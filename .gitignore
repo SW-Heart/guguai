@@ -1,5 +1,7 @@
 .env
 data/
 node_modules/
+.kiro/
+docs/
 .DS_Store
 *.log
