@@ -29,7 +29,6 @@ const userDataDir = path.join(dataDir, 'users');
 const port = Number(process.env.PORT || 4317);
 const duomiBase = (process.env.DUOMI_API_BASE || 'https://duomiapi.com').replace(/\/$/, '');
 const ttapiBase = (process.env.TTAPI_API_BASE || 'https://api.ttapi.io').replace(/\/$/, '');
-const ttapiGrokVideoModel = process.env.TTAPI_GROK_VIDEO_MODEL || 'grok-imagine-video-1.5-fast';
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const llmConfig = llmConfigFromEnv();
 const llmRates = llmRatesFromEnv();
@@ -45,10 +44,10 @@ const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
-const videoDurations = new Set([6, 8, 10, 15, 20, 25, 30]);
-const dramaVideoDurations = new Set([6, 8, 10, 15, 20, 25, 30]);
+const videoDurations = new Set([4, 6, 8, 10, 15, 20, 30]);
+const dramaVideoDurations = new Set([4, 6, 8, 10, 15, 20, 30]);
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
-const fixedModels = Object.freeze({ image: 'gpt-image-2', video: 'grok-video-1.5' });
+const fixedModels = Object.freeze({ image: 'gpt-image-2' });
 const invitationCodes = new Set([
   'STUDIO-7K3M-P9QX', 'STUDIO-4N8R-V2CW', 'STUDIO-6T5Y-H7JD',
   'STUDIO-9B2F-M4LA', 'STUDIO-3W7P-K8NE', 'STUDIO-5C9H-R6TU',
@@ -168,7 +167,7 @@ async function createDuomiVideo(task, refs) {
   }
 }
 async function createTtapiVideo(task, refs) {
-  const payload = { prompt: task.prompt, model: ttapiGrokVideoModel, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: '720p' };
+  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: '720p' };
   if (refs.length) payload.refer_images = refs.slice(0, task.maxReferenceImages || 7);
   const created = await fetchJson(`${ttapiBase}/grok/generations`, { method: 'POST', headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   const taskId = created.data?.jobId || created.jobId;
@@ -184,20 +183,12 @@ async function createTtapiVideo(task, refs) {
   throw Object.assign(new Error('TTAPI 视频任务等待超时'), { provider: 'ttapi', providerTaskId: taskId });
 }
 async function createVideo(task, refs) {
-  try { return await createDuomiVideo(task, refs); }
-  catch (duomiError) {
-    if (!duomiError.fallbackEligible) throw duomiError;
-    if (!ttapiConfigured) throw new Error(`${duomiError.message}；TTAPI 备用渠道未配置，无法重试`);
-    task.fallbackAttempt = { sourceProvider: 'duomi', sourceTaskId: duomiError.providerTaskId || '', provider: 'ttapi', model: ttapiGrokVideoModel, duration: task.duration, status: 'running', reason: duomiError.message, startedAt: now() };
-    try {
-      const result = await createTtapiVideo(task, refs);
-      task.fallbackAttempt = { ...task.fallbackAttempt, status: 'succeeded', providerTaskId: result.taskId, completedAt: now() };
-      return result;
-    } catch (ttapiError) {
-      task.fallbackAttempt = { ...task.fallbackAttempt, status: 'failed', providerTaskId: ttapiError.providerTaskId || '', error: ttapiError.message, finishedAt: now() };
-      throw new Error(`多米视频任务失败：${duomiError.message}；TTAPI 备用重试失败：${ttapiError.message}`);
-    }
+  if (task.provider === 'ttapi') {
+    if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置');
+    return createTtapiVideo(task, refs);
   }
+  if (task.provider === 'duomi') return createDuomiVideo(task, refs);
+  throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
 }
 function downloadErrorDetail(error) { const cause = error?.cause; return [cause?.code, cause?.message || error?.message].filter(Boolean).join(' · ') || '未知网络错误'; }
 async function downloadToFile(url, target, attempts = 4) {
@@ -770,7 +761,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, page.items);
     }
     if (url.pathname === '/api/generations' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!configState().duomi) return sendJson(res, 503, { error: '模型服务尚未配置' }); const input = await bodyJson(req); const type = input.type;
+      const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req); const type = input.type;
       if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt || ''); if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
       await ensureUserDirs(user.id);
       let dramaProjectId = ''; let dramaShotId = '';
@@ -781,7 +772,10 @@ const server = http.createServer(async (req, res) => {
       if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error: '不支持的图片比例' });
       let aspectRatio = null; let duration = null; let videoRequest = null;
       if (type === 'video') { videoRequest = validateVideoRequest(input, referenceAssetIds.length); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-      const task = { id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, model: type === 'video' ? videoRequest.model : fixedModels.image, size, quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration, ...(type === 'video' ? { generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, dramaProjectId, dramaShotId } : {}), creditCost: generationCost(type, duration), creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '', createdAt: now(), updatedAt: now(), finishedAt: null };
+      const provider = type === 'image' ? 'duomi' : videoRequest.provider;
+      if (provider === 'duomi' && !configState().duomi) return sendJson(res, 503, { error: 'Duomi 模型服务尚未配置' });
+      if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: 'TTAPI 模型服务尚未配置' });
+      const task = { id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider, model: type === 'video' ? videoRequest.model : fixedModels.image, size, quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration, ...(type === 'video' ? { generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, dramaProjectId, dramaShotId } : {}), creditCost: generationCost(type, duration), creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '', createdAt: now(), updatedAt: now(), finishedAt: null };
       const charged = await chargeGeneration(user.id, task.id, task.creditCost); if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
       try { await saveGeneration(user.id, task); } catch (error) { await refundGeneration(user.id, task.id, task.creditCost); throw error; }
       startGeneration(user.id, task); return sendJson(res, 202, { ...task, balance: charged.balance });

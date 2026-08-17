@@ -29,16 +29,15 @@ Node.js 22.5 或更高版本（元数据存储使用内置 `node:sqlite`）：
 ```dotenv
 DUOMI_API_KEY=
 DUOMI_API_BASE=https://duomiapi.com
-# 仅在多米视频任务失败或超时时，自动使用一次 TTAPI 备用重试
+DUOMI_VEO_MODEL=veo-fast
 TTAPI_API_KEY=
 TTAPI_API_BASE=https://api.ttapi.io
-TTAPI_GROK_VIDEO_MODEL=grok-imagine-video-1.5-fast
+TTAPI_GROK_VIDEO_MODEL=grok-imagine-video
+TTAPI_GROK_VIDEO_FAST_MODEL=grok-imagine-video-1.5-fast
 PORT=4317
 DIRECTOR_AGENT_BASE_URL=
 DIRECTOR_AGENT_API_KEY=
 DIRECTOR_AGENT_MODEL=deepseek-v4-flash
-VIDEO_MODEL=grok-video-1.5
-DRAMA_CONTINUITY_VIDEO_MODEL=veo3.1-fast
 LLM_API_PROTOCOL=openai-compatible
 LLM_INPUT_PRICE_YUAN_PER_MILLION=3
 LLM_OUTPUT_PRICE_YUAN_PER_MILLION=6
@@ -52,9 +51,9 @@ ALIYUN_OSS_PREFIX=model-studio
 
 系统优先读取现有 `DIRECTOR_AGENT_*` 配置，同时兼容 `LLM_API_BASE / LLM_API_KEY / LLM_MODEL`。`LLM_API_PROTOCOL` 支持 `anthropic` 和 `openai-compatible`，默认使用 OpenAI-compatible。LLM 调用前冻结最大可能积分，成功后根据供应商返回的输入/输出 Token 实际结算；图片和视频仍在提交任务前全额扣费。模型名称只保存在服务端账单和审计记录中，不向普通用户展示。
 
-视频由服务端按参数自动路由：仅“首尾帧 + 8 秒”使用 `DRAMA_CONTINUITY_VIDEO_MODEL`（默认 `veo3.1-fast`）；文本生成、参考元素和其他时长全部使用 `VIDEO_MODEL`（默认 `grok-video-1.5`）。首尾帧支持 1～2 张图、`9:16 / 16:9` 与 `720p / 1080p / 4k`；标准视频支持 6、8、10、15、20、25、30 秒及最多 7 张参考图。
+视频由服务端按参数自动路由：4、6、10、15 秒的文本/参考图请求使用 TTAPI `grok-imagine-video`；20、30 秒使用 TTAPI `grok-imagine-video-1.5-fast`；8 秒文本/参考图和 8 秒首尾帧请求使用 Duomi `veo-fast`。标准视频支持 `4 / 6 / 10 / 15 / 20 / 30` 秒、`2:3 / 3:2 / 1:1 / 9:16 / 16:9` 画幅和 720p；最多 7 张参考图，但 `grok-imagine-video` 的 15 秒参考图请求仅允许 1 张，多张参考图最长 10 秒。首尾帧支持 1～2 张图、`9:16 / 16:9` 与 `720p / 1080p / 4k`。
 
-配置 `TTAPI_API_KEY` 后，已创建任务的多米视频在轮询到失败、超时或轮询请求异常时，会自动将**同一秒数**、画幅、提示词和参考图交给 TTAPI `grok-imagine-video-1.5-fast` 重试一次。备用任务使用 `720p`，并以 `jobId` 查询成品；任务记录会保存两次渠道的信息。多米未成功创建任务时不会触发备用重试；TTAPI 未配置或备用任务失败时，原任务按既有规则退款。
+TTAPI 视频任务在提交后使用 `jobId` 轮询 `/grok/fetch`；Duomi Veo 任务继续使用 Duomi 的视频任务接口。两类任务都会保存供应商、模型和任务 ID；对应供应商未配置或任务失败时，原任务按既有规则退款，不跨模型切换。
 
 启动：
 

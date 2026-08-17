@@ -1,7 +1,7 @@
 import { buildResourceImagePrompt } from './resource-prompt.js?v=1';
 import { buildShotVideoPrompt } from './video-prompt.js?v=3';
 
-const durations = [6,8,10,15,20,25,30];
+const durations = [4,6,8,10,15,20,30];
 const ratios = ['9:16','16:9','1:1','2:3','3:2'];
 const imageRatios = ['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
 const imageQualities = [['low','低'],['medium','中'],['high','高']];

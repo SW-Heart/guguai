@@ -49,11 +49,11 @@ test('OSS object keys are scoped per user and prefix', () => {
 test('generation option enums match provider contracts', () => {
   assert.deepEqual([...__test.imageSizes], ['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
   assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9']);
-  assert.deepEqual([...__test.videoDurations], [6, 8, 10, 15, 20, 25, 30]);
+  assert.deepEqual([...__test.videoDurations], [4, 6, 8, 10, 15, 20, 30]);
 });
 
 test('models are fixed server-side and network errors retain their cause', () => {
-  assert.deepEqual(__test.fixedModels, { image: 'gpt-image-2', video: 'grok-video-1.5' });
+  assert.deepEqual(__test.fixedModels, { image: 'gpt-image-2' });
   assert.equal(__test.downloadErrorDetail({ message: 'fetch failed', cause: { code: 'ETIMEDOUT', message: 'connect timed out' } }), 'ETIMEDOUT · connect timed out');
 });
 
