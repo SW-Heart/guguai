@@ -1,9 +1,9 @@
-import { createDramaStudio } from './drama-studio.js?v=29';
+import { createDramaStudio } from './drama-studio.js?v=30';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoGenerationType:'REFERENCE', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', detailTaskId:null, previewFileId:null };
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
@@ -32,7 +32,17 @@ const libraryAccept = `${imageAccept},video/mp4,video/webm,video/quicktime`;
 const statusText = value => ({ queued:'排队中', running:'生成中', completed:'已完成', failed:'失败' })[value] || value;
 const generationStage = status => status === 'queued' ? 1 : status === 'running' ? 3 : status === 'completed' ? 5 : 0;
 const generationStages = ['排队', '准备', '生成', '增强', '完成'];
-const taskErrorText = value => /\[object Object\]/.test(String(value || '')) ? '模型请求失败，供应商未返回可读的错误原因。请调整参数后重新生成。' : String(value || '');
+const taskFailure = task => {
+  if (task?.failure && typeof task.failure === 'object') return {
+    code: String(task.failure.code || 'UNKNOWN'),
+    message: String(task.failure.message || '生成失败'),
+    suggestion: String(task.failure.suggestion || '请调整内容后重试。'),
+    action: String(task.failure.action || 'edit_input'),
+  };
+  return task?.status === 'failed' ? { code:'UNKNOWN', message:'生成失败，服务未返回具体原因', suggestion:'请调整提示词或参考图片后重试；若持续失败，请联系支持。', action:'edit_input' } : null;
+};
+const taskErrorText = task => { const failure = taskFailure(task); return failure ? `${failure.message}\n建议：${failure.suggestion}` : ''; };
+const taskFailureActionLabel = failure => ({ retry_later:'稍后重试', retry:'重新生成', contact_support:'联系支持', wait:'稍后刷新' })[failure?.action] || '调整后重试';
 let toastTimer;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('show'); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3200); }
 function emptyState(title, body, action='') { return `<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>${esc(title)}</h3><p>${esc(body)}</p>${action}</div>`; }
@@ -179,7 +189,7 @@ $('#closeRenameFile').onclick = $('#cancelRenameFile').onclick = closeRenameFile
 $('#renameFileDialog').addEventListener('cancel', event => { event.preventDefault(); closeRenameFileDialog(); });
 $('#renameFileDialog').addEventListener('close', () => { const restore = renameFileRestoreFocus; renameFileId = ''; renameFileRestoreFocus = null; renameFileError(); requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
 
-const dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, confirmDelete });
+const dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, confirmDelete, taskFailure });
 
 function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; $('#appView').classList.toggle('library-mode', files); $('#appView').classList.toggle('wide-mode', drama); $('#appView').classList.toggle('drama-project-open', drama && Boolean(state.dramaProject)); $('#appView').classList.toggle('drama-professional-open', drama && state.dramaProject?.mode === 'professional'); $('#creatorPanel').classList.toggle('hidden', wide); $('#generationView').classList.toggle('hidden', wide); $('#filesView').classList.toggle('hidden', !files); $('#dramaView').classList.toggle('hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => panel.classList.toggle('hidden', panel.dataset.panel !== nextRoute)); $('#galleryTitle').textContent = nextRoute === 'image' ? '图像作品' : '视频作品'; renderTasks(); } else if (files) renderFiles(); else { updateDramaModelState(); dramaController.load(); } }
 $$('.rail-button[data-route]').forEach(button => button.onclick = () => navigate(button.dataset.route));
@@ -309,18 +319,17 @@ function taskCard(task) {
   const asset = state.files.find(file => file.id === task.assetId);
   const activeStage = generationStage(task.status);
   const stageTrack = '';
-  const failureReason = task.status === 'failed' ? taskErrorText(task.error).split('。')[0] : '';
+  const failure = task.status === 'failed' ? taskFailure(task) : null;
   const media = asset
     ? (task.type === 'image' ? `<div class="card-media"><img src="${asset.url}" alt="${esc(asset.name)}" loading="lazy"></div>` : `<div class="card-media video"><video src="${asset.url}" preload="metadata" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span></div>`)
     : task.status === 'failed'
-      ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>生成失败</b><p>${esc(failureReason || '模型未返回可用结果')}</p></div>`
+      ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
       : task.assetId
         ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 1.7 3h15.4a2 2 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>成品文件未找到</b><p>任务已完成，但文件库中没有对应文件</p></div>`
         : `<div class="card-placeholder ${task.status}" aria-hidden="true"><div class="skeleton-frame"><i></i><i></i><i></i></div>${stageTrack}</div>`;
-  const spec = task.type === 'image' ? (task.size || '1:1') : `${task.aspectRatio || '16:9'} · ${task.duration || 10}s`;
   const completedActions = asset ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button><a class="task-action" href="/api/files/${asset.id}/download" title="下载" aria-label="下载"><svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></svg></a><button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
-  const failedAction = task.status === 'failed' ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>调整后重试</button>` : '';
-  return `<article class="task-card ${task.status}" data-record-id="${task.id}"><div class="card-visual">${media}<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>${completedActions}${failedAction}</div><footer class="card-meta"><span class="status-pill"><i></i>${statusText(task.status)}</span><code>${esc(spec)}</code><time>${dateText(task.createdAt)}</time></footer></article>`;
+  const failedAction = task.status === 'failed' && !['wait','contact_support'].includes(failure?.action) ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>${esc(taskFailureActionLabel(failure))}</button>` : '';
+  return `<article class="task-card ${task.status}" data-record-id="${task.id}"><div class="card-visual">${media}<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>${completedActions}${failedAction}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
 function reconcileCards(container, records, { card, signature, bind, empty }) {
@@ -353,14 +362,25 @@ function taskRenderSignature(task) {
   const asset = state.files.find(file => file.id === task.assetId);
   return `${recordSignature(task, taskCardSignatureFields)}|asset:${asset ? recordSignature(asset, fileCardSignatureFields) : ''}`;
 }
+function syncGenerationView() {
+  const small = state.generationView === 'small';
+  $('#generationGrid').classList.toggle('small-view', small);
+  $$('.view-toggle').forEach(button => {
+    const active = button.dataset.view === state.generationView;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
 function renderTasks() {
   if (!['image','video'].includes(state.route)) return;
+  syncGenerationView();
   let tasks = state.tasks.filter(task => task.type === state.route);
   if (state.generationFilter !== 'all') tasks = tasks.filter(task => state.generationFilter === 'running' ? ['queued','running'].includes(task.status) : task.status === state.generationFilter);
   const empty = emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。');
   reconcileCards($('#generationGrid'), tasks, { card:taskCard, signature:taskRenderSignature, bind:bindTaskCard, empty });
 }
 $$('.filter').forEach(button => button.onclick = () => { state.generationFilter = button.dataset.status; $$('.filter').forEach(x => x.classList.toggle('active', x === button)); renderTasks(); });
+$$('.view-toggle').forEach(button => button.onclick = () => { state.generationView = button.dataset.view; syncGenerationView(); });
 
 function detailRow(label, value, id='') { return `<div><dt>${esc(label)}</dt><dd${id ? ` id="${id}"` : ''}>${esc(value)}</dd></div>`; }
 function addTaskReference(task, target=task.type) { if (!task) return false; const ids = task.type === 'image' && task.assetId ? [task.assetId] : Array.isArray(task.referenceAssetIds) ? task.referenceAssetIds : []; const references = ids.filter(id => state.files.some(file => file.id === id && file.kind === 'image')); if (!references.length) return false; state.refs[target] = [...new Set([...references, ...state.refs[target]])].slice(0, 7); renderReferences(); return true; }
@@ -397,7 +417,7 @@ function openGenerationDetail(id) {
   const fileText = asset ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : '暂无成品文件';
   $('#generationCoreMeta').innerHTML = detailRow('尺寸与画幅', visualSpec) + detailRow('生成时间', fullDateText(task.createdAt));
   $('#generationDetailMeta').innerHTML = detailRow('内容类型', task.type === 'image' ? '图片' : '视频') + detailRow('文件信息', fileText, 'generationDetailFile') + detailRow('积分记录', creditText) + detailRow('任务编号', task.id);
-  const error = $('#generationDetailError'); error.textContent = taskErrorText(task.error); error.classList.toggle('hidden', !task.error);
+  const error = $('#generationDetailError'); const failure = taskFailure(task); error.textContent = taskErrorText(task); error.classList.toggle('hidden', !failure);
   const download = $('#downloadGeneration'); download.classList.toggle('hidden', !asset); if (asset) download.href = `/api/files/${asset.id}/download`;
   $('#useGenerationReference').classList.toggle('hidden', !asset || task.type !== 'image');
   const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !asset); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
@@ -458,7 +478,7 @@ function assetDisplayName(file) {
   const date = new Date(file.createdAt); const day = Number.isNaN(date.getTime()) ? '' : `｜${String(date.getMonth()+1).padStart(2,'0')}月${String(date.getDate()).padStart(2,'0')}日`;
   return `导入${file.kind === 'image' ? '图片' : '视频'}${day}`;
 }
-function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}" loading="lazy">` : `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><div class="file-info"><div><b title="${esc(displayName)}">${esc(displayName)}</b><small>${file.kind === 'image' ? '图片' : '视频'} · ${formatBytes(file.size)}</small></div><button class="more-button" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button><a href="/api/files/${file.id}/download">下载</a><button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
+function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}" loading="lazy">` : `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button><a href="/api/files/${file.id}/download">下载</a><button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
 function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
 function renderFiles() {
   if (state.route !== 'files') return;
@@ -489,38 +509,56 @@ document.addEventListener('click', () => $$('[data-menu]').forEach(menu => menu.
 
 function openUploadPicker(context) { state.uploadContext = context; $('#fileInput').accept = context === 'reference' ? imageAccept : libraryAccept; $('#fileInput').click(); }
 async function readImageSize(file) { if (!file.type.startsWith('image/')) return {}; try { const bitmap = await createImageBitmap(file); const result = { width:bitmap.width, height:bitmap.height }; bitmap.close(); return result; } catch { return new Promise(resolve => { const image = new Image(); const url = URL.createObjectURL(file); image.onload = () => { URL.revokeObjectURL(url); resolve({ width:image.naturalWidth, height:image.naturalHeight }); }; image.onerror = () => { URL.revokeObjectURL(url); resolve({}); }; image.src = url; }); } }
-function createUploadRow(file) { const queue = $('#referenceUploads'); queue.classList.remove('hidden'); const row = document.createElement('div'); row.className = 'upload-item'; const previewUrl = URL.createObjectURL(file); row.innerHTML = `<img src="${previewUrl}" alt=""><div><b>${esc(file.name)}</b><span>准备上传</span><div class="upload-track"><i></i></div></div><strong>0%</strong>`; queue.prepend(row); return { row, previewUrl, status:row.querySelector('span'), bar:row.querySelector('.upload-track i'), percent:row.querySelector('strong') }; }
-function updateUploadRow(view, percent, status, mode='') { const value = Math.max(0, Math.min(100, Math.round(percent))); view.bar.style.width = `${value}%`; view.percent.textContent = mode === 'error' ? '失败' : `${value}%`; view.status.textContent = status; view.row.classList.toggle('failed', mode === 'error'); view.row.classList.toggle('completed', mode === 'completed'); }
+function createUploadRow(file) { const grid = $('#referenceGrid'); grid.querySelector('.empty-state')?.remove(); const row = document.createElement('div'); row.className = 'reference-upload-placeholder'; row.setAttribute('aria-live', 'polite'); row.innerHTML = `<div class="reference-upload-visual"><i class="reference-upload-spinner" aria-hidden="true"></i><strong>0%</strong></div><span title="${esc(file.name)}">${esc(file.name)}</span>`; grid.prepend(row); row.setAttribute('aria-label', `${file.name}，准备上传`); return { row, fileName:file.name, status:row, percent:row.querySelector('strong') }; }
+function updateUploadRow(view, percent, status, mode='') { const value = Math.max(0, Math.min(100, Math.round(percent))); view.percent.textContent = mode === 'error' ? '失败' : `${value}%`; view.row.setAttribute('aria-label', `${view.fileName}，${status}`); view.row.dataset.uploadStatus = status; view.row.classList.toggle('failed', mode === 'error'); view.row.classList.toggle('completed', mode === 'completed'); }
 function uploadFile(file, dimensions, onProgress) { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/files/upload'); xhr.responseType = 'json'; xhr.setRequestHeader('Content-Type', file.type); xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name)); if (dimensions.width && dimensions.height) { xhr.setRequestHeader('X-Image-Width', dimensions.width); xhr.setRequestHeader('X-Image-Height', dimensions.height); } xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(Math.min(92, event.loaded / event.total * 92), '正在上传到文件库'); }; xhr.upload.onload = () => onProgress(94, '正在保存文件'); xhr.onload = () => { const data = xhr.response || {}; if (xhr.status >= 200 && xhr.status < 300) resolve(data); else reject(new Error(data.error || `上传失败（${xhr.status}）`)); }; xhr.onerror = () => reject(new Error('上传网络连接失败')); xhr.send(file); }); }
 function pickAndUploadDramaImage() { return new Promise((resolve, reject) => { const input=document.createElement('input');input.type='file';input.accept=imageAccept;input.onchange=async()=>{const file=input.files?.[0];if(!file)return resolve(null);try{if(file.size>10*1024*1024)throw new Error(`${file.name} 超过 10 MB`);const dimensions=await readImageSize(file);const asset=await uploadFile(file,dimensions,(progress)=>toast(`${file.name} · ${Math.round(progress)}%`));state.files=[asset,...state.files.filter(item=>item.id!==asset.id)];toast(`${file.name} 已上传到文件库`);resolve(asset);}catch(error){reject(error);}};input.click();});}
 $('#uploadButton').onclick = () => openUploadPicker('library');
-$('#fileInput').onchange = async event => { const files = [...event.target.files]; const context = state.uploadContext; event.target.value = ''; if (!files.length) return; let done = 0; let selected = 0; const referenceLimit = context === 'reference' && state.referenceTarget === 'video-frame' ? 1 : context === 'reference' && state.referenceTarget === 'video' ? videoReferenceLimit() : 7; for (const file of files) { const inDialog = context === 'reference'; const view = inDialog ? createUploadRow(file) : null; try { const limit = file.type.startsWith('image/') ? 10*1024*1024 : 25*1024*1024; if (file.size > limit) throw new Error(`${file.name} 超过 ${file.type.startsWith('image/') ? '10' : '25'} MB`); if (inDialog && !file.type.startsWith('image/')) throw new Error('参考素材只支持图片'); const dimensions = await readImageSize(file); const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`)); state.files = [asset, ...state.files.filter(item => item.id !== asset.id)]; let autoSelected = false; if (inDialog && state.dialogSelection.length < referenceLimit) { state.dialogSelection.push(asset.id); autoSelected = true; selected++; } done++; if (view) { updateUploadRow(view, 100, autoSelected ? '上传完成，已自动选中' : '上传完成，选择数量已满', 'completed'); setTimeout(() => { URL.revokeObjectURL(view.previewUrl); view.row.remove(); if (!$('#referenceUploads').children.length) $('#referenceUploads').classList.add('hidden'); }, 2400); renderReferenceDialog(); } else renderFiles(); } catch (error) { if (view) updateUploadRow(view, 0, error.message, 'error'); toast(error.message); } } renderReferences(); if (!context || context === 'library') await loadFiles(); if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`); };
+$('#fileInput').onchange = async event => { const files = [...event.target.files]; const context = state.uploadContext; event.target.value = ''; if (!files.length) return; let done = 0; let selected = 0; const referenceLimit = context === 'reference' && state.referenceTarget === 'video-frame' ? 1 : context === 'reference' && state.referenceTarget === 'video' ? videoReferenceLimit() : 7; for (const file of files) { const inDialog = context === 'reference'; const view = inDialog ? createUploadRow(file) : null; try { const limit = file.type.startsWith('image/') ? 10*1024*1024 : 25*1024*1024; if (file.size > limit) throw new Error(`${file.name} 超过 ${file.type.startsWith('image/') ? '10' : '25'} MB`); if (inDialog && !file.type.startsWith('image/')) throw new Error('参考素材只支持图片'); const dimensions = await readImageSize(file); const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`)); state.files = [asset, ...state.files.filter(item => item.id !== asset.id)]; let autoSelected = false; if (inDialog && state.dialogSelection.length < referenceLimit) { state.dialogSelection.push(asset.id); autoSelected = true; selected++; } done++; if (view) { updateUploadRow(view, 100, autoSelected ? '上传完成，已自动选中' : '上传完成，选择数量已满', 'completed'); renderReferenceDialog(); } else renderFiles(); } catch (error) { if (view) updateUploadRow(view, 0, error.message, 'error'); toast(error.message); } } renderReferences(); if (!context || context === 'library') await loadFiles(); if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`); };
 
 function videoGenerationParameters(modelId=$('#videoModel')?.value) {
   const modes = videoModelModes(modelId);
-  const mode = modes.some(item => item.generationType === state.videoGenerationType)
-    ? state.videoGenerationType
-    : modes.some(item => item.generationType === 'REFERENCE') ? 'REFERENCE' : modes[0]?.generationType || 'TEXT';
+  const mode = resolveVideoGenerationType(modelId, modes);
   return { mode, parameters: videoModelParameters(modelId, mode) };
+}
+function videoHasImages() {
+  return state.refs.video.length > 0 || Boolean(state.videoFrames.first || state.videoFrames.last);
+}
+function resolveVideoGenerationType(modelId=$('#videoModel')?.value, modes=videoModelModes(modelId)) {
+  const supportsText = modes.some(item => item.generationType === 'TEXT');
+  const supportsReference = modes.some(item => item.generationType === 'REFERENCE');
+  const supportsFirstLast = modes.some(item => item.generationType === 'FIRST&LAST');
+  // 普通视频页不再让用户直接选择模式：无图默认文生视频；有图默认参考图。
+  // 只有同时支持参考图和首尾帧的模型，才保留用户通过切换按钮选择的首尾帧状态。
+  if (supportsReference && supportsFirstLast && state.videoGenerationType === 'FIRST&LAST') return 'FIRST&LAST';
+  if (!videoHasImages()) return supportsText ? 'TEXT' : supportsReference ? 'REFERENCE' : modes[0]?.generationType || 'TEXT';
+  if (supportsReference) return 'REFERENCE';
+  return supportsFirstLast ? 'FIRST&LAST' : supportsText ? 'TEXT' : modes[0]?.generationType || 'TEXT';
 }
 function videoReferenceLimit() {
   const model = videoModelOptions().find(item => item.id === $('#videoModel')?.value);
   return model?.modes?.find(item => item.generationType === 'REFERENCE')?.maxImages || 7;
 }
 function renderVideoGenerationMode() {
-  const control = $('#videoGenerationMode');
-  const select = $('#videoGenerationType');
-  const widget = $('.product-select[data-for="videoGenerationType"]');
-  if (!control || !select || !widget) return;
-  const modes = videoModelModes();
-  const values = modes.map(item => item.generationType);
-  const nextMode = values.includes(state.videoGenerationType) ? state.videoGenerationType : values.includes('REFERENCE') ? 'REFERENCE' : values[0] || 'TEXT';
-  state.videoGenerationType = nextMode;
-  control.classList.toggle('hidden', !values.length);
-  select.innerHTML = modes.map(item => `<option value="${item.generationType}">${modeLabels[item.generationType] || item.generationType}</option>`).join('');
-  select.value = nextMode;
-  widget.dataset.dynamicOptions = 'true';
-  refreshProductSelect('videoGenerationType');
+  const toggle = $('#videoModeToggle');
+  const label = $('#videoReferenceLabel');
+  if (!toggle || !label) return;
+  const dualModeModel = supportsVideoMode('REFERENCE') && supportsVideoFirstLast();
+  const { mode } = videoGenerationParameters();
+  toggle.classList.toggle('hidden', !dualModeModel);
+  label.classList.toggle('hidden', dualModeModel);
+  if (!dualModeModel) {
+    label.textContent = mode === 'FIRST&LAST' ? '首尾帧' : '参考图片';
+    toggle.onclick = null;
+    return;
+  }
+  const firstLast = mode === 'FIRST&LAST';
+  const current = firstLast ? '首尾帧' : '参考图片';
+  const alternate = firstLast ? '参考图片' : '首尾帧';
+  toggle.innerHTML = `<b>${current}</b><span class="video-mode-switch" aria-hidden="true">⇄</span><span>${alternate}</span>`;
+  toggle.setAttribute('aria-label', `当前为${current}，点击切换为${alternate}`);
+  toggle.setAttribute('aria-pressed', String(firstLast));
+  toggle.onclick = () => setVideoGenerationType(firstLast ? 'REFERENCE' : 'FIRST&LAST');
 }
 function renderVideoFrameSlots() {
   const container = $('#videoReferences');
@@ -531,47 +569,54 @@ function renderVideoFrameSlots() {
       ? `<figure class="video-frame-slot filled"><img src="${file.url}" alt="${esc(file.name)}"><figcaption>${label}</figcaption><button type="button" class="remove-ref" data-video-frame-remove="${key}" aria-label="移除${label}">×</button></figure>`
       : `<button type="button" class="video-frame-slot" data-video-frame="${key}"><span>＋</span><b>${label}</b><small>${hint}</small></button>`;
   };
-  container.innerHTML = frame('first', '首帧', '上传首帧图片') + frame('last', '尾帧', '上传尾帧图片');
+  container.innerHTML = frame('first', '首帧', '上传首帧图片') + '<span class="video-frame-transition" aria-hidden="true">→</span>' + frame('last', '尾帧', '上传尾帧图片');
   container.classList.add('video-frame-strip');
   container.querySelectorAll('[data-video-frame]').forEach(button => button.onclick = () => openVideoFrameDialog(button.dataset.videoFrame));
   container.querySelectorAll('[data-video-frame-remove]').forEach(button => button.onclick = () => { state.videoFrames[button.dataset.videoFrameRemove] = ''; renderReferences(); });
 }
 function renderReferences() {
   const { mode } = videoGenerationParameters();
-  if (mode !== 'REFERENCE') state.refs.video = [];
-  else state.refs.video = state.refs.video.slice(0, videoReferenceLimit());
+  state.refs.video = state.refs.video.slice(0, videoReferenceLimit());
   const imageSelected = state.refs.image.map(id => state.files.find(file => file.id === id)).filter(Boolean);
   $('#imageReferences').innerHTML = imageSelected.map(file => `<div class="reference-thumb"><img src="${file.url}" alt="${esc(file.name)}"><button type="button" class="remove-ref" data-target="image" data-id="${file.id}" aria-label="移除参考图">×</button></div>`).join('') + `<button class="add-reference pick-reference" data-target="image" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button>`;
   const videoReferenceHead = $('#videoReferenceLabel').closest('.reference-head');
   const videoReferences = $('#videoReferences');
-  const hideVideoReferences = mode === 'TEXT';
-  videoReferenceHead.classList.toggle('hidden', hideVideoReferences);
-  videoReferences.classList.toggle('hidden', hideVideoReferences);
-  if (mode === 'FIRST&LAST') renderVideoFrameSlots();
-  else if (mode === 'TEXT') {
-    videoReferences.classList.remove('video-frame-strip');
-    videoReferences.innerHTML = '';
+  videoReferenceHead.classList.remove('hidden');
+  videoReferences.classList.remove('hidden');
+  if (mode === 'FIRST&LAST') {
+    state.refs.video = [];
+    renderVideoFrameSlots();
   } else {
     const selected = state.refs.video.map(id => state.files.find(file => file.id === id)).filter(Boolean);
     videoReferences.classList.remove('video-frame-strip');
     videoReferences.innerHTML = selected.map(file => `<div class="reference-thumb"><img src="${file.url}" alt="${esc(file.name)}"><button type="button" class="remove-ref" data-target="video" data-id="${file.id}" aria-label="移除参考图">×</button></div>`).join('') + `<button class="add-reference pick-reference" data-target="video" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button>`;
   }
   $$('.pick-reference').forEach(button => button.onclick = () => openReferenceDialog(button.dataset.target));
-  $$('.remove-ref[data-target]').forEach(button => button.onclick = () => { state.refs[button.dataset.target] = state.refs[button.dataset.target].filter(id => id !== button.dataset.id); renderReferences(); });
+  $$('.remove-ref[data-target]').forEach(button => button.onclick = () => {
+    state.refs[button.dataset.target] = state.refs[button.dataset.target].filter(id => id !== button.dataset.id);
+    if (!videoHasImages()) state.videoGenerationType = 'TEXT';
+    renderReferences();
+  });
   renderVideoGenerationMode();
   syncVideoModelParameters();
 }
 function setVideoGenerationType(type) {
-  if (!supportsVideoMode(type) || !['TEXT', 'REFERENCE', 'FIRST&LAST'].includes(type)) return;
+  if (!supportsVideoMode(type) || !['REFERENCE', 'FIRST&LAST'].includes(type)) return;
+  const current = videoGenerationParameters().mode;
+  if (current === 'REFERENCE' && type === 'FIRST&LAST') {
+    const [first, last] = state.refs.video.slice(0, 2);
+    state.videoFrames = { first: first || '', last: last || '' };
+    state.refs.video = [];
+  } else if (current === 'FIRST&LAST' && type === 'REFERENCE') {
+    state.refs.video = [state.videoFrames.first, state.videoFrames.last].filter(Boolean).slice(0, videoReferenceLimit());
+    state.videoFrames = { first:'', last:'' };
+  }
   state.videoGenerationType = type;
-  if (type === 'TEXT') { state.refs.video = []; state.videoFrames = { first:'', last:'' }; }
-  if (type === 'REFERENCE') state.videoFrames = { first:'', last:'' };
-  if (type === 'FIRST&LAST') state.refs.video = [];
   renderReferences();
 }
 function openReferenceDialog(target) {
   if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型');
-  if (target === 'video' && videoGenerationParameters().mode !== 'REFERENCE') return toast('当前模式不使用参考图片');
+  if (target === 'video' && videoGenerationParameters().mode === 'FIRST&LAST') return toast('请分别选择首帧和尾帧图片');
   state.referenceTarget = target; state.videoFrameTarget = ''; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
 function openVideoFrameDialog(frame) {
@@ -601,14 +646,6 @@ $$('.segmented').forEach(group => group.querySelectorAll('button').forEach(butto
 $$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { group.querySelectorAll('button[data-value]').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
 $('#moreRatios').onclick = () => { const opening = $('#moreRatios').getAttribute('aria-expanded') !== 'true'; $('#moreRatios').setAttribute('aria-expanded', String(opening)); $$('.ratio-extra').forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
 function ratioIcon(value) { const [width, height] = value.split(':').map(Number); const scale = Math.min(27 / width, 22 / height); return `<span class="select-ratio-icon" aria-hidden="true"><i style="width:${Math.round(width*scale)}px;height:${Math.round(height*scale)}px"></i></span>`; }
-function modeIcon(value) {
-  const icons = {
-    TEXT: '<svg viewBox="0 0 24 24"><path d="M5 5h14M12 5v14M8 19h8"/></svg>',
-    REFERENCE: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m5 17 4-4 3 3 2-2 5 4"/></svg>',
-    'FIRST&LAST': '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="1"/><rect x="14" y="6" width="7" height="12" rx="1"/><path d="m11 10 2-2m-2 6 2 2"/></svg>',
-  };
-  return `<span class="select-mode-icon" aria-hidden="true">${icons[value] || icons.TEXT}</span>`;
-}
 function resolutionIcon(value) {
   const lineCount = value === '1080p' ? 4 : value === '720p' ? 3 : 2;
   const detailLines = Array.from({ length: lineCount }, (_, index) => `<path d="M7 ${9 + index * 2.2}h10"/>`).join('');
@@ -616,28 +653,34 @@ function resolutionIcon(value) {
 }
 function clockIcon() { return '<span class="select-clock" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3.5 2"></path></svg></span>'; }
 const fallbackVideoModels = Object.freeze([
-  { id:'grok', label:'Grok Video 1.5 Fast', modes:[
-    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], minImages:1, maxImages:7 },
+  // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for GuGu 1.5.
+  { id:'grok', label:'GuGu 1.5', description:'全能视频模型，支持最长30秒视频，7张参考图', modes:[
+    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:1, maxImages:7 },
   ] },
-  { id:'grok-15', label:'Grok Video', availability:'coming-soon', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], minImages:1, maxImages:1 },
+  // Front-end fallback: GuGu 1.0 supports TEXT and REFERENCE only.
+  { id:'grok-15', label:'GuGu 1.0', availability:'coming-soon', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:1, maxImages:1 },
   ] },
-  { id:'veo', label:'Veo 3.1 Fast', modes:[
+  // Front-end fallback: Omni Flash supports TEXT and REFERENCE only.
+  { id:'oai', label:'Omni Flash', description:'Google 最新视频模型，高质量，英文支持效果好', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:1, maxImages:5 },
+  ] },
+  // Front-end fallback: Veo 3.1 Fast supports TEXT, REFERENCE and FIRST&LAST.
+  { id:'veo', label:'Veo 3.1 Fast', description:'支持首尾帧模式，固定8秒，速度快', modes:[
     { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[8], qualityOptions:['720p'], minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','16:9'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:3 },
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:2 },
   ] },
-  { id:'oai', label:'Omni Flash', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:1, maxImages:5 },
-  ] },
-  { id:'veo-31', label:'Veo 3.1', modes:[
+  // Front-end fallback: Veo 3.1 supports TEXT, REFERENCE and FIRST&LAST.
+  { id:'veo-31', label:'Veo 3.1', description:'支持首尾帧、支持1080P', modes:[
     { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p','1080p'], minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['16:9'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:3 },
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:2 },
   ] },
+  // Front-end fallback: these models are not yet available and expose no modes.
   { id:'minimax-h3', label:'MiniMax H3', availability:'coming-soon', modes:[] },
   { id:'seedance-2.0', label:'Seedance 2.0', availability:'coming-soon', modes:[] },
 ]);
@@ -654,23 +697,18 @@ function videoModelOptions() {
     .sort((a, b) => Number(a.availability === 'coming-soon') - Number(b.availability === 'coming-soon'));
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
-const modelIconUrls = Object.freeze({ grok:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/grok.svg', 'grok-15':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/grok.svg', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
+const modelIconUrls = Object.freeze({ grok:'/favicon.svg?v=2', 'grok-15':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
-function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.mode ? modeIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
-function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label"><b>${esc(option.textContent)}</b>${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
-function selectSubtitle() { return ''; }
-function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; if (!option) return; widget.querySelector('.product-select-trigger').innerHTML = `${productSelectIcon(widget, option)}<span><b>${esc(option.textContent)}</b>${selectSubtitle(widget)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') widget.querySelector('.product-select-menu').innerHTML = productSelectMarkup(widget, select); }
+function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
+function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; const model = widget.dataset.model ? videoModelOptions().find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label"><b>${esc(option.textContent)}</b>${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
+function selectSubtitle(widget, option = null) { if (!widget?.dataset.model) return ''; const selected = option || $(`#${widget.dataset.for}`)?.selectedOptions[0]; const model = selected ? videoModelOptions().find(item => item.id === selected.value) : null; return model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''; }
+function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; if (!option) return; widget.querySelector('.product-select-trigger').innerHTML = `${productSelectIcon(widget, option)}<span><b>${esc(option.textContent)}</b>${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') widget.querySelector('.product-select-menu').innerHTML = productSelectMarkup(widget, select); }
 function setProductSelectEnabled(id, enabled) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; select.disabled = !enabled; const trigger = widget.querySelector('.product-select-trigger'); trigger.disabled = !enabled; widget.classList.toggle('is-disabled', !enabled); if (!enabled) closeProductSelects(); }
 function setVideoSelectOptions(id, values, label, preferred) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const current = select.value; select.innerHTML = values.map(value => `<option value="${esc(value)}">${esc(label(value))}</option>`).join(''); const desired = values.map(String).includes(String(current)) ? current : values.map(String).includes(String(preferred)) ? String(preferred) : String(values[0] || ''); select.value = desired; widget.dataset.dynamicOptions = 'true'; refreshProductSelect(id); }
 function syncVideoModelOptions() { const select = $('#videoModel'); const widget = $('.product-select[data-for="videoModel"]'); if (!select || !widget) return; const current = select.value; const models = videoModelOptions(); select.innerHTML = models.map(model => `<option value="${esc(model.id)}" ${model.availability === 'coming-soon' ? 'disabled data-availability="coming-soon"' : ''}>${esc(model.label)}</option>`).join(''); const selectableModels = models.filter(model => model.availability !== 'coming-soon'); select.value = selectableModels.some(model => model.id === current) ? current : String(selectableModels[0]?.id || ''); widget.dataset.dynamicOptions = 'true'; refreshProductSelect('videoModel'); syncVideoModelParameters(); }
 function syncVideoModelParameters() {
   const modelId = $('#videoModel')?.value || '';
   const modes = videoModelModes(modelId);
-  if (!modes.some(item => item.generationType === state.videoGenerationType)) {
-    state.videoGenerationType = modes.some(item => item.generationType === 'REFERENCE') ? 'REFERENCE' : modes[0]?.generationType || 'TEXT';
-    state.refs.video = [];
-    state.videoFrames = { first:'', last:'' };
-  }
   const { mode:generationType, parameters } = videoGenerationParameters(modelId);
   renderVideoGenerationMode();
   if (!parameters) { setProductSelectEnabled('videoAspect', false); setProductSelectEnabled('videoDuration', false); setProductSelectEnabled('videoResolution', false); syncVideoPromptState(); updateVideoCost(); return; }
@@ -683,7 +721,7 @@ function syncVideoModelParameters() {
   syncVideoPromptState(); updateVideoCost();
 }
 function closeProductSelects(except=null) { $$('.product-select').forEach(widget => { if (widget === except) return; widget.querySelector('.product-select-menu').classList.add('hidden'); widget.querySelector('.product-select-trigger').setAttribute('aria-expanded', 'false'); }); }
-$$('.product-select').forEach(widget => { const select = $(`#${widget.dataset.for}`); const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); const renderTrigger = () => { const option = select.selectedOptions[0]; trigger.innerHTML = `${productSelectIcon(widget, option)}<span><b>${esc(option.textContent)}</b>${selectSubtitle(widget)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5-5 5"/></svg>`; }; menu.innerHTML = productSelectMarkup(widget, select); const choose = value => { select.value = value; menu.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', item.dataset.value === value)); renderTrigger(); closeProductSelects(); select.dispatchEvent(new Event('change', { bubbles:true })); }; menu.querySelectorAll('[role="option"]').forEach(item => item.onclick = () => choose(item.dataset.value)); trigger.onclick = event => { event.stopPropagation(); const opening = menu.classList.contains('hidden'); closeProductSelects(opening ? widget : null); menu.classList.toggle('hidden', !opening); trigger.setAttribute('aria-expanded', String(opening)); if (opening) menu.querySelector(`[data-value="${CSS.escape(select.value)}"]`)?.focus(); }; trigger.onkeydown = event => { if (['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); menu.classList.remove('hidden'); trigger.setAttribute('aria-expanded', 'true'); const options = [...menu.querySelectorAll('button')]; (event.key === 'ArrowDown' ? options[0] : options.at(-1))?.focus(); } }; menu.onkeydown = event => { const options = [...menu.querySelectorAll('button')]; const index = options.indexOf(document.activeElement); if (event.key === 'Escape') { closeProductSelects(); trigger.focus(); } if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); } }; renderTrigger(); });
+$$('.product-select').forEach(widget => { const select = $(`#${widget.dataset.for}`); const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); const renderTrigger = () => { const option = select.selectedOptions[0]; trigger.innerHTML = `${productSelectIcon(widget, option)}<span><b>${esc(option.textContent)}</b>${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5-5 5"/></svg>`; }; menu.innerHTML = productSelectMarkup(widget, select); const choose = value => { select.value = value; menu.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', item.dataset.value === value)); renderTrigger(); closeProductSelects(); select.dispatchEvent(new Event('change', { bubbles:true })); }; menu.querySelectorAll('[role="option"]').forEach(item => item.onclick = () => choose(item.dataset.value)); trigger.onclick = event => { event.stopPropagation(); const opening = menu.classList.contains('hidden'); closeProductSelects(opening ? widget : null); menu.classList.toggle('hidden', !opening); trigger.setAttribute('aria-expanded', String(opening)); if (opening) menu.querySelector(`[data-value="${CSS.escape(select.value)}"]`)?.focus(); }; trigger.onkeydown = event => { if (['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); menu.classList.remove('hidden'); trigger.setAttribute('aria-expanded', 'true'); const options = [...menu.querySelectorAll('button')]; (event.key === 'ArrowDown' ? options[0] : options.at(-1))?.focus(); } }; menu.onkeydown = event => { const options = [...menu.querySelectorAll('button')]; const index = options.indexOf(document.activeElement); if (event.key === 'Escape') { closeProductSelects(); trigger.focus(); } if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); } }; renderTrigger(); });
 document.addEventListener('click', event => { if (!event.target.closest('.product-select')) closeProductSelects(); });
 document.addEventListener('click', event => { const option = event.target.closest('.product-select[data-dynamic-options="true"] .product-select-menu [role="option"]'); if (!option || option.disabled) return; const widget = option.closest('.product-select'); const select = $(`#${widget.dataset.for}`); if (!select) return; select.value = option.dataset.value; refreshProductSelect(widget.dataset.for); closeProductSelects(); select.dispatchEvent(new Event('change', { bubbles:true })); });
 $$('.prompt-presets button').forEach(button => button.onclick = () => { const form = button.closest('form'); const textarea = form.querySelector('textarea'); textarea.value = button.dataset.preset; textarea.dispatchEvent(new Event('input', { bubbles:true })); textarea.focus(); });
@@ -698,8 +736,7 @@ async function submitGeneration(type, form, payload) { const button = form.query
 $('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value }); };
 $('#videoForm').onsubmit = event => { event.preventDefault(); syncVideoPromptState(); if (!$('#videoModel').value) return toast('请先选择视频模型'); if (Array.from($('#videoPrompt').value).length > videoPromptMaxLength) return; const { mode } = videoGenerationParameters(); const referenceAssetIds = mode === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video; submitGeneration('video', event.currentTarget, { prompt:$('#videoPrompt').value, modelId:$('#videoModel').value, aspectRatio:$('#videoAspect').value, duration:Number($('#videoDuration').value), quality:$('#videoResolution').value, generationType:mode, referenceAssetIds }); };
 function updateVideoCost() { const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return; const parameters = videoModelParameters($('#videoModel')?.value, videoGenerationParameters().mode); const fixedPrice = parameters?.pricing?.unit === 'request' ? Number(parameters.pricing.amount) / Number(state.pricing.yuanPerCredit || 0.1) : null; const perSecondPrice = parameters?.pricing?.unit === 'second' ? Number(parameters.pricing.amount) : null; cost.textContent = creditText(fixedPrice ?? Number(duration.value || 0) * (perSecondPrice ?? state.pricing.videoPerSecond)); }
-$('#videoModel').onchange = () => { state.videoGenerationType = 'REFERENCE'; state.refs.video = []; state.videoFrames = { first:'', last:'' }; renderReferences(); };
-$('#videoGenerationType').onchange = () => { state.videoGenerationType = $('#videoGenerationType').value; if (state.videoGenerationType === 'TEXT') { state.refs.video = []; state.videoFrames = { first:'', last:'' }; } if (state.videoGenerationType === 'REFERENCE') state.videoFrames = { first:'', last:'' }; if (state.videoGenerationType === 'FIRST&LAST') state.refs.video = []; renderReferences(); };
+$('#videoModel').onchange = () => { state.videoGenerationType = 'TEXT'; state.refs.video = []; state.videoFrames = { first:'', last:'' }; renderReferences(); };
 $('#videoDuration').onchange = () => { syncVideoModelParameters(); updateVideoCost(); };
 
 function renderPreviewMeta(file, width=file.width, height=file.height) { $('#previewDetailMeta').innerHTML = detailRow('素材类型', file.kind === 'image' ? '图片' : '视频') + detailRow('画面尺寸', width && height ? `${width} × ${height} px` : '读取中', 'previewDimensions') + detailRow('文件大小', formatBytes(file.size)) + detailRow('添加时间', fullDateText(file.createdAt)) + detailRow('原始文件名', file.name); }

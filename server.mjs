@@ -101,13 +101,43 @@ const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
 const publicUser = user => ({ id: user.id, username: user.username, role: user.role || 'user', status: user.status || 'active', credits: normalizeWallet(user).balance, createdAt: user.createdAt });
+const generationFailureCatalog = Object.freeze({
+  CONTENT_REJECTED: Object.freeze({ message: '内容未通过生成检查', suggestion: '请调整可能涉及敏感、侵权或高风险的描述及参考图片后重试。', action: 'edit_input' }),
+  INVALID_REFERENCE: Object.freeze({ message: '参考图片不符合生成要求', suggestion: '请检查图片格式、大小和数量，移除异常图片后重新生成。', action: 'edit_input' }),
+  INVALID_REQUEST: Object.freeze({ message: '生成参数不符合要求', suggestion: '请检查提示词、画幅、时长和生成模式后重试。', action: 'edit_input' }),
+  RATE_LIMITED: Object.freeze({ message: '当前生成请求较多', suggestion: '请稍等几分钟再试，不要连续重复提交。', action: 'retry_later' }),
+  TIMEOUT: Object.freeze({ message: '生成等待超时', suggestion: '本次任务已停止，可重新生成；若持续发生，请稍后再试。', action: 'retry' }),
+  SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
+  RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
+  ARCHIVE_FAILED: Object.freeze({ message: '成品归档暂未完成', suggestion: '模型已完成生成，请稍后刷新，不要重复提交；持续未恢复时请联系支持。', action: 'wait' }),
+  INTERRUPTED: Object.freeze({ message: '任务处理被中断', suggestion: '任务未能继续执行，请确认积分状态后重新生成。', action: 'retry' }),
+  REFUND_PENDING: Object.freeze({ message: '任务失败，积分退回待处理', suggestion: '请勿重复提交，联系支持并提供本平台任务编号。', action: 'contact_support' }),
+  UNKNOWN: Object.freeze({ message: '生成失败，服务未返回具体原因', suggestion: '可调整提示词或参考图片后重试；若持续失败，请联系支持。', action: 'edit_input' }),
+});
+function generationFailureCode(task) {
+  if (task.creditStatus === 'refund_failed') return 'REFUND_PENDING';
+  const raw = String(task.error || '').toLowerCase();
+  if ((task.providerTaskId && task.sourceUrl) || /成品下载|归档|文件存储|空文件/.test(raw)) return 'ARCHIVE_FAILED';
+  if (/服务重启|任务.*中断|interrupted|cancelled|canceled/.test(raw)) return 'INTERRUPTED';
+  if (/content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情|rejected/.test(raw)) return 'CONTENT_REJECTED';
+  if (/unmarshal.*images|image.*\[\]string|参考图|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
+  if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
+  if (/timeout|timed out|超时|等待超时/.test(raw)) return 'TIMEOUT';
+  if (/没有返回任务 id|没有返回结果|没有返回.*url|missing.*(task|result|url)|invalid response|结果地址/.test(raw)) return 'RESULT_INVALID';
+  if (/\b400\b|\b409\b|\b422\b|invalid (parameter|argument|request)|bad request|参数|不支持.*(画幅|时长|模式)/.test(raw)) return 'INVALID_REQUEST';
+  if (/\b(401|403|404|500|502|503|504)\b|fetch failed|network|econn|socket|service unavailable|服务.*(未配置|不可用)|任务没有返回任务 id/.test(raw)) return 'SERVICE_UNAVAILABLE';
+  return 'UNKNOWN';
+}
 function publicGeneration(task) {
-  const { ownerId, provider, providerTaskId, sourceUrl, ...value } = task;
+  const { ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError, rawResponse, requestUrl, ...value } = task;
+  const failure = task.status === 'failed'
+    ? { code: generationFailureCode(task), ...generationFailureCatalog[generationFailureCode(task)] }
+    : null;
+  if (failure && task.creditStatus === 'refunded') failure.suggestion += ' 本次预扣积分已退回。';
   return {
     ...value,
-    // Provider errors are useful for internal diagnostics but must not reveal
-    // which upstream service handled the task.
-    error: task.status === 'failed' && task.error ? '模型生成失败，请稍后重试' : task.error || '',
+    error: failure ? `${failure.message}。${failure.suggestion}` : '',
+    failure,
   };
 }
 const normalizeInviteCode = value => String(value || '').trim().toUpperCase();
@@ -270,7 +300,10 @@ function oaiVideoRequest(task, refs, apiKey) {
     return { headers, body: JSON.stringify(payload) };
   }
   const form = new FormData();
-  Object.entries(payload).forEach(([key, value]) => form.append(key, String(value)));
+  Object.entries(payload).forEach(([key, value]) => {
+    if (Array.isArray(value)) value.forEach(item => form.append(key, String(item)));
+    else form.append(key, String(value));
+  });
   return { headers, body: form };
 }
 async function createOaiVideo(task, refs) {
@@ -557,7 +590,7 @@ const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/fi
 
 async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; try { await serveFile(res, file, mime, '', 'no-cache'); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, generationFailureCode, publicGeneration };
 
 const server = http.createServer(async (req, res) => {
   try {
