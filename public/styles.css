@@ -50,6 +50,29 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand-gem::before { width: 12px; height: 4px; left: 5px; top: 7px; transform: rotate(-38deg); }
 .brand-gem::after { width: 12px; height: 4px; right: 5px; bottom: 7px; transform: rotate(-38deg); }
 
+/* Application boot */
+.app-boot { position: fixed; z-index: 50; inset: 0; width: 100%; min-height: 100dvh; display: grid; place-items: center; overflow: hidden; padding: 24px; background: radial-gradient(circle at 50% 42%, #ffffff 0, var(--canvas) 52%, #f0f0f3 100%); }
+.app-boot::before { content: ""; position: absolute; width: min(62vw, 720px); aspect-ratio: 1; border: 1px solid rgba(99,102,241,.06); border-radius: 50%; box-shadow: 0 0 0 42px rgba(99,102,241,.018), 0 0 0 84px rgba(99,102,241,.012); }
+.boot-center { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: min(360px, 100%); text-align: center; }
+.boot-logo { position: relative; width: 96px; height: 96px; display: grid; place-items: center; }
+.boot-logo::before, .boot-logo::after { content: ""; position: absolute; border: 1px solid rgba(99,102,241,.22); border-radius: 50%; }
+.boot-logo::before { inset: 8px; border-top-color: var(--brand); border-right-color: transparent; animation: boot-orbit 4.8s linear infinite; }
+.boot-logo::after { inset: 18px; border-bottom-color: #a5b4fc; border-left-color: transparent; animation: boot-orbit 3.6s linear infinite reverse; }
+.boot-logo .brand-gem { position: relative; z-index: 1; width: 48px; height: 48px; border-radius: 13px; box-shadow: 0 9px 24px rgba(24,24,27,.18), 0 0 0 7px rgba(99,102,241,.07); animation: boot-logo-breathe 2.4s ease-in-out infinite; }
+.boot-logo .brand-gem::before { width: 21px; height: 5px; left: 8px; top: 12px; }
+.boot-logo .brand-gem::after { width: 21px; height: 5px; right: 8px; bottom: 12px; }
+.boot-logo i { position: absolute; width: 5px; height: 5px; top: 7px; right: 20px; border-radius: 50%; background: #818cf8; box-shadow: 0 0 0 5px rgba(129,140,248,.1); animation: boot-signal 1.8s ease-in-out infinite; }
+.boot-wordmark { margin-top: 18px; color: var(--ink); font-size: 18px; font-weight: 650; letter-spacing: .12em; }
+.boot-status { display: flex; align-items: center; gap: 9px; margin-top: 30px; color: var(--muted); text-align: left; }
+.boot-status-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px rgba(99,102,241,.1); animation: boot-signal 1.5s ease-in-out infinite; }
+.boot-status strong { display: block; color: var(--ink-soft); font-size: 12px; font-weight: 550; }
+.boot-status p { margin: 4px 0 0; font-size: 10px; line-height: 1.55; }
+.boot-center > .secondary-button { min-width: 112px; margin-top: 24px; }
+@keyframes boot-orbit { to { transform: rotate(360deg); } }
+@keyframes boot-logo-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.035); } }
+@keyframes boot-signal { 0%, 100% { opacity: .38; transform: scale(.78); } 50% { opacity: 1; transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .boot-logo::before, .boot-logo::after, .boot-logo .brand-gem, .boot-logo i, .boot-status-dot { animation: none; } }
+
 /* Authentication */
 .auth-view { min-height: 100dvh; display: grid; grid-template-columns: minmax(520px, 1.15fr) minmax(420px, .85fr); background: var(--panel); }
 .auth-intro { position: relative; overflow: hidden; display: flex; flex-direction: column; padding: 42px 52px 38px; color: #f4f4f5; background: #16161a; }

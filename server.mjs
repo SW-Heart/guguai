@@ -108,6 +108,7 @@ const generationFailureCatalog = Object.freeze({
   RATE_LIMITED: Object.freeze({ message: '当前生成请求较多', suggestion: '请稍等几分钟再试，不要连续重复提交。', action: 'retry_later' }),
   TIMEOUT: Object.freeze({ message: '生成等待超时', suggestion: '本次任务已停止，可重新生成；若持续发生，请稍后再试。', action: 'retry' }),
   SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
+  UPSTREAM_BILLING: Object.freeze({ message: '视频供应商账户余额不足', suggestion: '请为当前视频供应商账户充值，或切换到已开通且有余额的渠道后再试。', action: 'contact_support' }),
   RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
   ARCHIVE_FAILED: Object.freeze({ message: '成品归档暂未完成', suggestion: '模型已完成生成，请稍后刷新，不要重复提交；持续未恢复时请联系支持。', action: 'wait' }),
   INTERRUPTED: Object.freeze({ message: '任务处理被中断', suggestion: '任务未能继续执行，请确认积分状态后重新生成。', action: 'retry' }),
@@ -123,6 +124,7 @@ function generationFailureCode(task) {
   if (/unmarshal.*images|image.*\[\]string|参考图|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
   if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
   if (/timeout|timed out|超时|等待超时/.test(raw)) return 'TIMEOUT';
+  if (/account balance|insufficient balance|insufficient funds|余额不足|账户余额|余额不够/.test(raw)) return 'UPSTREAM_BILLING';
   if (/没有返回任务 id|没有返回结果|没有返回.*url|missing.*(task|result|url)|invalid response|结果地址/.test(raw)) return 'RESULT_INVALID';
   if (/\b400\b|\b409\b|\b422\b|invalid (parameter|argument|request)|bad request|参数|不支持.*(画幅|时长|模式)/.test(raw)) return 'INVALID_REQUEST';
   if (/\b(401|403|404|500|502|503|504)\b|fetch failed|network|econn|socket|service unavailable|服务.*(未配置|不可用)|任务没有返回任务 id/.test(raw)) return 'SERVICE_UNAVAILABLE';
@@ -200,7 +202,20 @@ function errorMessage(value, fallback = '') {
   if (value && typeof value === 'object') return errorMessage(value.message || value.msg || value.detail || value.error || value.errors || value.code) || fallback;
   return fallback;
 }
-async function fetchJson(url, options = {}) { const response = await fetch(url, options); const text = await response.text(); let value; try { value = JSON.parse(text); } catch { value = { raw: text }; } if (!response.ok) throw new Error(`${response.status} ${errorMessage(value, text.slice(0, 300))}`); return value; }
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  let value;
+  try { value = JSON.parse(text); } catch { value = { raw: text }; }
+  if (!response.ok) {
+    const message = errorMessage(value, text.slice(0, 300));
+    throw Object.assign(new Error(`${response.status} ${message}`), {
+      upstreamStatus: response.status,
+      upstreamMessage: message,
+    });
+  }
+  return value;
+}
 async function createImage(task, refs) { const payload = { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality }; if (refs.length) payload.image = refs.slice(0, 7); const created = await fetchJson(`${duomiBase}/v1/images/generations?async=true`, { method: 'POST', headers: { Authorization: process.env.DUOMI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const taskId = created.id || created.task_id; if (!taskId) throw new Error('图片任务没有返回任务 ID'); for (let i = 0; i < 100; i++) { await sleep(6000); const state = await fetchJson(`${duomiBase}/v1/tasks/${taskId}`, { headers: { Authorization: process.env.DUOMI_API_KEY } }); if (state.state === 'succeeded') return { taskId, url: state.data?.images?.[0]?.url }; if (['error', 'failed'].includes(state.state)) throw new Error(state.message || '图片生成失败'); } throw new Error('图片任务等待超时'); }
 async function createDuomiVideo(task, refs) {
   let taskId = '';
@@ -216,6 +231,14 @@ async function createDuomiVideo(task, refs) {
     }
     throw Object.assign(new Error('多米视频任务等待超时'), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
   } catch (error) {
+    console.error('[video] Duomi upstream failure', {
+      generationId: task.id,
+      modelId: task.videoModelId || task.modelId || null,
+      model: task.model || null,
+      phase: taskId ? 'poll' : 'submit',
+      status: error.upstreamStatus || null,
+      message: error.upstreamMessage || error.message,
+    });
     if (taskId && error.fallbackEligible === undefined) error = Object.assign(new Error(error.message), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
     throw error;
   }

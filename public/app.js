@@ -149,7 +149,39 @@ $('#creditEarnTab').onclick = () => setCreditDetailTab('earn');
 $('#creditDetailDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('cancel', event => { event.preventDefault(); closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('close', () => { $('#creditDetailDialog').hidden = true; const restore = state.creditDetailRestoreFocus; state.creditDetailRestoreFocus = null; requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
-async function enterApp(user) { state.user = user; $('#authView').classList.add('hidden'); $('#appView').classList.remove('hidden'); const initial = user.username[0].toUpperCase(); $('#accountName').textContent = user.username; $('#menuName').textContent = user.username; $('#accountInitial').textContent = initial; $('#menuInitial').textContent = initial; setCreditBalance(user.credits); await Promise.all([loadConfig(), loadCredits(), loadFiles(), loadTasks()]); navigate(routeFromPath(window.location.pathname), { historyMode:'replace' }); }
+function showBoot(title = '正在恢复工作区', message = '正在确认登录状态，请稍候。', { retry = false } = {}) {
+  $('#bootTitle').textContent = title;
+  $('#bootMessage').textContent = message;
+  $('#bootRetry').classList.toggle('hidden', !retry);
+  $('#bootView').classList.remove('hidden');
+  $('#authView').classList.add('hidden');
+  $('#appView').classList.add('hidden');
+}
+function showAuth() {
+  state.user = null;
+  $('#bootView').classList.add('hidden');
+  $('#authView').classList.remove('hidden');
+  $('#appView').classList.add('hidden');
+  document.title = '登录 · GuGu AI';
+}
+function showApp() {
+  $('#bootView').classList.add('hidden');
+  $('#authView').classList.add('hidden');
+  $('#appView').classList.remove('hidden');
+}
+async function enterApp(user) {
+  state.user = user;
+  showBoot('正在加载工作区', '正在同步你的品牌素材与生成记录，请稍候。');
+  const initial = user.username[0].toUpperCase();
+  $('#accountName').textContent = user.username;
+  $('#menuName').textContent = user.username;
+  $('#accountInitial').textContent = initial;
+  $('#menuInitial').textContent = initial;
+  setCreditBalance(user.credits);
+  await Promise.all([loadConfig(), loadCredits(), loadFiles(), loadTasks()]);
+  navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
+  showApp();
+}
 
 let deleteConfirmationResolver = null;
 let deleteConfirmationRestoreFocus = null;
@@ -751,7 +783,22 @@ $('#deletePreview').onclick = async () => { if ($('#deletePreview').disabled) re
 $('#previewDialog').addEventListener('click', event => { if (event.target === event.currentTarget) $('#previewDialog').close(); });
 $('#previewDialog').addEventListener('close', () => { resetDetailFit($('#previewDialog')); $('#previewMedia').innerHTML = ''; $('#deletePreview').disabled = false; state.previewFileId = null; });
 
-async function bootstrap() { try { const { user } = await api('/api/auth/me'); await enterApp(user); } catch { $('#authView').classList.remove('hidden'); $('#appView').classList.add('hidden'); document.title = '登录 · GuGu AI'; if (window.location.pathname !== authPath) window.history.replaceState({ route:'login' }, '', authPath); } renderReferences(); }
+async function bootstrap() {
+  showBoot();
+  try {
+    const { user } = await api('/api/auth/me');
+    await enterApp(user);
+  } catch (error) {
+    if (error.status === 401) {
+      showAuth();
+      if (window.location.pathname !== authPath) window.history.replaceState({ route:'login' }, '', authPath);
+    } else {
+      showBoot('暂时无法恢复工作区', '登录状态确认失败，请检查网络后重试。', { retry:true });
+    }
+  }
+  renderReferences();
+}
+$('#bootRetry').onclick = () => bootstrap();
 function nextPollDelay() { return state.tasks.some(task => ['queued','running'].includes(task.status)) ? activePollDelay : idlePollDelay; }
 function scheduleTaskPoll(delay=nextPollDelay()) {
   clearTimeout(pollTimer);
