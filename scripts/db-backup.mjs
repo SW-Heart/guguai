@@ -12,7 +12,7 @@
  * Keeps the newest RETENTION backups and deletes older ones. Nothing else in
  * DATA_DIR is touched, including the legacy JSON files.
  */
-import { existsSync, readdirSync, statSync, unlinkSync, createReadStream } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, statSync, unlinkSync, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
@@ -20,8 +20,9 @@ import { openDatabase, closeDatabase, resolveDataDir, resolveDbFile } from '../l
 
 const RETENTION = 7;
 const TABLES = [
-  'users', 'sessions', 'invite_uses', 'credit_entries',
+  'users', 'sessions', 'invite_uses', 'invite_codes', 'invite_code_uses', 'credit_entries',
   'billing_holds', 'llm_usage', 'generations', 'assets', 'drama_projects',
+  'pricing_versions', 'model_controls', 'audit_events', 'system_events',
 ];
 
 function sha256(file) {
@@ -62,6 +63,7 @@ async function main() {
     TABLES.map(table => [table, db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get().c])
   );
   db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+  chmodSync(target, 0o600);
   closeDatabase({ checkpoint: false });
 
   // Validate the snapshot before trusting it.

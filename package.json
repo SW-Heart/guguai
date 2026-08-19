@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=.env server.mjs",
-    "create-admin": "node scripts/create-admin.mjs",
-    "migrate": "node scripts/migrate.mjs",
-    "db:check": "node scripts/db-check.mjs",
-    "db:backup": "node scripts/db-backup.mjs",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/drama-studio.js",
-    "test": "NODE_ENV=test node --test test/*.test.mjs"
+    "create-admin": "node --env-file=.env scripts/create-admin.mjs",
+    "migrate": "node --env-file=.env scripts/migrate.mjs",
+    "db:check": "node --env-file=.env scripts/db-check.mjs",
+    "db:backup": "node --env-file=.env scripts/db-backup.mjs",
+    "check": "node --check server.mjs && node --check lib/admin-api.mjs && node --check lib/auth.mjs && node --check scripts/create-admin.mjs && node --check public/app.js && node --check public/guguadmin.js && node --check public/drama-studio.js",
+    "test": "NODE_ENV=test node --test test/*.test.mjs && NODE_ENV=test node --test test/smoke-http.mjs",
+    "test:admin": "NODE_ENV=test node --test test/admin-*.test.mjs"
   },
   "engines": {
     "node": ">=22.5.0"

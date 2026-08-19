@@ -9,7 +9,7 @@
  * The legacy JSON files are never modified, so reverting is just a matter of
  * pointing the server back at them.
  */
-import { existsSync, readdirSync, readFileSync, statSync, copyFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, copyFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -223,9 +223,11 @@ const insertLlmUsage = () => sql(`
   ON CONFLICT(user_id, id) DO NOTHING`);
 
 const insertGeneration = () => sql(`
-  INSERT INTO generations(id, user_id, type, status, credit_cost, credit_status,
+  INSERT INTO generations(id, user_id, type, status, credit_cost, credit_cost_micro, credit_status,
+                          pricing_version, pricing_snapshot_json, model_id, provider,
                           asset_id, provider_task_id, created_at, updated_at, doc_json)
-  VALUES(:id, :userId, :type, :status, :creditCost, :creditStatus,
+  VALUES(:id, :userId, :type, :status, :creditCost, :creditCostMicro, :creditStatus,
+         :pricingVersion, :pricingSnapshotJson, :modelId, :provider,
          :assetId, :providerTaskId, :createdAt, :updatedAt, :docJson)
   ON CONFLICT(id) DO NOTHING`);
 
@@ -272,9 +274,26 @@ function migrateAll(legacyUsers) {
     if (changes) tally('sessions', 'inserted'); else tally('sessions', 'skipped');
   }
 
-  for (const invite of collectInviteUses(validUserIds)) {
+  const legacyInvites = collectInviteUses(validUserIds);
+  for (const invite of legacyInvites) {
     const changes = insertInvite().run(invite).changes;
     if (changes) tally('invite_uses', 'inserted'); else tally('invite_uses', 'skipped');
+  }
+  // Keep the configurable invitation catalog and its usage ledger in sync with
+  // the legacy one-use records imported above. Existing seeded codes are left
+  // intact; custom legacy codes are added with a one-use limit.
+  const syncInviteCode = sql(`
+    INSERT INTO invite_codes(code, enabled, max_uses, used_count, signup_bonus_micro, created_at, updated_at, note)
+    VALUES(:code, 1, 1, 0, :bonusMicro, :createdAt, :createdAt, '由旧版邀请码迁移')
+    ON CONFLICT(code) DO NOTHING`);
+  const syncInviteUse = sql(`
+    INSERT INTO invite_code_uses(id, code, user_id, username_snapshot, bonus_micro, used_at)
+    VALUES(:id, :code, :userId, :username, :bonusMicro, :usedAt)
+    ON CONFLICT(code, user_id) DO NOTHING`);
+  for (const invite of legacyInvites) {
+    syncInviteCode.run({ code: invite.code, bonusMicro: 50 * CREDIT_MICRO_FACTOR, createdAt: invite.usedAt });
+    if (invite.userId) syncInviteUse.run({ id: `legacy-${invite.code}`, code: invite.code, userId: invite.userId, username: invite.username || '', bonusMicro: 50 * CREDIT_MICRO_FACTOR, usedAt: invite.usedAt });
+    sql(`UPDATE invite_codes SET used_count = (SELECT COUNT(*) FROM invite_uses WHERE code = :code), enabled = CASE WHEN (SELECT COUNT(*) FROM invite_uses WHERE code = :code) >= max_uses THEN 0 ELSE enabled END WHERE code = :code`).run({ code: invite.code });
   }
 
   for (const userId of existsSync(userDataDir) ? readdirSync(userDataDir) : []) {
@@ -346,7 +365,12 @@ function migrateAll(legacyUsers) {
         type: record.type ?? 'image',
         status: record.status ?? 'failed',
         creditCost: Number.isFinite(Number(record.creditCost)) ? Number(record.creditCost) : 0,
+        creditCostMicro: Number.isSafeInteger(record.creditCostMicro) ? record.creditCostMicro : Number.isFinite(Number(record.creditCost)) ? Math.round(Number(record.creditCost) * CREDIT_MICRO_FACTOR) : 0,
         creditStatus: record.creditStatus ?? null,
+        pricingVersion: record.pricingVersion ?? record.pricingSnapshot?.version ?? null,
+        pricingSnapshotJson: record.pricingSnapshot ? JSON.stringify(record.pricingSnapshot) : null,
+        modelId: record.videoModelId || record.modelId || null,
+        provider: record.provider || null,
         assetId: record.assetId || null,
         providerTaskId: record.providerTaskId || null,
         createdAt: record.createdAt,
@@ -517,6 +541,7 @@ function main() {
     const backup = `${dbFile}.bak-${stamp}`;
     const probe = openDatabase();
     probe.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
+    chmodSync(backup, 0o600);
     closeDatabase();
     report.backup = backup;
     console.log(`已备份现有数据库 -> ${path.basename(backup)}`);

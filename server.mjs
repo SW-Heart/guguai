@@ -9,14 +9,18 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { conservativeInputTokenUpperBound, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
-import { closeDatabase, migrationCompleted, openDatabase, resolveDbFile } from './lib/db.mjs';
-import { chargeGeneration, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGeneration, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
+import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
+import { closeDatabase, migrationCompleted, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
+import { chargeGenerationMicro, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
 import { configureCursors, createSessionRecord, deleteAsset, deleteGeneration, deleteSession, findAsset, findDramaProject, findGeneration, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
-import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest } from './lib/video-capabilities.mjs';
+import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
+import { handleAdminRequest } from './lib/admin-api.mjs';
+import { createLoginAttemptLimiter } from './lib/auth.mjs';
+import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
+import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 
 const scrypt = promisify(scryptCallback);
@@ -29,7 +33,13 @@ const userDataDir = path.join(dataDir, 'users');
 const port = Number(process.env.PORT || 4317);
 const duomiBase = (process.env.DUOMI_API_BASE || 'https://duomiapi.com').replace(/\/$/, '');
 const ttapiBase = (process.env.TTAPI_API_BASE || 'https://api.ttapi.io').replace(/\/$/, '');
+const configuredOaiBase = (process.env.OAI_API_BASE || 'https://newapi.oairegbox.cc/v1').replace(/\/$/, '');
+const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${configuredOaiBase}/v1`;
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
+const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
+const oaiGrokConfigured = Boolean(process.env.OAIAPI_GROK_KEY);
+const oaiPollIntervalMs = 4_000;
+const oaiRequestTimeoutMs = 300_000;
 const llmConfig = llmConfigFromEnv();
 const llmRates = llmRatesFromEnv();
 const ossPrefix = String(process.env.ALIYUN_OSS_PREFIX || 'model-studio').replace(/^\/+|\/+$/g, '');
@@ -39,31 +49,27 @@ const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 10 * 1024 * 1024;
 const activeGenerations = new Map();
-const loginAttempts = new Map();
+const assetRestores = new Map();
+const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
-const videoDurations = new Set([4, 6, 8, 10, 15, 20, 30]);
-const dramaVideoDurations = new Set([4, 6, 8, 10, 15, 20, 30]);
+const videoDurations = new Set([8, 20, 30]);
+const dramaVideoDurations = new Set([8, 20, 30]);
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2' });
-const invitationCodes = new Set([
-  'STUDIO-7K3M-P9QX', 'STUDIO-4N8R-V2CW', 'STUDIO-6T5Y-H7JD',
-  'STUDIO-9B2F-M4LA', 'STUDIO-3W7P-K8NE', 'STUDIO-5C9H-R6TU',
-  'STUDIO-8L4D-X3VG', 'STUDIO-2Q6A-J9MS', 'STUDIO-7V5E-N2BK',
-  'STUDIO-4R8G-T6YP', 'STUDIO-9M3K-C7FH', 'STUDIO-6P2X-W5DA',
-]);
+const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
 
 await fs.mkdir(userDataDir, { recursive: true });
 
 // Metadata lives in SQLite; only media binaries stay on disk (plus OSS).
-openDatabase({ verbose: true });
+openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' ? ':memory:' : null });
 
 // Refuse to start on a half-migrated data directory, otherwise the server would
 // silently serve an empty database while the real records sit in JSON files.
-if (!migrationCompleted()) {
+if (process.env.NODE_ENV !== 'test' && !migrationCompleted()) {
   const legacyPresent = await fs.readFile(legacyUsersFile, 'utf8')
     .then(text => { try { return JSON.parse(text).length > 0; } catch { return false; } })
     .catch(() => false);
@@ -94,7 +100,16 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
-const publicUser = user => ({ id: user.id, username: user.username, role: user.role || 'user', credits: normalizeWallet(user).balance, createdAt: user.createdAt });
+const publicUser = user => ({ id: user.id, username: user.username, role: user.role || 'user', status: user.status || 'active', credits: normalizeWallet(user).balance, createdAt: user.createdAt });
+function publicGeneration(task) {
+  const { ownerId, provider, providerTaskId, sourceUrl, ...value } = task;
+  return {
+    ...value,
+    // Provider errors are useful for internal diagnostics but must not reveal
+    // which upstream service handled the task.
+    error: task.status === 'failed' && task.error ? '模型生成失败，请稍后重试' : task.error || '',
+  };
+}
 const normalizeInviteCode = value => String(value || '').trim().toUpperCase();
 const isKnownInviteCode = value => invitationCodes.has(normalizeInviteCode(value));
 const generationCost = (type, duration = 0) => type === 'image' ? creditPricing.image : Math.max(1, Math.round(Number(duration) || 1)) * creditPricing.videoPerSecond;
@@ -138,7 +153,16 @@ function setPageHeaders(res, page) {
   res.setHeader('X-Total-Count', String(page.total));
   if (page.nextCursor) res.setHeader('X-Next-Cursor', page.nextCursor);
 }
-function configState() { return { duomi: Boolean(process.env.DUOMI_API_KEY), ttapi: ttapiConfigured, oss: ossConfigured, llm: isLlmConfigured(llmConfig), videoCapabilities: publicVideoCapabilities() }; }
+function configState() {
+  const pricing = currentPricing();
+  return {
+    imageGeneration: Boolean(process.env.DUOMI_API_KEY),
+    oss: ossConfigured,
+    llm: isLlmConfigured(llmConfig),
+    pricing: { version: pricing.version, imagePerRequest: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond },
+    videoCapabilities: publicVideoCapabilitiesWithControls(),
+  };
+}
 
 function errorMessage(value, fallback = '') {
   if (typeof value === 'string') return value;
@@ -167,7 +191,7 @@ async function createDuomiVideo(task, refs) {
   }
 }
 async function createTtapiVideo(task, refs) {
-  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: '720p' };
+  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: task.quality || '720p' };
   if (refs.length) payload.refer_images = refs.slice(0, task.maxReferenceImages || 7);
   const created = await fetchJson(`${ttapiBase}/grok/generations`, { method: 'POST', headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   const taskId = created.data?.jobId || created.jobId;
@@ -182,21 +206,123 @@ async function createTtapiVideo(task, refs) {
   }
   throw Object.assign(new Error('TTAPI 视频任务等待超时'), { provider: 'ttapi', providerTaskId: taskId });
 }
+function oaiVideoUrl(value) {
+  const candidate = value?.data?.[0]?.url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : '';
+}
+function oaiTaskId(value) {
+  const candidate = value?.task_id || value?.taskId || value?.id || value?.data?.task_id || value?.data?.taskId || value?.data?.id || value?.data?.[0]?.task_id || value?.data?.[0]?.taskId || value?.data?.[0]?.id;
+  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
+}
+function oaiStatus(value) {
+  return String(value?.status || value?.state || value?.data?.status || value?.data?.state || value?.data?.[0]?.status || value?.data?.[0]?.state || '').trim().toUpperCase();
+}
+function oaiKeyForTask(task) {
+  if (task.videoModelId === VIDEO_MODEL_IDS.GROK_15) return process.env.OAIAPI_GROK_KEY;
+  if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) return process.env.OAIAPI_VEO_KEY;
+  return process.env.OAIAPI_GEMINI_KEY;
+}
+function veo31Size(task) {
+  const sizeByAspect = {
+    '16:9': { '720p': '1280x720', '1080p': '1920x1080' },
+    '9:16': { '720p': '720x1280', '1080p': '1080x1920' },
+  };
+  return sizeByAspect[task.aspectRatio]?.[task.quality || '720p'] || '1280x720';
+}
+function buildOaiVideoPayload(task, refs) {
+  if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) {
+    const payload = {
+      model: task.model,
+      prompt: task.prompt,
+      seconds: String(task.duration),
+      size: veo31Size(task),
+      generation_type: task.generationType || (refs.length ? 'REFERENCE' : 'TEXT'),
+    };
+    if (task.generationType === 'FIRST&LAST') {
+      if (refs[0]) payload.first_image_url = refs[0];
+      if (refs[1]) payload.last_image_url = refs[1];
+    } else if (task.generationType === 'REFERENCE') {
+      if (refs.length === 1) payload.image_url = refs[0];
+      else if (refs.length > 1) payload.images = refs.slice(0, task.maxReferenceImages || 3);
+    }
+    return payload;
+  }
+  const isGrok15 = task.videoModelId === VIDEO_MODEL_IDS.GROK_15;
+  const payload = { model: task.model, prompt: task.prompt, aspect_ratio: task.aspectRatio, seconds: isGrok15 ? String(task.duration) : task.duration };
+  if (isGrok15) {
+    payload.resolution = task.quality || '720p';
+    if (refs[0]) payload.image = refs[0];
+  } else if (task.generationType === 'FIRST&LAST') {
+    if (refs[0]) payload.first_image_url = refs[0];
+    if (refs[1]) payload.last_image_url = refs[1];
+  } else if (refs.length === 1) {
+    payload.image_url = refs[0];
+  } else if (refs.length > 1) {
+    payload.images = refs.slice(0, task.maxReferenceImages || 5);
+  }
+  return payload;
+}
+function oaiVideoRequest(task, refs, apiKey) {
+  const payload = buildOaiVideoPayload(task, refs);
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  if (task.videoModelId === VIDEO_MODEL_IDS.GROK_15 || task.videoModelId === VIDEO_MODEL_IDS.VEO_31 || !refs.length) {
+    headers['Content-Type'] = 'application/json';
+    return { headers, body: JSON.stringify(payload) };
+  }
+  const form = new FormData();
+  Object.entries(payload).forEach(([key, value]) => form.append(key, String(value)));
+  return { headers, body: form };
+}
+async function createOaiVideo(task, refs) {
+  const apiKey = oaiKeyForTask(task);
+  let taskId = '';
+  try {
+    const request = oaiVideoRequest(task, refs, apiKey);
+    const created = await fetchJson(`${oaiBase}/videos`, { method: 'POST', ...request, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
+    taskId = oaiTaskId(created);
+    const submittedUrl = oaiVideoUrl(created);
+    if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl };
+    if (!taskId) throw new Error('OAI 视频任务没有返回任务 ID');
+    for (let i = 0; i < 160; i++) {
+      await sleep(oaiPollIntervalMs);
+      const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
+      const videoUrl = oaiVideoUrl(state);
+      const status = oaiStatus(state);
+      if (videoUrl) return { provider: 'oai', taskId, url: videoUrl };
+      if (['SUCCEEDED', 'SUCCESS', 'COMPLETED', 'COMPLETE', 'DONE'].includes(status)) {
+        if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) throw new Error('Veo 3.1 任务已完成，但响应没有返回顶层 video_url');
+        return { provider: 'oai', taskId, url: `${oaiBase}/videos/${encodeURIComponent(taskId)}/content`, requiresAuth: true };
+      }
+      if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) throw new Error(errorMessage(state, 'OAI 视频生成失败'));
+    }
+    throw new Error('OAI 视频任务等待超时');
+  } catch (error) {
+    if (taskId && error.providerTaskId === undefined) error = Object.assign(new Error(error.message), { provider: 'oai', providerTaskId: taskId });
+    throw error;
+  }
+}
 async function createVideo(task, refs) {
   if (task.provider === 'ttapi') {
     if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置');
     return createTtapiVideo(task, refs);
   }
   if (task.provider === 'duomi') return createDuomiVideo(task, refs);
+  if (task.provider === 'oai') {
+    if (!oaiKeyForTask(task)) {
+      const message = task.videoModelId === VIDEO_MODEL_IDS.GROK_15 ? 'Grok Video 服务尚未配置' : task.videoModelId === VIDEO_MODEL_IDS.VEO_31 ? 'Veo 3.1 服务尚未配置' : 'OAI 视频服务尚未配置';
+      throw new Error(message);
+    }
+    return createOaiVideo(task, refs);
+  }
   throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
 }
 function downloadErrorDetail(error) { const cause = error?.cause; return [cause?.code, cause?.message || error?.message].filter(Boolean).join(' · ') || '未知网络错误'; }
-async function downloadToFile(url, target, attempts = 4) {
+async function downloadToFile(url, target, attempts = 4, options = {}) {
   const partial = `${target}.part`;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(180_000), headers: { 'User-Agent': 'Model-Studio/1.0', Accept: '*/*' } });
+      const response = await fetch(url, { signal: AbortSignal.timeout(180_000), headers: { 'User-Agent': 'Model-Studio/1.0', Accept: '*/*', ...(options.headers || {}) } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!response.body) throw new Error('响应没有文件内容');
       await pipeline(Readable.fromWeb(response.body), createWriteStream(partial, { flags: 'w' }));
@@ -222,7 +348,7 @@ function normalizeDramaProject(project) {
   if (project.mode === 'professional' && project.workflowVersion < 2) project.workflowVersion = 2;
   project.step ||= project.storyboard ? 'storyboard' : 'script'; project.input ||= project.script || '';
   project.synopsis ||= project.analysis?.logline || '';
-  project.settings = { shotCount:Math.max(1, Math.min(120, Number(project.settings?.shotCount) || project.storyboard?.shots?.length || 5)), totalDuration:Math.max(6, Math.min(3600, Number(project.settings?.totalDuration) || (project.storyboard?.shots?.length || 5) * 6)), shotDuration:dramaVideoDurations.has(Number(project.settings?.shotDuration)) ? Number(project.settings.shotDuration) : 6, aspectRatio:videoAspectRatios.has(project.settings?.aspectRatio) ? project.settings.aspectRatio : '9:16' };
+  project.settings = { shotCount:Math.max(1, Math.min(120, Number(project.settings?.shotCount) || project.storyboard?.shots?.length || 5)), totalDuration:Math.max(20, Math.min(3600, Number(project.settings?.totalDuration) || (project.storyboard?.shots?.length || 5) * 20)), shotDuration:dramaVideoDurations.has(Number(project.settings?.shotDuration)) ? Number(project.settings.shotDuration) : 20, aspectRatio:videoAspectRatios.has(project.settings?.aspectRatio) ? project.settings.aspectRatio : '9:16' };
   if (!Array.isArray(project.episodes)) project.episodes = [{ id:randomUUID(), number:1, title:'第 1 集', synopsis:project.synopsis, status:'draft' }];
   project.episodes = project.episodes.map((episode,index)=>({ id:episode.id || randomUUID(), number:index+1, title:String(episode.title || `第 ${index+1} 集`), synopsis:String(episode.synopsis || ''), status:String(episode.status || 'draft') }));
   if (!Array.isArray(project.scenes)) project.scenes = [];
@@ -265,7 +391,7 @@ function normalizeDramaProject(project) {
           referenceAssetIds:Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.map(String).slice(0, 7) : [],
         }))
       : [];
-    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['720p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p' }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
+    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:String(shot.generation?.modelId || ''), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p' }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
   });
   project.shots.forEach((shot,index) => { shot.promptOverride = dramaPromptOverrides[index] || ''; });
   project.productionQuality = productionQualitySummary({scenes:project.scenes,shots:project.shots}, project.settings);
@@ -280,7 +406,10 @@ function normalizeDramaProject(project) {
 async function loadDramaProject(userId, id) { const project = findDramaProject(userId, id); return project ? normalizeDramaProject(project) : null; }
 async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.ossKey && oss) await oss.delete(asset.ossKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
-function publicAsset(asset) { return { ...asset, url: `/api/files/${asset.id}/content` }; }
+function publicAsset(asset) {
+  const { ownerId, storageName, sourceUrl, sourceGenerationId, ossKey, ossUploadedAt, ...value } = asset;
+  return { ...value, url: `/api/files/${asset.id}/content` };
+}
 function ossObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [ossPrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
 async function uploadAssetToOss(userId, asset) {
   if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
@@ -291,6 +420,23 @@ async function uploadAssetToOss(userId, asset) {
   return key;
 }
 async function signedOssUrl(key, expires = 3600) { return oss.signatureUrl(key, { expires, method: 'GET' }); }
+async function ensureLocalAsset(userId, asset) {
+  const localFile = path.join(assetFilesDir(userId), asset.storageName);
+  if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
+  if (!oss || !asset.ossKey) throw Object.assign(new Error('文件本地缓存缺失，且没有可用的 OSS 归档'), { statusCode: 503 });
+
+  const restoreKey = `${safeId(userId)}:${asset.id}`;
+  if (assetRestores.has(restoreKey)) return assetRestores.get(restoreKey);
+  const restore = (async () => {
+    await ensureUserDirs(userId);
+    if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
+    const url = await signedOssUrl(asset.ossKey);
+    await downloadToFile(url, localFile, 4);
+    return localFile;
+  })().finally(() => assetRestores.delete(restoreKey));
+  assetRestores.set(restoreKey, restore);
+  return restore;
+}
 async function resolveRefs(userId, ids) { const refs = []; for (const id of ids.slice(0, 7)) { const asset = findAsset(userId, id); if (!asset || asset.kind !== 'image') continue; const key = asset.ossKey || await uploadAssetToOss(userId, asset); refs.push(await signedOssUrl(key)); } return refs; }
 async function validateReferenceAssets(userId, value) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考图 image_urls 必须使用数组格式'), { statusCode: 400 });
@@ -308,7 +454,9 @@ async function archiveGenerationResult(userId, task, resultUrl) {
   const extension = task.type === 'image' ? '.png' : '.mp4';
   const storageName = `${assetId}${extension}`;
   const localFile = path.join(assetFilesDir(userId), storageName);
-  const saved = await downloadToFile(resultUrl, localFile);
+  const contentUrl = task.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
+  const downloadHeaders = resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
+  const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
   const asset = { id: assetId, ownerId: userId, name: `${task.type === 'image' ? '生成图片' : '生成视频'} ${new Date().toLocaleString('zh-CN')}${extension}`, kind: task.type, mimeType: saved.contentType, size: saved.size, storageName, source: 'generation', sourceGenerationId: task.id, sourceUrl: resultUrl, createdAt: now(), updatedAt: now() };
   try { await uploadAssetToOss(userId, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw error; }
   task.assetId = assetId;
@@ -325,7 +473,7 @@ async function archiveLocalAsset(userId, sourceFile, { name, kind, mimeType, sou
 async function extractVideoTailFrame(userId, project, shot) {
   const task = findGeneration(userId, shot.selectedVideoTaskId); const video = task?.assetId ? findAsset(userId, task.assetId) : null;
   if (!video || video.kind !== 'video') throw Object.assign(new Error('请先选择一个已完成的分镜视频'), { statusCode:400 });
-  const source = path.join(assetFilesDir(userId), video.storageName); const temp = path.join(assetFilesDir(userId), `.tail-${randomUUID()}.jpg`);
+  const source = await ensureLocalAsset(userId, video); const temp = path.join(assetFilesDir(userId), `.tail-${randomUUID()}.jpg`);
   await execFile('ffmpeg', ['-y','-sseof','-0.08','-i',source,'-frames:v','1','-q:v','2',temp], { timeout:120_000 });
   const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 分镜 ${shot.shotNumber} 尾帧.jpg`, kind:'image', mimeType:'image/jpeg', source:'drama_tail_frame', projectId:project.id });
   shot.tailFrameAssetId = asset.id; await saveDramaProject(userId, project); return asset;
@@ -334,7 +482,7 @@ async function assembleDramaProject(userId, project) {
   if (!project.shots.length) throw Object.assign(new Error('项目还没有分镜'), { statusCode:400 });
   if (project.mode === 'professional' && project.shots.length < 2) throw Object.assign(new Error('专业编辑项目至少需要 2 个分镜才能合成'), { statusCode:400 });
   const sources = [];
-  for (const shot of project.shots) { const task = findGeneration(userId, shot.selectedVideoTaskId); const asset = task?.assetId ? findAsset(userId, task.assetId) : null; if (!asset || asset.kind !== 'video') throw Object.assign(new Error(`分镜 ${shot.shotNumber} 还没有选择完成的视频`), { statusCode:400 }); sources.push(path.join(assetFilesDir(userId), asset.storageName)); }
+  for (const shot of project.shots) { const task = findGeneration(userId, shot.selectedVideoTaskId); const asset = task?.assetId ? findAsset(userId, task.assetId) : null; if (!asset || asset.kind !== 'video') throw Object.assign(new Error(`分镜 ${shot.shotNumber} 还没有选择完成的视频`), { statusCode:400 }); sources.push(await ensureLocalAsset(userId, asset)); }
   const concatFile = path.join(assetFilesDir(userId), `.concat-${randomUUID()}.txt`); const temp = path.join(assetFilesDir(userId), `.final-${randomUUID()}.mp4`);
   await fs.writeFile(concatFile, sources.map(file => `file '${file.replaceAll("'", "'\\''")}'`).join('\n'));
   try { await execFile('ffmpeg', ['-y','-f','concat','-safe','0','-i',concatFile,'-c:v','libx264','-preset','medium','-crf','20','-c:a','aac','-movflags','+faststart',temp], { timeout:900_000, maxBuffer:10_000_000 }); }
@@ -342,7 +490,7 @@ async function assembleDramaProject(userId, project) {
   const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 完整成片.mp4`, kind:'video', mimeType:'video/mp4', source:'drama_final', projectId:project.id });
   project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
 }
-async function startGeneration(userId, task) { const promise = (async () => { try { task.status = 'running'; await saveGeneration(userId, task); const refs = await resolveRefs(userId, task.referenceAssetIds); const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs); if (!result.url) throw new Error('模型任务完成，但没有返回结果地址'); task.provider = result.provider || (task.type === 'image' ? 'duomi' : 'duomi'); task.providerTaskId = result.taskId; task.sourceUrl = result.url; await saveGeneration(userId, task); await archiveGenerationResult(userId, task, result.url); task.creditStatus = 'charged'; } catch (error) { task.status = 'failed'; task.error = error.message; if (task.providerTaskId && task.sourceUrl) { task.creditStatus = 'charged'; task.error += '；模型已生成成功，系统将继续恢复成品归档'; } else { try { await refundGeneration(userId, task.id, task.creditCost); task.creditStatus = 'refunded'; } catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; } } } finally { task.finishedAt = now(); await saveGeneration(userId, task); activeGenerations.delete(task.id); } })(); activeGenerations.set(task.id, promise); }
+async function startGeneration(userId, task) { const promise = (async () => { try { task.status = 'running'; await saveGeneration(userId, task); const refs = await resolveRefs(userId, task.referenceAssetIds); const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs); if (!result.url) throw new Error('模型任务完成，但没有返回结果地址'); task.provider = result.provider || (task.type === 'image' ? 'duomi' : 'duomi'); task.providerTaskId = result.taskId; task.sourceUrl = result.url; await saveGeneration(userId, task); await archiveGenerationResult(userId, task, result.url); task.creditStatus = 'charged'; } catch (error) { task.status = 'failed'; task.error = error.message; if (task.providerTaskId && task.sourceUrl) { task.creditStatus = 'charged'; task.error += '；模型已生成成功，系统将继续恢复成品归档'; } else { try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; } catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; } } } finally { task.finishedAt = now(); await saveGeneration(userId, task); activeGenerations.delete(task.id); } })(); activeGenerations.set(task.id, promise); }
 
 /**
  * Startup recovery for tasks left mid-flight by a restart.
@@ -380,14 +528,14 @@ async function recoverPendingGenerations() {
           // Never reached the provider, so the charge has to come back.
           task.status = 'failed';
           task.error = task.error || '服务重启时任务尚未提交到模型服务，已自动退款';
-          try { await refundGeneration(userId, task.id, task.creditCost); task.creditStatus = 'refunded'; refunded++; }
+          try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; refunded++; }
           catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; failed++; }
         } else {
           // Submitted but no result URL captured: cannot resume the poll loop
           // across a restart, so fail it and return the credits.
           task.status = 'failed';
           task.error = task.error || '服务重启中断了模型任务轮询，已自动退款';
-          try { await refundGeneration(userId, task.id, task.creditCost); task.creditStatus = 'refunded'; refunded++; }
+          try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; refunded++; }
           catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; failed++; }
         }
       } catch (error) {
@@ -405,14 +553,26 @@ async function recoverPendingGenerations() {
 
 async function streamUpload(req, target, limit = maxUploadBytes) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 10 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return size; }
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
-async function serveStatic(res, pathname) { const relative = pathname === '/' ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; try { await serveFile(res, file, mime, '', 'no-cache'); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
+const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject };
+async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; try { await serveFile(res, file, mime, '', 'no-cache'); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
+
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload };
 
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname === '/healthz' && req.method === 'GET') return sendJson(res, 200, { status: 'ok' });
+    if (url.pathname === '/readyz' && req.method === 'GET') {
+      try {
+        sql('SELECT 1 AS ready').get();
+        return sendJson(res, 200, { status: 'ready' });
+      } catch {
+        return sendJson(res, 503, { status: 'not_ready' });
+      }
+    }
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
+    if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
 
     if (url.pathname === '/api/auth/register' && req.method === 'POST') {
@@ -420,28 +580,37 @@ const server = http.createServer(async (req, res) => {
       if (!/^[a-z0-9_]{3,24}$/.test(username)) return sendJson(res, 400, { error: '账号需为 3–24 位字母、数字或下划线' });
       if (password.length < 8 || password.length > 128) return sendJson(res, 400, { error: '密码长度需为 8–128 位' });
       if (!inviteCode) return sendJson(res, 400, { error: '请输入邀请码' });
-      if (!isKnownInviteCode(inviteCode)) return sendJson(res, 400, { error: '邀请码无效' });
       // Password hashing is deliberately outside the transaction: scrypt takes
       // tens of milliseconds and must not be held across a write lock.
       const passwordHash = await hashPassword(password);
-      const user = { id: randomUUID(), username, role: 'user', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, passwordHash, inviteCode, createdAt: now() };
+      const user = { id: randomUUID(), username, role: 'user', status: 'active', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, passwordHash, inviteCode, createdAt: now(), updatedAt: now() };
       // The invite code is burnt in the same transaction that creates the user,
       // so concurrent registrations on one code cannot both win.
-      const result = registerUser({ user, inviteCode, signupBonus: creditPricing.signupBonus, grantBonus: grantSignupBonus });
+      const result = registerUser({ user, inviteCode, grantBonus: grantSignupBonus });
       if (result.error) return sendJson(res, result.status, { error: result.error });
       await ensureUserDirs(result.user.id);
       const token = createSession(result.user.id); setSessionCookie(res, token); return sendJson(res, 201, { user: publicUser(result.user) });
     }
     if (url.pathname === '/api/auth/login' && req.method === 'POST') {
-      const key = req.socket.remoteAddress || 'local'; const attempt = loginAttempts.get(key); if (attempt && attempt.count >= 8 && Date.now() - attempt.startedAt < 15 * 60_000) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
-      const input = await bodyJson(req); const username = String(input.username || '').trim().toLowerCase(); const user = findUserByUsername(username); const valid = user ? await verifyPassword(String(input.password || ''), user.passwordHash) : false;
-      if (!valid) { const current = !attempt || Date.now() - attempt.startedAt >= 15 * 60_000 ? { count: 0, startedAt: Date.now() } : attempt; current.count++; loginAttempts.set(key, current); return sendJson(res, 401, { error: '账号或密码不正确' }); }
-      loginAttempts.delete(key); await ensureUserDirs(user.id); const token = createSession(user.id); setSessionCookie(res, token); return sendJson(res, 200, { user: publicUser(user) });
+      const input = await bodyJson(req);
+      const username = String(input.username || '').trim().toLowerCase();
+      if (loginLimiter.isBlocked(req, username)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
+      const user = findUserByUsername(username);
+      const valid = user && user.status === 'active' ? await verifyPassword(String(input.password || ''), user.passwordHash) : false;
+      if (!valid) {
+        loginLimiter.recordFailure(req, username);
+        return sendJson(res, 401, { error: '账号或密码不正确' });
+      }
+      loginLimiter.reset(req, username);
+      await ensureUserDirs(user.id);
+      const token = createSession(user.id);
+      setSessionCookie(res, token);
+      return sendJson(res, 200, { user: publicUser(user) });
     }
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') { const token = parseCookies(req.headers.cookie).studio_session; if (token) deleteSession(tokenHash(token)); clearSessionCookie(res); return sendJson(res, 200, { ok: true }); }
     if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }
     if (url.pathname === '/api/config' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, configState()); }
-    if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const transactions = recentCreditEntries(user.id, 20); return sendJson(res, 200, { ...wallet, pricing: { ...creditPricing, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
+    if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
 
     if (url.pathname === '/api/drama/projects' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
@@ -758,7 +927,7 @@ const server = http.createServer(async (req, res) => {
       const user = requireUser(req, res); if (!user) return;
       const page = listGenerations(user.id, { type: url.searchParams.get('type'), limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
       setPageHeaders(res, page);
-      return sendJson(res, 200, page.items);
+      return sendJson(res, 200, page.items.map(publicGeneration));
     }
     if (url.pathname === '/api/generations' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req); const type = input.type;
@@ -766,19 +935,34 @@ const server = http.createServer(async (req, res) => {
       await ensureUserDirs(user.id);
       let dramaProjectId = ''; let dramaShotId = '';
       if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);const dramaProject=await loadDramaProject(user.id,dramaProjectId);const dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}); }
-      if (type === 'video' && charLength(prompt) > 4096) return sendJson(res, 400, { error: '视频提示词不能超过 4096 个字符' });
+      const promptMaxLength = type === 'image' ? 5000 : 4096;
+      if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` });
+      if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error: '请选择视频模型' });
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds);
       const size = type === 'image' ? String(input.size || '16:9') : null;
       if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error: '不支持的图片比例' });
       let aspectRatio = null; let duration = null; let videoRequest = null;
       if (type === 'video') { videoRequest = validateVideoRequest(input, referenceAssetIds.length); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
+      const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
+      if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
       const provider = type === 'image' ? 'duomi' : videoRequest.provider;
-      if (provider === 'duomi' && !configState().duomi) return sendJson(res, 503, { error: 'Duomi 模型服务尚未配置' });
-      if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: 'TTAPI 模型服务尚未配置' });
-      const task = { id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider, model: type === 'video' ? videoRequest.model : fixedModels.image, size, quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration, ...(type === 'video' ? { generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, dramaProjectId, dramaShotId } : {}), creditCost: generationCost(type, duration), creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '', createdAt: now(), updatedAt: now(), finishedAt: null };
-      const charged = await chargeGeneration(user.id, task.id, task.creditCost); if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
-      try { await saveGeneration(user.id, task); } catch (error) { await refundGeneration(user.id, task.id, task.creditCost); throw error; }
-      startGeneration(user.id, task); return sendJson(res, 202, { ...task, balance: charged.balance });
+      if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
+      if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
+      if (provider === 'oai') {
+        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15 ? oaiGrokConfigured : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31 ? oaiVeoConfigured : oaiConfigured;
+        if (!configured) {
+          const message = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15 ? 'Grok Video 服务尚未配置' : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31 ? 'Veo 3.1 服务尚未配置' : '视频生成服务尚未配置';
+          return sendJson(res, 503, { error: message });
+        }
+      }
+      const pricing = currentPricing();
+      const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
+        ? { ...pricing, videoPerSecondMicro: creditsToMicro(videoRequest.pricing.amount) }
+        : pricing;
+      const pricingSnapshotValue = pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
+      const task = { id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider, model: type === 'video' ? videoRequest.model : fixedModels.image, modelId, size, quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration, ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, dramaProjectId, dramaShotId } : {}), creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro, pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue, creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '', createdAt: now(), updatedAt: now(), finishedAt: null };
+      const charged = await chargeGenerationMicro(user.id, task.id, task.creditCostMicro, { modelId, contentType:type, provider, pricingVersion: task.pricingVersion, onCharged: () => saveGeneration(user.id, task) }); if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
+      startGeneration(user.id, task); return sendJson(res, 202, { ...publicGeneration(task), balance: charged.balance });
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {
@@ -804,7 +988,7 @@ const server = http.createServer(async (req, res) => {
     if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
 
     return await serveStatic(res, url.pathname);
-  } catch (error) { console.error(error); if (res.headersSent) return res.end(); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: error.message || '服务错误', ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
+  } catch (error) { console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
 });
 
 if (process.env.NODE_ENV !== 'test') {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { clientIp, createLoginAttemptLimiter } from '../lib/auth.mjs';
 import { __test } from '../server.mjs';
 
 test('password hashes are salted and verifiable', async () => {
@@ -25,10 +26,36 @@ test('unicode prompt length counts characters rather than UTF-16 units', () => {
   assert.equal(__test.charLength('图片🎬'), 3);
 });
 
-test('invite codes are normalized and unknown codes are rejected', () => {
-  assert.equal(__test.normalizeInviteCode(' studio-7k3m-p9qx '), 'STUDIO-7K3M-P9QX');
-  assert.equal(__test.isKnownInviteCode('studio-7k3m-p9qx'), true);
+test('invite codes are normalized and no public codes are built in', () => {
+  assert.equal(__test.normalizeInviteCode(' smoke-invite-a '), 'SMOKE-INVITE-A');
+  assert.equal(__test.isKnownInviteCode('STUDIO-7K3M-P9QX'), false);
   assert.equal(__test.isKnownInviteCode('STUDIO-NOT-VALID'), false);
+});
+
+test('trusted proxy IP is accepted only from a loopback peer', () => {
+  const request = (remoteAddress, realIp) => ({ socket: { remoteAddress }, headers: { 'x-real-ip': realIp } });
+  assert.equal(clientIp(request('203.0.113.5', '198.51.100.7'), { TRUST_PROXY: 'loopback' }), '203.0.113.5');
+  assert.equal(clientIp(request('127.0.0.1', '198.51.100.7'), { TRUST_PROXY: 'loopback' }), '198.51.100.7');
+  assert.equal(clientIp(request('127.0.0.1', 'not-an-ip'), { TRUST_PROXY: 'loopback' }), '127.0.0.1');
+  assert.equal(clientIp(request('127.0.0.1', '198.51.100.7'), {}), '127.0.0.1');
+});
+
+test('login limiter enforces thresholds and a hard entry bound', () => {
+  const req = ip => ({ socket: { remoteAddress: ip }, headers: {} });
+  const threshold = createLoginAttemptLimiter({ maxAttempts: 2, windowMs: 60_000, maxEntries: 10 });
+  threshold.recordFailure(req('192.0.2.1'), 'alice', 1);
+  assert.equal(threshold.isBlocked(req('192.0.2.1'), 'alice', 2), false);
+  threshold.recordFailure(req('192.0.2.1'), 'alice', 3);
+  assert.equal(threshold.isBlocked(req('192.0.2.1'), 'alice', 4), true);
+  assert.equal(threshold.isBlocked(req('192.0.2.1'), 'bob', 4), false);
+
+  const bounded = createLoginAttemptLimiter({ maxAttempts: 1, windowMs: 60_000, maxEntries: 2 });
+  bounded.recordFailure(req('192.0.2.1'), 'a', 1);
+  bounded.recordFailure(req('192.0.2.2'), 'b', 2);
+  bounded.recordFailure(req('192.0.2.3'), 'c', 3);
+  assert.equal(bounded.isBlocked(req('192.0.2.1'), 'a', 4), false);
+  assert.equal(bounded.isBlocked(req('192.0.2.2'), 'b', 4), true);
+  assert.equal(bounded.isBlocked(req('192.0.2.3'), 'c', 4), true);
 });
 
 test('generation credits follow platform pricing', () => {
@@ -49,7 +76,7 @@ test('OSS object keys are scoped per user and prefix', () => {
 test('generation option enums match provider contracts', () => {
   assert.deepEqual([...__test.imageSizes], ['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
   assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9']);
-  assert.deepEqual([...__test.videoDurations], [4, 6, 8, 10, 15, 20, 30]);
+  assert.deepEqual([...__test.videoDurations], [8, 20, 30]);
 });
 
 test('models are fixed server-side and network errors retain their cause', () => {

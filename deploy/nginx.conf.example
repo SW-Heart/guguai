@@ -1,0 +1,71 @@
+# Replace YOUR_DOMAIN before enabling this file. This file is intended to be
+# included from nginx's http context (for example /etc/nginx/conf.d/).
+upstream gugu_ai {
+    server 127.0.0.1:4317;
+    keepalive 32;
+}
+
+limit_req_zone $binary_remote_addr zone=gugu_login:10m rate=5r/m;
+limit_req_status 429;
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name YOUR_DOMAIN;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name YOUR_DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+
+    client_max_body_size 30m;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location = /healthz {
+        proxy_pass http://gugu_ai;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    location = /readyz {
+        proxy_pass http://gugu_ai;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    location ~ ^/api/(auth/login|admin/auth/login)$ {
+        limit_req zone=gugu_login burst=5 nodelay;
+        proxy_pass http://gugu_ai;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+    }
+
+    location / {
+        proxy_pass http://gugu_ai;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_request_buffering off;
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+    }
+}

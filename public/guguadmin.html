@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>GuGu 管理后台</title>
+  <link rel="stylesheet" href="/guguadmin.css">
+</head>
+<body>
+  <main id="adminLogin" class="login-shell">
+    <section class="login-card">
+      <div class="eyebrow">GUGU AI / CONTROL ROOM</div>
+      <h1>管理后台</h1>
+      <p>仅限授权管理员使用。</p>
+      <form id="loginForm">
+        <label>管理员账号<input id="loginUsername" name="username" autocomplete="username" required></label>
+        <label>密码<input id="loginPassword" name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">进入后台</button>
+        <div id="loginError" class="error" role="alert"></div>
+      </form>
+    </section>
+  </main>
+
+  <main id="adminApp" class="app-shell hidden">
+    <header class="topbar">
+      <div><span class="eyebrow">GUGU AI / CONTROL ROOM</span><h1>运营控制台</h1></div>
+      <div class="topbar-actions"><span id="adminName"></span><button id="logoutButton" class="ghost">退出</button></div>
+    </header>
+    <div class="layout">
+      <nav class="sidebar" aria-label="管理后台导航">
+        <button class="nav active" data-view="overview">总览</button>
+        <button class="nav" data-view="users">用户</button>
+        <button class="nav" data-view="models">模型与价格</button>
+        <button class="nav" data-view="invites">邀请码</button>
+        <button class="nav" data-view="logs">日志中心</button>
+      </nav>
+      <section class="content">
+        <div id="toast" class="toast" role="status"></div>
+        <section id="view-overview" class="view"></section>
+        <section id="view-users" class="view hidden"></section>
+        <section id="view-models" class="view hidden"></section>
+        <section id="view-invites" class="view hidden"></section>
+        <section id="view-logs" class="view hidden"></section>
+      </section>
+    </div>
+  </main>
+  <dialog id="adminDialog" class="admin-dialog" aria-labelledby="adminDialogTitle" aria-describedby="adminDialogDescription"><form id="adminDialogForm" class="admin-dialog-card"><header class="admin-dialog-head"><div><span id="adminDialogKicker" class="admin-dialog-kicker">编辑操作</span><h2 id="adminDialogTitle">编辑</h2><p id="adminDialogDescription"></p></div><button id="adminDialogClose" class="admin-dialog-close" type="button" aria-label="关闭">×</button></header><div id="adminDialogBody" class="admin-dialog-body"></div><div id="adminDialogError" class="admin-dialog-error" role="alert"></div><footer class="admin-dialog-footer"><button id="adminDialogCancel" class="ghost" type="button">取消</button><button id="adminDialogSubmit" class="primary" type="submit">保存</button></footer></form></dialog>
+  <script src="/guguadmin.js" defer></script>
+</body>
+</html>

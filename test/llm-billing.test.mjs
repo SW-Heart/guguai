@@ -103,7 +103,7 @@ test('script analysis accepts fenced JSON and validates required collections', (
   assert.throws(() => validateScriptAnalysis({ title: 'x', logline: '', scenes: [], assets: {} }), /characters/);
 });
 
-test('storyboard validation fixes shot order and enforces six-second production units', () => {
+test('storyboard validation fixes shot order and enforces twenty-second production units', () => {
   const result = validateStoryboard({ shots:[{
     shotNumber:99, sceneNumber:'2', title:'回头', narrativeFunction:'发现追兵', shotSize:'近景', cameraMovement:'快速摇镜',
     characters:['阿青'], action:'阿青停步回头', dialogue:'他们来了。', continuityNotes:'红色围巾在左肩',
@@ -111,7 +111,7 @@ test('storyboard validation fixes shot order and enforces six-second production 
   }] });
   assert.equal(result.shots[0].shotNumber, 1);
   assert.equal(result.shots[0].sceneNumber, 2);
-  assert.equal(result.shots[0].duration, 6);
+  assert.equal(result.shots[0].duration, 20);
   assert.throws(() => validateStoryboard({ shots:[{ title:'缺字段' }] }), /narrativeFunction/);
 });
 

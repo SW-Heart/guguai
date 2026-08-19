@@ -1,0 +1,26 @@
+[Unit]
+Description=GuGu AI Studio
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gugu
+Group=gugu
+WorkingDirectory=/opt/gugu-ai
+ExecStartPre=/usr/bin/test -r /opt/gugu-ai/.env
+ExecStart=/usr/bin/node --env-file=.env server.mjs
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gugu-ai
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

@@ -8,8 +8,18 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { closeDatabase, openDatabase, sql } from '../lib/db.mjs';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'smoke-'));
+const inviteCreatedAt = new Date().toISOString();
+openDatabase({ env: { DATA_DIR: dataDir } });
+const insertInvite = sql(`
+  INSERT INTO invite_codes(code, enabled, max_uses, used_count, signup_bonus_micro, created_at, updated_at, note)
+  VALUES(:code, 1, 1, 0, 50000000, :createdAt, :createdAt, 'HTTP smoke test')
+`);
+for (const code of ['SMOKE-INVITE-A', 'SMOKE-INVITE-B']) insertInvite.run({ code, createdAt: inviteCreatedAt });
+closeDatabase({ checkpoint: false });
+
 const port = 4399 + Math.floor(Math.random() * 200);
 const base = `http://127.0.0.1:${port}`;
 
@@ -39,7 +49,7 @@ function check(label, fn) {
 
 async function waitForServer() {
   for (let i = 0; i < 100; i++) {
-    try { await fetch(`${base}/api/config`); return true; } catch { await new Promise(r => setTimeout(r, 100)); }
+    try { await fetch(`${base}/readyz`); return true; } catch { await new Promise(r => setTimeout(r, 100)); }
   }
   return false;
 }
@@ -70,20 +80,26 @@ try {
   if (!await waitForServer()) throw new Error(`服务未启动:\n${serverLog}`);
   console.log('服务已启动\n');
 
-  console.log('认证：');
-  let r = await call('GET', '/api/auth/me');
+  console.log('健康检查：');
+  let r = await call('GET', '/healthz');
+  check('/healthz 返回 ok', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ok'); });
+  r = await call('GET', '/readyz');
+  check('/readyz 返回 ready', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ready'); });
+
+  console.log('\n认证：');
+  r = await call('GET', '/api/auth/me');
   check('未登录访问 /api/auth/me 返回 401', () => assert.equal(r.status, 401));
 
   r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'bad-code' });
   check('无效邀请码被拒', () => { assert.equal(r.status, 400); assert.match(r.body.error, /邀请码无效/); });
 
-  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'STUDIO-7K3M-P9QX' });
+  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'SMOKE-INVITE-A' });
   check('注册成功返回 201', () => assert.equal(r.status, 201));
   check('新用户获得 50 赠送积分', () => assert.equal(r.body.user.credits, 50));
   check('响应不含 passwordHash', () => assert.equal(r.body.user.passwordHash, undefined));
   const userA = r.body.user.id;
 
-  r = await call('POST', '/api/auth/register', { username: 'smoke_b', password: 'password1234', inviteCode: 'STUDIO-7K3M-P9QX' });
+  r = await call('POST', '/api/auth/register', { username: 'smoke_b', password: 'password1234', inviteCode: 'SMOKE-INVITE-A' });
   check('同一邀请码二次注册返回 409', () => { assert.equal(r.status, 409); assert.match(r.body.error, /邀请码/); });
 
   r = await call('GET', '/api/auth/me');
@@ -138,6 +154,9 @@ try {
     created.push(r.body.project.id);
   }
   check('创建 7 个项目', () => assert.equal(created.length, 7));
+  await new Promise(resolve => setTimeout(resolve, 5));
+  r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, { title: '最近更新项目' });
+  check('更新最后一个项目', () => assert.equal(r.status, 200));
 
   r = await call('GET', '/api/drama/projects');
   check('projects 包在 { projects } 里', () => { assert.ok(Array.isArray(r.body.projects)); assert.equal(r.body.projects.length, 7); });
@@ -171,7 +190,7 @@ try {
   console.log('\n跨用户隔离：');
   const cookieA = cookie;
   cookie = '';
-  r = await call('POST', '/api/auth/register', { username: 'smoke_c', password: 'password1234', inviteCode: 'STUDIO-4N8R-V2CW' });
+  r = await call('POST', '/api/auth/register', { username: 'smoke_c', password: 'password1234', inviteCode: 'SMOKE-INVITE-B' });
   check('第二个账号注册成功', () => assert.equal(r.status, 201));
   const cookieB = cookie;
 
@@ -204,12 +223,12 @@ try {
   const counts = {
     users: db.prepare('SELECT COUNT(*) c FROM users').get().c,
     sessions: db.prepare('SELECT COUNT(*) c FROM sessions').get().c,
-    invites: db.prepare('SELECT COUNT(*) c FROM invite_uses').get().c,
+    invites: db.prepare('SELECT COUNT(*) c FROM invite_code_uses').get().c,
     entries: db.prepare('SELECT COUNT(*) c FROM credit_entries').get().c,
     projects: db.prepare('SELECT COUNT(*) c FROM drama_projects').get().c,
   };
   check('users=2', () => assert.equal(counts.users, 2));
-  check('invite_uses=2', () => assert.equal(counts.invites, 2));
+  check('invite_code_uses=2', () => assert.equal(counts.invites, 2));
   check('credit_entries=2 (两笔赠送)', () => assert.equal(counts.entries, 2));
   check('drama_projects=7', () => assert.equal(counts.projects, 7));
   const drift = db.prepare(`

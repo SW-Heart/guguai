@@ -82,6 +82,32 @@ function main() {
     console.log('  提示: 迁移自 JSON 的历史流水可能带有旧快照，不计入失败判定。');
   }
 
+  const inviteMismatches = sql(`
+    SELECT code, used_count,
+           (SELECT COUNT(*) FROM invite_code_uses u WHERE u.code = invite_codes.code)
+           + (SELECT COUNT(*) FROM invite_uses legacy
+              WHERE legacy.code = invite_codes.code
+                AND (legacy.user_id IS NULL OR NOT EXISTS (
+                  SELECT 1 FROM invite_code_uses u2
+                  WHERE u2.code = legacy.code AND u2.user_id = legacy.user_id
+                ))) AS actual_count
+    FROM invite_codes
+    WHERE used_count <> (
+      (SELECT COUNT(*) FROM invite_code_uses u WHERE u.code = invite_codes.code)
+      + (SELECT COUNT(*) FROM invite_uses legacy
+         WHERE legacy.code = invite_codes.code
+           AND (legacy.user_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM invite_code_uses u2
+             WHERE u2.code = legacy.code AND u2.user_id = legacy.user_id
+           )))
+    )
+  `).all();
+  console.log(`邀请码使用次数校验: ${inviteMismatches.length === 0 ? 'ok' : `${inviteMismatches.length} 条不一致`}`);
+  if (inviteMismatches.length) failures.push(`邀请码使用次数不一致 ${inviteMismatches.length} 条`);
+
+  const pricingCount = sql('SELECT COUNT(*) AS count FROM pricing_versions').get().count;
+  if (pricingCount < 1) failures.push('没有有效的平台价格版本');
+
   const counts = sql(`
     SELECT
       (SELECT COUNT(*) FROM users) AS users,
@@ -94,7 +120,12 @@ function main() {
       (SELECT COUNT(*) FROM generations) AS generations,
       (SELECT COUNT(*) FROM generations WHERE status IN ('queued','running')) AS pendingGenerations,
       (SELECT COUNT(*) FROM assets) AS assets,
-      (SELECT COUNT(*) FROM drama_projects) AS dramaProjects
+      (SELECT COUNT(*) FROM drama_projects) AS dramaProjects,
+      (SELECT COUNT(*) FROM invite_codes) AS inviteCodes,
+      (SELECT COUNT(*) FROM invite_code_uses) AS inviteCodeUses,
+      (SELECT COUNT(*) FROM audit_events) AS auditEvents,
+      (SELECT COUNT(*) FROM system_events) AS systemEvents,
+      (SELECT COUNT(*) FROM pricing_versions) AS pricingVersions
   `).get({ now: new Date().toISOString() });
 
   console.log('\n表统计：');
