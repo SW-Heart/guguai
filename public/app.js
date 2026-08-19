@@ -396,7 +396,7 @@ function continueFromTask(task, target=task.type, includeReference=false) {
   toast(includeReference ? '已带入参考图和创作描述' : '已带入创作描述，可调整后重新生成');
 }
 function handleTaskAction(action, id) { const task = state.tasks.find(item => item.id === id); if (!task) return; if (action === 'preview' || action === 'more') return openGenerationDetail(id); if (action === 'reference') { continueFromTask(task, task.type, true); return; } if (action === 'continue') continueFromTask(task); }
-function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); const dialog=media.closest('dialog'); dialog?.classList.toggle('portrait-detail', portrait); if (portrait) { const availableHeight=Math.min(820,window.innerHeight-32); dialog?.style.setProperty('--portrait-dialog-width',`${Math.round(400+availableHeight*(width/height))}px`); } else dialog?.style.removeProperty('--portrait-dialog-width'); }
+function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); }
 function resetDetailFit(dialog) { dialog.classList.remove('portrait-detail'); dialog.style.removeProperty('--portrait-dialog-width'); }
 function closeGenerationDetail() { const dialog = $('#generationDetailDialog'); dialog.close(); resetDetailFit(dialog); $('#generationDetailMedia').innerHTML = ''; state.detailTaskId = null; }
 function openGenerationDetail(id) {

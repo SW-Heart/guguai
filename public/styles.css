@@ -373,8 +373,14 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .reference-upload-placeholder.failed .reference-upload-visual strong { color: var(--danger); }
 
 #previewDialog { width: min(1180px, calc(100% - 32px)); max-width: none; height: min(820px, calc(100dvh - 32px)); max-height: none; overflow: hidden; background: var(--canvas); }
-#previewDialog.portrait-detail,
-#generationDetailDialog.portrait-detail { width: min(var(--portrait-dialog-width), calc(100% - 32px)); }
+#previewDialog[open],
+#generationDetailDialog[open],
+.professional-media-preview-dialog[open] { animation: media-dialog-enter 180ms cubic-bezier(.2,.8,.2,1) both; }
+#previewDialog[open]::backdrop,
+#generationDetailDialog[open]::backdrop,
+.professional-media-preview-dialog[open]::backdrop { animation: media-backdrop-enter 160ms ease-out both; }
+@keyframes media-dialog-enter { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes media-backdrop-enter { from { opacity: 0; } to { opacity: 1; } }
 .asset-detail-layout { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 400px; }
 .asset-detail-media { min-width: 0; min-height: 0; overflow: hidden; padding: clamp(16px, 2.5vw, 34px); background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(238,242,248,.58)); backdrop-filter: blur(18px) saturate(125%); display: grid; place-items: center; }
 .asset-detail-media img, .asset-detail-media video { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; border: 1px solid rgba(255,255,255,.78); border-radius: 18px; background: rgba(255,255,255,.42); box-shadow: 0 18px 42px rgba(43,48,61,.16), 0 1px 0 rgba(255,255,255,.9) inset; object-fit: contain; }
@@ -1368,7 +1374,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .generation-detail-media > img,
 .generation-detail-media > video { min-width: 0; min-height: 0; }
 
-.professional-media-preview-dialog { position: relative; display: block; box-sizing: border-box; }
+.professional-media-preview-dialog { position: relative; box-sizing: border-box; }
 .professional-media-preview-stage { position: absolute; inset: 0 0 58px; min-width: 0; min-height: 0; height: auto; padding: 16px; box-sizing: border-box; overflow: auto; display: grid; place-items: center; overscroll-behavior: contain; }
 .professional-media-preview-stage img,
 .professional-media-preview-stage video { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; }
