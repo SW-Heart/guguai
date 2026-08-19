@@ -6,15 +6,15 @@
   <meta name="color-scheme" content="light">
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=93">
+  <link rel="stylesheet" href="/styles.css?v=94">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
   <section id="bootView" class="app-boot" role="status" aria-live="polite">
     <div class="boot-center">
       <div class="boot-logo" aria-hidden="true"><span class="brand-gem"></span><i></i></div>
-      <div class="boot-wordmark">GuGu AI</div>
-      <div class="boot-status"><span class="boot-status-dot" aria-hidden="true"></span><div><strong id="bootTitle">正在恢复工作区</strong><p id="bootMessage">正在确认登录状态，请稍候。</p></div></div>
+      <span id="bootTitle" class="sr-only">正在恢复工作区</span>
+      <span id="bootMessage" class="sr-only">正在确认登录状态，请稍候。</span>
       <button id="bootRetry" class="secondary-button hidden" type="button">重新加载</button>
     </div>
   </section>

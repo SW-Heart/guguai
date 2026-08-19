@@ -38,6 +38,7 @@ const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${config
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
 const oaiGrokConfigured = Boolean(process.env.OAIAPI_GROK_KEY);
+const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
 const llmConfig = llmConfigFromEnv();
