@@ -41,6 +41,12 @@ const oaiGrokConfigured = Boolean(process.env.OAIAPI_GROK_KEY);
 const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
+const ttapiPollIntervalMs = 8_000;
+const ttapiMaxPollBackoffMs = 60_000;
+const ttapiRequestTimeoutMs = 60_000;
+const generationRetryMaxDelayMs = 60_000;
+const archiveAttemptsPerRun = 6;
+const archiveRescheduleMs = 5 * 60_000;
 const llmConfig = llmConfigFromEnv();
 const llmRates = llmRatesFromEnv();
 const ossPrefix = String(process.env.ALIYUN_OSS_PREFIX || 'model-studio').replace(/^\/+|\/+$/g, '');
@@ -50,6 +56,7 @@ const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 8 * 1024 * 1024;
 const activeGenerations = new Map();
+const generationRetryTimers = new Map();
 const assetRestores = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -132,13 +139,24 @@ function generationFailureCode(task) {
   return 'UNKNOWN';
 }
 function publicGeneration(task) {
-  const { ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError, rawResponse, requestUrl, ...value } = task;
+  const {
+    ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError,
+    rawResponse, requestUrl, lastPollError, lastPollErrorAt, lastArchiveError, lastArchiveErrorAt,
+    pollFailureCount, archiveFailureCount, submissionUncertain, archivePending, ...value
+  } = task;
   const failure = task.status === 'failed'
     ? { code: generationFailureCode(task), ...generationFailureCatalog[generationFailureCode(task)] }
     : null;
+  const progressStage = task.status !== 'running' ? task.status
+    : task.submissionUncertain ? 'awaiting_reconciliation'
+      : task.sourceUrl && !task.assetId ? 'archiving'
+        : task.lastPollError ? 'polling_retry'
+          : task.providerTaskId ? 'provider_processing'
+            : 'submitting';
   if (failure && task.creditStatus === 'refunded') failure.suggestion += ' 本次预扣积分已退回。';
   return {
     ...value,
+    progressStage,
     error: failure ? `${failure.message}。${failure.suggestion}` : '',
     failure,
   };
@@ -244,21 +262,82 @@ async function createDuomiVideo(task, refs) {
     throw error;
   }
 }
-async function createTtapiVideo(task, refs) {
-  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: task.quality || '720p' };
-  if (refs.length) payload.refer_images = refs.slice(0, task.maxReferenceImages || 7);
-  const created = await fetchJson(`${ttapiBase}/grok/generations`, { method: 'POST', headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  const taskId = created.data?.jobId || created.jobId;
-  if (!taskId) throw Object.assign(new Error('TTAPI 视频任务没有返回任务 ID'), { provider: 'ttapi' });
-  for (let i = 0; i < 160; i++) {
-    await sleep(8000);
-    const state = await fetchJson(`${ttapiBase}/grok/fetch?jobId=${encodeURIComponent(taskId)}`, { headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY } });
+function upstreamRequestErrorDetail(error) {
+  return [error?.upstreamStatus, error?.cause?.code, error?.upstreamMessage || error?.cause?.message || error?.message]
+    .filter(Boolean).join(' · ') || '未知上游网络错误';
+}
+function isDefinitiveSubmitRejection(error) {
+  return Number(error?.upstreamStatus) >= 400
+    && Number(error?.upstreamStatus) < 500
+    && ![408, 409, 425, 429].includes(Number(error.upstreamStatus));
+}
+async function pollTtapiVideo(taskId, hooks = {}) {
+  let consecutiveErrors = 0;
+  let recovering = false;
+  for (;;) {
+    const delay = consecutiveErrors
+      ? Math.min(ttapiPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), ttapiMaxPollBackoffMs)
+      : ttapiPollIntervalMs;
+    await sleep(delay);
+    let state;
+    try {
+      state = await fetchJson(`${ttapiBase}/grok/fetch?jobId=${encodeURIComponent(taskId)}`, {
+        headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY },
+        signal: AbortSignal.timeout(ttapiRequestTimeoutMs),
+      });
+    } catch (error) {
+      consecutiveErrors++;
+      recovering = true;
+      const detail = upstreamRequestErrorDetail(error);
+      console.error('[video] TTAPI poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
+      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
+      catch (saveError) { console.error('[video] TTAPI poll state persistence failed', { taskId, message: saveError.message }); }
+      continue;
+    }
+
+    if (recovering) {
+      try { await hooks.onPollRecovered?.(); }
+      catch (saveError) { console.error('[video] TTAPI recovery state persistence failed', { taskId, message: saveError.message }); }
+    }
+    consecutiveErrors = 0;
+    recovering = false;
     const videoUrl = state.data?.videoUrl;
     if (videoUrl) return { provider: 'ttapi', taskId, url: videoUrl };
     const status = String(state.status || state.data?.status || '').toUpperCase();
-    if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED'].includes(status)) throw Object.assign(new Error(errorMessage(state, 'TTAPI 视频生成失败')), { provider: 'ttapi', providerTaskId: taskId });
+    if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) {
+      throw Object.assign(new Error(errorMessage(state, 'TTAPI 视频生成失败')), {
+        provider: 'ttapi', providerTaskId: taskId, upstreamTerminal: true,
+      });
+    }
   }
-  throw Object.assign(new Error('TTAPI 视频任务等待超时'), { provider: 'ttapi', providerTaskId: taskId });
+}
+async function createTtapiVideo(task, refs, hooks = {}) {
+  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: task.quality || '720p' };
+  if (refs.length) payload.refer_images = refs.slice(0, task.maxReferenceImages || 7);
+  let created;
+  try {
+    created = await fetchJson(`${ttapiBase}/grok/generations`, {
+      method: 'POST',
+      headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(ttapiRequestTimeoutMs),
+    });
+  } catch (error) {
+    if (isDefinitiveSubmitRejection(error)) {
+      throw Object.assign(error, { provider: 'ttapi', upstreamTerminal: true });
+    }
+    throw Object.assign(new Error(`TTAPI 提交结果待确认：${upstreamRequestErrorDetail(error)}`), {
+      provider: 'ttapi', submissionUncertain: true, cause: error,
+    });
+  }
+  const taskId = created.data?.jobId || created.jobId;
+  if (!taskId) {
+    throw Object.assign(new Error('TTAPI 已接受请求，但没有返回任务 ID，提交结果待核对'), {
+      provider: 'ttapi', submissionUncertain: true,
+    });
+  }
+  await hooks.onSubmitted?.({ provider: 'ttapi', taskId: String(taskId) });
+  return pollTtapiVideo(String(taskId), hooks);
 }
 function oaiVideoUrl(value) {
   const candidate = value?.data?.[0]?.url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
@@ -352,10 +431,10 @@ async function createOaiVideo(task, refs) {
     throw error;
   }
 }
-async function createVideo(task, refs) {
+async function createVideo(task, refs, hooks = {}) {
   if (task.provider === 'ttapi') {
     if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置');
-    return createTtapiVideo(task, refs);
+    return createTtapiVideo(task, refs, hooks);
   }
   if (task.provider === 'duomi') return createDuomiVideo(task, refs);
   if (task.provider === 'oai') {
@@ -391,6 +470,17 @@ async function downloadToFile(url, target, attempts = 4, options = {}) {
 }
 
 function saveGeneration(userId, task) { task.updatedAt = now(); return saveGenerationRecord(userId, task); }
+async function saveGenerationWithRetry(userId, task, phase = 'update') {
+  let failures = 0;
+  for (;;) {
+    try { return await saveGeneration(userId, task); }
+    catch (error) {
+      failures++;
+      console.error('[generation] critical state persistence retry', { generationId: task.id, phase, failures, message: error.message });
+      await sleep(Math.min(500 * 2 ** Math.min(failures - 1, 6), generationRetryMaxDelayMs));
+    }
+  }
+}
 function saveDramaProject(userId, project) { project.updatedAt = now(); return saveDramaProjectRecord(userId, project); }
 function publicDramaProject(project) { const { ownerId, ...value } = project; return value; }
 function normalizeDramaProject(project) {
@@ -501,7 +591,14 @@ async function validateReferenceAssets(userId, value) {
   return ids;
 }
 async function archiveGenerationResult(userId, task, resultUrl) {
-  const assetId = randomUUID();
+  const assetId = task.assetId || `generation-${task.id}`;
+  const existing = findAsset(userId, assetId);
+  if (existing?.sourceGenerationId === task.id) {
+    task.assetId = assetId;
+    task.status = 'completed';
+    task.error = '';
+    return;
+  }
   const extension = task.type === 'image' ? '.png' : '.mp4';
   const storageName = `${assetId}${extension}`;
   const localFile = path.join(assetFilesDir(userId), storageName);
@@ -541,65 +638,213 @@ async function assembleDramaProject(userId, project) {
   const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 完整成片.mp4`, kind:'video', mimeType:'video/mp4', source:'drama_final', projectId:project.id });
   project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
 }
-async function startGeneration(userId, task) { const promise = (async () => { try { task.status = 'running'; await saveGeneration(userId, task); const refs = await resolveRefs(userId, task.referenceAssetIds); const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs); if (!result.url) throw new Error('模型任务完成，但没有返回结果地址'); task.provider = result.provider || (task.type === 'image' ? 'duomi' : 'duomi'); task.providerTaskId = result.taskId; task.sourceUrl = result.url; await saveGeneration(userId, task); await archiveGenerationResult(userId, task, result.url); task.creditStatus = 'charged'; } catch (error) { task.status = 'failed'; task.error = error.message; if (task.providerTaskId && task.sourceUrl) { task.creditStatus = 'charged'; task.error += '；模型已生成成功，系统将继续恢复成品归档'; } else { try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; } catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; } } } finally { task.finishedAt = now(); await saveGeneration(userId, task); activeGenerations.delete(task.id); } })(); activeGenerations.set(task.id, promise); }
+function ttapiPersistenceHooks(userId, task) {
+  return {
+    onSubmitted: async ({ provider, taskId }) => {
+      task.provider = provider;
+      task.providerTaskId = taskId;
+      task.submittedAt ||= now();
+      task.submissionUncertain = false;
+      task.error = '';
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGenerationWithRetry(userId, task, 'ttapi-submitted');
+    },
+    onPollError: async ({ consecutiveErrors, detail }) => {
+      task.status = 'running';
+      task.lastPollError = detail;
+      task.lastPollErrorAt = now();
+      task.pollFailureCount = consecutiveErrors;
+      await saveGeneration(userId, task);
+    },
+    onPollRecovered: async () => {
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGeneration(userId, task);
+    },
+  };
+}
+function scheduleGenerationArchive(userId, task) {
+  if (generationRetryTimers.has(task.id)) return;
+  const timer = setTimeout(() => {
+    generationRetryTimers.delete(task.id);
+    const current = findGeneration(userId, task.id);
+    if (current?.status === 'running' && current.sourceUrl && !current.assetId) {
+      resumeGenerationArchive(userId, current);
+    }
+  }, archiveRescheduleMs);
+  timer.unref();
+  generationRetryTimers.set(task.id, timer);
+}
+async function archiveGenerationWithRetry(userId, task) {
+  let failures = Number(task.archiveFailureCount) || 0;
+  for (let attempt = 1; attempt <= archiveAttemptsPerRun; attempt++) {
+    try {
+      await archiveGenerationResult(userId, task, task.sourceUrl);
+      task.archiveFailureCount = 0;
+      task.archivePending = false;
+      task.lastArchiveError = '';
+      task.lastArchiveErrorAt = null;
+      return true;
+    } catch (error) {
+      failures++;
+      task.status = 'running';
+      task.archiveFailureCount = failures;
+      task.lastArchiveError = error.message;
+      task.lastArchiveErrorAt = now();
+      await saveGeneration(userId, task);
+      console.error('[generation] archive retry scheduled', { generationId: task.id, failures, message: error.message });
+      if (attempt < archiveAttemptsPerRun) {
+        await sleep(Math.min(2_000 * 2 ** Math.min(attempt - 1, 5), generationRetryMaxDelayMs));
+      }
+    }
+  }
+  task.archivePending = true;
+  await saveGenerationWithRetry(userId, task, 'archive-deferred');
+  scheduleGenerationArchive(userId, task);
+  return false;
+}
+async function completeGenerationResult(userId, task, result) {
+  task.provider = result.provider || task.provider;
+  task.providerTaskId = result.taskId || task.providerTaskId;
+  task.sourceUrl = result.url;
+  task.status = 'running';
+  task.error = '';
+  await saveGenerationWithRetry(userId, task, 'provider-result');
+  const archived = await archiveGenerationWithRetry(userId, task);
+  task.creditStatus = 'charged';
+  return archived;
+}
+async function failGeneration(userId, task, error) {
+  task.status = 'failed';
+  task.error = error.message;
+  try {
+    await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost));
+    task.creditStatus = 'refunded';
+  } catch (refundError) {
+    task.creditStatus = 'refund_failed';
+    task.error += `；自动退款失败：${refundError.message}`;
+  }
+}
+function startGeneration(userId, task) {
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      await saveGenerationWithRetry(userId, task, 'generation-running');
+      const refs = await resolveRefs(userId, task.referenceAssetIds);
+      const hooks = task.provider === 'ttapi' ? ttapiPersistenceHooks(userId, task) : {};
+      const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs, hooks);
+      if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.submissionUncertain) {
+        task.status = 'running';
+        task.submissionUncertain = true;
+        task.error = error.message;
+        task.creditStatus = 'charged';
+        console.error('[video] TTAPI submission outcome is uncertain; no refund issued', { generationId: task.id, message: error.message });
+      } else if (task.provider === 'ttapi' && task.providerTaskId && !error.upstreamTerminal) {
+        task.status = 'running';
+        task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
+        task.creditStatus = 'charged';
+        console.error('[video] TTAPI task paused without refund', { generationId: task.id, providerTaskId: task.providerTaskId, message: error.message });
+      } else {
+        await failGeneration(userId, task, error);
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'generation-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
+function resumeTtapiGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      task.error = '';
+      await saveGeneration(userId, task);
+      const result = await pollTtapiVideo(task.providerTaskId, ttapiPersistenceHooks(userId, task));
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.upstreamTerminal) {
+        await failGeneration(userId, task, error);
+      } else {
+        task.status = 'running';
+        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
+        task.creditStatus = 'charged';
+        console.error('[video] TTAPI recovery paused without refund', { generationId: task.id, message: error.message });
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'ttapi-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
+function resumeGenerationArchive(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      await saveGenerationWithRetry(userId, task, 'generation-running');
+      await archiveGenerationWithRetry(userId, task);
+      task.creditStatus = 'charged';
+    } finally {
+      task.finishedAt = task.status === 'completed' ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'archive-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
 
-/**
- * Startup recovery for tasks left mid-flight by a restart.
- *
- * Selection is by status via the partial index idx_gen_pending, so the cost is
- * proportional to the pending set rather than the whole history. The previous
- * implementation walked every generation record of every user and matched on
- * `error` text, which both scaled with total volume and missed tasks whose
- * failure message did not happen to contain the expected substring.
- */
+/** Resume durable generation work after a process restart without depending on any browser session. */
 async function recoverPendingGenerations() {
   const startedAt = Date.now();
   const pending = listPendingGenerations();
-  if (!pending.length) return;
-
-  let archived = 0;
+  let polling = 0;
+  let archiving = 0;
   let refunded = 0;
-  let failed = 0;
-  const concurrency = 5;
-  let cursor = 0;
+  let awaitingReconciliation = 0;
 
-  const worker = async () => {
-    while (cursor < pending.length) {
-      const { userId, task } = pending[cursor++];
-      try {
-        if (task.providerTaskId && task.sourceUrl && !task.assetId) {
-          // The provider finished; only our archiving step was interrupted.
-          task.status = 'running'; task.error = '模型已完成，正在恢复成品归档';
-          saveGeneration(userId, task);
-          await archiveGenerationResult(userId, task, task.sourceUrl);
-          task.recoveredAt = now();
-          task.creditStatus = 'charged';
-          archived++;
-        } else if (!task.providerTaskId) {
-          // Never reached the provider, so the charge has to come back.
-          task.status = 'failed';
-          task.error = task.error || '服务重启时任务尚未提交到模型服务，已自动退款';
-          try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; refunded++; }
-          catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; failed++; }
-        } else {
-          // Submitted but no result URL captured: cannot resume the poll loop
-          // across a restart, so fail it and return the credits.
-          task.status = 'failed';
-          task.error = task.error || '服务重启中断了模型任务轮询，已自动退款';
-          try { await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost)); task.creditStatus = 'refunded'; refunded++; }
-          catch (refundError) { task.creditStatus = 'refund_failed'; task.error += `；自动退款失败：${refundError.message}`; failed++; }
-        }
-      } catch (error) {
-        task.status = 'failed'; task.error = error.message; failed++;
-      } finally {
-        task.finishedAt = now();
-        try { saveGeneration(userId, task); } catch (error) { console.error('恢复任务写回失败', task.id, error); }
-      }
+  for (const { userId, task } of pending) {
+    if (task.providerTaskId && task.sourceUrl && !task.assetId) {
+      resumeGenerationArchive(userId, task);
+      archiving++;
+    } else if (task.provider === 'ttapi' && task.providerTaskId) {
+      resumeTtapiGeneration(userId, task);
+      polling++;
+    } else if (task.submissionUncertain || (task.provider === 'ttapi' && !task.providerTaskId)) {
+      task.status = 'running';
+      task.finishedAt = null;
+      task.creditStatus = 'charged';
+      task.submissionUncertain = true;
+      task.error ||= '服务中断时未能确认上游任务 ID，任务保留待核对且不会自动退款';
+      saveGeneration(userId, task);
+      awaitingReconciliation++;
+    } else {
+      await failGeneration(userId, task, new Error(task.error || '服务重启时任务尚未提交到模型服务'));
+      task.finishedAt = now();
+      saveGeneration(userId, task);
+      refunded++;
     }
-  };
+  }
 
-  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
-  console.log(`[recovery] 待恢复 ${pending.length} 归档成功 ${archived} 退款 ${refunded} 失败 ${failed} 耗时 ${Date.now() - startedAt}ms`);
+  if (pending.length) {
+    console.log(`[recovery] 待恢复 ${pending.length} 恢复轮询 ${polling} 恢复归档 ${archiving} 待核对 ${awaitingReconciliation} 退款 ${refunded} 耗时 ${Date.now() - startedAt}ms`);
+  }
 }
 
 async function streamUpload(req, target, limit = maxUploadBytes) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return size; }
@@ -1025,6 +1270,7 @@ const server = http.createServer(async (req, res) => {
       const user = await requireUser(req, res); if (!user) return; const id = safeId(generationMatch[1]);
       if (activeGenerations.has(id)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
       const task = findGeneration(user.id, id); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
+      const retryTimer = generationRetryTimers.get(id); if (retryTimer) { clearTimeout(retryTimer); generationRetryTimers.delete(id); }
       const asset = task.assetId ? findAsset(user.id, task.assetId) : null;
       await deleteAssetRecord(user.id, asset);
       deleteGeneration(user.id, id);
