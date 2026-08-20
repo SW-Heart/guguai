@@ -48,7 +48,7 @@ const ossConfigured = Boolean(process.env.ALIYUN_ACCESS_KEY_ID && process.env.AL
 const oss = ossConfigured ? new OSS({ accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID, accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET, endpoint: process.env.ALIYUN_OSS_ENDPOINT, bucket: process.env.ALIYUN_OSS_BUCKET, secure: true }) : null;
 const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
-const maxReferenceImageBytes = 10 * 1024 * 1024;
+const maxReferenceImageBytes = 8 * 1024 * 1024;
 const activeGenerations = new Map();
 const assetRestores = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
@@ -318,17 +318,11 @@ function buildOaiVideoPayload(task, refs) {
 }
 function oaiVideoRequest(task, refs, apiKey) {
   const payload = buildOaiVideoPayload(task, refs);
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  if (task.videoModelId === VIDEO_MODEL_IDS.GROK_15 || task.videoModelId === VIDEO_MODEL_IDS.VEO_31 || !refs.length) {
-    headers['Content-Type'] = 'application/json';
-    return { headers, body: JSON.stringify(payload) };
-  }
-  const form = new FormData();
-  Object.entries(payload).forEach(([key, value]) => {
-    if (Array.isArray(value)) value.forEach(item => form.append(key, String(item)));
-    else form.append(key, String(value));
-  });
-  return { headers, body: form };
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  return { headers, body: JSON.stringify(payload) };
 }
 async function createOaiVideo(task, refs) {
   const apiKey = oaiKeyForTask(task);
@@ -502,7 +496,7 @@ async function validateReferenceAssets(userId, value) {
   for (const id of ids) {
     const asset = findAsset(userId, id);
     if (!asset || asset.kind !== 'image') throw Object.assign(new Error('参考图不存在或不是图片'), { statusCode: 400 });
-    if (Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 10 MB`), { statusCode: 400 });
+    if (Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 8 MB`), { statusCode: 400 });
   }
   return ids;
 }
@@ -608,7 +602,7 @@ async function recoverPendingGenerations() {
   console.log(`[recovery] 待恢复 ${pending.length} 归档成功 ${archived} 退款 ${refunded} 失败 ${failed} 耗时 ${Date.now() - startedAt}ms`);
 }
 
-async function streamUpload(req, target, limit = maxUploadBytes) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 10 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return size; }
+async function streamUpload(req, target, limit = maxUploadBytes) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return size; }
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 
@@ -1039,7 +1033,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, page.items.map(publicAsset));
     }
     if (url.pathname === '/api/files/upload' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM 或 MOV' }); const isImage = imageTypes.has(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 10 MB' : '文件不能超过 25 MB' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const size = await streamUpload(req, localFile, uploadLimit); if (!size) return sendJson(res, 400, { error: '文件为空' }); const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind: isImage ? 'image' : 'video', mimeType, size, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
+      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM 或 MOV' }); const isImage = imageTypes.has(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const size = await streamUpload(req, localFile, uploadLimit); if (!size) return sendJson(res, 400, { error: '文件为空' }); const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind: isImage ? 'image' : 'video', mimeType, size, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
     if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
