@@ -1407,3 +1407,18 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .professional-media-preview-dialog > footer { min-height: 52px; padding-inline: 13px; }
   .professional-media-preview-dialog > footer b { max-width: 62%; }
 }
+
+/* Expand the middle column's scroll hit area to its full width without widening its content. */
+@media (min-width: 921px) {
+  .app-shell.drama-professional-open .professional-shot-editor {
+    padding: 0;
+  }
+
+  .app-shell.drama-professional-open .professional-shot-editor > .professional-panel-head {
+    padding: 17px clamp(20px, 3vw, 42px) 14px;
+  }
+
+  .app-shell.drama-professional-open .professional-shot-editor-scroll {
+    padding: 0 clamp(20px, 3vw, 42px) 58px;
+  }
+}

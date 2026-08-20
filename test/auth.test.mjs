@@ -76,7 +76,7 @@ test('OSS object keys are scoped per user and prefix', () => {
 test('generation option enums match provider contracts', () => {
   assert.deepEqual([...__test.imageSizes], ['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
   assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9']);
-  assert.deepEqual([...__test.videoDurations], [8, 20, 30]);
+  assert.deepEqual([...__test.videoDurations], [8, 10, 20, 30]);
 });
 
 test('models are fixed server-side and network errors retain their cause', () => {
@@ -96,6 +96,15 @@ test('legacy projects recover their furthest completed drama step', () => {
 test('manual video prompt overrides survive project normalization', () => {
   const project = __test.normalizeDramaProject({settings:{},resources:[],shots:[{title:'镜头',promptOverride:'用户手动修改后的逐秒分镜',resourceIds:[],referenceAssetIds:[],videoVersions:[]}]});
   assert.equal(project.shots[0].promptOverride, '用户手动修改后的逐秒分镜');
+});
+
+test('professional project normalization preserves ten-second durations', () => {
+  const project = __test.normalizeDramaProject({
+    mode:'professional', settings:{shotDuration:10}, resources:[],
+    shots:[{title:'十秒镜头',duration:10,resourceIds:[],referenceAssetIds:[],videoVersions:[]}],
+  });
+  assert.equal(project.settings.shotDuration, 10);
+  assert.equal(project.shots[0].duration, 10);
 });
 
 test('ordered video reference selections survive project normalization', () => {
