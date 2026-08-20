@@ -232,5 +232,5 @@
   $('#loginForm').addEventListener('submit', login);
   $('#logoutButton').addEventListener('click', async () => { try { await api('/api/admin/auth/logout', { method:'POST', body:'{}' }); } finally { location.reload(); } });
   document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
-  api('/api/admin/auth/session').then(result => { state.admin = result.admin; $('#adminName').textContent = result.admin.username; showView('overview'); $('#adminLogin').classList.add('hidden'); $('#adminApp').classList.remove('hidden'); }).catch(() => {});
+  api('/api/admin/auth/session').then(result => { state.csrf = result.csrfToken; state.admin = result.admin; $('#adminName').textContent = result.admin.username; showView('overview'); $('#adminLogin').classList.add('hidden'); $('#adminApp').classList.remove('hidden'); }).catch(() => {});
 })();
