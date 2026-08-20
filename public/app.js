@@ -768,7 +768,19 @@ async function submitGeneration(type, form, payload) { const button = form.query
 $('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value }); };
 $('#videoForm').onsubmit = event => { event.preventDefault(); syncVideoPromptState(); if (!$('#videoModel').value) return toast('请先选择视频模型'); if (Array.from($('#videoPrompt').value).length > videoPromptMaxLength) return; const { mode } = videoGenerationParameters(); const referenceAssetIds = mode === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video; submitGeneration('video', event.currentTarget, { prompt:$('#videoPrompt').value, modelId:$('#videoModel').value, aspectRatio:$('#videoAspect').value, duration:Number($('#videoDuration').value), quality:$('#videoResolution').value, generationType:mode, referenceAssetIds }); };
 function updateVideoCost() { const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return; const parameters = videoModelParameters($('#videoModel')?.value, videoGenerationParameters().mode); const fixedPrice = parameters?.pricing?.unit === 'request' ? Number(parameters.pricing.amount) / Number(state.pricing.yuanPerCredit || 0.1) : null; const perSecondPrice = parameters?.pricing?.unit === 'second' ? Number(parameters.pricing.amount) : null; cost.textContent = creditText(fixedPrice ?? Number(duration.value || 0) * (perSecondPrice ?? state.pricing.videoPerSecond)); }
-$('#videoModel').onchange = () => { state.videoGenerationType = 'TEXT'; state.refs.video = []; state.videoFrames = { first:'', last:'' }; renderReferences(); };
+$('#videoModel').onchange = () => {
+  const hadFirstLast = state.videoGenerationType === 'FIRST&LAST';
+  const supportsReference = supportsVideoMode('REFERENCE');
+  const supportsFirstLast = supportsVideoFirstLast();
+  if (hadFirstLast && !supportsFirstLast) {
+    state.refs.video = [state.videoFrames.first, state.videoFrames.last, ...state.refs.video].filter(Boolean);
+    state.videoFrames = { first:'', last:'' };
+  }
+  if (supportsReference) state.refs.video = state.refs.video.slice(0, videoReferenceLimit());
+  else if (!supportsFirstLast) state.refs.video = [];
+  state.videoGenerationType = hadFirstLast && supportsFirstLast ? 'FIRST&LAST' : 'TEXT';
+  renderReferences();
+};
 $('#videoDuration').onchange = () => { syncVideoModelParameters(); updateVideoCost(); };
 
 function renderPreviewMeta(file, width=file.width, height=file.height) { $('#previewDetailMeta').innerHTML = detailRow('素材类型', file.kind === 'image' ? '图片' : '视频') + detailRow('画面尺寸', width && height ? `${width} × ${height} px` : '读取中', 'previewDimensions') + detailRow('文件大小', formatBytes(file.size)) + detailRow('添加时间', fullDateText(file.createdAt)) + detailRow('原始文件名', file.name); }

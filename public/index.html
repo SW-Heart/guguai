@@ -56,7 +56,7 @@
     <nav class="rail" aria-label="主要功能">
       <button class="rail-button active" data-route="image"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span>图像生成</span></button>
       <button class="rail-button" data-route="video"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span>视频生成</span></button>
-      <button class="rail-button" data-route="drama"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 9h16M8 5l2 4M14 5l2 4"/><path d="m10 12 5 2.5-5 2.5z"/></svg><span>短剧创作</span></button>
+      <button class="rail-button" data-route="drama"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 9h16M8 5l2 4M14 5l2 4"/><path d="m10 12 5 2.5-5 2.5z"/></svg><span>短剧创作</span><em class="rail-beta" aria-hidden="true">内测</em></button>
       <button class="rail-button" data-route="files"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></svg><span>文件库</span></button>
       <div class="rail-spacer"></div>
     </nav>
@@ -118,6 +118,6 @@
   <dialog id="renameFileDialog" class="form-dialog" aria-labelledby="renameFileTitle" aria-describedby="renameFileHelp"><form id="renameFileForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">文件管理</span><h2 id="renameFileTitle">重命名素材</h2><p id="renameFileHelp">修改后会立即同步到文件库。</p></div><button id="closeRenameFile" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body"><label class="dialog-field" for="renameFileInput"><span>文件名</span><input id="renameFileInput" maxlength="200" autocomplete="off" required><small id="renameFileError" class="field-error hidden" role="alert"></small></label></div><footer class="dialog-footer"><button id="cancelRenameFile" class="secondary-button" type="button">取消</button><button id="saveRenameFile" class="gradient-button" type="submit">保存名称</button></footer></form></dialog>
   <dialog id="deleteConfirmDialog" class="delete-confirm-dialog" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage"><div><div class="dialog-head"><div><span class="dialog-kicker">危险操作</span><h2 id="deleteConfirmTitle">确认删除</h2></div></div><p id="deleteConfirmMessage">作品一旦删除，无法恢复。</p><footer><button id="cancelDeleteConfirm" class="secondary-button" type="button">取消</button><button id="acceptDeleteConfirm" class="danger-button" type="button">确认删除</button></footer></div></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js?v=97"></script>
+  <script type="module" src="/app.js?v=98"></script>
 </body>
 </html>
