@@ -8,6 +8,12 @@ upstream gugu_ai {
 limit_req_zone $binary_remote_addr zone=gugu_login:10m rate=5r/m;
 limit_req_status 429;
 
+gzip on;
+gzip_comp_level 5;
+gzip_min_length 1024;
+gzip_proxied any;
+gzip_types text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml;
+
 server {
     listen 80;
     listen [::]:80;

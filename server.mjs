@@ -11,8 +11,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, migrationCompleted, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
-import { chargeGenerationMicro, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { configureCursors, createSessionRecord, deleteAsset, deleteGeneration, deleteSession, findAsset, findDramaProject, findGeneration, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
+import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
+import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntents, findAsset, findDramaProject, findGeneration, findUploadIntent, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, listRecoverableUploadIntents, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -30,20 +30,28 @@ const publicDir = path.join(here, 'public');
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(here, 'data');
 const legacyUsersFile = path.join(dataDir, 'users.json');
 const userDataDir = path.join(dataDir, 'users');
+const mediaTmpDir = process.env.MEDIA_TMP_DIR ? path.resolve(process.env.MEDIA_TMP_DIR) : path.join(dataDir, 'tmp');
+const mediaTmpMaxAgeMs = Math.max(60_000, Number(process.env.MEDIA_TMP_MAX_AGE_MINUTES || 360) * 60_000);
 const port = Number(process.env.PORT || 4317);
 const duomiBase = (process.env.DUOMI_API_BASE || 'https://duomiapi.com').replace(/\/$/, '');
 const ttapiBase = (process.env.TTAPI_API_BASE || 'https://api.ttapi.io').replace(/\/$/, '');
+const configuredCntcnBase = (process.env.CNTCN_API_BASE || 'https://api.ai.cntcn.com').replace(/\/$/, '');
+const cntcnBase = /\/v1$/i.test(configuredCntcnBase) ? configuredCntcnBase : `${configuredCntcnBase}/v1`;
 const configuredOaiBase = (process.env.OAI_API_BASE || 'https://newapi.oairegbox.cc/v1').replace(/\/$/, '');
 const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${configuredOaiBase}/v1`;
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
+const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
 const oaiGrokConfigured = Boolean(process.env.OAIAPI_GROK_KEY);
 const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
+const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
 const ttapiPollIntervalMs = 8_000;
 const ttapiMaxPollBackoffMs = 60_000;
 const ttapiRequestTimeoutMs = 60_000;
+const cntcnRequestTimeoutMs = 60_000;
+const cntcnPollIntervalMs = 5_000;
 const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
@@ -52,6 +60,13 @@ const llmRates = llmRatesFromEnv();
 const ossPrefix = String(process.env.ALIYUN_OSS_PREFIX || 'model-studio').replace(/^\/+|\/+$/g, '');
 const ossConfigured = Boolean(process.env.ALIYUN_ACCESS_KEY_ID && process.env.ALIYUN_ACCESS_KEY_SECRET && process.env.ALIYUN_OSS_ENDPOINT && process.env.ALIYUN_OSS_BUCKET);
 const oss = ossConfigured ? new OSS({ accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID, accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET, endpoint: process.env.ALIYUN_OSS_ENDPOINT, bucket: process.env.ALIYUN_OSS_BUCKET, secure: true }) : null;
+const directOssUploadEnabled = String(process.env.DIRECT_OSS_UPLOAD_ENABLED || '').toLowerCase() === 'true';
+const uploadIntentExpiresSeconds = Math.max(60, Number(process.env.UPLOAD_INTENT_EXPIRES_SECONDS || 600));
+const ossUploadExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS || 300));
+const ossAssetUrlExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS || 900));
+const uploadMaxPendingPerUser = Math.max(1, Number(process.env.UPLOAD_MAX_PENDING_PER_USER || 3));
+const uploadInitLimitPerMinute = Math.max(1, Number(process.env.UPLOAD_INIT_LIMIT_PER_MINUTE || 10));
+const uploadInitAttempts = new Map();
 const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 8 * 1024 * 1024;
@@ -61,16 +76,26 @@ const assetRestores = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
+const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm']);
+const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm' });
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
-const videoDurations = new Set([8, 10, 20, 30]);
-const dramaVideoDurations = new Set([8, 10, 20, 30]);
+const videoDurations = new Set([8, 10, 15, 20, 30]);
+const dramaVideoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2' });
 const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
 
 await fs.mkdir(userDataDir, { recursive: true });
+await fs.mkdir(mediaTmpDir, { recursive: true });
+const staleMediaCutoff = Date.now() - mediaTmpMaxAgeMs;
+for (const entry of await fs.readdir(mediaTmpDir, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const target = path.join(mediaTmpDir, entry.name);
+  const stat = await fs.stat(target).catch(() => null);
+  if (stat && stat.mtimeMs < staleMediaCutoff) await fs.rm(target, { recursive: true, force: true }).catch(error => console.error(`[media] 启动清理失败 ${target}`, error.message));
+}
 
 // Metadata lives in SQLite; only media binaries stay on disk (plus OSS).
 openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' ? ':memory:' : null });
@@ -109,6 +134,25 @@ const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
 const publicUser = user => ({ id: user.id, username: user.username, role: user.role || 'user', status: user.status || 'active', credits: normalizeWallet(user).balance, createdAt: user.createdAt });
+const uploadSweepIntervalMs = Math.max(60_000, Number(process.env.UPLOAD_SWEEP_INTERVAL_MINUTES || 10) * 60_000);
+const uploadVerifyStaleMs = Math.max(60_000, Number(process.env.UPLOAD_VERIFY_STALE_MINUTES || 10) * 60_000);
+const uploadSweeper = setInterval(() => {
+  if (!directOssUploadEnabled || !ossConfigured) return;
+  const nowIso = now();
+  try {
+    const expired = expireUploadIntents(nowIso);
+    if (expired.length) expired.forEach(intent => oss.delete(intent.temporaryOssKey).catch(() => {}));
+    const staleBefore = new Date(Date.now() - uploadVerifyStaleMs).toISOString();
+    const stale = listRecoverableUploadIntents(nowIso, staleBefore);
+    stale.forEach(intent => {
+      markUploadIntentFailed(intent.userId, intent.id, { errorCode: 'UPLOAD_VERIFY_TIMEOUT', nowIso });
+      oss.delete(intent.temporaryOssKey).catch(() => {});
+      oss.delete(intent.finalOssKey).catch(() => {});
+    });
+    if (expired.length || stale.length) console.log(`[uploads] 清理过期 ${expired.length} 条，超时 ${stale.length} 条`);
+  } catch (error) { console.error('[uploads] 定期清理失败', error); }
+}, uploadSweepIntervalMs);
+uploadSweeper.unref();
 const generationFailureCatalog = Object.freeze({
   CONTENT_REJECTED: Object.freeze({ message: '内容未通过生成检查', suggestion: '请调整可能涉及敏感、侵权或高风险的描述及参考图片后重试。', action: 'edit_input' }),
   INVALID_REFERENCE: Object.freeze({ message: '参考图片不符合生成要求', suggestion: '请检查图片格式、大小和数量，移除异常图片后重新生成。', action: 'edit_input' }),
@@ -209,6 +253,7 @@ function configState() {
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY),
     oss: ossConfigured,
+    directOssUpload: ossConfigured && directOssUploadEnabled,
     llm: isLlmConfigured(llmConfig),
     pricing: { version: pricing.version, imagePerRequest: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond },
     videoCapabilities: publicVideoCapabilitiesWithControls(),
@@ -339,8 +384,81 @@ async function createTtapiVideo(task, refs, hooks = {}) {
   await hooks.onSubmitted?.({ provider: 'ttapi', taskId: String(taskId) });
   return pollTtapiVideo(String(taskId), hooks);
 }
+function cntcnVideoUrl(value) {
+  const candidates = [
+    value?.video_url, value?.url, value?.download_url, value?.original_video_url,
+    value?.data?.video_url, value?.data?.url, value?.data?.download_url, value?.data?.original_video_url,
+  ];
+  const candidate = candidates.find(item => typeof item === 'string' && item.trim());
+  return candidate ? candidate.trim() : '';
+}
+function cntcnTaskId(value) {
+  const candidate = value?.task_id || value?.taskId || value?.id || value?.data?.task_id || value?.data?.taskId || value?.data?.id;
+  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
+}
+function cntcnStatus(value) {
+  return String(value?.status || value?.data?.status || value?.data?.status_code || '').trim().toLowerCase();
+}
+function cntcnError(value) {
+  return errorMessage(value?.error || value?.error_message || value?.api_error || value, 'CNTCN 视频生成失败');
+}
+async function pollCntcnVideo(taskId, hooks = {}) {
+  let consecutiveErrors = 0;
+  let recovering = false;
+  for (;;) {
+    await sleep(consecutiveErrors ? Math.min(cntcnPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000) : cntcnPollIntervalMs);
+    let state;
+    try {
+      state = await fetchJson(`${cntcnBase}/videos/${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: `Bearer ${process.env.CNTCN_KEY}` },
+        signal: AbortSignal.timeout(cntcnRequestTimeoutMs),
+      });
+    } catch (error) {
+      consecutiveErrors++;
+      recovering = true;
+      const detail = upstreamRequestErrorDetail(error);
+      console.error('[video] CNTCN poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
+      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
+      catch (saveError) { console.error('[video] CNTCN poll state persistence failed', { taskId, message: saveError.message }); }
+      continue;
+    }
+    if (recovering) {
+      try { await hooks.onPollRecovered?.(); }
+      catch (saveError) { console.error('[video] CNTCN recovery state persistence failed', { taskId, message: saveError.message }); }
+    }
+    consecutiveErrors = 0;
+    recovering = false;
+    const videoUrl = cntcnVideoUrl(state);
+    if (videoUrl) return { provider: 'cntcn', taskId, url: videoUrl };
+    const status = cntcnStatus(state);
+    if (['failed', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
+      throw Object.assign(new Error(cntcnError(state)), { provider: 'cntcn', providerTaskId: taskId, upstreamTerminal: true });
+    }
+    // An expired URL can be regenerated by querying the task again.
+  }
+}
+async function createCntcnVideo(task, refs, hooks = {}) {
+  let taskId = '';
+  try {
+    const created = await fetchJson(`${cntcnBase}/videos`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.CNTCN_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildVideoPayload(task, refs)),
+      signal: AbortSignal.timeout(cntcnRequestTimeoutMs),
+    });
+    taskId = cntcnTaskId(created);
+    if (!taskId) throw new Error('CNTCN 已接受请求，但没有返回任务 ID，提交结果待核对');
+    await hooks.onSubmitted?.({ provider: 'cntcn', taskId });
+    return pollCntcnVideo(taskId, hooks);
+  } catch (error) {
+    if (error.upstreamTerminal) throw error;
+    if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'cntcn', upstreamTerminal: true });
+    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'cntcn', providerTaskId: taskId });
+    throw Object.assign(new Error(`CNTCN 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'cntcn', submissionUncertain: true, cause: error });
+  }
+}
 function oaiVideoUrl(value) {
-  const candidate = value?.data?.[0]?.url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
+  const candidate = value?.data?.[0]?.video_url || value?.data?.[0]?.url || value?.data?.video_url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
   return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : '';
 }
 function oaiTaskId(value) {
@@ -353,6 +471,7 @@ function oaiStatus(value) {
 function oaiKeyForTask(task) {
   if (task.videoModelId === VIDEO_MODEL_IDS.GROK_15) return process.env.OAIAPI_GROK_KEY;
   if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) return process.env.OAIAPI_VEO_KEY;
+  if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) return process.env.OAIAPI_MINIMAX_KEY;
   return process.env.OAIAPI_GEMINI_KEY;
 }
 function veo31Size(task) {
@@ -363,6 +482,7 @@ function veo31Size(task) {
   return sizeByAspect[task.aspectRatio]?.[task.quality || '720p'] || '1280x720';
 }
 function buildOaiVideoPayload(task, refs) {
+  if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) return buildVideoPayload(task, refs);
   if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) {
     const payload = {
       model: task.model,
@@ -421,6 +541,7 @@ async function createOaiVideo(task, refs) {
       if (videoUrl) return { provider: 'oai', taskId, url: videoUrl };
       if (['SUCCEEDED', 'SUCCESS', 'COMPLETED', 'COMPLETE', 'DONE'].includes(status)) {
         if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) throw new Error('Veo 3.1 任务已完成，但响应没有返回顶层 video_url');
+        if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) throw new Error('MiniMax H3 任务已完成，但响应没有返回 video_url');
         return { provider: 'oai', taskId, url: `${oaiBase}/videos/${encodeURIComponent(taskId)}/content`, requiresAuth: true };
       }
       if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) throw new Error(errorMessage(state, 'OAI 视频生成失败'));
@@ -437,9 +558,19 @@ async function createVideo(task, refs, hooks = {}) {
     return createTtapiVideo(task, refs, hooks);
   }
   if (task.provider === 'duomi') return createDuomiVideo(task, refs);
+  if (task.provider === 'cntcn') {
+    if (!cntcnConfigured) throw new Error('CNTCN Seedance 视频服务尚未配置');
+    return createCntcnVideo(task, refs, hooks);
+  }
   if (task.provider === 'oai') {
     if (!oaiKeyForTask(task)) {
-      const message = task.videoModelId === VIDEO_MODEL_IDS.GROK_15 ? 'Grok Video 服务尚未配置' : task.videoModelId === VIDEO_MODEL_IDS.VEO_31 ? 'Veo 3.1 服务尚未配置' : 'OAI 视频服务尚未配置';
+      const message = task.videoModelId === VIDEO_MODEL_IDS.GROK_15
+        ? 'Grok Video 服务尚未配置'
+        : task.videoModelId === VIDEO_MODEL_IDS.VEO_31
+          ? 'Veo 3.1 服务尚未配置'
+          : task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3
+            ? 'MiniMax H3 服务尚未配置'
+            : 'OAI 视频服务尚未配置';
       throw new Error(message);
     }
     return createOaiVideo(task, refs);
@@ -552,6 +683,147 @@ function publicAsset(asset) {
   return { ...value, url: `/api/files/${asset.id}/content` };
 }
 function ossObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [ossPrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
+async function withMediaTempDir(label, callback) {
+  const jobDir = path.join(mediaTmpDir, `${safeId(label) || 'job'}-${randomUUID()}`);
+  await fs.mkdir(jobDir, { recursive: true, mode: 0o700 });
+  try { return await callback(jobDir); }
+  finally { await fs.rm(jobDir, { recursive: true, force: true }).catch(error => console.error(`[media] 临时目录清理失败 ${jobDir}`, error.message)); }
+}
+async function uploadAssetFileToOss(userId, asset, sourceFile) {
+  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  const key = asset.ossKey || ossObjectKey(userId, asset.storageName);
+  await oss.put(key, sourceFile, { headers: { 'Content-Type': asset.mimeType } });
+  asset.ossKey = key; asset.ossUploadedAt = now();
+  await saveAsset(userId, asset);
+  return key;
+}
+function uploadExtension(mimeType, name = '') {
+  const requested = path.extname(String(name)).toLowerCase().replace(/[^a-z0-9.]/g, '');
+  if (requested && requested.length <= 10) return requested;
+  return ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba' }[mimeType] || '');
+}
+function pendingUploadKey(userId, uploadId, mimeType, name) { return [ossPrefix, 'pending', safeId(userId), `${safeId(uploadId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
+function finalUploadKey(userId, assetId, mimeType, name) { return [ossPrefix, 'assets', safeId(userId), `${safeId(assetId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
+function ossUploadUrl() { return oss ? `${oss.generateObjectUrl('').replace(/\/+$/, '')}/` : ''; }
+function uploadInitRateAllowed(userId, timestamp = Date.now()) {
+  const key = String(userId);
+  const current = uploadInitAttempts.get(key);
+  if (!current || timestamp - current.startedAt >= 60_000) {
+    uploadInitAttempts.set(key, { startedAt: timestamp, count: 1 });
+    return true;
+  }
+  if (current.count >= uploadInitLimitPerMinute) return false;
+  current.count += 1;
+  return true;
+}
+function uploadSizeLimit(mimeType) { return imageTypes.has(mimeType) ? maxReferenceImageBytes : maxUploadBytes; }
+function uploadKind(mimeType) { return imageTypes.has(mimeType) ? 'image' : videoTypes.has(mimeType) ? 'video' : 'audio'; }
+function normalizeUploadMime(mimeType, name = '') {
+  const declared = String(mimeType || '').split(';')[0].trim().toLowerCase();
+  if (declared === 'image/jpg' || declared === 'image/pjpeg') return 'image/jpeg';
+  if (declared === 'audio/x-m4a' || declared === 'audio/m4a') return 'audio/mp4';
+  if ([...imageTypes, ...videoTypes, ...audioTypes].includes(declared)) return declared;
+  const extension = path.extname(String(name || '')).toLowerCase();
+  return uploadMimeByExtension[extension] || declared;
+}
+function buildUploadPostPolicy({ key, mimeType, sizeLimit, expiresAt }) {
+  return {
+    expiration: expiresAt,
+    conditions: [
+      { bucket: process.env.ALIYUN_OSS_BUCKET },
+      ['eq', '$key', key],
+      ['eq', '$Content-Type', mimeType],
+      ['content-length-range', 1, sizeLimit],
+      ['eq', '$success_action_status', '200'],
+      ['eq', '$x-oss-forbid-overwrite', 'true'],
+    ],
+  };
+}
+function uploadPolicyFields(policy) {
+  if (!oss) return {};
+  const signed = oss.calculatePostSignature(policy);
+  return {
+    ...signed,
+    key: policy.conditions.find(item => Array.isArray(item) && item[1] === '$key')?.[2],
+    'Content-Type': policy.conditions.find(item => Array.isArray(item) && item[1] === '$Content-Type')?.[2],
+    success_action_status: '200',
+    'x-oss-forbid-overwrite': 'true',
+  };
+}
+function objectHeaders(result) {
+  const headers = result?.res?.headers || {};
+  const get = (...names) => names.map(name => headers[name] ?? headers[name.toLowerCase()]).find(value => value !== undefined && value !== null);
+  return {
+    size: Number(get('content-length') || 0),
+    mimeType: String(get('content-type') || '').split(';')[0].toLowerCase(),
+    etag: String(get('etag') || '').replace(/^"|"$/g, ''),
+  };
+}
+function combinedOssObjectMetadata(metaResult, headResult) {
+  const sizeMeta = objectHeaders(metaResult);
+  const headerMeta = objectHeaders(headResult);
+  return {
+    size: sizeMeta.size,
+    mimeType: headerMeta.mimeType || sizeMeta.mimeType,
+    etag: sizeMeta.etag || headerMeta.etag,
+    status: metaResult?.status || headResult?.status,
+  };
+}
+async function headOssObject(key) {
+  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  // getObjectMeta returns an accurate object size, but OSS does not include
+  // the standard Content-Type header in that response. HeadObject does.
+  const [metaResult, headResult] = await Promise.all([oss.getObjectMeta(key), oss.head(key)]);
+  return combinedOssObjectMetadata(metaResult, headResult);
+}
+async function readOssPrefix(key) {
+  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  const result = await oss.get(key, { headers: { Range: 'bytes=0-63' } });
+  return Buffer.from(result.content || '');
+}
+function magicMatches(mimeType, content) {
+  const bytes = Buffer.from(content || '');
+  if (mimeType === 'image/png') return bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  if (mimeType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (mimeType === 'image/webp') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (mimeType === 'video/webm') return bytes.subarray(0, 4).equals(Buffer.from('1a45dfa3', 'hex'));
+  if (mimeType === 'video/mp4' || mimeType === 'video/quicktime') return bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav') return bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WAVE';
+  if (mimeType === 'audio/ogg') return bytes.subarray(0, 4).toString('ascii') === 'OggS';
+  if (mimeType === 'audio/mpeg' || mimeType === 'audio/mp3') return bytes.subarray(0, 3).toString('ascii') === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
+  if (mimeType === 'audio/aac') return bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0;
+  if (mimeType === 'audio/mp4') return bytes.subarray(4, 8).toString('ascii') === 'ftyp';
+  if (mimeType === 'audio/webm') return bytes.subarray(0, 4).equals(Buffer.from('1a45dfa3', 'hex'));
+  return false;
+}
+async function verifyUploadedObject(intent) {
+  let meta;
+  try { meta = await headOssObject(intent.temporaryOssKey); } catch (error) {
+    throw Object.assign(new Error('上传对象不存在或暂时不可读取'), { statusCode: 422, code: 'UPLOAD_OBJECT_MISSING', cause: error });
+  }
+  if (meta.size !== Number(intent.expectedSize)) throw Object.assign(new Error('上传文件大小校验失败'), { statusCode: 422, code: 'UPLOAD_SIZE_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
+  if (normalizeUploadMime(meta.mimeType) !== String(intent.mimeType).toLowerCase()) throw Object.assign(new Error('上传文件类型校验失败'), { statusCode: 422, code: 'UPLOAD_MIME_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
+  const prefix = await readOssPrefix(intent.temporaryOssKey);
+  if (!magicMatches(intent.mimeType, prefix)) throw Object.assign(new Error('文件内容与声明类型不一致'), { statusCode: 422, code: 'UPLOAD_MAGIC_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
+  return meta;
+}
+async function promoteUploadedObject(intent) {
+  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  try {
+    const existing = await headOssObject(intent.finalOssKey);
+    if (existing.size === Number(intent.expectedSize) && existing.mimeType === String(intent.mimeType).toLowerCase()) return existing;
+    throw Object.assign(new Error('正式对象已存在但内容不匹配'), { statusCode: 409, code: 'UPLOAD_FINAL_CONFLICT' });
+  } catch (error) {
+    if (error.code === 'UPLOAD_FINAL_CONFLICT') throw error;
+    // A missing final object is the normal first-promotion path. Other OSS
+    // errors must still surface instead of being mistaken for a 404.
+    const status = error?.status || error?.statusCode || error?.res?.status;
+    const code = String(error?.code || '');
+    if (status && status !== 404 && !/NoSuchKey|NotFound|NoSuchObject/i.test(code)) throw error;
+  }
+  await oss.copy(intent.finalOssKey, intent.temporaryOssKey, { headers: { 'Content-Type': intent.mimeType, 'x-oss-forbid-overwrite': 'true' } });
+  return headOssObject(intent.finalOssKey);
+}
 async function uploadAssetToOss(userId, asset) {
   if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
   const key = asset.ossKey || ossObjectKey(userId, asset.storageName);
@@ -560,16 +832,18 @@ async function uploadAssetToOss(userId, asset) {
   await saveAsset(userId, asset);
   return key;
 }
-async function signedOssUrl(key, expires = 3600) { return oss.signatureUrl(key, { expires, method: 'GET' }); }
-async function ensureLocalAsset(userId, asset) {
-  const localFile = path.join(assetFilesDir(userId), asset.storageName);
-  if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
+function publicOssUrl(key) { return oss.generateObjectUrl(key); }
+async function signedOssUrl(key, expires = ossAssetUrlExpiresSeconds) { return oss.signatureUrl(key, { expires, method: 'GET' }); }
+async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)) {
+  const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
+  if (await fs.access(permanentFile).then(() => true).catch(() => false)) return permanentFile;
   if (!oss || !asset.ossKey) throw Object.assign(new Error('文件本地缓存缺失，且没有可用的 OSS 归档'), { statusCode: 503 });
 
-  const restoreKey = `${safeId(userId)}:${asset.id}`;
+  const localFile = path.join(targetDir, asset.storageName);
+  const restoreKey = `${safeId(userId)}:${asset.id}:${targetDir}`;
   if (assetRestores.has(restoreKey)) return assetRestores.get(restoreKey);
   const restore = (async () => {
-    await ensureUserDirs(userId);
+    await fs.mkdir(targetDir, { recursive: true, mode: 0o700 });
     if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
     const url = await signedOssUrl(asset.ossKey);
     await downloadToFile(url, localFile, 4);
@@ -578,15 +852,33 @@ async function ensureLocalAsset(userId, asset) {
   assetRestores.set(restoreKey, restore);
   return restore;
 }
-async function resolveRefs(userId, ids) { const refs = []; for (const id of ids.slice(0, 7)) { const asset = findAsset(userId, id); if (!asset || asset.kind !== 'image') continue; const key = asset.ossKey || await uploadAssetToOss(userId, asset); refs.push(await signedOssUrl(key)); } return refs; }
-async function validateReferenceAssets(userId, value) {
-  if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考图 image_urls 必须使用数组格式'), { statusCode: 400 });
+async function resolveRefs(userId, ids, task = {}) {
+  const mixed = task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3;
+  const refs = mixed ? { images: [], videos: [], audios: [] } : [];
+  for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
+    const asset = findAsset(userId, id);
+    if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
+    if (!mixed && asset.kind !== 'image') continue;
+    const key = asset.ossKey || await uploadAssetToOss(userId, asset);
+    const url = task.provider === 'cntcn' ? publicOssUrl(key) : await signedOssUrl(key);
+    if (mixed) refs[`${asset.kind}s`].push(url);
+    else refs.push(url);
+  }
+  return refs;
+}
+async function validateReferenceAssets(userId, value, limits = null) {
+  if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
   const ids = [...new Set((value || []).map(safeId).filter(Boolean))];
-  if (ids.length > 7) throw Object.assign(new Error('参考图最多支持 7 张'), { statusCode: 400 });
+  const referenceLimits = limits || { image: 7, video: 0, audio: 0, total: 7 };
+  if (ids.length > referenceLimits.total) throw Object.assign(new Error(`参考素材最多支持 ${referenceLimits.total} 个（图片 ${referenceLimits.image} / 视频 ${referenceLimits.video} / 音频 ${referenceLimits.audio}）`), { statusCode: 400 });
+  const counts = { image: 0, video: 0, audio: 0 };
   for (const id of ids) {
     const asset = findAsset(userId, id);
-    if (!asset || asset.kind !== 'image') throw Object.assign(new Error('参考图不存在或不是图片'), { statusCode: 400 });
-    if (Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 8 MB`), { statusCode: 400 });
+    if (!asset || !Object.hasOwn(counts, asset.kind)) throw Object.assign(new Error('参考素材不存在或类型不受当前模型支持'), { statusCode: 400 });
+    counts[asset.kind]++;
+    if (counts[asset.kind] > Number(referenceLimits[asset.kind] || 0)) throw Object.assign(new Error(`参考${asset.kind === 'image' ? '图片' : asset.kind === 'video' ? '视频' : '音频'}最多支持 ${referenceLimits[asset.kind]} 个`), { statusCode: 400 });
+    if (asset.kind === 'image' && Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 8 MB`), { statusCode: 400 });
+    if (asset.kind !== 'image' && Number(asset.size) > maxUploadBytes) throw Object.assign(new Error(`参考素材“${asset.name}”超过 25 MB`), { statusCode: 400 });
   }
   return ids;
 }
@@ -599,44 +891,48 @@ async function archiveGenerationResult(userId, task, resultUrl) {
     task.error = '';
     return;
   }
-  const extension = task.type === 'image' ? '.png' : '.mp4';
-  const storageName = `${assetId}${extension}`;
-  const localFile = path.join(assetFilesDir(userId), storageName);
-  const contentUrl = task.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
-  const downloadHeaders = resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
-  const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
-  const asset = { id: assetId, ownerId: userId, name: `${task.type === 'image' ? '生成图片' : '生成视频'} ${new Date().toLocaleString('zh-CN')}${extension}`, kind: task.type, mimeType: saved.contentType, size: saved.size, storageName, source: 'generation', sourceGenerationId: task.id, sourceUrl: resultUrl, createdAt: now(), updatedAt: now() };
-  try { await uploadAssetToOss(userId, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw error; }
-  task.assetId = assetId;
-  task.status = 'completed';
-  task.error = '';
+  return withMediaTempDir(`generation-${task.id}`, async jobDir => {
+    const extension = task.type === 'image' ? '.png' : '.mp4';
+    const storageName = `${assetId}${extension}`;
+    const localFile = path.join(jobDir, storageName);
+    const contentUrl = task.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
+    const downloadHeaders = resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
+    const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
+    const asset = { id: assetId, ownerId: userId, name: `${task.type === 'image' ? '生成图片' : '生成视频'} ${new Date().toLocaleString('zh-CN')}${extension}`, kind: task.type, mimeType: saved.contentType, size: saved.size, storageName, source: 'generation', sourceGenerationId: task.id, sourceUrl: resultUrl, createdAt: now(), updatedAt: now() };
+    await uploadAssetFileToOss(userId, asset, localFile);
+    task.assetId = assetId;
+    task.status = 'completed';
+    task.error = '';
+  });
 }
 async function archiveLocalAsset(userId, sourceFile, { name, kind, mimeType, source, projectId }) {
-  const id = randomUUID(); const extension = path.extname(sourceFile); const storageName = `${id}${extension}`; const target = path.join(assetFilesDir(userId), storageName);
-  await fs.rename(sourceFile, target); const stat = await fs.stat(target);
+  const id = randomUUID(); const extension = path.extname(sourceFile); const storageName = `${id}${extension}`; const stat = await fs.stat(sourceFile);
   const asset = { id, ownerId:userId, name, kind, mimeType, size:stat.size, storageName, source, projectId, sourceGenerationId:'', sourceUrl:'', createdAt:now(), updatedAt:now() };
-  try { await uploadAssetToOss(userId, asset); } catch (error) { await fs.unlink(target).catch(() => {}); throw error; }
+  try { await uploadAssetFileToOss(userId, asset, sourceFile); } finally { await fs.unlink(sourceFile).catch(() => {}); }
   return asset;
 }
 async function extractVideoTailFrame(userId, project, shot) {
   const task = findGeneration(userId, shot.selectedVideoTaskId); const video = task?.assetId ? findAsset(userId, task.assetId) : null;
   if (!video || video.kind !== 'video') throw Object.assign(new Error('请先选择一个已完成的分镜视频'), { statusCode:400 });
-  const source = await ensureLocalAsset(userId, video); const temp = path.join(assetFilesDir(userId), `.tail-${randomUUID()}.jpg`);
-  await execFile('ffmpeg', ['-y','-sseof','-0.08','-i',source,'-frames:v','1','-q:v','2',temp], { timeout:120_000 });
-  const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 分镜 ${shot.shotNumber} 尾帧.jpg`, kind:'image', mimeType:'image/jpeg', source:'drama_tail_frame', projectId:project.id });
-  shot.tailFrameAssetId = asset.id; await saveDramaProject(userId, project); return asset;
+  return withMediaTempDir(`tail-${shot.id}`, async jobDir => {
+    const source = await ensureLocalAsset(userId, video, jobDir); const temp = path.join(jobDir, 'tail.jpg');
+    await execFile('ffmpeg', ['-y','-sseof','-0.08','-i',source,'-frames:v','1','-q:v','2',temp], { timeout:120_000 });
+    const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 分镜 ${shot.shotNumber} 尾帧.jpg`, kind:'image', mimeType:'image/jpeg', source:'drama_tail_frame', projectId:project.id });
+    shot.tailFrameAssetId = asset.id; await saveDramaProject(userId, project); return asset;
+  });
 }
 async function assembleDramaProject(userId, project) {
   if (!project.shots.length) throw Object.assign(new Error('项目还没有分镜'), { statusCode:400 });
   if (project.mode === 'professional' && project.shots.length < 2) throw Object.assign(new Error('专业编辑项目至少需要 2 个分镜才能合成'), { statusCode:400 });
-  const sources = [];
-  for (const shot of project.shots) { const task = findGeneration(userId, shot.selectedVideoTaskId); const asset = task?.assetId ? findAsset(userId, task.assetId) : null; if (!asset || asset.kind !== 'video') throw Object.assign(new Error(`分镜 ${shot.shotNumber} 还没有选择完成的视频`), { statusCode:400 }); sources.push(await ensureLocalAsset(userId, asset)); }
-  const concatFile = path.join(assetFilesDir(userId), `.concat-${randomUUID()}.txt`); const temp = path.join(assetFilesDir(userId), `.final-${randomUUID()}.mp4`);
-  await fs.writeFile(concatFile, sources.map(file => `file '${file.replaceAll("'", "'\\''")}'`).join('\n'));
-  try { await execFile('ffmpeg', ['-y','-f','concat','-safe','0','-i',concatFile,'-c:v','libx264','-preset','medium','-crf','20','-c:a','aac','-movflags','+faststart',temp], { timeout:900_000, maxBuffer:10_000_000 }); }
-  finally { await fs.unlink(concatFile).catch(() => {}); }
-  const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 完整成片.mp4`, kind:'video', mimeType:'video/mp4', source:'drama_final', projectId:project.id });
-  project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
+  return withMediaTempDir(`assemble-${project.id}`, async jobDir => {
+    const sources = [];
+    for (const shot of project.shots) { const task = findGeneration(userId, shot.selectedVideoTaskId); const asset = task?.assetId ? findAsset(userId, task.assetId) : null; if (!asset || asset.kind !== 'video') throw Object.assign(new Error(`分镜 ${shot.shotNumber} 还没有选择完成的视频`), { statusCode:400 }); sources.push(await ensureLocalAsset(userId, asset, jobDir)); }
+    const concatFile = path.join(jobDir, 'concat.txt'); const temp = path.join(jobDir, 'final.mp4');
+    await fs.writeFile(concatFile, sources.map(file => `file '${file.replaceAll("'", "'\\''")}'`).join('\n'));
+    await execFile('ffmpeg', ['-y','-f','concat','-safe','0','-i',concatFile,'-c:v','libx264','-preset','medium','-crf','20','-c:a','aac','-movflags','+faststart',temp], { timeout:900_000, maxBuffer:10_000_000 });
+    const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 完整成片.mp4`, kind:'video', mimeType:'video/mp4', source:'drama_final', projectId:project.id });
+    project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
+  });
 }
 function ttapiPersistenceHooks(userId, task) {
   return {
@@ -650,6 +946,34 @@ function ttapiPersistenceHooks(userId, task) {
       task.lastPollErrorAt = null;
       task.pollFailureCount = 0;
       await saveGenerationWithRetry(userId, task, 'ttapi-submitted');
+    },
+    onPollError: async ({ consecutiveErrors, detail }) => {
+      task.status = 'running';
+      task.lastPollError = detail;
+      task.lastPollErrorAt = now();
+      task.pollFailureCount = consecutiveErrors;
+      await saveGeneration(userId, task);
+    },
+    onPollRecovered: async () => {
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGeneration(userId, task);
+    },
+  };
+}
+function cntcnPersistenceHooks(userId, task) {
+  return {
+    onSubmitted: async ({ provider, taskId }) => {
+      task.provider = provider;
+      task.providerTaskId = taskId;
+      task.submittedAt ||= now();
+      task.submissionUncertain = false;
+      task.error = '';
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGenerationWithRetry(userId, task, 'cntcn-submitted');
     },
     onPollError: async ({ consecutiveErrors, detail }) => {
       task.status = 'running';
@@ -734,8 +1058,8 @@ function startGeneration(userId, task) {
       task.status = 'running';
       task.finishedAt = null;
       await saveGenerationWithRetry(userId, task, 'generation-running');
-      const refs = await resolveRefs(userId, task.referenceAssetIds);
-      const hooks = task.provider === 'ttapi' ? ttapiPersistenceHooks(userId, task) : {};
+      const refs = await resolveRefs(userId, task.referenceAssetIds, task);
+      const hooks = task.provider === 'ttapi' ? ttapiPersistenceHooks(userId, task) : task.provider === 'cntcn' ? cntcnPersistenceHooks(userId, task) : {};
       const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs, hooks);
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
       await completeGenerationResult(userId, task, result);
@@ -746,7 +1070,7 @@ function startGeneration(userId, task) {
         task.error = error.message;
         task.creditStatus = 'charged';
         console.error('[video] TTAPI submission outcome is uncertain; no refund issued', { generationId: task.id, message: error.message });
-      } else if (task.provider === 'ttapi' && task.providerTaskId && !error.upstreamTerminal) {
+      } else if (['ttapi', 'cntcn'].includes(task.provider) && task.providerTaskId && !error.upstreamTerminal) {
         task.status = 'running';
         task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
         task.creditStatus = 'charged';
@@ -791,6 +1115,33 @@ function resumeTtapiGeneration(userId, task) {
   activeGenerations.set(task.id, promise);
   return promise;
 }
+function resumeCntcnGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      task.error = '';
+      await saveGeneration(userId, task);
+      const result = await pollCntcnVideo(task.providerTaskId, cntcnPersistenceHooks(userId, task));
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.upstreamTerminal) await failGeneration(userId, task, error);
+      else {
+        task.status = 'running';
+        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
+        task.creditStatus = 'charged';
+        console.error('[video] CNTCN recovery paused without refund', { generationId: task.id, message: error.message });
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'cntcn-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
 function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
@@ -826,7 +1177,10 @@ async function recoverPendingGenerations() {
     } else if (task.provider === 'ttapi' && task.providerTaskId) {
       resumeTtapiGeneration(userId, task);
       polling++;
-    } else if (task.submissionUncertain || (task.provider === 'ttapi' && !task.providerTaskId)) {
+    } else if (task.provider === 'cntcn' && task.providerTaskId) {
+      resumeCntcnGeneration(userId, task);
+      polling++;
+    } else if (task.submissionUncertain || (['ttapi', 'cntcn'].includes(task.provider) && !task.providerTaskId)) {
       task.status = 'running';
       task.finishedAt = null;
       task.creditStatus = 'charged';
@@ -851,9 +1205,9 @@ async function streamUpload(req, target, limit = maxUploadBytes) { const handle 
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 
-async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; try { await serveFile(res, file, mime, '', 'no-cache'); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
+async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, generationFailureCode, publicGeneration };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, generationFailureCode, publicGeneration };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1239,20 +1593,34 @@ const server = http.createServer(async (req, res) => {
         if (!Number.isFinite(requestedDuration) || requestedDuration !== Number(dramaShot.duration)) return sendJson(res, 409, { error: `分镜时长已保存为 ${dramaShot.duration} 秒，请刷新页面后再生成` });
         input.duration = Number(dramaShot.duration);
       }
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds);
       const size = type === 'image' ? String(input.size || '16:9') : null;
       if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error: '不支持的图片比例' });
+      const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
       let aspectRatio = null; let duration = null; let videoRequest = null;
-      if (type === 'video') { videoRequest = validateVideoRequest(input, referenceAssetIds.length); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
+      if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
       const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
       if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
       const provider = type === 'image' ? 'duomi' : videoRequest.provider;
       if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
+      if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: 'CNTCN Seedance 视频服务尚未配置' });
       if (provider === 'oai') {
-        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15 ? oaiGrokConfigured : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31 ? oaiVeoConfigured : oaiConfigured;
+        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15
+          ? oaiGrokConfigured
+          : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
+            ? oaiVeoConfigured
+            : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
+              ? oaiMinimaxConfigured
+              : oaiConfigured;
         if (!configured) {
-          const message = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15 ? 'Grok Video 服务尚未配置' : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31 ? 'Veo 3.1 服务尚未配置' : '视频生成服务尚未配置';
+          const message = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15
+            ? 'Grok Video 服务尚未配置'
+            : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
+              ? 'Veo 3.1 服务尚未配置'
+              : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
+                ? 'MiniMax H3 服务尚未配置'
+                : '视频生成服务尚未配置';
           return sendJson(res, 503, { error: message });
         }
       }
@@ -1260,10 +1628,34 @@ const server = http.createServer(async (req, res) => {
       const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
         ? { ...pricing, videoPerSecondMicro: creditsToMicro(videoRequest.pricing.amount) }
         : pricing;
+      const quantity = type === 'image' ? (input.quantity === undefined ? 1 : input.quantity) : 1;
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10) return sendJson(res, 400, { error: '图片生成数量需为 1–10 的整数' });
       const pricingSnapshotValue = pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
-      const task = { id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider, model: type === 'video' ? videoRequest.model : fixedModels.image, modelId, size, quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration, ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, dramaProjectId, dramaShotId } : {}), creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro, pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue, creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '', createdAt: now(), updatedAt: now(), finishedAt: null };
-      const charged = await chargeGenerationMicro(user.id, task.id, task.creditCostMicro, { modelId, contentType:type, provider, pricingVersion: task.pricingVersion, onCharged: () => saveGeneration(user.id, task) }); if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
-      startGeneration(user.id, task); return sendJson(res, 202, { ...publicGeneration(task), balance: charged.balance });
+      const batchId = quantity > 1 ? randomUUID() : '';
+      const tasks = Array.from({ length: quantity }, (_, index) => ({
+        id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider,
+        model: type === 'video' ? videoRequest.model : fixedModels.image, modelId, size,
+        quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality,
+        aspectRatio, duration,
+        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits: videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
+        ...(quantity > 1 ? { batchId, batchIndex: index + 1, batchSize: quantity } : {}),
+        creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro,
+        pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue,
+        creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '',
+        createdAt: now(), updatedAt: now(), finishedAt: null,
+      }));
+      const chargeItems = tasks.map(task => ({
+        generationId: task.id,
+        costMicro: task.creditCostMicro,
+        metadata: { modelId, contentType:type, provider, pricingVersion: task.pricingVersion, onCharged: () => saveGeneration(user.id, task) },
+      }));
+      const charged = quantity === 1
+        ? await chargeGenerationMicro(user.id, tasks[0].id, tasks[0].creditCostMicro, chargeItems[0].metadata)
+        : await chargeGenerationBatchMicro(user.id, chargeItems);
+      if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
+      tasks.forEach(task => startGeneration(user.id, task));
+      if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(tasks[0]), balance: charged.balance });
+      return sendJson(res, 202, { tasks: tasks.map(publicGeneration), quantity, balance: charged.balance });
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {
@@ -1283,8 +1675,123 @@ const server = http.createServer(async (req, res) => {
       setPageHeaders(res, page);
       return sendJson(res, 200, page.items.map(publicAsset));
     }
+    if (url.pathname === '/api/files/uploads/init' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      if (!directOssUploadEnabled || !ossConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
+      if (!uploadInitRateAllowed(user.id)) return sendJson(res, 429, { error: '上传请求过于频繁，请稍后再试' });
+      if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) return sendJson(res, 429, { error: '未完成上传数量过多，请先完成或稍后重试' });
+      const input = await bodyJson(req, 32_000);
+      const mimeType = normalizeUploadMime(input.mimeType, input.name);
+      if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' });
+      const size = Number(input.size);
+      const sizeLimit = uploadSizeLimit(mimeType);
+      if (!Number.isSafeInteger(size) || size <= 0) return sendJson(res, 400, { error: '文件大小无效' });
+      if (size > sizeLimit) return sendJson(res, 413, { error: imageTypes.has(mimeType) ? '单张图片不能超过 8 MB' : '视频或音频不能超过 25 MB' });
+      const name = String(input.name || 'file').replace(/[\r\n\u0000-\u001f]/g, '').trim().slice(0, 160) || 'file';
+      const uploadId = randomUUID();
+      const assetId = randomUUID();
+      const createdAt = now();
+      const expiresAt = new Date(Date.now() + Math.min(uploadIntentExpiresSeconds, ossUploadExpiresSeconds) * 1000).toISOString();
+      const intent = {
+        id: uploadId,
+        userId: user.id,
+        assetId,
+        temporaryOssKey: pendingUploadKey(user.id, uploadId, mimeType, name),
+        finalOssKey: finalUploadKey(user.id, assetId, mimeType, name),
+        name,
+        kind: uploadKind(mimeType),
+        mimeType,
+        expectedSize: size,
+        clientWidth: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.width) || 0))) || null : null,
+        clientHeight: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.height) || 0))) || null : null,
+        status: 'pending',
+        expiresAt,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      createUploadIntent(intent);
+      const policy = buildUploadPostPolicy({ key: intent.temporaryOssKey, mimeType, sizeLimit, expiresAt });
+      return sendJson(res, 201, {
+        uploadId,
+        assetId,
+        method: 'POST',
+        uploadUrl: ossUploadUrl(),
+        fields: uploadPolicyFields(policy),
+        expiresAt,
+      });
+    }
+    const uploadStatusMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)$/);
+    if (uploadStatusMatch && req.method === 'GET') {
+      const user = await requireUser(req, res); if (!user) return;
+      const intent = findUploadIntent(user.id, uploadStatusMatch[1]);
+      if (!intent) return sendJson(res, 404, { error: '上传任务不存在' });
+      const asset = intent.status === 'completed' ? findAsset(user.id, intent.assetId) : null;
+      return sendJson(res, 200, { uploadId: intent.id, assetId: intent.assetId, status: intent.status, expiresAt: intent.expiresAt, asset: asset ? publicAsset(asset) : null });
+    }
+    const uploadCompleteMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)\/complete$/);
+    if (uploadCompleteMatch && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      if (!directOssUploadEnabled || !ossConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
+      const uploadId = uploadCompleteMatch[1];
+      const existing = findUploadIntent(user.id, uploadId);
+      if (!existing) return sendJson(res, 404, { error: '上传任务不存在' });
+      if (existing.status === 'completed') {
+        const asset = findAsset(user.id, existing.assetId);
+        return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
+      }
+      if (existing.status === 'expired') return sendJson(res, 410, { error: '上传凭证已过期，请重新选择文件' });
+      if (existing.status === 'failed') return sendJson(res, 422, { error: '上传文件验证失败，请重新选择文件' });
+      const nowIso = now();
+      if (existing.expiresAt <= nowIso) {
+        expireUploadIntents(nowIso, 1);
+        return sendJson(res, 410, { error: '上传凭证已过期，请重新选择文件' });
+      }
+      if (!claimUploadIntent(user.id, uploadId, nowIso)) {
+        const current = findUploadIntent(user.id, uploadId);
+        if (current?.status === 'completed') {
+          const asset = findAsset(user.id, current.assetId);
+          return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
+        }
+        return sendJson(res, 202, { uploadId, assetId: existing.assetId, status: current?.status || 'verifying' });
+      }
+      const intent = findUploadIntent(user.id, uploadId);
+      let meta;
+      try {
+        meta = await verifyUploadedObject(intent);
+        const finalMeta = await promoteUploadedObject(intent);
+        const extension = uploadExtension(intent.mimeType, intent.name);
+        const asset = {
+          id: intent.assetId,
+          ownerId: user.id,
+          name: intent.name,
+          kind: intent.kind,
+          mimeType: intent.mimeType,
+          size: meta.size,
+          storageName: `${intent.assetId}${extension}`,
+          source: 'upload',
+          sourceGenerationId: '',
+          sourceUrl: '',
+          ossKey: intent.finalOssKey,
+          ossUploadedAt: nowIso,
+          ...(intent.kind === 'image' && intent.clientWidth && intent.clientHeight ? { width: intent.clientWidth, height: intent.clientHeight } : {}),
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        completeUploadIntentWithAsset(user.id, uploadId, { actualSize: finalMeta.size || meta.size, objectEtag: finalMeta.etag || meta.etag, asset, nowIso });
+        await oss.delete(intent.temporaryOssKey).catch(error => console.warn(`[upload] 清理 pending 失败 uploadId=${uploadId}`, error.message));
+        return sendJson(res, 201, publicAsset(asset));
+      } catch (error) {
+        const code = error.code || 'UPLOAD_VERIFY_FAILED';
+        if (code.startsWith('UPLOAD_')) {
+          markUploadIntentFailed(user.id, uploadId, { errorCode: code, actualSize: error.actualSize ?? meta?.size ?? null, objectEtag: error.objectEtag ?? meta?.etag ?? null, nowIso: now() });
+          await oss.delete(intent.temporaryOssKey).catch(() => {});
+          return sendJson(res, error.statusCode || 422, { error: error.message || '上传文件验证失败', code });
+        }
+        throw Object.assign(new Error(`上传文件归档失败：${error.message}`), { statusCode: 502, cause: error });
+      }
+    }
     if (url.pathname === '/api/files/upload' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM 或 MOV' }); const isImage = imageTypes.has(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const size = await streamUpload(req, localFile, uploadLimit); if (!size) return sendJson(res, 400, { error: '文件为空' }); const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind: isImage ? 'image' : 'video', mimeType, size, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
+      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 8 MB' : '视频或音频不能超过 25 MB' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const size = await streamUpload(req, localFile, uploadLimit); if (!size) return sendJson(res, 400, { error: '文件为空' }); const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
     if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
@@ -1307,6 +1814,7 @@ if (process.env.NODE_ENV !== 'test') {
       if (shuttingDown) return;
       shuttingDown = true;
       clearInterval(sessionSweeper);
+      clearInterval(uploadSweeper);
       server.close(() => {
         try { closeDatabase(); } catch (error) { console.error('关闭数据库失败', error); }
         process.exit(0);

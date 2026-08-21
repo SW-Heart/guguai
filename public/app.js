@@ -3,7 +3,7 @@ import { listSignature, mergeTransientFields, recordSignature } from './list-syn
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[], audio:[] }, videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', detailTaskId:null, previewFileId:null };
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
@@ -28,7 +28,11 @@ const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${
 const dateText = value => new Date(value).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
 const fullDateText = value => value ? new Date(value).toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—';
 const imageAccept = 'image/png,image/jpeg,image/webp';
-const libraryAccept = `${imageAccept},video/mp4,video/webm,video/quicktime`;
+const videoAccept = 'video/mp4,video/webm,video/quicktime';
+const audioAccept = 'audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/mp4,audio/aac,audio/webm';
+const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm' });
+function normalizedUploadMime(file) { const declared = String(file?.type || '').split(';')[0].trim().toLowerCase(); if (declared === 'image/jpg' || declared === 'image/pjpeg') return 'image/jpeg'; if (declared === 'audio/x-m4a' || declared === 'audio/m4a') return 'audio/mp4'; if (['image/png','image/jpeg','image/webp','video/mp4','video/webm','video/quicktime','audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/ogg','audio/mp4','audio/aac','audio/webm'].includes(declared)) return declared; const extension = `.${String(file?.name || '').split('.').pop()}`.toLowerCase(); return uploadMimeByExtension[extension] || declared; }
+const libraryAccept = `${imageAccept},${videoAccept},${audioAccept}`;
 const statusText = value => ({ queued:'排队中', running:'生成中', completed:'已完成', failed:'失败' })[value] || value;
 const generationStage = status => status === 'queued' ? 1 : status === 'running' ? 3 : status === 'completed' ? 5 : 0;
 const generationStages = ['排队', '准备', '生成', '增强', '完成'];
@@ -125,7 +129,7 @@ async function loadCredits() {
     state.pricing = result.pricing;
     state.creditWallet = { balance:Number(result.balance) || 0, held:Number(result.held) || 0, available:Number(result.available) || 0 };
     state.creditTransactions = Array.isArray(result.transactions) ? result.transactions : [];
-    setCreditBalance(result.balance);
+    updateImageCost();
     updateVideoCost();
   } catch (error) { if (error.status === 401) location.reload(); }
 }
@@ -477,7 +481,7 @@ $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generati
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
 $('#useGenerationReference').onclick = () => continueFromTask(state.tasks.find(item => item.id === state.detailTaskId), 'image', true);
 $('#deriveGeneration').onclick = () => { const task = state.tasks.find(item => item.id === state.detailTaskId); continueFromTask(task, 'video', true); };
-$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmDelete({ title:'确认删除作品', message:'作品一旦删除，无法恢复。' })) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (task.assetId) { state.refs.image = state.refs.image.filter(assetId => assetId !== task.assetId); state.refs.video = state.refs.video.filter(assetId => assetId !== task.assetId); } closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
+$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmDelete({ title:'确认删除作品', message:'作品一旦删除，无法恢复。' })) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (task.assetId) { state.refs.image = state.refs.image.filter(assetId => assetId !== task.assetId); state.refs.video = state.refs.video.filter(assetId => assetId !== task.assetId); state.refs.audio = state.refs.audio.filter(assetId => assetId !== task.assetId); } closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
 
 async function loadFiles({ background=false }={}) {
   if (filesRequest) { const pending = filesRequest; return background ? pending : pending.then(() => loadFiles({ background:true })); }
@@ -506,11 +510,11 @@ function assetDisplayName(file) {
   const technical = /^(?:生成图片|生成视频)(?:\s|$)|^codex-clipboard-|^[a-f\d-]{20,}$|^\d+(?:\s*\(\d+\))?$|^(?=[A-Za-z0-9_-]{12,}$)(?=.*\d)[A-Za-z0-9_-]+$/i.test(stem);
   if (!technical && stem) return stem;
   const task = state.tasks.find(item => item.id === file.sourceGenerationId || item.assetId === file.id);
-  if (task?.prompt) { const subject = task.prompt.trim().split(/[，。；,;\n]/)[0].replace(/^(请|帮我|生成|制作|创建|一张|一幅|一个|一段)/, '').trim().slice(0, 18); if (subject) return `${subject}｜${file.kind === 'image' ? '商品图' : '商品视频'}`; }
+  if (task?.prompt) { const subject = task.prompt.trim().split(/[，。；,;\n]/)[0].replace(/^(请|帮我|生成|制作|创建|一张|一幅|一个|一段)/, '').trim().slice(0, 18); if (subject) return `${subject}｜${file.kind === 'image' ? '商品图' : file.kind === 'audio' ? '音频' : '商品视频'}`; }
   const date = new Date(file.createdAt); const day = Number.isNaN(date.getTime()) ? '' : `｜${String(date.getMonth()+1).padStart(2,'0')}月${String(date.getDate()).padStart(2,'0')}日`;
-  return `导入${file.kind === 'image' ? '图片' : '视频'}${day}`;
+  return `导入${file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}${day}`;
 }
-function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}" loading="lazy">` : `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button><a href="/api/files/${file.id}/download">下载</a><button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
+function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}" loading="lazy">` : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button><a href="/api/files/${file.id}/download">下载</a><button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
 function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
 function renderFiles() {
   if (state.route !== 'files') return;
@@ -525,6 +529,7 @@ $('#fileSearch').oninput = renderFiles; $$('.type-tabs button').forEach(button =
 function clearFileReferences(fileId) {
   state.refs.image = state.refs.image.filter(id => id !== fileId);
   state.refs.video = state.refs.video.filter(id => id !== fileId);
+  state.refs.audio = state.refs.audio.filter(id => id !== fileId);
 }
 async function removeFile(file) {
   await api(`/api/files/${file.id}`, { method:'DELETE', body:'{}' });
@@ -539,22 +544,73 @@ function bindFileActions(root) {
 }
 document.addEventListener('click', () => $$('[data-menu]').forEach(menu => menu.classList.add('hidden')));
 
-function openUploadPicker(context) { state.uploadContext = context; $('#fileInput').accept = context === 'reference' ? imageAccept : libraryAccept; $('#fileInput').click(); }
+function referenceLimits(modelId=$('#videoModel')?.value) { const parameters = videoModelParameters(modelId, videoGenerationParameters(modelId).mode); return parameters?.referenceLimits || { image: 7, video: 0, audio: 0, total: 7 }; }
+function referenceAccept(modelId=$('#videoModel')?.value) { const limits = referenceLimits(modelId); return [limits.image ? imageAccept : '', limits.video ? videoAccept : ''].filter(Boolean).join(','); }
+function referenceFileKinds(modelId=$('#videoModel')?.value) { const limits = referenceLimits(modelId); return new Set(['image', 'video'].filter(kind => limits[kind] > 0)); }
+function openUploadPicker(context) { state.uploadContext = context; $('#fileInput').accept = context === 'reference' && state.referenceTarget === 'video' ? referenceAccept() : context === 'reference' && state.referenceTarget === 'audio' ? audioAccept : context === 'reference' ? imageAccept : libraryAccept; $('#fileInput').click(); }
 async function readImageSize(file) { if (!file.type.startsWith('image/')) return {}; try { const bitmap = await createImageBitmap(file); const result = { width:bitmap.width, height:bitmap.height }; bitmap.close(); return result; } catch { return new Promise(resolve => { const image = new Image(); const url = URL.createObjectURL(file); image.onload = () => { URL.revokeObjectURL(url); resolve({ width:image.naturalWidth, height:image.naturalHeight }); }; image.onerror = () => { URL.revokeObjectURL(url); resolve({}); }; image.src = url; }); } }
 function createUploadRow(file) { const grid = $('#referenceGrid'); grid.querySelector('.empty-state')?.remove(); const row = document.createElement('div'); row.className = 'reference-upload-placeholder'; row.setAttribute('aria-live', 'polite'); row.innerHTML = `<div class="reference-upload-visual"><i class="reference-upload-spinner" aria-hidden="true"></i><strong>0%</strong></div><span title="${esc(file.name)}">${esc(file.name)}</span>`; grid.prepend(row); row.setAttribute('aria-label', `${file.name}，准备上传`); return { row, fileName:file.name, status:row, percent:row.querySelector('strong') }; }
 function updateUploadRow(view, percent, status, mode='') { const value = Math.max(0, Math.min(100, Math.round(percent))); view.percent.textContent = mode === 'error' ? '失败' : `${value}%`; view.row.setAttribute('aria-label', `${view.fileName}，${status}`); view.row.dataset.uploadStatus = status; view.row.classList.toggle('failed', mode === 'error'); view.row.classList.toggle('completed', mode === 'completed'); }
-function uploadFile(file, dimensions, onProgress) { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/files/upload'); xhr.responseType = 'json'; xhr.setRequestHeader('Content-Type', file.type); xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name)); if (dimensions.width && dimensions.height) { xhr.setRequestHeader('X-Image-Width', dimensions.width); xhr.setRequestHeader('X-Image-Height', dimensions.height); } xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(Math.min(92, event.loaded / event.total * 92), '正在上传到文件库'); }; xhr.upload.onload = () => onProgress(94, '正在保存文件'); xhr.onload = () => { const data = xhr.response || {}; if (xhr.status >= 200 && xhr.status < 300) resolve(data); else reject(new Error(data.error || `上传失败（${xhr.status}）`)); }; xhr.onerror = () => reject(new Error('上传网络连接失败')); xhr.send(file); }); }
+function uploadFileLegacy(file, dimensions, onProgress, mimeType=normalizedUploadMime(file)) { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/files/upload'); xhr.responseType = 'json'; xhr.setRequestHeader('Content-Type', mimeType); xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name)); if (dimensions.width && dimensions.height) { xhr.setRequestHeader('X-Image-Width', dimensions.width); xhr.setRequestHeader('X-Image-Height', dimensions.height); } xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(Math.min(92, event.loaded / event.total * 92), '正在上传到文件库'); }; xhr.upload.onload = () => onProgress(94, '正在保存文件'); xhr.onload = () => { const data = xhr.response || {}; if (xhr.status >= 200 && xhr.status < 300) resolve(data); else reject(new Error(data.error || `上传失败（${xhr.status}）`)); }; xhr.onerror = () => reject(new Error('上传网络连接失败')); xhr.send(file); }); }
+function postFileToOss(intent, file, onProgress) { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', intent.uploadUrl); xhr.responseType = 'text'; xhr.withCredentials = false; const form = new FormData(); Object.entries(intent.fields || {}).forEach(([name, value]) => form.append(name, value)); form.append('file', file); xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(5 + event.loaded / event.total * 87, '正在上传到云端'); }; xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.getResponseHeader('ETag') || ''); else reject(Object.assign(new Error(`OSS 上传失败（${xhr.status}）`), { status: xhr.status })); }; xhr.onerror = () => reject(Object.assign(new Error('OSS 上传网络连接失败'), { status: 0 })); xhr.onabort = () => reject(Object.assign(new Error('OSS 上传已取消'), { status: 0 })); xhr.send(form); }); }
+async function completeDirectUpload(uploadId, onProgress) { let result = await api(`/api/files/uploads/${encodeURIComponent(uploadId)}/complete`, { method:'POST', body:'{}' }); if (result.status === 'verifying') { for (let attempt = 0; attempt < 6; attempt += 1) { await new Promise(resolve => setTimeout(resolve, Math.min(1500, 300 * (attempt + 1)))); result = await api(`/api/files/uploads/${encodeURIComponent(uploadId)}`); if (result.status === 'completed' && result.asset) return result.asset; if (result.status === 'failed') throw new Error('文件验证失败，请重新选择文件'); if (result.status === 'expired') throw new Error('上传凭证已过期，请重新选择文件'); } throw new Error('文件仍在验证中，请稍后刷新文件库'); } onProgress(99, '正在保存文件'); return result; }
+async function uploadFile(file, dimensions, onProgress, mimeType=normalizedUploadMime(file)) { const normalizedFile = file.type === mimeType ? file : new File([file], file.name, { type:mimeType, lastModified:file.lastModified }); if (!state.config.directOssUpload) return uploadFileLegacy(normalizedFile, dimensions, onProgress, mimeType); onProgress(2, '正在准备上传'); const intent = await api('/api/files/uploads/init', { method:'POST', body:JSON.stringify({ name:normalizedFile.name, mimeType, size:normalizedFile.size, width:dimensions.width || 0, height:dimensions.height || 0 }) }); await postFileToOss(intent, normalizedFile, onProgress); onProgress(94, '正在验证文件'); const asset = await completeDirectUpload(intent.uploadId, onProgress); onProgress(100, '文件已保存'); return asset; }
 function pickAndUploadDramaImage() { return new Promise((resolve, reject) => { const input=document.createElement('input');input.type='file';input.accept=imageAccept;input.onchange=async()=>{const file=input.files?.[0];if(!file)return resolve(null);try{if(file.size>8*1024*1024)throw new Error(`${file.name} 超过 8 MB`);const dimensions=await readImageSize(file);const asset=await uploadFile(file,dimensions,(progress)=>toast(`${file.name} · ${Math.round(progress)}%`));state.files=[asset,...state.files.filter(item=>item.id!==asset.id)];toast(`${file.name} 已上传到文件库`);resolve(asset);}catch(error){reject(error);}};input.click();});}
 $('#uploadButton').onclick = () => openUploadPicker('library');
 $('#fileInput').onchange = async event => { const files = [...event.target.files]; const context = state.uploadContext; event.target.value = ''; if (!files.length) return; let done = 0; let selected = 0; const referenceLimit = context === 'reference' && state.referenceTarget === 'video-frame' ? 1 : context === 'reference' && state.referenceTarget === 'video' ? videoReferenceLimit() : 7; for (const file of files) { const inDialog = context === 'reference'; const view = inDialog ? createUploadRow(file) : null; try { const limit = file.type.startsWith('image/') ? 8*1024*1024 : 25*1024*1024; if (file.size > limit) throw new Error(`${file.name} 超过 ${file.type.startsWith('image/') ? '8' : '25'} MB`); if (inDialog && !file.type.startsWith('image/')) throw new Error('参考素材只支持图片'); const dimensions = await readImageSize(file); const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`)); state.files = [asset, ...state.files.filter(item => item.id !== asset.id)]; let autoSelected = false; if (inDialog && state.dialogSelection.length < referenceLimit) { state.dialogSelection.push(asset.id); autoSelected = true; selected++; } done++; if (view) { updateUploadRow(view, 100, autoSelected ? '上传完成，已自动选中' : '上传完成，选择数量已满', 'completed'); renderReferenceDialog(); } else renderFiles(); } catch (error) { if (view) updateUploadRow(view, 0, error.message, 'error'); toast(error.message); } } renderReferences(); if (!context || context === 'library') await loadFiles(); if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`); };
 
+// Rebind the picker after the legacy image-only handler so mixed reference
+// models can select and upload images, videos, and audio in one dialog.
+$('#fileInput').onchange = async event => {
+  const files = [...event.target.files];
+  const context = state.uploadContext;
+  event.target.value = '';
+  if (!files.length) return;
+  let done = 0;
+  let selected = 0;
+  const isFrame = context === 'reference' && state.referenceTarget === 'video-frame';
+  const isVideoReference = context === 'reference' && state.referenceTarget === 'video';
+  const isDialogAudio = context === 'reference' && state.referenceTarget === 'audio';
+  const allowedKinds = context === 'reference' ? (isDialogAudio ? new Set(['audio']) : isFrame || !isVideoReference ? new Set(['image']) : referenceFileKinds()) : new Set(['image', 'video', 'audio']);
+  const limits = isVideoReference || isDialogAudio ? referenceLimits() : { image: 7, video: 0, audio: 0, total: isFrame ? 1 : 7 };
+  for (const file of files) {
+    const inDialog = context === 'reference';
+    const view = inDialog ? createUploadRow(file) : null;
+    try {
+      const mimeType = normalizedUploadMime(file);
+      const kind = mimeType.startsWith('image/') ? 'image' : mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : '';
+      const sizeLimit = kind === 'image' ? 8 * 1024 * 1024 : 25 * 1024 * 1024;
+      if (!kind || file.size > sizeLimit) throw new Error(`${file.name} 超过 ${kind === 'image' ? '8' : '25'} MB 或格式不支持`);
+      if (inDialog && !allowedKinds.has(kind)) throw new Error(`当前模型不支持${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}参考`);
+      const currentTotal = isDialogAudio ? state.refs.video.length + state.dialogSelection.length : state.dialogSelection.length + state.refs.audio.length;
+      if (inDialog && !isFrame && currentTotal >= limits.total) throw new Error(`参考素材最多选择 ${limits.total} 个`);
+      const dimensions = await readImageSize(file);
+      const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`), mimeType);
+      state.files = [asset, ...state.files.filter(item => item.id !== asset.id)];
+      const selectedKindCount = state.dialogSelection.map(id => state.files.find(item => item.id === id)).filter(item => item?.kind === kind).length;
+      if (inDialog && state.dialogSelection.length + (isDialogAudio ? state.refs.video.length : state.refs.audio.length) < (isFrame ? 1 : limits.total) && selectedKindCount < (isFrame ? 1 : limits[kind])) {
+        state.dialogSelection.push(asset.id);
+        selected++;
+      }
+      done++;
+      if (view) { updateUploadRow(view, 100, '上传完成', 'completed'); renderReferenceDialog(); }
+      else renderFiles();
+    } catch (error) {
+      if (view) updateUploadRow(view, 0, error.message, 'error');
+      toast(error.message);
+    }
+  }
+  renderReferences();
+  if (!context || context === 'library') await loadFiles();
+  if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`);
+};
 function videoGenerationParameters(modelId=$('#videoModel')?.value) {
   const modes = videoModelModes(modelId);
   const mode = resolveVideoGenerationType(modelId, modes);
   return { mode, parameters: videoModelParameters(modelId, mode) };
 }
 function videoHasImages() {
-  return state.refs.video.length > 0 || Boolean(state.videoFrames.first || state.videoFrames.last);
+  return state.refs.video.length > 0 || state.refs.audio.length > 0 || Boolean(state.videoFrames.first || state.videoFrames.last);
 }
 function resolveVideoGenerationType(modelId=$('#videoModel')?.value, modes=videoModelModes(modelId)) {
   const supportsText = modes.some(item => item.generationType === 'TEXT');
@@ -569,7 +625,8 @@ function resolveVideoGenerationType(modelId=$('#videoModel')?.value, modes=video
 }
 function videoReferenceLimit() {
   const model = videoModelOptions().find(item => item.id === $('#videoModel')?.value);
-  return model?.modes?.find(item => item.generationType === 'REFERENCE')?.maxImages || 7;
+  const mode = model?.modes?.find(item => item.generationType === 'REFERENCE');
+  return mode?.referenceLimits?.total || mode?.maxImages || 7;
 }
 function renderVideoGenerationMode() {
   const toggle = $('#videoModeToggle');
@@ -580,13 +637,14 @@ function renderVideoGenerationMode() {
   toggle.classList.toggle('hidden', !dualModeModel);
   label.classList.toggle('hidden', dualModeModel);
   if (!dualModeModel) {
-    label.textContent = mode === 'FIRST&LAST' ? '首尾帧' : '参考图片';
+    label.textContent = mode === 'FIRST&LAST' ? '首尾帧' : (mode?.referenceLimits?.audio || mode?.referenceLimits?.video ? '参考素材' : '参考图片');
     toggle.onclick = null;
     return;
   }
   const firstLast = mode === 'FIRST&LAST';
-  const current = firstLast ? '首尾帧' : '参考图片';
-  const alternate = firstLast ? '参考图片' : '首尾帧';
+  const referenceLabel = mode?.referenceLimits?.audio || mode?.referenceLimits?.video ? '参考素材' : '参考图片';
+  const current = firstLast ? '首尾帧' : referenceLabel;
+  const alternate = firstLast ? referenceLabel : '首尾帧';
   toggle.innerHTML = `<b>${current}</b><span class="video-mode-switch" aria-hidden="true">⇄</span><span>${alternate}</span>`;
   toggle.setAttribute('aria-label', `当前为${current}，点击切换为${alternate}`);
   toggle.setAttribute('aria-pressed', String(firstLast));
@@ -606,7 +664,7 @@ function renderVideoFrameSlots() {
   container.querySelectorAll('[data-video-frame]').forEach(button => button.onclick = () => openVideoFrameDialog(button.dataset.videoFrame));
   container.querySelectorAll('[data-video-frame-remove]').forEach(button => button.onclick = () => { state.videoFrames[button.dataset.videoFrameRemove] = ''; renderReferences(); });
 }
-function renderReferences() {
+function renderReferencesLegacy() {
   const { mode } = videoGenerationParameters();
   state.refs.video = state.refs.video.slice(0, videoReferenceLimit());
   const imageSelected = state.refs.image.map(id => state.files.find(file => file.id === id)).filter(Boolean);
@@ -632,11 +690,50 @@ function renderReferences() {
   renderVideoGenerationMode();
   syncVideoModelParameters();
 }
+function renderReferences() {
+  const { mode } = videoGenerationParameters();
+  const limits = referenceLimits();
+  if (mode === 'FIRST&LAST') state.refs.audio = [];
+  state.refs.audio = state.refs.audio.filter(id => state.files.some(file => file.id === id && file.kind === 'audio')).slice(0, limits.audio || 0);
+  const videoSlots = Math.max(0, (limits.total || videoReferenceLimit()) - state.refs.audio.length);
+  state.refs.video = state.refs.video.filter(id => state.files.some(file => file.id === id && (file.kind === 'image' || file.kind === 'video'))).slice(0, videoSlots);
+  const imageSelected = state.refs.image.map(id => state.files.find(file => file.id === id && file.kind === 'image')).filter(Boolean);
+  $('#imageReferences').innerHTML = imageSelected.map(file => `<div class="reference-thumb"><img src="${file.url}" alt="${esc(file.name)}"><button type="button" class="remove-ref" data-target="image" data-id="${file.id}" aria-label="移除参考图">×</button></div>`).join('') + `<button class="add-reference pick-reference" data-target="image" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button>`;
+  const videoReferenceHead = $('#videoReferenceLabel').closest('.reference-head');
+  const videoReferences = $('#videoReferences');
+  const audioSection = $('#videoAudioReference');
+  const audioReferences = $('#audioReferences');
+  videoReferenceHead.classList.remove('hidden');
+  videoReferences.classList.remove('hidden');
+  const showAudio = supportsVideoMode('REFERENCE') && limits.audio > 0;
+  audioSection.classList.toggle('hidden', !showAudio);
+  if (showAudio) {
+    const audioFiles = state.refs.audio.map(id => state.files.find(file => file.id === id)).filter(Boolean);
+    audioReferences.innerHTML = audioFiles.map(file => `<div class="reference-thumb reference-audio" title="${esc(assetDisplayName(file))}">${audioCoverMarkup()}<button type="button" class="remove-ref" data-target="audio" data-id="${file.id}" aria-label="移除参考音频">×</button></div>`).join('') + `<button class="add-reference pick-reference" data-target="audio" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button>`;
+  } else audioReferences.innerHTML = '';
+  if (mode === 'FIRST&LAST') {
+    state.refs.video = [];
+    renderVideoFrameSlots();
+  } else {
+    const selected = state.refs.video.map(id => state.files.find(file => file.id === id)).filter(Boolean);
+    videoReferences.classList.remove('video-frame-strip');
+    videoReferences.innerHTML = selected.map(file => `<div class="reference-thumb reference-${file.kind}">${referenceMediaMarkup(file, file.name)}<button type="button" class="remove-ref" data-target="video" data-id="${file.id}" aria-label="移除参考素材">×</button></div>`).join('') + `<button class="add-reference pick-reference" data-target="video" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button>`;
+  }
+  $$('.pick-reference').forEach(button => button.onclick = () => openReferenceDialog(button.dataset.target));
+  $$('.remove-ref[data-target]').forEach(button => button.onclick = () => {
+    state.refs[button.dataset.target] = state.refs[button.dataset.target].filter(id => id !== button.dataset.id);
+    if (!videoHasImages()) state.videoGenerationType = 'TEXT';
+    renderReferences();
+  });
+  renderVideoGenerationMode();
+  syncVideoModelParameters();
+}
 function setVideoGenerationType(type) {
   if (!supportsVideoMode(type) || !['REFERENCE', 'FIRST&LAST'].includes(type)) return;
   const current = videoGenerationParameters().mode;
   if (current === 'REFERENCE' && type === 'FIRST&LAST') {
-    const [first, last] = state.refs.video.slice(0, 2);
+    const imageRefs = state.refs.video.filter(id => state.files.some(file => file.id === id && file.kind === 'image'));
+    const [first, last] = imageRefs.slice(0, 2);
     state.videoFrames = { first: first || '', last: last || '' };
     state.refs.video = [];
   } else if (current === 'FIRST&LAST' && type === 'REFERENCE') {
@@ -655,7 +752,7 @@ function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
   state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
-function renderReferenceDialog() {
+function renderReferenceDialogLegacy() {
   const isFrame = state.referenceTarget === 'video-frame';
   const limit = isFrame ? 1 : state.referenceTarget === 'video' ? videoReferenceLimit() : 7;
   $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : '选择参考图片';
@@ -674,6 +771,41 @@ $('#confirmReference').onclick = () => {
 };
 $('#dialogUpload').onclick = () => openUploadPicker('reference');
 
+function audioCoverMarkup() { return '<div class="reference-audio-cover" aria-hidden="true"><b>♫</b><small>AUDIO</small></div>'; }
+function referenceMediaMarkup(file, displayName = file.name) {
+  if (file.kind === 'image') return `<img src="${file.url}" alt="${esc(displayName)}">`;
+  if (file.kind === 'video') return `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`;
+  return audioCoverMarkup();
+}
+function renderReferenceDialog() {
+  const isFrame = state.referenceTarget === 'video-frame';
+  const isVideo = state.referenceTarget === 'video';
+  const isAudio = state.referenceTarget === 'audio';
+  const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo || isAudio ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
+  const allowedKinds = isAudio ? new Set(['audio']) : isFrame || !isVideo ? new Set(['image']) : referenceFileKinds();
+  const selectedFiles = state.dialogSelection.map(id => state.files.find(file => file.id === id)).filter(Boolean);
+  const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
+  const otherCount = isVideo ? state.refs.audio.length : isAudio ? state.refs.video.length : 0;
+  const totalSelected = state.dialogSelection.length + otherCount;
+  $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : isAudio ? '选择参考音频' : '选择参考素材';
+  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 8 MB。' : isAudio ? `最多选择 ${limits.audio} 个音频，单个不超过 25 MB；全部参考素材合计 ${limits.total} 个。` : `图片 ${limits.image} / 视频 ${limits.video} / 音频 ${limits.audio}，合计 ${limits.total} 个；音频在外部独立添加。`;
+  $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isAudio ? '上传音频' : '上传参考素材'}</span>`;
+  $('#selectionCount').textContent = isAudio ? `已选择 ${state.dialogSelection.length} / ${limits.audio}（素材合计 ${totalSelected} / ${limits.total}）` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${isVideo ? state.refs.audio.length : 0}）`;
+  $('#confirmReference').textContent = isFrame ? '使用此图片' : isAudio ? '使用所选音频' : '使用所选素材';
+  const files = state.files.filter(file => allowedKinds.has(file.kind));
+  $('#referenceGrid').innerHTML = files.length ? files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('') : emptyState(isAudio ? '没有可用音频' : '没有可用参考素材', isAudio ? '先上传一个音频文件。' : '先上传图片或视频到文件库。');
+  $$('.reference-option').forEach(button => button.onclick = () => {
+    const id = button.dataset.id;
+    const file = state.files.find(item => item.id === id);
+    if (!file) return;
+    if (state.dialogSelection.includes(id)) state.dialogSelection = state.dialogSelection.filter(item => item !== id);
+    else if (totalSelected >= limits.total) return toast(`参考素材最多选择 ${limits.total} 个`);
+    else if ((counts[file.kind] || 0) >= (limits[file.kind] || 0)) return toast(`参考${file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : '音频'}最多选择 ${limits[file.kind] || 0} 个`);
+    else state.dialogSelection.push(id);
+    renderReferenceDialog();
+  });
+}
+
 $$('.segmented').forEach(group => group.querySelectorAll('button').forEach(button => button.onclick = () => { group.querySelectorAll('button').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
 $$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { group.querySelectorAll('button[data-value]').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
 $('#moreRatios').onclick = () => { const opening = $('#moreRatios').getAttribute('aria-expanded') !== 'true'; $('#moreRatios').setAttribute('aria-expanded', String(opening)); $$('.ratio-extra').forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
@@ -686,25 +818,28 @@ function resolutionIcon(value) {
 function clockIcon() { return '<span class="select-clock" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3.5 2"></path></svg></span>'; }
 const fallbackVideoModels = Object.freeze([
   // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for GuGu 1.5.
-  { id:'grok', label:'GuGu 1.5', description:'全能视频模型，支持最长30秒视频，7张参考图', modes:[
-    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,20,30], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:1, maxImages:7 },
+  { id:'grok', label:'GuGu 1.5', description:'全能视频模型，支持最长20秒视频，7张参考图', modes:[
+    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:1, maxImages:7 },
   ] },
-  // Front-end fallback: GuGu 1.0 supports TEXT and REFERENCE only.
-  { id:'grok-15', label:'GuGu 1.0', availability:'coming-soon', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1','4:3','3:4','2:3','3:2'], durations:[6,12], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:1, maxImages:1 },
+  // Front-end fallback: route to the upstream model selected by resolution.
+  { id:'minimax-h3', label:'MiniMax H3', description:'支持 768p 与 2K，4～15 秒视频', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, referenceLimits:{image:5,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, referenceLimits:{image:5,video:3,audio:3,total:15}, minImages:1, maxImages:5 },
+    { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, minImages:1, maxImages:2 },
+  ] },
+  { id:'seedance-2.0', label:'Seedance 2.0', description:'支持 15 秒、1:1/16:9/9:16 文生视频与参考图视频', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1'], durations:[15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1'], durations:[15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:1, maxImages:9 },
+  ] },
+  { id:'seedance-2.0-fast', label:'Seedance 2.0 Fast', description:'支持 5～15 秒、16:9/1:1/9:16 文生视频与参考素材视频', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','1:1','9:16'], durations:[5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:12}, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','1:1','9:16'], durations:[5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:12}, minImages:1, maxImages:9 },
   ] },
   // Front-end fallback: Omni Flash supports TEXT and REFERENCE only.
   { id:'oai', label:'Omni Flash', description:'Google 最新视频模型，高质量，英文支持效果好', modes:[
     { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:1, maxImages:5 },
-  ] },
-  // Front-end fallback: Veo 3.1 Fast is coming soon and cannot be selected.
-  { id:'veo', label:'Veo 3.1 Fast', description:'支持首尾帧模式，固定8秒，速度快', availability:'coming-soon', modes:[
-    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[8], qualityOptions:['720p'], minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','16:9'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:3 },
-    { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:2 },
   ] },
   // Front-end fallback: Veo 3.1 supports TEXT, REFERENCE and FIRST&LAST.
   { id:'veo-31', label:'Veo 3.1', description:'支持首尾帧、支持1080P', modes:[
@@ -712,9 +847,17 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'REFERENCE', aspectRatios:['16:9'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:3 },
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:2 },
   ] },
-  // Front-end fallback: these models are not yet available and expose no modes.
-  { id:'minimax-h3', label:'MiniMax H3', availability:'coming-soon', modes:[] },
-  { id:'seedance-2.0', label:'Seedance 2.0', availability:'coming-soon', modes:[] },
+  // Front-end fallback: GuGu 1.0 is coming soon and cannot be selected.
+  { id:'grok-15', label:'GuGu 1.0', description:'Duomi 视频模型，支持 6/10/15 秒和最多 7 张参考图', availability:'coming-soon', modes:[
+    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[6,10,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[6,10,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:1, unit:'second' }, minImages:1, maxImages:7 },
+  ] },
+  // Front-end fallback: Veo 3.1 Fast is coming soon and cannot be selected.
+  { id:'veo', label:'Veo 3.1 Fast', description:'支持首尾帧模式，固定8秒，速度快', availability:'coming-soon', modes:[
+    { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[8], qualityOptions:['720p'], minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','16:9'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:3 },
+    { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:2 },
+  ] },
 ]);
 const hiddenVideoModelIds = new Set();
 const modeLabels = Object.freeze({ TEXT:'文生视频', REFERENCE:'参考图模式', 'FIRST&LAST':'首尾帧' });
@@ -726,10 +869,13 @@ function videoModelOptions() {
   const models = hasServerCatalog ? state.config.videoCapabilities.models : fallbackVideoModels;
   return models
     .filter(model => !hiddenVideoModelIds.has(model.id) && (model.enabled !== false || model.availability === 'coming-soon'))
+    .map(model => model.id === 'grok'
+      ? { ...model, modes: model.modes?.map(mode => ({ ...mode, durations: mode.durations?.filter(value => Number(value) !== 30) })) }
+      : model)
     .sort((a, b) => Number(a.availability === 'coming-soon') - Number(b.availability === 'coming-soon'));
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
-const modelIconUrls = Object.freeze({ grok:'/favicon.svg?v=2', 'grok-15':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
+const modelIconUrls = Object.freeze({ grok:'/favicon.svg?v=2', 'grok-15':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; const model = widget.dataset.model ? videoModelOptions().find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label"><b>${esc(option.textContent)}</b>${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
@@ -747,7 +893,7 @@ function syncVideoModelParameters() {
   const durations = parameters.durations;
   const qualities = parameters.qualityOptions;
   setVideoSelectOptions('videoAspect', parameters.aspectRatios, value => value, '16:9');
-  setVideoSelectOptions('videoDuration', durations, value => `${value} 秒`, modelId === 'grok-15' ? 6 : modelId === 'veo' || modelId === 'veo-31' ? 8 : 20);
+  setVideoSelectOptions('videoDuration', durations, value => `${value} 秒`, modelId === 'grok' ? 10 : modelId === 'grok-15' ? 6 : modelId === 'veo' || modelId === 'veo-31' ? 8 : 10);
   setVideoSelectOptions('videoResolution', qualities, value => value, '720p');
   setProductSelectEnabled('videoAspect', true); setProductSelectEnabled('videoDuration', true); setProductSelectEnabled('videoResolution', true);
   syncVideoPromptState(); updateVideoCost();
@@ -762,12 +908,32 @@ const videoPromptMaxLength = 4096;
 const promptMaxHeight = 200;
 function autoResizePrompt(prompt) { prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, promptMaxHeight)}px`; }
 function syncImagePromptState() { const prompt = $('#imagePrompt'); autoResizePrompt(prompt); const count = Array.from(prompt.value).length; const countElement = $('#imagePromptCount'); const overLimit = count > imagePromptMaxLength; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setCustomValidity(overLimit ? `图片提示词不能超过 ${imagePromptMaxLength} 个字符` : ''); $('#imageForm .generate').disabled = overLimit; }
-function syncVideoPromptState() { const prompt = $('#videoPrompt'); autoResizePrompt(prompt); const count = Array.from(prompt.value).length; const countElement = $('#videoPromptCount'); const overLimit = count > videoPromptMaxLength; const { mode } = videoGenerationParameters(); const missingImages = mode === 'REFERENCE' ? state.refs.video.length === 0 : mode === 'FIRST&LAST' ? !state.videoFrames.first : false; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setCustomValidity(overLimit ? `视频提示词不能超过 ${videoPromptMaxLength} 个字符` : ''); $('#videoForm .generate').disabled = overLimit || !$('#videoModel').value || missingImages; }
+function syncVideoPromptState() { const prompt = $('#videoPrompt'); autoResizePrompt(prompt); const count = Array.from(prompt.value).length; const countElement = $('#videoPromptCount'); const overLimit = count > videoPromptMaxLength; const { mode } = videoGenerationParameters(); const missingImages = mode === 'REFERENCE' ? (state.refs.video.length === 0 && state.refs.audio.length === 0) : mode === 'FIRST&LAST' ? !state.videoFrames.first : false; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setCustomValidity(overLimit ? `视频提示词不能超过 ${videoPromptMaxLength} 个字符` : ''); $('#videoForm .generate').disabled = overLimit || !$('#videoModel').value || missingImages; }
 $('#imagePrompt').oninput = syncImagePromptState; $('#videoPrompt').oninput = syncVideoPromptState;
-async function submitGeneration(type, form, payload) { const button = form.querySelector('.generate'); const original = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="button-spinner"></span><span>正在提交</span>'; try { const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, referenceAssetIds:state.refs[type], ...payload }) }); setCreditBalance(result.balance); form.querySelector('textarea').value = ''; form.querySelector('textarea').dispatchEvent(new Event('input', { bubbles:true })); state.refs[type] = []; if (type === 'video') state.videoFrames = { first:'', last:'' }; renderReferences(); toast(`任务已提交，扣除 ${result.creditCost} 积分`); await loadTasks(); } catch (error) { toast(error.message); await loadCredits(); } finally { button.innerHTML = original; if (type === 'image') syncImagePromptState(); else { syncVideoPromptState(); updateVideoCost(); } } }
-$('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value }); };
+async function submitGeneration(type, form, payload) { const button = form.querySelector('.generate'); const original = button.innerHTML; const referenceAssetIds = type === 'video' ? [...new Set([...(payload.referenceAssetIds || []), ...state.refs.audio])] : state.refs[type]; button.disabled = true; button.innerHTML = '<span class="button-spinner"></span><span>正在提交</span>'; try { const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds }) }); const tasks = Array.isArray(result.tasks) ? result.tasks : [result]; setCreditBalance(result.balance); form.querySelector('textarea').value = ''; form.querySelector('textarea').dispatchEvent(new Event('input', { bubbles:true })); state.refs[type] = []; if (type === 'video') { state.refs.audio = []; state.videoFrames = { first:'', last:'' }; } renderReferences(); const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0); toast(tasks.length > 1 ? `已提交 ${tasks.length} 个图像任务，预扣 ${creditText(totalCost)} 积分` : `任务已提交，扣除 ${tasks[0].creditCost} 积分`); await loadTasks(); } catch (error) { toast(error.message); await loadCredits(); } finally { button.innerHTML = original; if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } } }
+$('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
+$('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
+$('#imageQuantity').onchange = () => commitImageQuantity($('#imageQuantity').value);
+$('#imageQuantityDecrease').onclick = () => changeImageQuantity(-1);
+$('#imageQuantityIncrease').onclick = () => changeImageQuantity(1);
 $('#videoForm').onsubmit = event => { event.preventDefault(); syncVideoPromptState(); if (!$('#videoModel').value) return toast('请先选择视频模型'); if (Array.from($('#videoPrompt').value).length > videoPromptMaxLength) return; const { mode } = videoGenerationParameters(); const referenceAssetIds = mode === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video; submitGeneration('video', event.currentTarget, { prompt:$('#videoPrompt').value, modelId:$('#videoModel').value, aspectRatio:$('#videoAspect').value, duration:Number($('#videoDuration').value), quality:$('#videoResolution').value, generationType:mode, referenceAssetIds }); };
-function updateVideoCost() { const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return; const parameters = videoModelParameters($('#videoModel')?.value, videoGenerationParameters().mode); const fixedPrice = parameters?.pricing?.unit === 'request' ? Number(parameters.pricing.amount) / Number(state.pricing.yuanPerCredit || 0.1) : null; const perSecondPrice = parameters?.pricing?.unit === 'second' ? Number(parameters.pricing.amount) : null; cost.textContent = creditText(fixedPrice ?? Number(duration.value || 0) * (perSecondPrice ?? state.pricing.videoPerSecond)); }
+const imageQuantityMin = 1;
+const imageQuantityMax = 10;
+function imageQuantityValue(value) { const text = String(value ?? '').trim(); if (!text) return null; const quantity = Number(text); return Number.isInteger(quantity) ? Math.min(imageQuantityMax, Math.max(imageQuantityMin, quantity)) : null; }
+function updateImageQuantityButtons(value=imageQuantityValue($('#imageQuantity')?.value)) { const quantity = value ?? imageQuantityMin; $('#imageQuantityDecrease').disabled = quantity <= imageQuantityMin; $('#imageQuantityIncrease').disabled = quantity >= imageQuantityMax; }
+function updateImageCost() { const cost = $('#imageCost'); const quantity = $('#imageQuantity'); if (!cost || !quantity) return; const count = imageQuantityValue(quantity.value) ?? imageQuantityMin; cost.textContent = creditText(count * (Number(state.pricing.image) || 1)); updateImageQuantityButtons(count); }
+function commitImageQuantity(value) { const input = $('#imageQuantity'); const quantity = imageQuantityValue(value) ?? imageQuantityMin; input.value = String(quantity); updateImageCost(); return quantity; }
+function changeImageQuantity(delta) { const input = $('#imageQuantity'); const current = imageQuantityValue(input.value) ?? imageQuantityMin; commitImageQuantity(current + delta); }
+function videoPricingFor(modelId, parameters, quality) {
+  const selectedPricing = parameters?.pricingByQuality?.[quality] || parameters?.pricing;
+  if (selectedPricing) return selectedPricing;
+  if (modelId === 'minimax-h3') {
+    if (quality === '768p') return { currency:'credit', amount:2, unit:'second' };
+    if (quality === '2k') return { currency:'credit', amount:3, unit:'second' };
+  }
+  return null;
+}
+function updateVideoCost() { const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return; const modelId = $('#videoModel')?.value; const parameters = videoModelParameters(modelId, videoGenerationParameters(modelId).mode); const quality = $('#videoResolution')?.value; const selectedPricing = videoPricingFor(modelId, parameters, quality); const fixedPrice = selectedPricing?.unit === 'request' ? Number(selectedPricing.amount) / Number(state.pricing.yuanPerCredit || 0.1) : null; const perSecondPrice = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : null; cost.textContent = creditText(fixedPrice ?? Number(duration.value || 0) * (perSecondPrice ?? state.pricing.videoPerSecond)); }
 $('#videoModel').onchange = () => {
   const hadFirstLast = state.videoGenerationType === 'FIRST&LAST';
   const supportsReference = supportsVideoMode('REFERENCE');
@@ -776,16 +942,20 @@ $('#videoModel').onchange = () => {
     state.refs.video = [state.videoFrames.first, state.videoFrames.last, ...state.refs.video].filter(Boolean);
     state.videoFrames = { first:'', last:'' };
   }
-  if (supportsReference) state.refs.video = state.refs.video.slice(0, videoReferenceLimit());
-  else if (!supportsFirstLast) state.refs.video = [];
+  if (supportsReference) { const allowedKinds = referenceFileKinds(); const limits = referenceLimits(); state.refs.video = state.refs.video.filter(id => allowedKinds.has(state.files.find(file => file.id === id)?.kind)).slice(0, videoReferenceLimit()); state.refs.audio = limits.audio ? state.refs.audio.filter(id => state.files.some(file => file.id === id && file.kind === 'audio')).slice(0, limits.audio) : []; }
+  else if (!supportsFirstLast) { state.refs.video = []; state.refs.audio = []; }
   state.videoGenerationType = hadFirstLast && supportsFirstLast ? 'FIRST&LAST' : 'TEXT';
+  syncVideoModelParameters();
   renderReferences();
 };
 $('#videoDuration').onchange = () => { syncVideoModelParameters(); updateVideoCost(); };
+$('#videoResolution').onchange = () => updateVideoCost();
 
-function renderPreviewMeta(file, width=file.width, height=file.height) { $('#previewDetailMeta').innerHTML = detailRow('素材类型', file.kind === 'image' ? '图片' : '视频') + detailRow('画面尺寸', width && height ? `${width} × ${height} px` : '读取中', 'previewDimensions') + detailRow('文件大小', formatBytes(file.size)) + detailRow('添加时间', fullDateText(file.createdAt)) + detailRow('原始文件名', file.name); }
-function openPreview(id) { const file = state.files.find(item => item.id === id); if (!file) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } $('#previewDownload').href = `/api/files/${file.id}/download`; $('#previewDialog').showModal(); }
+function renderPreviewMetaLegacy(file, width=file.width, height=file.height) { $('#previewDetailMeta').innerHTML = detailRow('素材类型', file.kind === 'image' ? '图片' : '视频') + detailRow('画面尺寸', width && height ? `${width} × ${height} px` : '读取中', 'previewDimensions') + detailRow('文件大小', formatBytes(file.size)) + detailRow('添加时间', fullDateText(file.createdAt)) + detailRow('原始文件名', file.name); }
+function openPreviewLegacy(id) { const file = state.files.find(item => item.id === id); if (!file) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMetaLegacy(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMetaLegacy(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMetaLegacy(file, file.width, file.height); }; } $('#previewDownload').href = `/api/files/${file.id}/download`; $('#previewDialog').showModal(); }
 function usePreviewAsset(target) { const file = state.files.find(item => item.id === state.previewFileId); if (!file || file.kind !== 'image') return; if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型'); if (target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST') { const frame = state.videoFrames.first ? 'last' : 'first'; state.videoFrames[frame] = file.id; } else { const limit = target === 'video' ? videoReferenceLimit() : 7; if (!state.refs[target].includes(file.id)) state.refs[target] = [file.id, ...state.refs[target]].slice(0, limit); } $('#previewDialog').close(); navigate(target); renderReferences(); toast(`已将“${assetDisplayName(file)}”设为${target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST' ? '视频帧图片' : '参考图'}`); }
+function renderPreviewMeta(file, width=file.width, height=file.height) { $('#previewDetailMeta').innerHTML = detailRow('素材类型', file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频') + detailRow('画面尺寸', file.kind === 'audio' ? '—' : width && height ? `${width} × ${height} px` : '读取中', 'previewDimensions') + detailRow('文件大小', formatBytes(file.size)) + detailRow('添加时间', fullDateText(file.createdAt)) + detailRow('原始文件名', file.name); }
+function openPreview(id) { const file = state.files.find(item => item.id === id); if (!file) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : file.kind === 'audio' ? `<audio src="${file.url}" controls autoplay></audio>` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else if (file.kind === 'video') { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } $('#previewDownload').href = `/api/files/${file.id}/download`; $('#previewDialog').showModal(); }
 $('#usePreviewForImage').onclick = () => usePreviewAsset('image');
 $('#usePreviewForVideo').onclick = () => usePreviewAsset('video');
 $('#closePreview').onclick = () => $('#previewDialog').close();

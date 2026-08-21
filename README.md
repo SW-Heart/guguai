@@ -57,13 +57,16 @@ cp .env.example .env
 | 数据目录 | `DATA_DIR` | 生产环境必须指向项目目录外的持久化绝对路径 |
 | 可信代理 | `TRUST_PROXY` | 本机 Nginx 反代时设为 `loopback`；直连服务时不要设置 |
 | 图片与 8 秒视频 | `DUOMI_API_KEY`、`DUOMI_API_BASE`、`DUOMI_VEO_MODEL` | 使用图片生成，或使用 8 秒文本/参考图/首尾帧视频 |
-| 常规视频 | `TTAPI_API_KEY`、`TTAPI_API_BASE`、`TTAPI_GROK_VIDEO_FAST_MODEL` | 使用 Grok Video 1.5 Fast 的 20、30 秒文本或参考图视频 |
+| 常规视频 | `TTAPI_API_KEY`、`TTAPI_API_BASE`、`TTAPI_GROK_VIDEO_FAST_MODEL` | 使用 Grok Video 1.5 Fast 的 10、15、20、30 秒文本或参考图视频 |
 | Omni Flash 视频 | `OAI_API_BASE`、`OAIAPI_GEMINI_KEY`、`OAI_OMNI_FAST_MODEL` | 使用 `omni-fast` 的 10 秒文本、参考图或首尾帧视频 |
 | Grok Video 视频 | `OAI_API_BASE`、`OAIAPI_GROK_KEY`、`OAI_GROK_MODEL` | 使用 OAI 兼容接口的 Grok Video，支持 6/12 秒、480p/720p 和 7 种画幅；仅支持 1 张参考图，按 1 积分/秒计费 |
 | Veo 3.1 视频 | `OAI_API_BASE`、`OAIAPI_VEO_KEY`、`OAI_VEO_31_MODEL` | 使用 oairegbox 的 `firefly-veo-3.1`，支持 4/6/8 秒文生视频和单图参考图视频 |
+| MiniMax H3 视频 | `OAI_API_BASE`、`OAIAPI_MINIMAX_KEY`、`OAI_MINIMAX_H3_768_MODEL`、`OAI_MINIMAX_H3_2K_MODEL` | 平台统一展示为 MiniMax H3；选择 768p 路由到 768p 模型，选择 2K 路由到 2K 模型，支持 4–15 秒文本、参考图和首尾帧视频 |
+| Seedance 2.0 / Seedance 2.0 Fast 视频 | `CNTCN_API_BASE`、`CNTCN_KEY`、`CNTCN_SD2_MODEL`、`CNTCN_SD2_FAST_MODEL` | 通过 CNTCN 异步接口使用两个模型；Seedance 2.0 固定 15 秒，Fast 支持 5–15 秒，均支持 720p、16:9/1:1/9:16 和参考素材，3 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
 | 文件存储 | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`、`ALIYUN_OSS_PREFIX` | 上传文件、使用参考图、保存生成结果或成片 |
+| 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传杭州 OSS；默认关闭，需先完成 OSS CORS 验证 |
 
 最小示例（请替换为真实值）：
 
@@ -85,6 +88,14 @@ OAIAPI_GROK_KEY=your_oai_grok_key
 OAI_GROK_MODEL=grok-imagine-video
 OAIAPI_VEO_KEY=your_oai_veo_key
 OAI_VEO_31_MODEL=firefly-veo-3.1
+OAIAPI_MINIMAX_KEY=your_oai_minimax_key
+OAI_MINIMAX_H3_768_MODEL=minimax-h3-768p
+OAI_MINIMAX_H3_2K_MODEL=minimax-h3-2k
+
+CNTCN_API_BASE=https://api.ai.cntcn.com
+CNTCN_KEY=your_cntcn_key
+CNTCN_SD2_MODEL=933qudao-g
+CNTCN_SD2_FAST_MODEL=933qudao-fast
 
 DIRECTOR_AGENT_BASE_URL=https://your-llm-endpoint
 DIRECTOR_AGENT_API_KEY=your_llm_key
@@ -99,6 +110,14 @@ ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
 ALIYUN_OSS_ENDPOINT=your_oss_endpoint
 ALIYUN_OSS_BUCKET=your_bucket
 ALIYUN_OSS_PREFIX=model-studio
+DIRECT_OSS_UPLOAD_ENABLED=false
+ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS=300
+ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS=900
+UPLOAD_INTENT_EXPIRES_SECONDS=600
+UPLOAD_MAX_PENDING_PER_USER=3
+UPLOAD_INIT_LIMIT_PER_MINUTE=10
+MEDIA_TMP_DIR=/var/lib/gugu-ai/tmp
+MEDIA_JOB_CONCURRENCY=2
 ```
 
 说明：
@@ -340,11 +359,11 @@ http://127.0.0.1:4317/guguadmin
 
 | 模式 | 图片要求 | 时长 | 画幅 | 清晰度 |
 | --- | --- | --- | --- | --- |
-| 文生视频 | 不可带参考图 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒 | 依模型能力 | 依模型能力 |
-| 参考图视频 | 1 张图片（Grok Video；Veo 3.1：1 张） | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒 | 依模型能力 | 依模型能力 |
-| 首尾帧视频 | 1–2 张图片 | Veo：固定 8 秒；Omni Flash：10 秒 | 16:9、9:16 | 依模型能力 |
+| 文生视频 | 不可带参考图 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒 | 依模型能力 | MiniMax H3：768p / 2K；Seedance 2.0：720p |
+| 参考素材视频 | 1 张图片（Grok Video；Veo 3.1：1 张）；MiniMax H3：图片 5 / 视频 3 / 音频 3，合计 15；Seedance 2.0：图片 9 / 视频 3 / 音频 3，合计 15；Seedance 2.0 Fast：图片 9 / 视频 3 / 音频 3，合计 12 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒；Seedance 2.0 Fast：5–15 秒 | 依模型能力 | 依模型能力 |
+| 首尾帧视频 | 1–2 张图片 | Veo：固定 8 秒；Omni Flash：10 秒；MiniMax H3：4–15 秒 | 依模型能力 | 依模型能力 |
 
-路由规则：Grok Video 的 6、12 秒文本/参考图视频使用 OAI 兼容接口 `POST /v1/videos` 提交任务和 `GET /v1/videos/{task_id}` 轮询；请求使用 `seconds`、`aspect_ratio`、`resolution`，单张首帧使用 `image`，最多 1 张参考图，不支持多图和 1080p。Grok Video 按 1 积分/秒计费。Grok Video 1.5 Fast 的 10、20、30 秒文本/参考图视频使用 TTAPI；Veo 的 8 秒文本/参考图及首尾帧视频使用 Duomi；Omni Flash 使用 OAI 渠道的同一组异步接口；Veo 3.1 使用 oairegbox 的同一组异步接口。OAI 任务默认每 4 秒轮询，单次请求超时 300 秒。
+路由规则：Grok Video 的 6、12 秒文本/参考图视频使用 OAI 兼容接口 `POST /v1/videos` 提交任务和 `GET /v1/videos/{task_id}` 轮询；请求使用 `seconds`、`aspect_ratio`、`resolution`，单张首帧使用 `image`，最多 1 张参考图，不支持多图和 1080p。Grok Video 按 1 积分/秒计费。Grok Video 1.5 Fast 的 10、15、20、30 秒文本/参考图视频使用 TTAPI；Veo 的 8 秒文本/参考图及首尾帧视频使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI 渠道的同一组异步接口。Seedance 2.0 和 Seedance 2.0 Fast 使用 CNTCN 的同一组 `POST /v1/videos` 与 `GET /v1/videos/{task_id}` 异步接口，提示词中的 `@图片1`、`@视频1`、`@音频1` 分别按数组顺序映射到 `reference_image_urls`、`reference_videos`、`reference_audios`；标准版固定 15 秒，Fast 支持 5–15 秒，均支持 720p、16:9/1:1/9:16，按 3 积分/秒计费。CNTCN 的 `queued/running/succeeded/failed/expired` 状态会持久化到任务恢复链路，成功后归档原始下载地址。MiniMax H3 支持参考图片、视频和音频，使用 `ratio`、`referenceImages`、`referenceVideos`、`referenceAudios`、`first_image`、`last_image`；768p 按 2 积分/秒计费，2K 按 3 积分/秒计费。OAI 任务默认每 4 秒轮询，单次请求超时 300 秒。
 
 ## 常用命令
 
@@ -391,7 +410,7 @@ npm run migrate -- --verify
 
 ### 备份与恢复
 
-元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；媒体文件会归档到 OSS，本地副本作为 ffmpeg 工作缓存，缺失时会按需从 OSS 回源。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
+元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和生成结果归档后，媒体主副本保存在 OSS，生成结果使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认 OSS 对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
 
 备份请使用：
 
@@ -413,6 +432,10 @@ npm run db:backup
 ### 上传或生成结果归档失败
 
 检查 OSS 的 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET` 是否完整配置，且 Bucket、Endpoint 与访问权限匹配。
+
+### Seedance 2.0 参考图返回 403
+
+当前 OSS Bucket 使用公共读。CNTCN 参考素材必须提交不带签名 query 的公开对象 URL，使渠道的 `HEAD` 可用性预检和后续 `GET` 下载都能成功。不要为 CNTCN 使用按 GET 方法签发的 OSS 临时 URL；该 URL 在渠道发起 HEAD 请求时会因签名方法不匹配返回 403。
 
 ### 智能导演不可用
 

@@ -122,10 +122,10 @@ test('schema upgrades create a verified pre-upgrade snapshot', () => {
 
     resetForTests();
     openDatabase({ file });
-    assert.equal(sql("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, '2');
+    assert.equal(sql("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, '4');
     closeDatabase({ checkpoint: false });
 
-    const backupName = readdirSync(dir).find(name => name.startsWith('studio.db.pre-schema-1-to-2-'));
+    const backupName = readdirSync(dir).find(name => name.startsWith('studio.db.pre-schema-1-to-4-'));
     assert.ok(backupName);
     const backup = new DatabaseSync(path.join(dir, backupName), { readOnly: true });
     assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
