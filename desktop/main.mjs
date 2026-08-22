@@ -8,6 +8,7 @@ import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
+import { macDmgUpdateFile } from './manual-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -28,6 +29,8 @@ let libraryIndex;
 let trustedOrigin;
 let packageMetadata = {};
 let updateConfigured = false;
+let macUpdateDownloadPromise;
+let downloadedMacUpdatePath = '';
 
 function commandLineApiBase() {
   const value = process.argv.find(argument => argument.startsWith('--api-base='));
@@ -372,13 +375,82 @@ function updateFeedUrl() {
 function sendUpdateStatus(status, extra = {}) {
   mainWindow?.webContents.send('desktop:update-status', { status, ...extra });
 }
+
+async function macUpdateDigest(filePath) {
+  const hash = createHash('sha512');
+  let size = 0;
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => { size += chunk.length; hash.update(chunk); });
+    stream.on('error', reject);
+    stream.on('end', resolve);
+  });
+  return { size, sha512: hash.digest('base64') };
+}
+
+async function openMacUpdateInstaller(filePath, version) {
+  downloadedMacUpdatePath = filePath;
+  const errorMessage = await shell.openPath(filePath);
+  if (errorMessage) throw new Error(`无法打开更新安装包：${errorMessage}`);
+  sendUpdateStatus('installer-opened', { version });
+  return true;
+}
+
+async function downloadMacUpdate(updateInfo) {
+  const file = macDmgUpdateFile(updateInfo, updateFeedUrl());
+  if (!file.sha512 || !Number.isFinite(Number(file.size)) || Number(file.size) <= 0) throw new Error('DMG 更新清单缺少完整性校验信息');
+  const updateDir = path.join(app.getPath('cache'), 'gugu-ai-updates');
+  const target = path.join(updateDir, safeName(file.fileName, `GuGu-AI-${updateInfo.version}.dmg`));
+  const temporary = `${target}.${process.pid}.${randomUUID()}.part`;
+  await fs.mkdir(updateDir, { recursive: true });
+  try {
+    const cached = await macUpdateDigest(target).catch(() => null);
+    if (cached?.size === Number(file.size) && cached.sha512 === file.sha512) return openMacUpdateInstaller(target, updateInfo.version);
+    const response = await net.fetch(file.downloadUrl, { redirect: 'follow' });
+    if (!response.ok || !response.body) throw new Error(`更新安装包下载失败（${response.status}）`);
+    const hash = createHash('sha512');
+    const total = Number(file.size);
+    let transferred = 0;
+    let lastPercent = -1;
+    const digestTransform = new Transform({ transform(chunk, _encoding, callback) {
+      transferred += chunk.length;
+      hash.update(chunk);
+      const percent = Math.min(100, Math.floor((transferred / total) * 100));
+      if (percent !== lastPercent) {
+        lastPercent = percent;
+        sendUpdateStatus('downloading', { percent, transferred, total });
+      }
+      callback(null, chunk);
+    } });
+    await pipeline(Readable.fromWeb(response.body), digestTransform, createWriteStream(temporary, { mode: 0o600 }));
+    const sha512 = hash.digest('base64');
+    if (transferred !== total || sha512 !== file.sha512) throw new Error('更新安装包完整性校验失败');
+    await fs.rm(target, { force: true });
+    await fs.rename(temporary, target);
+    return openMacUpdateInstaller(target, updateInfo.version);
+  } catch (error) {
+    await fs.rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function startMacUpdateDownload(updateInfo) {
+  if (macUpdateDownloadPromise) return macUpdateDownloadPromise;
+  const promise = downloadMacUpdate(updateInfo)
+    .catch(error => { sendUpdateStatus('error', { message: error.message }); return false; })
+    .finally(() => { if (macUpdateDownloadPromise === promise) macUpdateDownloadPromise = undefined; });
+  macUpdateDownloadPromise = promise;
+  return promise;
+}
+
 function configureAutoUpdater() {
   if (!app.isPackaged) return;
   const url = updateFeedUrl();
   if (!url) { sendUpdateStatus('unconfigured'); return; }
   try {
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
+    const manualMacUpdate = process.platform === 'darwin';
+    autoUpdater.autoDownload = !manualMacUpdate;
+    autoUpdater.autoInstallOnAppQuit = !manualMacUpdate;
     // Keep electron-updater's blockmap/range-request path enabled. If a
     // differential download cannot be assembled, electron-updater falls back
     // to the complete package automatically.
@@ -386,10 +458,17 @@ function configureAutoUpdater() {
     autoUpdater.setFeedURL({ provider: 'generic', url: `${url}/` });
     updateConfigured = true;
     autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
-    autoUpdater.on('update-available', info => sendUpdateStatus('available', { version: info.version }));
+    autoUpdater.on('update-available', info => {
+      sendUpdateStatus('available', { version: info.version });
+      if (manualMacUpdate) startMacUpdateDownload(info);
+    });
     autoUpdater.on('update-not-available', info => sendUpdateStatus('current', { version: info.version }));
     autoUpdater.on('download-progress', progress => sendUpdateStatus('downloading', { percent: Math.round(progress.percent), transferred: progress.transferred, total: progress.total }));
-    autoUpdater.on('update-downloaded', info => sendUpdateStatus('downloaded', { version: info.version }));
+    autoUpdater.on('update-downloaded', info => {
+      if (manualMacUpdate) return;
+      sendUpdateStatus('downloaded', { version: info.version });
+      setTimeout(() => autoUpdater.quitAndInstall(false, true), 1_500);
+    });
     autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.message }));
     setTimeout(() => autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message })), 4_000);
   } catch (error) {
@@ -454,7 +533,17 @@ function registerIpc() {
   });
   ipcMain.handle('desktop:retry', () => loadStudio());
   ipcMain.handle('updates:check', () => checkForUpdates());
-  ipcMain.handle('updates:install', () => { if (!updateConfigured) return false; autoUpdater.quitAndInstall(); return true; });
+  ipcMain.handle('updates:install', async () => {
+    if (!updateConfigured) return false;
+    if (process.platform === 'darwin') {
+      if (!downloadedMacUpdatePath) return false;
+      const errorMessage = await shell.openPath(downloadedMacUpdatePath);
+      if (errorMessage) throw new Error(`无法打开更新安装包：${errorMessage}`);
+      return true;
+    }
+    autoUpdater.quitAndInstall(false, true);
+    return true;
+  });
   ipcMain.handle('workspace:get', () => ({ path: workspace, assetCount: libraryIndex.assets.length }));
   ipcMain.handle('workspace:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 GuGu AI 工作区', properties: ['openDirectory', 'createDirectory'] });

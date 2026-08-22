@@ -1,7 +1,7 @@
 {
   "name": "model-studio",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "GuGu AI 创作工作台与桌面客户端",
   "author": "GuGu AI",
   "guguApiBase": "",
@@ -20,7 +20,7 @@
     "desktop:pack": "electron-builder --config desktop/electron-builder.yml",
     "desktop:dist": "electron-builder --config desktop/electron-builder.yml --publish never",
     "desktop:release": "node scripts/desktop-release.mjs",
-    "check": "node --check server.mjs && node --check lib/admin-api.mjs && node --check lib/auth.mjs && node --check scripts/create-admin.mjs && node --check scripts/cleanup-local-media.mjs && node --check scripts/desktop-dev.mjs && node --check scripts/desktop-release.mjs && node --check desktop/main.mjs && node --check desktop/preload.cjs && node --check public/app.js && node --check public/guguadmin.js && node --check public/drama-studio.js",
+    "check": "node --check server.mjs && node --check lib/admin-api.mjs && node --check lib/auth.mjs && node --check scripts/create-admin.mjs && node --check scripts/cleanup-local-media.mjs && node --check scripts/desktop-dev.mjs && node --check scripts/desktop-release.mjs && node --check desktop/main.mjs && node --check desktop/manual-update.mjs && node --check desktop/preload.cjs && node --check public/app.js && node --check public/guguadmin.js && node --check public/drama-studio.js",
     "test": "NODE_ENV=test node --test test/*.test.mjs && NODE_ENV=test node --test test/smoke-http.mjs",
     "test:admin": "NODE_ENV=test node --test test/admin-*.test.mjs"
   },

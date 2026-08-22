@@ -268,6 +268,7 @@ async function initDesktopBridge() {
         else if (status === 'available') { setUpdateLabel('正在下载更新…'); setUpdateTitle(`正在下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = true; toast(`发现 GuGu AI ${payload.version || ''}，正在后台下载`); }
         else if (status === 'downloading') { setUpdateLabel(`更新 ${payload.percent || 0}%`); setUpdateTitle('正在下载更新'); updateButton.disabled = true; }
         else if (status === 'downloaded') { setUpdateLabel('重启更新'); setUpdateTitle('点击重启更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.install(); toast(`GuGu AI ${payload.version || ''} 已下载完成，点击重启更新`); }
+        else if (status === 'installer-opened') { setUpdateLabel('更新'); setUpdateTitle('安装窗口已打开'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.install(); }
         else if (status === 'error') { setUpdateLabel('检查更新'); setUpdateTitle('检查更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.check(); if (!document.hidden) toast(`自动更新暂不可用：${payload.message || '未知错误'}`); }
       };
       desktopUpdateUnsubscribe?.();

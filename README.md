@@ -284,7 +284,7 @@ npm run desktop:release -- --win
 2. 确认 `DESKTOP_API_BASE` 是线上 API 的 HTTPS 地址，`DESKTOP_UPDATE_PUBLIC_URL` 是浏览器可访问的更新 feed 地址；并准备 OSS 四项凭据。
 3. 执行带两个地址的 `npm run desktop:release` 检查文件清单。
 4. 执行 `DESKTOP_API_BASE=https://api.example.com DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai npm run desktop:release -- --publish`。
-5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会自动下载，下载完成后按钮变为「重启更新」。
+5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。macOS 发现新版本后会在后台下载 DMG，完成完整性校验后自动打开系统安装窗口；其他平台继续使用 electron-updater 的原生安装流程。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 
@@ -292,7 +292,9 @@ npm run desktop:release -- --win
 
 目前这是本机一键发布流程，还没有绑定 GitHub Actions 等 CI。后续如果确定代码托管平台，可以再把同一条命令接到打 tag 自动构建发布。当前 Codex 环境已提供 `gugu-desktop-release` skill；下次直接说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单，只有明确要求上传时才执行 OSS 发布。
 
-内测包未签名/未公证，自动更新机制已经接入，但 macOS 可能因系统安全策略限制未签名应用的自动替换；内测阶段可在更新失败时重新打开最新安装包覆盖安装。正式对外发布前仍应补充代码签名、公证和 HTTPS 更新源。
+未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包，再自动挂载并打开系统安装窗口。产品内仍显示原有「更新」按钮，用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
+
+取得 `Developer ID Application` 证书后，可再切回签名应用的原生自动替换流程并配置 Apple 公证。证书应通过钥匙串或 `CSC_LINK`、`CSC_KEY_PASSWORD` 注入，不要提交到仓库。
 
 ## 生产部署与域名
 
