@@ -58,6 +58,7 @@ const cntcnPollIntervalMs = 5_000;
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
 const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || 360));
+const autodlMaxPollDurationMs = autodlMaxPolls * autodlPollIntervalMs;
 const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
@@ -478,25 +479,47 @@ function autodlVideoUrl(value) {
     || autodlResults(value).find(item => typeof item?.url === 'string' && item.url.trim());
   return result?.url?.trim() || '';
 }
-async function pollAutodlVideo(taskId, hooks = {}) {
+function autodlRetryableResponseError(value) {
+  const code = value?.code;
+  const normalizedCode = code === undefined || code === null ? '' : String(code).trim().toLowerCase();
+  if (!normalizedCode || normalizedCode === 'success' || value?.data != null) return null;
+  const detail = errorMessage(value, 'AutoDL 返回业务错误');
+  return Object.assign(new Error(detail), {
+    upstreamCode: String(code),
+    upstreamMessage: detail,
+    retryableBusinessResponse: true,
+  });
+}
+async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
+  const fetchState = runtime.fetchJson || fetchJson;
+  const wait = runtime.sleep || sleep;
+  const nowMs = runtime.now || Date.now;
+  const maxPolls = Math.max(1, Number(runtime.maxPolls ?? autodlMaxPolls));
+  const maxDurationMs = Math.max(1, Number(runtime.maxDurationMs ?? autodlMaxPollDurationMs));
+  const pollIntervalMs = Math.max(0, Number(runtime.pollIntervalMs ?? autodlPollIntervalMs));
+  const startedAt = nowMs();
   let consecutiveErrors = 0;
   let recovering = false;
-  for (let attempt = 0; attempt < autodlMaxPolls; attempt++) {
+  for (let attempt = 0; attempt < maxPolls; attempt++) {
+    const remainingMs = maxDurationMs - (nowMs() - startedAt);
+    if (remainingMs <= 0) break;
     const delay = consecutiveErrors
-      ? Math.min(autodlPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000)
-      : autodlPollIntervalMs;
-    await sleep(delay);
+      ? Math.min(pollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000)
+      : pollIntervalMs;
+    await wait(Math.min(delay, remainingMs));
     let state;
     try {
-      state = await fetchJson(`${autodlBase}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
+      state = await fetchState(`${autodlBase}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
         headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}` },
         signal: AbortSignal.timeout(autodlRequestTimeoutMs),
       });
+      const businessError = autodlRetryableResponseError(state);
+      if (businessError) throw businessError;
     } catch (error) {
       consecutiveErrors++;
       recovering = true;
       const detail = upstreamRequestErrorDetail(error);
-      console.error('[video] AutoDL poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
+      console.error('[video] AutoDL poll retryable failure; task remains active', { taskId, consecutiveErrors, detail });
       try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
       catch (saveError) { console.error('[video] AutoDL poll state persistence failed', { taskId, message: saveError.message }); }
       continue;
@@ -527,10 +550,11 @@ function buildAutodlPayload(task, refs) {
   groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { payload[`ref_audio_${index}`] = url; });
   return payload;
 }
-async function createAutodlVideo(task, refs, hooks = {}) {
+async function createAutodlVideo(task, refs, hooks = {}, runtime = {}) {
+  const submit = runtime.fetchJson || fetchJson;
   let taskId = '';
   try {
-    const created = await fetchJson(`${autodlBase}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(autodlWorkflowId)}`, {
+    const created = await submit(`${autodlBase}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(autodlWorkflowId)}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(buildAutodlPayload(task, refs)),
@@ -541,7 +565,7 @@ async function createAutodlVideo(task, refs, hooks = {}) {
     await hooks.onSubmitted?.({ provider: 'autodl', taskId });
     const immediateUrl = autodlVideoUrl(created);
     if (immediateUrl) return { provider: 'autodl', taskId, url: immediateUrl };
-    return pollAutodlVideo(taskId, hooks);
+    return pollAutodlVideo(taskId, hooks, runtime);
   } catch (error) {
     if (error.upstreamTerminal || error.submissionUncertain) throw error;
     if (!taskId && isDefinitiveSubmitRejection(error)) {
@@ -1370,7 +1394,7 @@ const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/fi
 
 async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, generationFailureCode, publicGeneration };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration };
 
 const server = http.createServer(async (req, res) => {
   try {

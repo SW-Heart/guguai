@@ -261,6 +261,23 @@ DESKTOP_API_BASE=https://api.example.com \
 
 当 `DESKTOP_API_BASE` 或 `DESKTOP_UPDATE_PUBLIC_URL` 已配置时，脚本会在构建过程中把线上 API 地址和更新地址临时写入安装包元数据，构建结束后恢复源码。因此用户从 Finder 双击安装包即可连接线上服务并自动检查更新，不需要在用户电脑上设置环境变量。
 
+按平台分别构建：
+
+```bash
+# macOS：在 macOS 上执行，生成 DMG、ZIP 和对应 blockmap/feed
+DESKTOP_API_BASE=https://guguai.xyz \
+  DESKTOP_UPDATE_PUBLIC_URL=https://你的更新公开地址 \
+  npm run desktop:release -- --mac
+
+# Windows：建议在 Windows 构建机上执行，生成 NSIS 安装包
+# PowerShell
+$env:DESKTOP_API_BASE = "https://guguai.xyz"
+$env:DESKTOP_UPDATE_PUBLIC_URL = "https://你的更新公开地址"
+npm run desktop:release -- --win
+```
+
+当前 macOS 主机未安装 Wine，不能直接在这台 Mac 上可靠生成 Windows NSIS 安装包；Windows 包请在 Windows 构建机或 CI 上执行。`--mac`、`--win`、`--linux` 参数会传递给 electron-builder，也可以使用 `--x64` 或 `--arm64` 指定架构。
+
 每次发布只需要：
 
 1. 修改 `package.json` 的 `version`，例如从 `0.1.0` 改为 `0.1.1`。

@@ -14,6 +14,7 @@ const packageJson = JSON.parse(originalPackageJson);
 const args = process.argv.slice(2);
 const publish = args.includes('--publish');
 const skipBuild = args.includes('--skip-build');
+const builderTargets = args.filter(value => ['--mac', '--win', '--linux', '--all', '--x64', '--arm64', '--ia32', '--universal'].includes(value));
 const valueArg = name => args.find(value => value.startsWith(`${name}=`))?.slice(name.length + 1) || '';
 const version = packageJson.version;
 const updatePrefix = String(valueArg('--prefix') || process.env.DESKTOP_UPDATE_OSS_PREFIX || `${process.env.ALIYUN_OSS_PREFIX || 'model-studio'}/desktop-updates`).replace(/^\/+|\/+$/g, '');
@@ -45,6 +46,8 @@ function usage() {
   --prefix=...    OSS 更新目录，默认 <ALIYUN_OSS_PREFIX>/desktop-updates
   --base-url=...  用户端 GUGU_UPDATE_URL 对应的公开地址
   --api-base=...   用户端线上创作服务 API 地址（生产包必填）
+  --mac/--win/--linux  指定构建平台，可组合使用
+  --x64/--arm64        指定目标架构
 `);
 }
 
@@ -94,7 +97,9 @@ if (!skipBuild) {
     await fs.writeFile(packagePath, `${JSON.stringify(buildPackage, null, 2)}\n`);
   }
   try {
-    await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'desktop:dist']);
+    const distArgs = ['run', 'desktop:dist'];
+    if (builderTargets.length) distArgs.push('--', ...builderTargets);
+    await run(process.platform === 'win32' ? 'npm.cmd' : 'npm', distArgs);
   } finally {
     if (publicUrl || apiBase) await fs.writeFile(packagePath, originalPackageJson);
   }

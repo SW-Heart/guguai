@@ -7,6 +7,7 @@ import path from 'node:path';
 import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fetchRemoteMedia } from './media-download.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -272,16 +273,7 @@ async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
     }
   }
   const targetUrl = trustedMediaDownloadUrl(url);
-  const cookies = await session.defaultSession.cookies.get({ url: targetUrl });
-  const headers = cookies.length ? { Cookie: cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ') } : {};
-  let response = await net.fetch(targetUrl, { headers, redirect: 'manual' });
-  for (let redirectCount = 0; redirectCount < 4 && response.status >= 300 && response.status < 400; redirectCount += 1) {
-    const location = response.headers.get('location');
-    if (!location) break;
-    const redirectedUrl = new URL(location, targetUrl).toString();
-    const redirectedOrigin = new URL(redirectedUrl).origin;
-    response = await net.fetch(redirectedUrl, { headers: redirectedOrigin === trustedOrigin ? headers : {}, redirect: 'manual' });
-  }
+  const response = await fetchRemoteMedia(session.defaultSession, targetUrl);
   if (!response.ok || !response.body) throw new Error(`媒体下载失败（${response.status}）`);
   const originalName = safeName(name, `${kind === 'video' ? '生成视频' : '生成图片'}-${cloudAssetId}`);
   const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov' }[mimeType] || '');
@@ -418,7 +410,7 @@ async function loadStudio() {
     return;
   }
   try {
-    const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(3000) });
+    const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`服务返回 ${response.status}`);
     await mainWindow.loadURL(`${apiBase}/`);
   } catch (error) {

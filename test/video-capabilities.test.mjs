@@ -11,6 +11,10 @@ test('video catalog exposes GuGu 2.0 as available in launch order', () => {
   assert.equal(gugu10?.availability, 'available');
   assert.equal(gugu10?.description, '支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成');
   assert.deepEqual(gugu10?.modes.find(mode => mode.generationType === 'REFERENCE')?.referenceLimits, { image: 9, video: 0, audio: 3, total: 12 });
+  assert.throws(
+    () => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.GROK_15, generationType: 'TEXT', aspectRatio: '16:9', duration: 5, quality: '1080p' }),
+    error => error.statusCode === 400 && /不支持所选清晰度/.test(error.message),
+  );
 });
 
 test('first and last frame mode selects continuity profile and enforces eight seconds', () => {
