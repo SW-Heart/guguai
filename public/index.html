@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=99">
+  <link rel="stylesheet" href="/styles.css?v=100">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
@@ -121,6 +121,6 @@
   <dialog id="renameFileDialog" class="form-dialog" aria-labelledby="renameFileTitle" aria-describedby="renameFileHelp"><form id="renameFileForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">文件管理</span><h2 id="renameFileTitle">重命名素材</h2><p id="renameFileHelp">修改后会立即同步到文件库。</p></div><button id="closeRenameFile" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body"><label class="dialog-field" for="renameFileInput"><span>文件名</span><input id="renameFileInput" maxlength="200" autocomplete="off" required><small id="renameFileError" class="field-error hidden" role="alert"></small></label></div><footer class="dialog-footer"><button id="cancelRenameFile" class="secondary-button" type="button">取消</button><button id="saveRenameFile" class="gradient-button" type="submit">保存名称</button></footer></form></dialog>
   <dialog id="deleteConfirmDialog" class="delete-confirm-dialog" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage"><div><div class="dialog-head"><div><span class="dialog-kicker">危险操作</span><h2 id="deleteConfirmTitle">确认删除</h2></div></div><p id="deleteConfirmMessage">作品一旦删除，无法恢复。</p><footer><button id="cancelDeleteConfirm" class="secondary-button" type="button">取消</button><button id="acceptDeleteConfirm" class="danger-button" type="button">确认删除</button></footer></div></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js?v=109"></script>
+  <script type="module" src="/app.js?v=110"></script>
 </body>
 </html>

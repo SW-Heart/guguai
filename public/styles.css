@@ -163,6 +163,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .rail-update-button { min-height: 52px; margin-top: 4px; border: 1px solid transparent; color: #4f46e5; background: #eef0ff; }
 .rail-update-button:hover { color: #3730a3; border-color: var(--brand-line); background: #e0e7ff; }
 .rail-update-button:disabled { cursor: wait; opacity: .68; }
+.rail-update-button.has-update { color: #fff; background: linear-gradient(135deg, var(--brand), #756cf3); box-shadow: 0 8px 18px rgba(99,102,241,.22); }
+.rail-update-button.has-update:hover { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--brand-hover), #695fe8); box-shadow: 0 10px 22px rgba(99,102,241,.28); }
+.rail-update-button.has-update:disabled { color: rgba(255,255,255,.82); background: linear-gradient(135deg, var(--brand), #756cf3); opacity: .82; }
 .rail-update-button svg { width: 17px; }
 .rail-update-button span { white-space: nowrap; font-size: 9px; }
 .rail-beta { position: absolute; top: 4px; right: -5px; padding: 2px 4px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; color: #fff; background: linear-gradient(135deg, #7773e8, #aa68c9); box-shadow: 0 2px 6px rgba(101,88,190,.22); font: 700 8px/1 var(--sans); font-style: normal; letter-spacing: .02em; white-space: nowrap; }

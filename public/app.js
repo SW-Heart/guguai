@@ -258,12 +258,20 @@ async function initDesktopBridge() {
       const updateLabel = updateButton.querySelector('span') || updateButton;
       const setUpdateLabel = text => { updateLabel.textContent = text; };
       const setUpdateTitle = text => { updateButton.title = text; };
-      updateButton.classList.remove('hidden');
+      const hideUpdateButton = () => {
+        updateButton.classList.add('hidden');
+        updateButton.classList.remove('has-update');
+        updateButton.disabled = false;
+      };
+      const showUpdateButton = () => {
+        updateButton.classList.remove('hidden');
+        updateButton.classList.add('has-update');
+      };
+      hideUpdateButton();
       const applyUpdateStatus = payload => {
         const status = payload?.status;
-        if (status === 'unconfigured') { updateButton.classList.add('hidden'); updateButton.disabled = false; return; }
-        if (status === 'current') { updateButton.classList.remove('hidden'); setUpdateLabel('检查更新'); setUpdateTitle('检查更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.check(); return; }
-        updateButton.classList.remove('hidden');
+        if (status === 'unconfigured' || status === 'current' || status === 'error') { hideUpdateButton(); return; }
+        showUpdateButton();
         if (status === 'checking') { setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; }
         else if (status === 'available') { setUpdateLabel('正在下载更新…'); setUpdateTitle(`正在下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = true; toast(`发现 GuGu AI ${payload.version || ''}，正在后台下载`); }
         else if (status === 'downloading') { setUpdateLabel(`更新 ${payload.percent || 0}%`); setUpdateTitle('正在下载更新'); updateButton.disabled = true; }
