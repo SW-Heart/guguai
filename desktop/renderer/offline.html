@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GuGu AI · 服务连接</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #080c11; color: #eef5f2; }
+    body { min-height: 100vh; margin: 0; padding: 32px; background: radial-gradient(circle at 50% 0, #17352c 0, transparent 42%), #080c11; }
+    main { width: min(980px, 100%); margin: 0 auto; padding: 38px; border: 1px solid #26352f; border-radius: 20px; background: #10171b; box-shadow: 0 24px 80px #0008; }
+    .mark { color: #8cf0ca; font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; }
+    h1 { margin: 12px 0 8px; font-size: 26px; } p { color: #9baaa5; line-height: 1.65; font-size: 14px; }
+    #detail { padding: 12px 14px; border: 1px solid #26352f; border-radius: 10px; color: #c7d6d1; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
+    label { display: block; margin-top: 18px; color: #9baaa5; font-size: 12px; } input { width: 100%; box-sizing: border-box; margin-top: 7px; padding: 11px 12px; border: 1px solid #30423b; border-radius: 9px; color: #eef5f2; background: #0b1114; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; } button { margin-top: 20px; border: 0; border-radius: 10px; padding: 12px 18px; color: #06100d; background: #8cf0ca; font-weight: 700; cursor: pointer; } button.secondary { color: #c7d6d1; background: #24352f; }
+    .local-library { margin-top: 36px; padding-top: 26px; border-top: 1px solid #26352f; } .library-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; } .library-head h2 { margin: 0; font-size: 18px; } .library-head p { margin: 5px 0 0; font-size: 12px; } #localSearch { width: 220px; margin: 0; } .local-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 12px; margin-top: 18px; } .local-card { min-width: 0; padding: 0; border: 1px solid #26352f; border-radius: 12px; overflow: hidden; color: #dbe7e2; background: #0b1114; text-align: left; cursor: pointer; } .local-card:hover { border-color: #8cf0ca; transform: translateY(-2px); } .local-card-media { aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; background: #17231f; } .local-card-media img, .local-card-media video { width: 100%; height: 100%; object-fit: cover; } .local-card-media audio { width: 90%; } .audio-mark { color: #8cf0ca; font-size: 34px; } .local-card-name { display: block; padding: 9px 10px 2px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; } .local-card-meta { display: block; padding: 0 10px 10px; color: #7f928b; font-size: 10px; } .local-empty { grid-column: 1/-1; padding: 26px; border: 1px dashed #30423b; border-radius: 12px; color: #8da19a; text-align: center; font-size: 12px; }
+    @media (max-width: 620px) { body { padding: 16px; } main { padding: 24px; } .library-head { display: block; } #localSearch { width: 100%; margin-top: 12px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="mark">GUGU AI / DESKTOP</span>
+    <h1>创作服务暂时无法连接</h1>
+    <p>客户端需要连接线上创作服务。请填写服务地址后重试；你的本地工作区不会受到影响。开发调试时可运行 <code>npm run desktop:dev</code>。</p>
+    <div id="detail">正在读取连接信息…</div>
+    <label for="apiBase">创作服务地址</label>
+    <input id="apiBase" type="url" spellcheck="false" placeholder="https://studio.example.com">
+    <div class="actions"><button id="saveAndRetry" type="button">保存并连接</button><button id="retry" class="secondary" type="button">按当前地址重试</button></div>
+    <label for="updateUrl">自动更新地址（可选）</label>
+    <input id="updateUrl" type="url" spellcheck="false" placeholder="https://download.example.com/gugu-ai">
+    <div class="actions"><button id="saveUpdateUrl" class="secondary" type="button">保存更新地址</button></div>
+    <section class="local-library" aria-labelledby="localLibraryTitle">
+      <div class="library-head"><div><h2 id="localLibraryTitle">本地素材库</h2><p id="localSummary">正在读取本地工作区…</p></div><input id="localSearch" type="search" placeholder="搜索本地素材" aria-label="搜索本地素材"></div>
+      <div id="localGrid" class="local-grid"></div>
+    </section>
+  </main>
+  <script>
+    const detail = document.querySelector('#detail');
+    const apiBase = document.querySelector('#apiBase');
+    const updateUrl = document.querySelector('#updateUrl');
+    const localGrid = document.querySelector('#localGrid');
+    const localSummary = document.querySelector('#localSummary');
+    const localSearch = document.querySelector('#localSearch');
+    let localAssets = [];
+    const message = new URLSearchParams(location.search).get('message');
+    detail.textContent = message || '未提供错误信息';
+    const kindOf = item => item.kind || (String(item.mimeType || '').startsWith('image/') ? 'image' : String(item.mimeType || '').startsWith('video/') ? 'video' : String(item.mimeType || '').startsWith('audio/') ? 'audio' : '');
+    const sizeOf = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+    function renderLocal() {
+      const query = localSearch.value.trim().toLowerCase();
+      const assets = localAssets.filter(item => !query || String(item.name || '').toLowerCase().includes(query));
+      localSummary.textContent = `${localAssets.length} 个本地素材 · 双击素材可在文件夹中显示`;
+      localGrid.replaceChildren();
+      if (!assets.length) { const empty = document.createElement('div'); empty.className = 'local-empty'; empty.textContent = localAssets.length ? '没有匹配的本地素材' : '本地工作区还没有素材'; localGrid.append(empty); return; }
+      assets.forEach(item => {
+        const card = document.createElement('button'); card.type = 'button'; card.className = 'local-card'; card.title = '双击在文件夹中显示';
+        const media = document.createElement('div'); media.className = 'local-card-media'; const kind = kindOf(item);
+        if (kind === 'image') { const image = document.createElement('img'); image.src = item.url; image.alt = item.name || '本地图片'; image.loading = 'lazy'; media.append(image); }
+        else if (kind === 'video') { const video = document.createElement('video'); video.src = item.url; video.preload = 'metadata'; video.muted = true; media.append(video); }
+        else if (kind === 'audio') { const audio = document.createElement('audio'); audio.src = item.url; audio.controls = true; audio.onclick = event => event.stopPropagation(); media.append(audio); }
+        else { const mark = document.createElement('span'); mark.className = 'audio-mark'; mark.textContent = '♫'; media.append(mark); }
+        const name = document.createElement('strong'); name.className = 'local-card-name'; name.textContent = item.name || '未命名文件';
+        const meta = document.createElement('small'); meta.className = 'local-card-meta'; meta.textContent = `${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'} · ${sizeOf(Number(item.size) || 0)}`;
+        card.append(media, name, meta); card.ondblclick = () => window.guguDesktop?.media?.showInFolder?.(item.id) || window.guguDesktop?.workspace?.open?.(); localGrid.append(card);
+      });
+    }
+    localSearch.oninput = renderLocal;
+    window.guguDesktop?.media?.listLocal?.().then(assets => { localAssets = Array.isArray(assets) ? assets : []; renderLocal(); }).catch(error => { localSummary.textContent = `本地工作区读取失败：${error.message}`; });
+    window.guguDesktop?.getInfo?.().then(info => { apiBase.value = info.apiBase || ''; updateUrl.value = info.updateUrl || ''; }).catch(() => {});
+    document.querySelector('#saveAndRetry').onclick = async () => { const button = document.querySelector('#saveAndRetry'); button.disabled = true; detail.textContent = '正在保存地址并连接…'; try { await window.guguDesktop?.setApiBase?.(apiBase.value); } catch (error) { detail.textContent = error.message; button.disabled = false; } };
+    document.querySelector('#retry').onclick = () => window.guguDesktop?.retry?.() || location.reload();
+    document.querySelector('#saveUpdateUrl').onclick = async () => { const button = document.querySelector('#saveUpdateUrl'); button.disabled = true; detail.textContent = '正在保存自动更新地址…'; try { const result = await window.guguDesktop?.setUpdateUrl?.(updateUrl.value); detail.textContent = result?.restartRequired ? '更新地址已保存，请重启客户端后生效。' : '更新地址已保存。'; } catch (error) { detail.textContent = error.message; } finally { button.disabled = false; } };
+  </script>
+</body>
+</html>

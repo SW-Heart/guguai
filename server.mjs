@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, migrationCompleted, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntents, findAsset, findDramaProject, findGeneration, findUploadIntent, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, listRecoverableUploadIntents, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
+import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntents, findAsset, findAssetBySha256, findDramaProject, findGeneration, findUploadIntent, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, listRecoverableUploadIntents, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -39,6 +39,9 @@ const configuredCntcnBase = (process.env.CNTCN_API_BASE || 'https://api.ai.cntcn
 const cntcnBase = /\/v1$/i.test(configuredCntcnBase) ? configuredCntcnBase : `${configuredCntcnBase}/v1`;
 const configuredOaiBase = (process.env.OAI_API_BASE || 'https://newapi.oairegbox.cc/v1').replace(/\/$/, '');
 const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${configuredOaiBase}/v1`;
+const autodlBase = (process.env.AUTODL_API_BASE || 'https://autodl.art').replace(/\/$/, '');
+const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
+const autodlConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlWorkflowId);
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
@@ -52,6 +55,9 @@ const ttapiMaxPollBackoffMs = 60_000;
 const ttapiRequestTimeoutMs = 60_000;
 const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
+const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
+const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
+const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || 360));
 const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
@@ -76,8 +82,8 @@ const assetRestores = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
-const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm']);
-const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm' });
+const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/flac']);
+const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm', '.flac':'audio/flac' });
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
 const videoDurations = new Set([8, 10, 15, 20, 30]);
@@ -457,6 +463,94 @@ async function createCntcnVideo(task, refs, hooks = {}) {
     throw Object.assign(new Error(`CNTCN 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'cntcn', submissionUncertain: true, cause: error });
   }
 }
+function autodlStatus(value) {
+  return String(value?.data?.status || value?.status || '').trim().toLowerCase();
+}
+function autodlTaskId(value) {
+  const candidate = value?.data?.task_id || value?.data?.taskId || value?.task_id || value?.taskId;
+  return candidate === undefined || candidate === null ? '' : String(candidate);
+}
+function autodlResults(value) {
+  return Array.isArray(value?.data?.results) ? value.data.results : Array.isArray(value?.results) ? value.results : [];
+}
+function autodlVideoUrl(value) {
+  const result = autodlResults(value).find(item => item?.type === 'video' && typeof item.url === 'string' && item.url.trim())
+    || autodlResults(value).find(item => typeof item?.url === 'string' && item.url.trim());
+  return result?.url?.trim() || '';
+}
+async function pollAutodlVideo(taskId, hooks = {}) {
+  let consecutiveErrors = 0;
+  let recovering = false;
+  for (let attempt = 0; attempt < autodlMaxPolls; attempt++) {
+    const delay = consecutiveErrors
+      ? Math.min(autodlPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000)
+      : autodlPollIntervalMs;
+    await sleep(delay);
+    let state;
+    try {
+      state = await fetchJson(`${autodlBase}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}` },
+        signal: AbortSignal.timeout(autodlRequestTimeoutMs),
+      });
+    } catch (error) {
+      consecutiveErrors++;
+      recovering = true;
+      const detail = upstreamRequestErrorDetail(error);
+      console.error('[video] AutoDL poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
+      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
+      catch (saveError) { console.error('[video] AutoDL poll state persistence failed', { taskId, message: saveError.message }); }
+      continue;
+    }
+    if (recovering) {
+      try { await hooks.onPollRecovered?.(); }
+      catch (saveError) { console.error('[video] AutoDL recovery state persistence failed', { taskId, message: saveError.message }); }
+    }
+    consecutiveErrors = 0;
+    recovering = false;
+    const videoUrl = autodlVideoUrl(state);
+    const status = autodlStatus(state);
+    if (videoUrl) return { provider: 'autodl', taskId, url: videoUrl };
+    if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
+      throw Object.assign(new Error(state.msg || state.message || 'AutoDL 视频生成失败'), { provider: 'autodl', providerTaskId: taskId, upstreamTerminal: true });
+    }
+  }
+  throw Object.assign(new Error('AutoDL 视频任务等待超时'), { provider: 'autodl', providerTaskId: taskId });
+}
+function buildAutodlPayload(task, refs) {
+  const groups = Array.isArray(refs) ? { images: refs, audios: [] } : (refs || { images: [], audios: [] });
+  const payload = {
+    prompt: task.prompt,
+    duration: task.duration,
+    resolution: `${task.quality || '768p'}${task.aspectRatio === '9:16' ? '竖' : '横'}`,
+  };
+  groups.images?.slice(0, task.referenceLimits?.image || task.maxReferenceImages || 9).forEach((url, index) => { payload[`ref_image_${index}`] = url; });
+  groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { payload[`ref_audio_${index}`] = url; });
+  return payload;
+}
+async function createAutodlVideo(task, refs, hooks = {}) {
+  let taskId = '';
+  try {
+    const created = await fetchJson(`${autodlBase}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(autodlWorkflowId)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildAutodlPayload(task, refs)),
+      signal: AbortSignal.timeout(autodlRequestTimeoutMs),
+    });
+    taskId = autodlTaskId(created);
+    if (!taskId) throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });
+    await hooks.onSubmitted?.({ provider: 'autodl', taskId });
+    const immediateUrl = autodlVideoUrl(created);
+    if (immediateUrl) return { provider: 'autodl', taskId, url: immediateUrl };
+    return pollAutodlVideo(taskId, hooks);
+  } catch (error) {
+    if (error.upstreamTerminal || error.submissionUncertain) throw error;
+    if (!taskId && isDefinitiveSubmitRejection(error)) {
+      throw Object.assign(error, { provider: 'autodl', upstreamTerminal: true });
+    }
+    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'autodl', providerTaskId: taskId });
+    throw Object.assign(new Error(`AutoDL 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'autodl', submissionUncertain: true, cause: error });
+  }
+}
 function oaiVideoUrl(value) {
   const candidate = value?.data?.[0]?.video_url || value?.data?.[0]?.url || value?.data?.video_url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
   return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : '';
@@ -562,6 +656,10 @@ async function createVideo(task, refs, hooks = {}) {
     if (!cntcnConfigured) throw new Error('CNTCN Seedance 视频服务尚未配置');
     return createCntcnVideo(task, refs, hooks);
   }
+  if (task.provider === 'autodl') {
+    if (!autodlConfigured) throw new Error('AutoDL GuGu 2.0 视频服务尚未配置');
+    return createAutodlVideo(task, refs, hooks);
+  }
   if (task.provider === 'oai') {
     if (!oaiKeyForTask(task)) {
       const message = task.videoModelId === VIDEO_MODEL_IDS.GROK_15
@@ -663,7 +761,7 @@ function normalizeDramaProject(project) {
           referenceAssetIds:Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.map(String).slice(0, 7) : [],
         }))
       : [];
-    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:String(shot.generation?.modelId || ''), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p' }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
+    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:String(shot.generation?.modelId || ''), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p' }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
   });
   project.shots.forEach((shot,index) => { shot.promptOverride = dramaPromptOverrides[index] || ''; });
   project.productionQuality = productionQualitySummary({scenes:project.scenes,shots:project.shots}, project.settings);
@@ -700,7 +798,7 @@ async function uploadAssetFileToOss(userId, asset, sourceFile) {
 function uploadExtension(mimeType, name = '') {
   const requested = path.extname(String(name)).toLowerCase().replace(/[^a-z0-9.]/g, '');
   if (requested && requested.length <= 10) return requested;
-  return ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba' }[mimeType] || '');
+  return ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
 }
 function pendingUploadKey(userId, uploadId, mimeType, name) { return [ossPrefix, 'pending', safeId(userId), `${safeId(uploadId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
 function finalUploadKey(userId, assetId, mimeType, name) { return [ossPrefix, 'assets', safeId(userId), `${safeId(assetId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
@@ -794,6 +892,7 @@ function magicMatches(mimeType, content) {
   if (mimeType === 'audio/aac') return bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0;
   if (mimeType === 'audio/mp4') return bytes.subarray(4, 8).toString('ascii') === 'ftyp';
   if (mimeType === 'audio/webm') return bytes.subarray(0, 4).equals(Buffer.from('1a45dfa3', 'hex'));
+  if (mimeType === 'audio/flac') return bytes.subarray(0, 4).toString('ascii') === 'fLaC';
   return false;
 }
 async function verifyUploadedObject(intent) {
@@ -853,14 +952,14 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   return restore;
 }
 async function resolveRefs(userId, ids, task = {}) {
-  const mixed = task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3;
+  const mixed = task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
     const asset = findAsset(userId, id);
     if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
     if (!mixed && asset.kind !== 'image') continue;
     const key = asset.ossKey || await uploadAssetToOss(userId, asset);
-    const url = task.provider === 'cntcn' ? publicOssUrl(key) : await signedOssUrl(key);
+    const url = task.provider === 'cntcn' || task.provider === 'autodl' ? publicOssUrl(key) : await signedOssUrl(key);
     if (mixed) refs[`${asset.kind}s`].push(url);
     else refs.push(url);
   }
@@ -990,6 +1089,34 @@ function cntcnPersistenceHooks(userId, task) {
     },
   };
 }
+function autodlPersistenceHooks(userId, task) {
+  return {
+    onSubmitted: async ({ provider, taskId }) => {
+      task.provider = provider;
+      task.providerTaskId = taskId;
+      task.submittedAt ||= now();
+      task.submissionUncertain = false;
+      task.error = '';
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGenerationWithRetry(userId, task, 'autodl-submitted');
+    },
+    onPollError: async ({ consecutiveErrors, detail }) => {
+      task.status = 'running';
+      task.lastPollError = detail;
+      task.lastPollErrorAt = now();
+      task.pollFailureCount = consecutiveErrors;
+      await saveGeneration(userId, task);
+    },
+    onPollRecovered: async () => {
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGeneration(userId, task);
+    },
+  };
+}
 function scheduleGenerationArchive(userId, task) {
   if (generationRetryTimers.has(task.id)) return;
   const timer = setTimeout(() => {
@@ -1059,7 +1186,13 @@ function startGeneration(userId, task) {
       task.finishedAt = null;
       await saveGenerationWithRetry(userId, task, 'generation-running');
       const refs = await resolveRefs(userId, task.referenceAssetIds, task);
-      const hooks = task.provider === 'ttapi' ? ttapiPersistenceHooks(userId, task) : task.provider === 'cntcn' ? cntcnPersistenceHooks(userId, task) : {};
+      const hooks = task.provider === 'ttapi'
+        ? ttapiPersistenceHooks(userId, task)
+        : task.provider === 'cntcn'
+          ? cntcnPersistenceHooks(userId, task)
+          : task.provider === 'autodl'
+            ? autodlPersistenceHooks(userId, task)
+            : {};
       const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs, hooks);
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
       await completeGenerationResult(userId, task, result);
@@ -1069,12 +1202,12 @@ function startGeneration(userId, task) {
         task.submissionUncertain = true;
         task.error = error.message;
         task.creditStatus = 'charged';
-        console.error('[video] TTAPI submission outcome is uncertain; no refund issued', { generationId: task.id, message: error.message });
-      } else if (['ttapi', 'cntcn'].includes(task.provider) && task.providerTaskId && !error.upstreamTerminal) {
+        console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
+      } else if (['ttapi', 'cntcn', 'autodl'].includes(task.provider) && task.providerTaskId && !error.upstreamTerminal) {
         task.status = 'running';
         task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
         task.creditStatus = 'charged';
-        console.error('[video] TTAPI task paused without refund', { generationId: task.id, providerTaskId: task.providerTaskId, message: error.message });
+        console.error('[video] async provider task paused without refund', { generationId: task.id, provider: task.provider, providerTaskId: task.providerTaskId, message: error.message });
       } else {
         await failGeneration(userId, task, error);
       }
@@ -1142,6 +1275,33 @@ function resumeCntcnGeneration(userId, task) {
   activeGenerations.set(task.id, promise);
   return promise;
 }
+function resumeAutodlGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      task.error = '';
+      await saveGeneration(userId, task);
+      const result = await pollAutodlVideo(task.providerTaskId, autodlPersistenceHooks(userId, task));
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.upstreamTerminal) await failGeneration(userId, task, error);
+      else {
+        task.status = 'running';
+        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
+        task.creditStatus = 'charged';
+        console.error('[video] AutoDL recovery paused without refund', { generationId: task.id, message: error.message });
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'autodl-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
 function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
@@ -1180,7 +1340,10 @@ async function recoverPendingGenerations() {
     } else if (task.provider === 'cntcn' && task.providerTaskId) {
       resumeCntcnGeneration(userId, task);
       polling++;
-    } else if (task.submissionUncertain || (['ttapi', 'cntcn'].includes(task.provider) && !task.providerTaskId)) {
+    } else if (task.provider === 'autodl' && task.providerTaskId) {
+      resumeAutodlGeneration(userId, task);
+      polling++;
+    } else if (task.submissionUncertain || (['ttapi', 'cntcn', 'autodl'].includes(task.provider) && !task.providerTaskId)) {
       task.status = 'running';
       task.finishedAt = null;
       task.creditStatus = 'charged';
@@ -1201,7 +1364,7 @@ async function recoverPendingGenerations() {
   }
 }
 
-async function streamUpload(req, target, limit = maxUploadBytes) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return size; }
+async function streamUpload(req, target, limit = maxUploadBytes, digest = null) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 8 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); digest?.update(chunk); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return digest ? { size, sha256: digest.digest('hex') } : size; }
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 
@@ -1585,7 +1748,8 @@ const server = http.createServer(async (req, res) => {
       await ensureUserDirs(user.id);
       let dramaProjectId = ''; let dramaShotId = ''; let dramaShot = null;
       if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);const dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}); }
-      const promptMaxLength = type === 'image' ? 5000 : 4096;
+      const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
+      const promptMaxLength = type === 'image' ? 5000 : requestedVideoModelId === VIDEO_MODEL_IDS.GROK_15 ? 10000 : 4096;
       if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` });
       if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error: '请选择视频模型' });
       if (type === 'video' && dramaShot) {
@@ -1605,6 +1769,7 @@ const server = http.createServer(async (req, res) => {
       if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: 'CNTCN Seedance 视频服务尚未配置' });
+      if (provider === 'autodl' && !autodlConfigured) return sendJson(res, 503, { error: 'AutoDL GuGu 2.0 视频服务尚未配置' });
       if (provider === 'oai') {
         const configured = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15
           ? oaiGrokConfigured
@@ -1688,6 +1853,14 @@ const server = http.createServer(async (req, res) => {
       if (!Number.isSafeInteger(size) || size <= 0) return sendJson(res, 400, { error: '文件大小无效' });
       if (size > sizeLimit) return sendJson(res, 413, { error: imageTypes.has(mimeType) ? '单张图片不能超过 8 MB' : '视频或音频不能超过 25 MB' });
       const name = String(input.name || 'file').replace(/[\r\n\u0000-\u001f]/g, '').trim().slice(0, 160) || 'file';
+      const suppliedHash = input.sha256 === undefined || input.sha256 === null || input.sha256 === '' ? '' : String(input.sha256).trim().toLowerCase();
+      if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' });
+      if (suppliedHash) {
+        const existingAsset = findAssetBySha256(user.id, suppliedHash, size);
+        if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) {
+          return sendJson(res, 200, { mode: 'reuse', asset: publicAsset(existingAsset), sha256: suppliedHash });
+        }
+      }
       const uploadId = randomUUID();
       const assetId = randomUUID();
       const createdAt = now();
@@ -1702,6 +1875,7 @@ const server = http.createServer(async (req, res) => {
         kind: uploadKind(mimeType),
         mimeType,
         expectedSize: size,
+        sha256: suppliedHash || null,
         clientWidth: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.width) || 0))) || null : null,
         clientHeight: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.height) || 0))) || null : null,
         status: 'pending',
@@ -1767,6 +1941,7 @@ const server = http.createServer(async (req, res) => {
           kind: intent.kind,
           mimeType: intent.mimeType,
           size: meta.size,
+          ...(intent.sha256 ? { sha256: intent.sha256 } : {}),
           storageName: `${intent.assetId}${extension}`,
           source: 'upload',
           sourceGenerationId: '',
@@ -1791,7 +1966,23 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (url.pathname === '/api/files/upload' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 8 MB' : '视频或音频不能超过 25 MB' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const size = await streamUpload(req, localFile, uploadLimit); if (!size) return sendJson(res, 400, { error: '文件为空' }); const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
+      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 8 MB' : '视频或音频不能超过 25 MB' }); const suppliedHash = String(req.headers['x-file-sha256'] || '').trim().toLowerCase(); if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const upload = await streamUpload(req, localFile, uploadLimit, createHash('sha256')); const size = upload.size; if (!size) return sendJson(res, 400, { error: '文件为空' }); if (suppliedHash && suppliedHash === upload.sha256) { const existing = findAssetBySha256(user.id, suppliedHash, size); if (existing && existing.mimeType === mimeType && existing.kind === kind) { await fs.unlink(localFile).catch(() => {}); return sendJson(res, 200, { ...publicAsset(existing), mode: 'reuse', sha256: suppliedHash }); } } const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, sha256: upload.sha256, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
+    }
+    const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
+    if (directMediaMatch && req.method === 'GET') {
+      const user = await requireUser(req, res); if (!user) return;
+      const asset = findAsset(user.id, directMediaMatch[1]);
+      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
+      if (asset.ossKey && oss) {
+        res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' });
+        return res.end();
+      }
+      const localFile = path.join(assetFilesDir(user.id), asset.storageName);
+      if (await fs.access(localFile).then(() => true).catch(() => false)) {
+        res.writeHead(302, { Location: `/api/files/${asset.id}/content`, 'Cache-Control': 'private, no-store' });
+        return res.end();
+      }
+      return sendJson(res, 404, { error: '文件内容不存在' });
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
     if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }

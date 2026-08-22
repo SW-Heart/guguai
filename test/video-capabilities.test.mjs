@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
 
-test('video catalog keeps launch order and gates GuGu 1.0 as coming soon', () => {
+test('video catalog exposes GuGu 2.0 as available in launch order', () => {
   const models = publicVideoCapabilities().models;
   assert.deepEqual(models.map(model => model.label), [
-    'GuGu 1.5', 'MiniMax H3', 'Seedance 2.0', 'Seedance 2.0 Fast', 'Omni Flash', 'Veo 3.1', 'GuGu 1.0', 'Veo 3.1 Fast',
+    'GuGu 2.0', 'GuGu 1.5', 'MiniMax H3', 'Seedance 2.0', 'Seedance 2.0 Fast', 'Omni Flash', 'Veo 3.1', 'Veo 3.1 Fast',
   ]);
-  assert.equal(models.find(model => model.id === VIDEO_MODEL_IDS.GROK_15)?.availability, 'coming-soon');
+  const gugu10 = models.find(model => model.id === VIDEO_MODEL_IDS.GROK_15);
+  assert.equal(gugu10?.availability, 'available');
+  assert.equal(gugu10?.description, '支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成');
+  assert.deepEqual(gugu10?.modes.find(mode => mode.generationType === 'REFERENCE')?.referenceLimits, { image: 9, video: 0, audio: 3, total: 12 });
 });
 
 test('first and last frame mode selects continuity profile and enforces eight seconds', () => {

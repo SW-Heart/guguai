@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 import { __test } from '../server.mjs';
-import { claimUploadIntent, completeUploadIntentWithAsset, countActiveUploadIntents, createUploadIntent, findUploadIntent, insertUser } from '../lib/store.mjs';
+import { claimUploadIntent, completeUploadIntentWithAsset, countActiveUploadIntents, createUploadIntent, findAssetBySha256, findUploadIntent, insertUser, saveAssetRecord } from '../lib/store.mjs';
 
 test('direct upload keys are scoped and policy fixes the object key', () => {
   const pending = __test.pendingUploadKey('user/unsafe', 'upload-1', 'image/jpeg', 'photo.jpg');
@@ -67,4 +67,18 @@ test('upload intent claim and completion are idempotent', () => {
   assert.equal(second.asset.id, intent.assetId);
   assert.equal(findUploadIntent(userId, intent.id).status, 'completed');
   assert.equal(countActiveUploadIntents(userId), 0);
+});
+
+test('same-user content hash lookup reuses an existing asset without crossing users', () => {
+  const userId = randomUUID();
+  const otherUserId = randomUUID();
+  const createdAt = new Date().toISOString();
+  insertUser({ id: userId, username: `hash_${userId.slice(0, 8)}`, passwordHash: 'test', role: 'user', status: 'active', creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  insertUser({ id: otherUserId, username: `hash_${otherUserId.slice(0, 8)}`, passwordHash: 'test', role: 'user', status: 'active', creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  const sha256 = 'a'.repeat(64);
+  const asset = { id: randomUUID(), ownerId: userId, name: 'same.png', kind: 'image', mimeType: 'image/png', size: 42, sha256, storageName: 'same.png', createdAt, updatedAt: createdAt };
+  saveAssetRecord(userId, asset);
+  assert.equal(findAssetBySha256(userId, sha256, 42).id, asset.id);
+  assert.equal(findAssetBySha256(otherUserId, sha256, 42), null);
+  assert.equal(findAssetBySha256(userId, sha256, 43), null);
 });

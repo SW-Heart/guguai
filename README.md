@@ -8,7 +8,7 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 
 - **个人创作空间**：账号注册/登录、邀请码注册、积分流水、用户数据隔离。
 - **管理后台**：仅管理员可登录 `/guguadmin`，管理用户、模型、全局价格、邀请码、积分和运行日志。
-- **文件库**：上传、搜索、筛选、预览、下载、重命名与删除图片、视频素材。
+- **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；云端 OSS 只作为备份与跨设备同步来源。
 - **图片生成**：支持提示词、比例、质量和最多 7 张参考图；成品自动进入文件库。
 - **视频生成**：支持文生视频、参考图视频、首尾帧视频；按时长和模式自动选择视频服务。
 - **短剧创作**：提供「智能导演」和「专业编辑」两种工作模式，支持资源定稿、分镜、镜头视频、尾帧衔接与一键成片。
@@ -63,9 +63,11 @@ cp .env.example .env
 | Veo 3.1 视频 | `OAI_API_BASE`、`OAIAPI_VEO_KEY`、`OAI_VEO_31_MODEL` | 使用 oairegbox 的 `firefly-veo-3.1`，支持 4/6/8 秒文生视频和单图参考图视频 |
 | MiniMax H3 视频 | `OAI_API_BASE`、`OAIAPI_MINIMAX_KEY`、`OAI_MINIMAX_H3_768_MODEL`、`OAI_MINIMAX_H3_2K_MODEL` | 平台统一展示为 MiniMax H3；选择 768p 路由到 768p 模型，选择 2K 路由到 2K 模型，支持 4–15 秒文本、参考图和首尾帧视频 |
 | Seedance 2.0 / Seedance 2.0 Fast 视频 | `CNTCN_API_BASE`、`CNTCN_KEY`、`CNTCN_SD2_MODEL`、`CNTCN_SD2_FAST_MODEL` | 通过 CNTCN 异步接口使用两个模型；Seedance 2.0 固定 15 秒，Fast 支持 5–15 秒，均支持 720p、16:9/1:1/9:16 和参考素材，3 积分/秒 |
+| GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_ID` | 通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
 | 文件存储 | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`、`ALIYUN_OSS_PREFIX` | 上传文件、使用参考图、保存生成结果或成片 |
+| 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
 | 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传杭州 OSS；默认关闭，需先完成 OSS CORS 验证 |
 
 最小示例（请替换为真实值）：
@@ -96,6 +98,10 @@ CNTCN_API_BASE=https://api.ai.cntcn.com
 CNTCN_KEY=your_cntcn_key
 CNTCN_SD2_MODEL=933qudao-g
 CNTCN_SD2_FAST_MODEL=933qudao-fast
+
+AUTODL_API_BASE=https://autodl.art
+AUTODL_MINIMAX_H3_ID=minimax_h3_image_audio_to_video_v2_15s
+AUTODL_COMFYUI_KEY=your_autodl_comfyui_key
 
 DIRECTOR_AGENT_BASE_URL=https://your-llm-endpoint
 DIRECTOR_AGENT_API_KEY=your_llm_key
@@ -141,6 +147,135 @@ http://127.0.0.1:4317
 ```
 
 首次使用前先执行 `npm run create-admin` 创建管理员，再从 `/guguadmin` 创建随机邀请码。系统不会内置或自动生成公开邀请码。普通账号要求 3–24 位小写字母、数字或下划线，密码为 8–128 位；注册赠送积分由邀请码配置决定。
+
+## 桌面客户端（内测）
+
+桌面客户端适合素材量较大、需要快速查阅本地成品的场景。内测阶段暂不做 macOS Developer ID 签名和公证，macOS 首次打开可能需要在系统安全设置中允许应用。
+
+### 启动与打包
+
+```bash
+# 启动本地服务并打开 Electron 客户端（仅开发调试）
+npm run desktop:dev
+
+# 指定已运行的服务地址（不会重复启动服务）
+npm run desktop:dev -- --api-base=http://127.0.0.1:4317
+
+# 构建当前平台的安装包，构建时写入线上 API，产物写入 release/
+DESKTOP_API_BASE=https://api.example.com npm run desktop:dist
+```
+
+本地开发的 `.env` 可以这样配置：
+
+```dotenv
+NODE_ENV=development
+PORT=4317
+DATA_DIR=./data
+TRUST_PROXY=
+
+# 下面三项仅用于桌面发布，本地 desktop:dev 不需要填写
+DESKTOP_UPDATE_OSS_PREFIX=
+DESKTOP_UPDATE_PUBLIC_URL=
+DESKTOP_API_BASE=
+```
+
+运行 `npm run desktop:dev` 时，脚本会自动启动 `server.mjs`，并将桌面端连接到 `http://127.0.0.1:4317`。`DATA_DIR=./data` 表示数据库和本地运行数据放在项目根目录的 `data/` 下；如需隔离测试数据，可改成 `./data-desktop-dev`。本地没有 Nginx 反向代理时，`TRUST_PROXY` 保持为空。
+
+生产安装包采用标准的“桌面客户端 + 线上 API 服务”架构：客户端只连接构建时写入的线上 API 地址，不内置或自动启动 Node 服务，也不会把项目 `.env`、模型密钥或 OSS 密钥打进安装包。若地址未配置或服务暂时不可达，客户端会打开服务连接页；填写 HTTPS API 地址并保存后即可重试。`npm run desktop:dev` 仅用于本地开发，会启动项目服务并把桌面端指向本机地址。
+
+发布生产/内测包时必须设置 `DESKTOP_API_BASE`，例如：
+
+```bash
+DESKTOP_API_BASE=https://api.example.com \
+  DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
+  npm run desktop:release
+```
+
+三个桌面发布变量的对应关系如下：
+
+| 变量 | 配置位置 | 示例 | 作用 |
+| --- | --- | --- | --- |
+| `DESKTOP_API_BASE` | 构建客户端时的环境变量 | `https://ai.example.com` | 桌面客户端连接的线上服务根地址；不是 `/api` 子路径，也不要带尾部 `/` |
+| `DESKTOP_UPDATE_OSS_PREFIX` | 发布脚本环境变量 | `model-studio/desktop-updates` | 安装包、feed、blockmap 在 OSS 中的对象前缀 |
+| `DESKTOP_UPDATE_PUBLIC_URL` | 发布脚本环境变量 | `https://download.example.com/gugu-ai` | 用户设备可以直接下载更新文件的 HTTPS 根地址，必须和 OSS/CDN 的对象前缀对应 |
+
+`DESKTOP_API_BASE` 不需要写进服务器 `.env`。服务器只需要正常运行 `server.mjs`，并通过域名和 HTTPS 反向代理暴露出来。例如服务器 `.env` 使用：
+
+```dotenv
+NODE_ENV=production
+PORT=4317
+DATA_DIR=/var/lib/gugu-ai
+TRUST_PROXY=loopback
+```
+
+Nginx 将 `https://ai.example.com` 转发到本机 `127.0.0.1:4317` 后，检查：
+
+```bash
+curl --fail https://ai.example.com/healthz
+# {"status":"ok"}
+```
+
+此时构建桌面客户端时使用 `DESKTOP_API_BASE=https://ai.example.com` 即可。完整的 systemd、Nginx 和 HTTPS 配置见下方「生产部署与域名」。
+
+客户端默认工作区为系统 Documents 下的 `GuGu AI Projects`，也可以在右上角「本地工作区」切换。每个工作区包含以下目录：
+
+```text
+GuGu AI Projects/
+├── library/                 # 素材和生成成品的本地主副本
+├── projects/                # 短剧项目文件
+├── exports/                 # 导出成片
+└── .gugu/
+    ├── library-index.json   # 本地索引、SHA-256、云端关联 ID
+    ├── transfers/           # 下载/上传临时文件
+    ├── cache/
+    └── logs/
+```
+
+### 本地优先与 OSS 备份
+
+- 从客户端导入的图片、视频、音频会先复制到 `library/` 并计算 SHA-256；相同内容再次导入会直接复用本地文件。
+- 导入完成后再向服务端发起 OSS 直传或兼容上传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
+- AI 生成完成后，客户端通过服务端签名下载地址把成品自动落到本地 `library/`；文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
+- 客户端启动时先读取本地索引；网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。联网后会在后台补齐尚未落地的历史云端素材。
+- 云端 OSS 是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
+
+删除云端文件时，客户端会同时删除对应的本地副本；需要保留素材时请先在工作区或其他备份介质中复制一份。
+
+### 自动更新
+
+生产或内测分发时，为客户端提供一个静态 Generic Update Feed。当前仓库提供一键构建并发布到 OSS 的脚本：
+
+```bash
+# 第一次先预览：构建安装包，并列出将要上传的文件（不会上传）
+DESKTOP_API_BASE=https://api.example.com \
+  DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
+  npm run desktop:release
+
+# 配好线上 API、更新地址和 OSS 凭据后，构建并上传到 OSS
+DESKTOP_API_BASE=https://api.example.com \
+  DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
+  npm run desktop:release -- --publish
+```
+
+脚本会读取现有的 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`，默认上传到 `${ALIYUN_OSS_PREFIX}/desktop-updates/`。如需指定目录，可设置 `DESKTOP_UPDATE_OSS_PREFIX`。它会自动上传安装包、zip、`latest-*.yml` 和 blockmap 文件，并对 `latest-*.yml` 使用不缓存策略。
+
+当 `DESKTOP_API_BASE` 或 `DESKTOP_UPDATE_PUBLIC_URL` 已配置时，脚本会在构建过程中把线上 API 地址和更新地址临时写入安装包元数据，构建结束后恢复源码。因此用户从 Finder 双击安装包即可连接线上服务并自动检查更新，不需要在用户电脑上设置环境变量。
+
+每次发布只需要：
+
+1. 修改 `package.json` 的 `version`，例如从 `0.1.0` 改为 `0.1.1`。
+2. 确认 `DESKTOP_API_BASE` 是线上 API 的 HTTPS 地址，`DESKTOP_UPDATE_PUBLIC_URL` 是浏览器可访问的更新 feed 地址；并准备 OSS 四项凭据。
+3. 执行带两个地址的 `npm run desktop:release` 检查文件清单。
+4. 执行 `DESKTOP_API_BASE=https://api.example.com DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai npm run desktop:release -- --publish`。
+5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会自动下载，下载完成后按钮变为「重启更新」。
+
+也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
+
+更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest-*.yml`。
+
+目前这是本机一键发布流程，还没有绑定 GitHub Actions 等 CI。后续如果确定代码托管平台，可以再把同一条命令接到打 tag 自动构建发布。当前 Codex 环境已提供 `gugu-desktop-release` skill；下次直接说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单，只有明确要求上传时才执行 OSS 发布。
+
+内测包未签名/未公证，自动更新机制已经接入，但 macOS 可能因系统安全策略限制未签名应用的自动替换；内测阶段可在更新失败时重新打开最新安装包覆盖安装。正式对外发布前仍应补充代码签名、公证和 HTTPS 更新源。
 
 ## 生产部署与域名
 
@@ -300,7 +435,7 @@ http://127.0.0.1:4317/guguadmin
 ### 1. 上传与管理素材
 
 1. 登录后进入「文件库」。
-2. 上传 PNG、JPEG、WebP、MP4、WebM 或 MOV 文件。
+2. 上传 PNG、JPEG、WebP、MP4、WebM、MOV、MP3、WAV 或 FLAC 文件。
 3. 图片最大 8 MB，视频最大 25 MB。
 4. 在文件库中搜索、筛选、预览、下载或重命名素材；图片可作为图片生成和视频生成的参考图。
 
@@ -361,9 +496,10 @@ http://127.0.0.1:4317/guguadmin
 | --- | --- | --- | --- | --- |
 | 文生视频 | 不可带参考图 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒 | 依模型能力 | MiniMax H3：768p / 2K；Seedance 2.0：720p |
 | 参考素材视频 | 1 张图片（Grok Video；Veo 3.1：1 张）；MiniMax H3：图片 5 / 视频 3 / 音频 3，合计 15；Seedance 2.0：图片 9 / 视频 3 / 音频 3，合计 15；Seedance 2.0 Fast：图片 9 / 视频 3 / 音频 3，合计 12 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒；Seedance 2.0 Fast：5–15 秒 | 依模型能力 | 依模型能力 |
+| GuGu 2.0 参考素材视频 | 图片最多 9 张、音频最多 3 段，合计最多 12 个；不支持参考视频 | 1–15 秒 | 16:9 / 9:16 | 480p / 768p |
 | 首尾帧视频 | 1–2 张图片 | Veo：固定 8 秒；Omni Flash：10 秒；MiniMax H3：4–15 秒 | 依模型能力 | 依模型能力 |
 
-路由规则：Grok Video 的 6、12 秒文本/参考图视频使用 OAI 兼容接口 `POST /v1/videos` 提交任务和 `GET /v1/videos/{task_id}` 轮询；请求使用 `seconds`、`aspect_ratio`、`resolution`，单张首帧使用 `image`，最多 1 张参考图，不支持多图和 1080p。Grok Video 按 1 积分/秒计费。Grok Video 1.5 Fast 的 10、15、20、30 秒文本/参考图视频使用 TTAPI；Veo 的 8 秒文本/参考图及首尾帧视频使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI 渠道的同一组异步接口。Seedance 2.0 和 Seedance 2.0 Fast 使用 CNTCN 的同一组 `POST /v1/videos` 与 `GET /v1/videos/{task_id}` 异步接口，提示词中的 `@图片1`、`@视频1`、`@音频1` 分别按数组顺序映射到 `reference_image_urls`、`reference_videos`、`reference_audios`；标准版固定 15 秒，Fast 支持 5–15 秒，均支持 720p、16:9/1:1/9:16，按 3 积分/秒计费。CNTCN 的 `queued/running/succeeded/failed/expired` 状态会持久化到任务恢复链路，成功后归档原始下载地址。MiniMax H3 支持参考图片、视频和音频，使用 `ratio`、`referenceImages`、`referenceVideos`、`referenceAudios`、`first_image`、`last_image`；768p 按 2 积分/秒计费，2K 按 3 积分/秒计费。OAI 任务默认每 4 秒轮询，单次请求超时 300 秒。
+路由规则：Grok Video 的 6、12 秒文本/参考图视频使用 OAI 兼容接口 `POST /v1/videos` 提交任务和 `GET /v1/videos/{task_id}` 轮询；请求使用 `seconds`、`aspect_ratio`、`resolution`，单张首帧使用 `image`，最多 1 张参考图，不支持多图和 1080p。Grok Video 按 1 积分/秒计费。Grok Video 1.5 Fast 的 10、15、20、30 秒文本/参考图视频使用 TTAPI；Veo 的 8 秒文本/参考图及首尾帧视频使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI 渠道的同一组异步接口。Seedance 2.0 和 Seedance 2.0 Fast 使用 CNTCN 的同一组 `POST /v1/videos` 与 `GET /v1/videos/{task_id}` 异步接口，提示词中的 `@图片1`、`@视频1`、`@音频1` 分别按数组顺序映射到 `reference_image_urls`、`reference_videos`、`reference_audios`；标准版固定 15 秒，Fast 支持 5–15 秒，均支持 720p、16:9/1:1/9:16，按 3 积分/秒计费。CNTCN 的 `queued/running/succeeded/failed/expired` 状态会持久化到任务恢复链路，成功后归档原始下载地址。GuGu 2.0 通过 AutoDL ComfyUI 工作流提交到 `/api/v1/comfyui/comfyui_workflow/{workflow_id}`，使用 `duration`、`resolution`、`ref_image_0..8` 和 `ref_audio_0..2` 字段；分辨率由平台的画幅与清晰度组合映射为 `480p竖`、`768p竖`、`480p横` 或 `768p横`，任务通过 `/result/{task_id}` 轮询并支持服务重启恢复。MiniMax H3 支持参考图片、视频和音频，使用 `ratio`、`referenceImages`、`referenceVideos`、`referenceAudios`、`first_image`、`last_image`；768p 按 2 积分/秒计费，2K 按 3 积分/秒计费。OAI 任务默认每 4 秒轮询，单次请求超时 300 秒。
 
 ## 常用命令
 
@@ -385,6 +521,15 @@ npm run db:check
 
 # 创建 SQLite 热备份，并只保留最近 7 份
 npm run db:backup
+
+# 启动桌面客户端（内测）
+npm run desktop:dev
+
+# 构建桌面安装包
+npm run desktop:dist
+
+# 构建并预览桌面发布文件；追加 -- --publish 才会上传 OSS
+npm run desktop:release
 ```
 
 ## 数据迁移、备份与恢复
@@ -411,6 +556,8 @@ npm run migrate -- --verify
 ### 备份与恢复
 
 元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和生成结果归档后，媒体主副本保存在 OSS，生成结果使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认 OSS 对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
+
+桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和 OSS 关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library-index.json` 与 `library/` 必须一起备份，不能只备份索引文件。
 
 备份请使用：
 

@@ -1,0 +1,26 @@
+appId: com.guguai.studio
+productName: GuGu AI
+artifactName: GuGu-AI-${version}-${os}-${arch}.${ext}
+icon: public/favicon.svg
+directories:
+  output: release
+  buildResources: desktop/resources
+files:
+  - desktop/**
+  - package.json
+asar: true
+mac:
+  category: public.app-category.video
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+linux:
+  target:
+    - AppImage
