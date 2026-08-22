@@ -1,9 +1,9 @@
-import { createDramaStudio } from './drama-studio.js?v=31';
+import { createDramaStudio } from './drama-studio.js?v=32';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[], audio:[] }, videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[], audio:[] }, videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
@@ -681,14 +681,56 @@ function assetDisplayName(file) {
 }
 function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}" loading="lazy">` : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : `<video src="${file.url}" preload="metadata"></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; const download = window.guguDesktop && file.localStatus === 'saved' ? `<button class="download-local" data-asset-id="${esc(file.localId || file.id)}">下载</button>` : `<a href="/api/files/${encodeURIComponent(file.id)}/download">下载</a>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${download}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
 function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
+function uploadJobKind(mimeType) { const value = String(mimeType || ''); return value.startsWith('image/') ? 'image' : value.startsWith('video/') ? 'video' : value.startsWith('audio/') ? 'audio' : ''; }
+function uploadJobMediaMarkup(job) { if (job.kind === 'image' && job.previewUrl) return `<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}">`; if (job.kind === 'video' && job.previewUrl) return `<video src="${esc(job.previewUrl)}" preload="metadata" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return '<span class="audio-file-mark">♫</span>'; }
+function uploadJobCard(job, variant='file') {
+  const failed = job.status === 'failed';
+  const completed = job.status === 'completed';
+  const progress = Math.max(0, Math.min(100, Math.round(job.progress || 0)));
+  const percent = failed ? '失败' : `${progress}%`;
+  const label = failed ? job.error : completed ? (job.selected ? '上传完成，已选中' : '上传完成') : (job.label || '准备上传');
+  const selected = job.selected ? '<i class="upload-job-selected" aria-label="已选中">✓</i>' : '';
+  const ring = failed ? '<span class="upload-progress-ring upload-progress-error"><b>!</b></span>' : `<span class="upload-progress-ring" style="--upload-progress:${progress}%"><b>${percent}</b></span>`;
+  const media = uploadJobMediaMarkup(job);
+  if (variant === 'reference') return `<article class="reference-upload-placeholder upload-job-card ${failed ? 'failed' : ''} ${completed ? 'completed' : ''}" data-upload-id="${esc(job.id)}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div class="reference-upload-visual upload-job-visual">${media}<span class="upload-job-shade">${ring}</span>${selected}</div><span title="${esc(job.name)}">${esc(job.name)}</span></article>`;
+  return `<article class="file-card upload-job-file-card upload-job-card ${failed ? 'failed' : ''} ${completed ? 'completed' : ''}" data-upload-id="${esc(job.id)}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div class="file-preview upload-job-visual">${media}<span class="upload-job-shade">${ring}</span>${selected}</div></article>`;
+}
+function renderUploadJobCards(container, jobs, variant='file') { container.querySelectorAll('[data-upload-id]').forEach(node => node.remove()); if (jobs.length) container.prepend(...jobs.map(job => elementFromHtml(uploadJobCard(job, variant)))); }
+function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) renderReferenceDialog(); renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
+function createUploadJob(file, context, { previewUrl='', mimeType=normalizedUploadMime(file) } = {}) {
+  const objectUrl = previewUrl || (file ? URL.createObjectURL(file) : '');
+  const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:objectUrl, revokePreview:Boolean(objectUrl && !previewUrl), progress:0, status:'queued', label:'准备上传', error:'', selected:false, assetId:'' };
+  state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
+}
+function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
+function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; state.files=[asset,...state.files.filter(item=>item.id!==asset.id)]; const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
+function failUploadJob(job, error) { if (!job) return; job.status='failed'; job.progress=0; job.error=error?.message || '上传失败'; job.label=job.error; notifyUploadSurfaceChanged(); }
+function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); notifyUploadSurfaceChanged(); }
+function autoSelectUploadedReference(asset, kind, job) {
+  if (!asset || job?.context !== 'reference') return false;
+  const referenceTarget=job.referenceTarget || state.referenceTarget; const isFrame=referenceTarget==='video-frame'; const isVideo=referenceTarget==='video'; const isAudio=referenceTarget==='audio';
+  const limits=isFrame ? {image:1,video:0,audio:0,total:1} : isVideo || isAudio ? referenceLimits() : {image:7,video:0,audio:0,total:7};
+  const allowedKinds=isAudio ? new Set(['audio']) : isFrame || !isVideo ? new Set(['image']) : referenceFileKinds();
+  if (!allowedKinds.has(kind)) return false;
+  const selectedFiles=state.dialogSelection.map(id=>state.files.find(file=>file.id===id)).filter(Boolean);
+  const counts=Object.fromEntries(['image','video','audio'].map(type=>[type,selectedFiles.filter(file=>file.kind===type).length]));
+  const otherCount=isVideo ? state.refs.audio.length : isAudio ? state.refs.video.length : 0;
+  if (state.dialogSelection.includes(asset.id) || state.dialogSelection.length+otherCount >= limits.total || counts[kind] >= Number(limits[kind] || 0)) return false;
+  state.dialogSelection.push(asset.id); return true;
+}
 function renderFiles() {
   if (state.route !== 'files') return;
   const query = $('#fileSearch').value.trim().toLowerCase();
-  const files = state.files.filter(file => (state.fileKind === 'all' || file.kind === state.fileKind) && (!query || `${file.name} ${assetDisplayName(file)}`.toLowerCase().includes(query)));
-  $('#fileCount').textContent = `${files.length} 个文件`;
-  const empty = emptyState(state.files.length ? '没有匹配的文件' : '文件库还是空的', state.files.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', state.files.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>');
-  reconcileCards($('#fileGrid'), files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty });
-  $('#fileGrid .empty-upload')?.addEventListener('click', () => openUploadPicker('library'), { once:true });
+  const matches = file => (state.fileKind === 'all' || file.kind === state.fileKind) && (!query || `${file.name} ${assetDisplayName(file)}`.toLowerCase().includes(query));
+  const uploads = state.uploadJobs.filter(job => job.context === 'library' && (!query || job.name.toLowerCase().includes(query)) && (state.fileKind === 'all' || job.kind === state.fileKind));
+  const uploadingAssetIds = new Set(uploads.map(job => job.assetId).filter(Boolean));
+  const files = state.files.filter(file => matches(file) && !uploadingAssetIds.has(file.id));
+  $('#fileCount').textContent = `${files.length + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个上传中` : ''}`;
+  const empty = uploads.length ? '' : emptyState(state.files.length ? '没有匹配的文件' : '文件库还是空的', state.files.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', state.files.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>');
+  const grid = $('#fileGrid');
+  reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty });
+  renderUploadJobCards(grid, uploads, 'file');
+  grid.querySelector('.empty-upload')?.addEventListener('click', () => openUploadPicker('library'), { once:true });
 }
 $('#fileSearch').oninput = renderFiles; $$('.type-tabs button').forEach(button => button.onclick = () => { state.fileKind = button.dataset.kind; $$('.type-tabs button').forEach(x => x.classList.toggle('active', x === button)); renderFiles(); });
 function clearFileReferences(fileId) {
@@ -743,34 +785,30 @@ async function desktopImportToContext(context) {
   for (const item of imported) {
     if (item.error) { toast(`${item.filePath || '文件'} 导入失败：${item.error}`); continue; }
     const kind = desktopMediaKind(item);
-    const sizeLimit = kind === 'image' ? 8 * 1024 * 1024 : 25 * 1024 * 1024;
+    const sizeLimit = kind === 'image' ? 20 * 1024 * 1024 : 25 * 1024 * 1024;
     if (item.size > sizeLimit) {
-      toast(`${item.name || '文件'} 超过 ${kind === 'image' ? '8' : '25'} MB`);
+      toast(`${item.name || '文件'} 超过 ${kind === 'image' ? '20' : '25'} MB`);
       continue;
     }
     if (!kind || (inDialog && (!allowedKinds.has(kind) || limits[kind] <= 0))) {
       toast(`${item.name || '文件'} 不符合当前入口支持的素材类型`);
       continue;
     }
+    let job=null;
     try {
+      const previewUrl=await bridge.media.url(item.id).catch(()=> '');
+      job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType });
+      updateUploadJob(job, 8, '正在同步到云端');
       const result = await bridge.media.syncLocal({ assetId: item.id });
       const cloudAsset = result.cloudAsset || result.asset;
       if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
       const file = { ...cloudAsset, url: result.url, remoteUrl: cloudAsset.url, localStatus: 'saved', localPath: result.relativePath, sha256: item.sha256 || cloudAsset.sha256 };
-      state.files = [file, ...state.files.filter(existing => existing.id !== file.id)];
+      const beforeSelected=selected;
+      finishUploadJob(job, file, !inDialog, inDialog ? () => autoSelectUploadedReference(file, kind, job) : null);
+      if (inDialog && job.selected && selected === beforeSelected) selected += 1;
       synced += 1;
-      if (inDialog) {
-        const selectedFiles = state.dialogSelection.map(id => state.files.find(existing => existing.id === id)).filter(Boolean);
-        const counts = Object.fromEntries(['image', 'video', 'audio'].map(type => [type, selectedFiles.filter(existing => existing.kind === type).length]));
-        const otherCount = isVideoReference ? state.refs.audio.length : isDialogAudio ? state.refs.video.length : 0;
-        const totalSelected = state.dialogSelection.length + otherCount;
-        if (!state.dialogSelection.includes(file.id) && totalSelected < limits.total && counts[kind] < (limits[kind] || 0)) {
-          state.dialogSelection.push(file.id);
-          selected += 1;
-        }
-        renderReferenceDialog();
-      } else renderFiles();
     } catch (error) {
+      if (job) failUploadJob(job,error);
       toast(`${item.name || '文件'} 云端同步失败：${error.message}`);
     }
   }
@@ -783,62 +821,41 @@ function openUploadPicker(context) {
   state.uploadContext = context; $('#fileInput').accept = context === 'reference' && state.referenceTarget === 'video' ? referenceAccept() : context === 'reference' && state.referenceTarget === 'audio' ? audioAccept : context === 'reference' ? imageAccept : libraryAccept; $('#fileInput').click();
 }
 async function readImageSize(file) { if (!file.type.startsWith('image/')) return {}; try { const bitmap = await createImageBitmap(file); const result = { width:bitmap.width, height:bitmap.height }; bitmap.close(); return result; } catch { return new Promise(resolve => { const image = new Image(); const url = URL.createObjectURL(file); image.onload = () => { URL.revokeObjectURL(url); resolve({ width:image.naturalWidth, height:image.naturalHeight }); }; image.onerror = () => { URL.revokeObjectURL(url); resolve({}); }; image.src = url; }); } }
-function createUploadRow(file) { const grid = $('#referenceGrid'); grid.querySelector('.empty-state')?.remove(); const row = document.createElement('div'); row.className = 'reference-upload-placeholder'; row.setAttribute('aria-live', 'polite'); row.innerHTML = `<div class="reference-upload-visual"><i class="reference-upload-spinner" aria-hidden="true"></i><strong>0%</strong></div><span title="${esc(file.name)}">${esc(file.name)}</span>`; grid.prepend(row); row.setAttribute('aria-label', `${file.name}，准备上传`); return { row, fileName:file.name, status:row, percent:row.querySelector('strong') }; }
-function updateUploadRow(view, percent, status, mode='') { const value = Math.max(0, Math.min(100, Math.round(percent))); view.percent.textContent = mode === 'error' ? '失败' : `${value}%`; view.row.setAttribute('aria-label', `${view.fileName}，${status}`); view.row.dataset.uploadStatus = status; view.row.classList.toggle('failed', mode === 'error'); view.row.classList.toggle('completed', mode === 'completed'); }
 function uploadFileLegacy(file, dimensions, onProgress, mimeType=normalizedUploadMime(file), sha256='') { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/files/upload'); xhr.responseType = 'json'; xhr.setRequestHeader('Content-Type', mimeType); xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name)); if (sha256) xhr.setRequestHeader('X-File-SHA256', sha256); if (dimensions.width && dimensions.height) { xhr.setRequestHeader('X-Image-Width', dimensions.width); xhr.setRequestHeader('X-Image-Height', dimensions.height); } xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(Math.min(92, event.loaded / event.total * 92), '正在上传到文件库'); }; xhr.upload.onload = () => onProgress(94, '正在保存文件'); xhr.onload = () => { const data = xhr.response || {}; if (xhr.status >= 200 && xhr.status < 300) resolve(data); else reject(new Error(data.error || `上传失败（${xhr.status}）`)); }; xhr.onerror = () => reject(new Error('上传网络连接失败')); xhr.send(file); }); }
 function postFileToOss(intent, file, onProgress) { return new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', intent.uploadUrl); xhr.responseType = 'text'; xhr.withCredentials = false; const form = new FormData(); Object.entries(intent.fields || {}).forEach(([name, value]) => form.append(name, value)); form.append('file', file); xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress(5 + event.loaded / event.total * 87, '正在上传到云端'); }; xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.getResponseHeader('ETag') || ''); else reject(Object.assign(new Error(`OSS 上传失败（${xhr.status}）`), { status: xhr.status })); }; xhr.onerror = () => reject(Object.assign(new Error('OSS 上传网络连接失败'), { status: 0 })); xhr.onabort = () => reject(Object.assign(new Error('OSS 上传已取消'), { status: 0 })); xhr.send(form); }); }
 async function completeDirectUpload(uploadId, onProgress) { let result = await api(`/api/files/uploads/${encodeURIComponent(uploadId)}/complete`, { method:'POST', body:'{}' }); if (result.status === 'verifying') { for (let attempt = 0; attempt < 6; attempt += 1) { await new Promise(resolve => setTimeout(resolve, Math.min(1500, 300 * (attempt + 1)))); result = await api(`/api/files/uploads/${encodeURIComponent(uploadId)}`); if (result.status === 'completed' && result.asset) return result.asset; if (result.status === 'failed') throw new Error('文件验证失败，请重新选择文件'); if (result.status === 'expired') throw new Error('上传凭证已过期，请重新选择文件'); } throw new Error('文件仍在验证中，请稍后刷新文件库'); } onProgress(99, '正在保存文件'); return result; }
 async function sha256Blob(file) { if (!window.crypto?.subtle) return ''; const digest = await window.crypto.subtle.digest('SHA-256', await file.arrayBuffer()); return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join(''); }
 async function uploadFile(file, dimensions, onProgress, mimeType=normalizedUploadMime(file)) { const normalizedFile = file.type === mimeType ? file : new File([file], file.name, { type:mimeType, lastModified:file.lastModified }); let sha256 = ''; try { onProgress(1, '正在计算素材指纹'); sha256 = await sha256Blob(normalizedFile); } catch {} if (!state.config.directOssUpload) return uploadFileLegacy(normalizedFile, dimensions, onProgress, mimeType, sha256); onProgress(2, '正在准备上传'); const intent = await api('/api/files/uploads/init', { method:'POST', body:JSON.stringify({ name:normalizedFile.name, mimeType, size:normalizedFile.size, sha256, width:dimensions.width || 0, height:dimensions.height || 0 }) }); if (intent.mode === 'reuse' && intent.asset) { onProgress(100, '已命中云端素材'); return intent.asset; } await postFileToOss(intent, normalizedFile, onProgress); onProgress(94, '正在验证文件'); const asset = await completeDirectUpload(intent.uploadId, onProgress); onProgress(100, '文件已保存'); return asset; }
-function pickAndUploadDramaImage() { return new Promise((resolve, reject) => { const input=document.createElement('input');input.type='file';input.accept=imageAccept;input.onchange=async()=>{const file=input.files?.[0];if(!file)return resolve(null);try{if(file.size>8*1024*1024)throw new Error(`${file.name} 超过 8 MB`);const dimensions=await readImageSize(file);const asset=await uploadFile(file,dimensions,(progress)=>toast(`${file.name} · ${Math.round(progress)}%`));state.files=[asset,...state.files.filter(item=>item.id!==asset.id)];toast(`${file.name} 已上传到文件库`);resolve(asset);}catch(error){reject(error);}};input.click();});}
+async function processBrowserUpload(file, job, context) {
+  try {
+    const mimeType=normalizedUploadMime(file); const kind=uploadJobKind(mimeType); job.mimeType=mimeType; job.kind=kind;
+    updateUploadJob(job, 0, '正在检查文件');
+    const sizeLimit=kind==='image' ? 20*1024*1024 : 25*1024*1024;
+    if (!kind || file.size > sizeLimit) throw new Error(`${file.name} 超过 ${kind === 'image' ? '20' : '25'} MB 或格式不支持`);
+    const inDialog=context==='reference'; const referenceTarget=job.referenceTarget || state.referenceTarget; const isFrame=inDialog && referenceTarget==='video-frame'; const isVideoReference=inDialog && referenceTarget==='video'; const isDialogAudio=inDialog && referenceTarget==='audio';
+    const allowedKinds=inDialog ? (isDialogAudio ? new Set(['audio']) : isFrame || !isVideoReference ? new Set(['image']) : referenceFileKinds()) : new Set(['image','video','audio']);
+    if (inDialog && !allowedKinds.has(kind)) throw new Error(`当前模型不支持${kind==='image'?'图片':kind==='video'?'视频':'音频'}参考`);
+    const limits=isVideoReference || isDialogAudio ? referenceLimits() : { image:7, video:0, audio:0, total:isFrame ? 1 : 7 };
+    const otherCount=isVideoReference ? state.refs.audio.length : isDialogAudio ? state.refs.video.length : 0;
+    if (inDialog && !isFrame && state.dialogSelection.length + otherCount >= limits.total) throw new Error(`参考素材最多选择 ${limits.total} 个`);
+    const dimensions=await readImageSize(file);
+    const asset=await uploadFile(file, dimensions, (progress,label)=>updateUploadJob(job,progress,label), mimeType);
+    if (context==='reference') finishUploadJob(job, asset, false, () => autoSelectUploadedReference(asset, kind, job));
+    else finishUploadJob(job, asset, true);
+    return asset;
+  } catch (error) { failUploadJob(job,error); toast(error.message); return null; }
+}
+async function processBrowserUploads(files, context) {
+  const jobs=files.map(file=>createUploadJob(file,context)); let completed=0; let selected=0;
+  for (let index=0; index<files.length; index+=1) { const asset=await processBrowserUpload(files[index],jobs[index],context); if (!asset) continue; completed+=1; if (context==='reference' && jobs[index].selected) selected+=1; }
+  if (context==='reference') renderReferences();
+  if (context==='library') await loadFiles();
+  if (completed) toast(`${completed} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`);
+  return jobs.map((job,index)=>({ job, asset:job.assetId ? state.files.find(file=>file.id===job.assetId) : null, file:files[index] }));
+}
+function pickAndUploadDramaImage({ context='professional' } = {}) { return new Promise((resolve,reject) => { const input=document.createElement('input'); input.type='file'; input.accept=imageAccept; input.onchange=async()=>{ const file=input.files?.[0]; if(!file)return resolve(null); const job=createUploadJob(file,context); const asset=await processBrowserUpload(file,job,context); if (!asset) return reject(new Error(job.error || '上传失败')); resolve(asset); }; input.click(); }); }
 $('#uploadButton').onclick = () => openUploadPicker('library');
-$('#fileInput').onchange = async event => { const files = [...event.target.files]; const context = state.uploadContext; event.target.value = ''; if (!files.length) return; let done = 0; let selected = 0; const referenceLimit = context === 'reference' && state.referenceTarget === 'video-frame' ? 1 : context === 'reference' && state.referenceTarget === 'video' ? videoReferenceLimit() : 7; for (const file of files) { const inDialog = context === 'reference'; const view = inDialog ? createUploadRow(file) : null; try { const limit = file.type.startsWith('image/') ? 8*1024*1024 : 25*1024*1024; if (file.size > limit) throw new Error(`${file.name} 超过 ${file.type.startsWith('image/') ? '8' : '25'} MB`); if (inDialog && !file.type.startsWith('image/')) throw new Error('参考素材只支持图片'); const dimensions = await readImageSize(file); const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`)); state.files = [asset, ...state.files.filter(item => item.id !== asset.id)]; let autoSelected = false; if (inDialog && state.dialogSelection.length < referenceLimit) { state.dialogSelection.push(asset.id); autoSelected = true; selected++; } done++; if (view) { updateUploadRow(view, 100, autoSelected ? '上传完成，已自动选中' : '上传完成，选择数量已满', 'completed'); renderReferenceDialog(); } else renderFiles(); } catch (error) { if (view) updateUploadRow(view, 0, error.message, 'error'); toast(error.message); } } renderReferences(); if (!context || context === 'library') await loadFiles(); if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`); };
-
-// Rebind the picker after the legacy image-only handler so mixed reference
-// models can select and upload images, videos, and audio in one dialog.
-$('#fileInput').onchange = async event => {
-  const files = [...event.target.files];
-  const context = state.uploadContext;
-  event.target.value = '';
-  if (!files.length) return;
-  let done = 0;
-  let selected = 0;
-  const isFrame = context === 'reference' && state.referenceTarget === 'video-frame';
-  const isVideoReference = context === 'reference' && state.referenceTarget === 'video';
-  const isDialogAudio = context === 'reference' && state.referenceTarget === 'audio';
-  const allowedKinds = context === 'reference' ? (isDialogAudio ? new Set(['audio']) : isFrame || !isVideoReference ? new Set(['image']) : referenceFileKinds()) : new Set(['image', 'video', 'audio']);
-  const limits = isVideoReference || isDialogAudio ? referenceLimits() : { image: 7, video: 0, audio: 0, total: isFrame ? 1 : 7 };
-  for (const file of files) {
-    const inDialog = context === 'reference';
-    const view = inDialog ? createUploadRow(file) : null;
-    try {
-      const mimeType = normalizedUploadMime(file);
-      const kind = mimeType.startsWith('image/') ? 'image' : mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : '';
-      const sizeLimit = kind === 'image' ? 8 * 1024 * 1024 : 25 * 1024 * 1024;
-      if (!kind || file.size > sizeLimit) throw new Error(`${file.name} 超过 ${kind === 'image' ? '8' : '25'} MB 或格式不支持`);
-      if (inDialog && !allowedKinds.has(kind)) throw new Error(`当前模型不支持${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}参考`);
-      const currentTotal = isDialogAudio ? state.refs.video.length + state.dialogSelection.length : state.dialogSelection.length + state.refs.audio.length;
-      if (inDialog && !isFrame && currentTotal >= limits.total) throw new Error(`参考素材最多选择 ${limits.total} 个`);
-      const dimensions = await readImageSize(file);
-      const asset = await uploadFile(file, dimensions, (progress, label) => view ? updateUploadRow(view, progress, label) : toast(`${file.name} · ${Math.round(progress)}%`), mimeType);
-      state.files = [asset, ...state.files.filter(item => item.id !== asset.id)];
-      const selectedKindCount = state.dialogSelection.map(id => state.files.find(item => item.id === id)).filter(item => item?.kind === kind).length;
-      if (inDialog && state.dialogSelection.length + (isDialogAudio ? state.refs.video.length : state.refs.audio.length) < (isFrame ? 1 : limits.total) && selectedKindCount < (isFrame ? 1 : limits[kind])) {
-        state.dialogSelection.push(asset.id);
-        selected++;
-      }
-      done++;
-      if (view) { updateUploadRow(view, 100, '上传完成', 'completed'); renderReferenceDialog(); }
-      else renderFiles();
-    } catch (error) {
-      if (view) updateUploadRow(view, 0, error.message, 'error');
-      toast(error.message);
-    }
-  }
-  renderReferences();
-  if (!context || context === 'library') await loadFiles();
-  if (done) toast(`${done} 个文件上传完成${selected ? `，${selected} 个已自动选中` : ''}`);
-};
+$('#fileInput').onchange = async event => { const files=[...event.target.files]; const context=state.uploadContext; event.target.value=''; if (!files.length) return; await processBrowserUploads(files,context); };
 function videoGenerationParameters(modelId=$('#videoModel')?.value) {
   const modes = videoModelModes(modelId);
   const mode = resolveVideoGenerationType(modelId, modes);
@@ -994,7 +1011,7 @@ function renderReferenceDialogLegacy() {
   const isFrame = state.referenceTarget === 'video-frame';
   const limit = isFrame ? 1 : state.referenceTarget === 'video' ? videoReferenceLimit() : 7;
   $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : '选择参考图片';
-  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 8 MB。' : `最多选择 ${limit} 张图片，单张不超过 8 MB。新上传图片会自动选中。`;
+  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `最多选择 ${limit} 张图片，单张不超过 20 MB。新上传图片会自动选中。`;
   $('#selectionCount').textContent = `已选择 ${state.dialogSelection.length} / ${limit}`;
   $('#confirmReference').textContent = isFrame ? '使用此图片' : '使用所选图片';
   const images = state.files.filter(file => file.kind === 'image');
@@ -1027,12 +1044,15 @@ function renderReferenceDialog() {
   const otherCount = isVideo ? state.refs.audio.length : isAudio ? state.refs.video.length : 0;
   const totalSelected = state.dialogSelection.length + otherCount;
   $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : isAudio ? '选择参考音频' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 8 MB。' : isAudio ? `最多选择 ${limits.audio} 个音频，单个不超过 25 MB；全部参考素材合计 ${limits.total} 个。` : `图片 ${limits.image} / 视频 ${limits.video} / 音频 ${limits.audio}，合计 ${limits.total} 个；音频在外部独立添加。`;
+  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : isAudio ? `最多选择 ${limits.audio} 个音频，单个不超过 25 MB；全部参考素材合计 ${limits.total} 个。` : `图片 ${limits.image} / 视频 ${limits.video} / 音频 ${limits.audio}，合计 ${limits.total} 个；音频在外部独立添加。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isAudio ? '上传音频' : '上传参考素材'}</span>`;
   $('#selectionCount').textContent = isAudio ? `已选择 ${state.dialogSelection.length} / ${limits.audio}（素材合计 ${totalSelected} / ${limits.total}）` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${isVideo ? state.refs.audio.length : 0}）`;
   $('#confirmReference').textContent = isFrame ? '使用此图片' : isAudio ? '使用所选音频' : '使用所选素材';
-  const files = state.files.filter(file => allowedKinds.has(file.kind) && !file.localOnly);
-  $('#referenceGrid').innerHTML = files.length ? files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('') : emptyState(isAudio ? '没有可用音频' : '没有可用参考素材', isAudio ? '先上传一个音频文件。' : '先上传图片或视频到文件库。');
+  const uploadJobs = state.uploadJobs.filter(job => job.context === 'reference');
+  const uploadingAssetIds = new Set(uploadJobs.map(job => job.assetId).filter(Boolean));
+  const files = state.files.filter(file => allowedKinds.has(file.kind) && !file.localOnly && !uploadingAssetIds.has(file.id));
+  const uploadMarkup = uploadJobs.map(job => uploadJobCard(job, 'reference')).join('');
+  $('#referenceGrid').innerHTML = uploadMarkup + (files.length ? files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('') : (uploadMarkup ? '' : emptyState(isAudio ? '没有可用音频' : '没有可用参考素材', isAudio ? '先上传一个音频文件。' : '先上传图片或视频到文件库。')));
   $$('.reference-option').forEach(button => button.onclick = () => {
     const id = button.dataset.id;
     const file = state.files.find(item => item.id === id);

@@ -1453,3 +1453,34 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
     padding: 0 clamp(20px, 3vw, 42px) 58px;
   }
 }
+.upload-job-card { position: relative; overflow: hidden; }
+.upload-job-file-card { border-color: var(--brand-line); box-shadow: 0 0 0 1px var(--brand-soft); }
+.upload-job-card .upload-job-visual { position: relative; overflow: hidden; }
+.upload-job-card .upload-job-visual > img,
+.upload-job-card .upload-job-visual > video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.upload-job-card .upload-job-visual > .audio-file-mark { display: grid; }
+.upload-job-shade { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 8px; color: var(--ink); background: rgba(255,255,255,.56); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); text-align: center; }
+.upload-progress-ring { --upload-progress: 0%; position: relative; display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 auto; border-radius: 50%; color: var(--brand); background: conic-gradient(var(--brand) var(--upload-progress), rgba(255,255,255,.72) 0); filter: drop-shadow(0 1px 3px rgba(24,24,27,.12)); }
+.upload-progress-ring::before { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: rgba(255,255,255,.88); }
+.upload-progress-ring b { position: relative; z-index: 1; font: 600 11px var(--mono); }
+.upload-progress-ring.upload-progress-error { color: #be123c; background: conic-gradient(#fb7185 100%, rgba(255,255,255,.72) 0); }
+.upload-progress-ring.upload-progress-error b { font: 700 18px var(--sans); }
+.upload-job-card.failed { border-color: #fecdd3; }
+.upload-job-card.completed { border-color: #a7d5b2; }
+.upload-job-selected { position: absolute; z-index: 4; top: 8px; right: 8px; width: 25px; height: 25px; border-radius: 50%; color: white; background: var(--brand); display: grid; place-items: center; font-size: 13px; font-style: normal; box-shadow: 0 2px 5px rgba(24,24,27,.2); }
+.reference-upload-placeholder.upload-job-card .reference-upload-visual { position: relative; overflow: hidden; }
+.reference-upload-placeholder.upload-job-card .reference-upload-visual > img,
+.reference-upload-placeholder.upload-job-card .reference-upload-visual > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.reference-upload-placeholder.upload-job-card .reference-upload-visual > .audio-file-mark { position: absolute; inset: 0; }
+.reference-upload-placeholder.upload-job-card .reference-upload-visual .upload-job-selected { top: 8px; right: 8px; }
+.professional-upload-jobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.professional-upload-job { min-width: 0; overflow: hidden; border: 1px solid var(--brand-line); border-radius: 8px; background: var(--panel); }
+.professional-upload-job > div { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--surface); }
+.professional-upload-job > div > img, .professional-upload-job > div > video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.professional-upload-job > div > .audio-file-mark { width: 100%; height: 100%; display: grid; }
+.professional-upload-job-status { position: absolute; inset: 0; display: grid; place-items: center; padding: 6px; background: rgba(255,255,255,.56); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); text-align: center; }
+.professional-upload-job-status b { font: 600 11px var(--mono); }
+.professional-upload-job > div > i { position: absolute; top: 6px; right: 6px; width: 21px; height: 21px; border-radius: 50%; color: #fff; background: var(--brand); display: grid; place-items: center; font-size: 11px; font-style: normal; }
+.professional-upload-job > span { display: block; overflow: hidden; padding: 7px; color: var(--ink-soft); text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.professional-upload-job.failed { border-color: #fecdd3; }
+.professional-upload-job.completed { border-color: #a7d5b2; }
