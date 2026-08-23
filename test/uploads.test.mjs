@@ -10,9 +10,9 @@ test('direct upload keys are scoped and policy fixes the object key', () => {
   const final = __test.finalUploadKey('user/unsafe', 'asset-1', 'image/jpeg', 'photo.jpg');
   assert.equal(pending, 'model-studio/pending/userunsafe/upload-1.jpg');
   assert.equal(final, 'model-studio/assets/userunsafe/asset-1.jpg');
-  const policy = __test.buildUploadPostPolicy({ key: pending, mimeType: 'image/jpeg', sizeLimit: 8 * 1024 * 1024, expiresAt: '2026-08-21T00:10:00.000Z' });
+  const policy = __test.buildUploadPostPolicy({ key: pending, mimeType: 'image/jpeg', sizeLimit: 20 * 1024 * 1024, expiresAt: '2026-08-21T00:10:00.000Z' });
   assert.ok(policy.conditions.some(item => Array.isArray(item) && item[1] === '$key' && item[2] === pending));
-  assert.ok(policy.conditions.some(item => Array.isArray(item) && item[0] === 'content-length-range' && item[2] === 8 * 1024 * 1024));
+  assert.ok(policy.conditions.some(item => Array.isArray(item) && item[0] === 'content-length-range' && item[2] === 20 * 1024 * 1024));
 });
 
 test('supported media magic bytes are recognized', () => {

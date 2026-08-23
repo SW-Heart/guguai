@@ -1,4 +1,4 @@
-import { createDramaStudio } from './drama-studio.js?v=32';
+import { createDramaStudio } from './drama-studio.js?v=33';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 
 const $ = selector => document.querySelector(selector);
