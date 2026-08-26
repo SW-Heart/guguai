@@ -57,6 +57,7 @@ const ttapiMaxPollBackoffMs = 60_000;
 const ttapiRequestTimeoutMs = 60_000;
 const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
+const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROUTE_SUBMIT_TIMEOUT_MS || 180_000));
 const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 5 * 60_000));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
@@ -277,7 +278,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     group.push(item);
     dynamicByModel.set(item.modelId, group);
   }
-  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_25];
+  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_2_FAST, VIDEO_MODEL_IDS.SEEDANCE_25];
   const modelOrder = { [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50 };
   const models = [...(videoCapabilities.models || [])].sort((a, b) => (modelOrder[a.id] ?? 100) - (modelOrder[b.id] ?? 100));
   const items = [];
@@ -596,7 +597,7 @@ async function createRoutedVideo(task, refs, hooks = {}) {
   try {
     const created = await fetchJson(`${base}/v1/videos`, {
       method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(routedVideoPayload(task, refs)), signal: AbortSignal.timeout(90_000),
+      body: JSON.stringify(routedVideoPayload(task, refs)), signal: AbortSignal.timeout(routedVideoSubmitTimeoutMs),
     });
     taskId = cntcnTaskId(created);
     if (!taskId) throw new Error('渠道已接受请求，但没有返回任务 ID');
@@ -1679,7 +1680,7 @@ const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/fi
 
 async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, oaiMaxPollDurationMs, oaiMaxPolls };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
 
 const server = http.createServer(async (req, res) => {
   try {

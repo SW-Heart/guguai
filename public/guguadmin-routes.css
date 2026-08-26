@@ -22,6 +22,7 @@
 
 .route-group h4 { margin: 0 0 3px; font-size: 14px; }
 .route-group header span { color: var(--accent); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.route-group header .detail { margin: 5px 0 0; color: var(--muted); font: 11px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .route-group header label { min-width: 240px; display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
 .route-group header select { width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); background: #0e131a; }
 .route-table { min-width: 1020px; }

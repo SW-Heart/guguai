@@ -39,13 +39,35 @@ test('Seedance route selection, pricing and catalog health', async t => {
   t.afterEach(cleanupDb);
 
   await t.test('seeds all priority routes and calculates the exact 20% markup', () => {
-    assert.equal(listModelRoutes().length, 24);
+    assert.equal(listModelRoutes().length, 25);
     assert.equal(routeTest.saleMicroFromCostFen(215), 25_800_000);
     const selected = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', duration: 15, aspectRatio: '16:9' });
     assert.equal(selected.id, 'sd20-480-diw-nd');
     assert.equal(selected.salePriceYuan, 2.58);
     assert.equal(selected.salePriceCredits, 25.8);
+    const fast = selectModelRoute({ logicalModelId: 'seedance-2.0-fast', quality: '720p', duration: 15, aspectRatio: '16:9' });
+    assert.equal(fast.id, 'sd20-fast-720-diw-ed');
+    assert.equal(fast.provider, 'diw');
+    assert.equal(fast.upstreamModelId, 'ed-seedance 2.0 fast 720p');
+    assert.equal(fast.costYuan, 1.5);
+    assert.equal(fast.salePriceYuan, 1.8);
+    assert.equal(fast.salePriceCredits, 18);
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 7.2);
+  });
+
+  await t.test('Fast route is included in the public dynamic price catalog', () => {
+    const price = publicModelPrices().find(item => item.modelId === 'seedance-2.0-fast' && item.quality === '720p');
+    assert.deepEqual(price && {
+      label: price.label,
+      duration: price.duration,
+      available: price.available,
+      credits: price.credits,
+      yuan: price.yuan,
+      selectedRouteId: price.selectedRouteId,
+    }, {
+      label: 'Seedance 2.0 Fast', duration: 15, available: true, credits: 18, yuan: 1.8,
+      selectedRouteId: 'sd20-fast-720-diw-ed',
+    });
   });
 
   await t.test('manual choice is preferred but still falls back after it is disabled', () => {
@@ -72,5 +94,15 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.notEqual(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', duration: 15, aspectRatio: '16:9' }).id, 'sd20-480-diw-nd');
     await checkModelRoutes({ routeIds: ['sd20-480-diw-nd'], fetchImpl: response(['nd-seedance-2.0 480p']) });
     assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', duration: 15, aspectRatio: '16:9' }).id, 'sd20-480-diw-nd');
+  });
+
+  await t.test('Fast route visibility follows the DIW model catalog monitor', async () => {
+    const response = ids => async () => new Response(JSON.stringify({ data: ids.map(id => ({ id })) }), { status: 200, headers: { 'content-type': 'application/json' } });
+    await checkModelRoutes({ routeIds: ['sd20-fast-720-diw-ed'], fetchImpl: response([]) });
+    assert.equal(sql("SELECT catalog_status FROM model_routes WHERE id='sd20-fast-720-diw-ed'").get().catalog_status, 'missing');
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.0-fast' && item.quality === '720p').available, false);
+    await checkModelRoutes({ routeIds: ['sd20-fast-720-diw-ed'], fetchImpl: response(['ed-seedance 2.0 fast 720p']) });
+    assert.equal(sql("SELECT catalog_status FROM model_routes WHERE id='sd20-fast-720-diw-ed'").get().catalog_status, 'available');
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.0-fast' && item.quality === '720p').available, true);
   });
 });

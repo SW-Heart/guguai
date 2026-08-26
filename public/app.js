@@ -377,15 +377,22 @@ function creditEarnType(entry) {
   if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
   return '积分获取';
 }
+function creditEntryStatus(entry, task) {
+  if (entry?.type === 'generation_refund' || task?.creditStatus === 'refunded') return { key:'refunded', label:'已退款' };
+  if (['queued', 'running'].includes(task?.status) || (task?.status === 'failed' && task?.creditStatus !== 'refunded')) return { key:'pending', label:'进行中' };
+  return { key:'completed', label:'已完成' };
+}
 function signedCreditAmount(amount) { return `${amount < 0 ? '-' : '+'}${creditText(Math.abs(amount))}`; }
 function renderCreditRows(entries, direction) {
-  if (!entries.length) return `<tr><td colspan="${direction === 'spend' ? 4 : 3}"><div class="credit-empty">暂无${direction === 'spend' ? '积分消耗' : '积分获取'}记录</div></td></tr>`;
+  if (!entries.length) return `<tr><td colspan="${direction === 'spend' ? 5 : 3}"><div class="credit-empty">暂无${direction === 'spend' ? '积分消耗' : '积分获取'}记录</div></td></tr>`;
   return entries.map(entry => {
     const amount = creditEntryAmount(entry);
     const task = entry.generationId ? state.tasks.find(item => item.id === entry.generationId) : null;
     const model = direction === 'spend' ? `<td>${esc(creditModelName(entry, task))}</td>` : '';
     const type = direction === 'spend' ? creditSpendType(entry) : creditEarnType(entry);
-    return `<tr><td><time datetime="${esc(entry.createdAt || '')}">${esc(creditDateText(entry.createdAt))}</time></td><td>${esc(type)}</td>${model}<td class="${direction === 'spend' ? 'credit-spend' : 'credit-earn'}">${esc(signedCreditAmount(amount))}</td></tr>`;
+    const status = direction === 'spend' ? creditEntryStatus(entry, task) : null;
+    const statusCell = status ? `<td><span class="credit-status credit-status-${status.key}">${esc(status.label)}</span></td>` : '';
+    return `<tr><td><time datetime="${esc(entry.createdAt || '')}">${esc(creditDateText(entry.createdAt))}</time></td><td>${esc(type)}</td>${model}<td class="${direction === 'spend' ? 'credit-spend' : 'credit-earn'}">${esc(signedCreditAmount(amount))}</td>${statusCell}</tr>`;
   }).join('');
 }
 function renderCreditDetail() {
@@ -526,6 +533,7 @@ async function enterApp(user) {
   await Promise.all([loadConfig(), loadCredits(), loadFiles(), loadTasks()]);
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
   showApp();
+  void openModelPriceDialog({ auto:true });
 }
 
 let deleteConfirmationResolver = null;
@@ -1321,9 +1329,9 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1'], durations:[30], qualityOptions:['480p','720p'], referenceLimits:{image:30,video:10,audio:10,total:50}, minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1'], durations:[30], qualityOptions:['480p','720p'], referenceLimits:{image:30,video:10,audio:10,total:50}, minImages:1, maxImages:30 },
   ] },
-  { id:'seedance-2.0-fast', label:'Seedance 2.0 Fast', description:'支持 5～15 秒、16:9/1:1/9:16 文生视频与参考素材视频', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','1:1','9:16'], durations:[5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:12}, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','1:1','9:16'], durations:[5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['720p'], pricing:{ currency:'credit', amount:3, unit:'second' }, referenceLimits:{image:9,video:3,audio:3,total:12}, minImages:1, maxImages:9 },
+  { id:'seedance-2.0-fast', label:'Seedance 2.0 Fast', description:'固定 15 秒、720p，支持 9 张图片 + 3 段视频 + 3 段音频参考', modes:[
+    { generationType:'TEXT', aspectRatios:['16:9','1:1','9:16'], durations:[15], qualityOptions:['720p'], referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','1:1','9:16'], durations:[15], qualityOptions:['720p'], referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:1, maxImages:9 },
   ] },
   { id:'minimax-h3', label:'MiniMax H3', description:'支持 768p 与 2K，4～15 秒视频', modes:[
     { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, referenceLimits:{image:5,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
@@ -1499,7 +1507,7 @@ function currentVideoReferenceIds() { const mode = videoGenerationParameters().m
 function currentVideoQuoteInput() { return { modelId:$('#videoModel')?.value || '', aspectRatio:$('#videoAspect')?.value || '16:9', duration:Number($('#videoDuration')?.value || 0), quality:$('#videoResolution')?.value || '', generationType:videoGenerationParameters().mode, referenceAssetIds:cloudReferenceIds(currentVideoReferenceIds()) }; }
 function updateVideoCost() {
   const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return;
-  const input = currentVideoQuoteInput(); const routed = ['seedance-2.0','seedance-2.5'].includes(input.modelId);
+  const input = currentVideoQuoteInput(); const routed = ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }
@@ -1536,17 +1544,39 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
   body.innerHTML = groups.length ? groups.map(modelId => {
     const rows = visibleItems.filter(item => item.modelId === modelId);
     const label = rows[0]?.label || modelId;
-    const requestPrice = rows[0]?.unit === 'request';
-    return `<section class="price-model-group"><header><div class="price-model-heading">${modelIcon(modelId)}<h3>${esc(label)}</h3></div><small>${rows[0]?.duration ? `固定 ${Number(rows[0].duration)} 秒` : requestPrice ? '按次计费' : '按秒计费'}</small></header><div class="price-model-rows">${rows.map(item => `<div class="price-model-row"><b>${esc(item.quality)}</b><span>当前平台价格</span><strong>¥${Number(item.yuan).toFixed(2)} / ${item.unit === 'request' ? '次' : '秒'}<small>${creditText(item.credits)} 积分 / ${item.unit === 'request' ? '次' : '秒'}</small></strong></div>`).join('')}</div></section>`;
+    return `<section class="price-model-group"><header><div class="price-model-heading">${modelIcon(modelId)}<h3>${esc(label)}</h3></div></header><div class="price-model-rows">${rows.map(item => { const unit = item.unit === 'request' ? '次' : '秒'; return `<div class="price-model-row"><b>${esc(item.quality)}</b><strong>¥${Number(item.yuan).toFixed(2)} / ${unit}<small>${creditText(item.credits)} 积分 / ${unit}</small></strong></div>`; }).join('')}</div></section>`;
   }).join('') : '<div class="price-catalog-empty">暂时没有可用的模型价格。</div>';
 }
-$('#modelPriceButton').onclick = async () => {
+
+const modelPriceAutoOpenKey = 'gugu:model-price-auto-open-date';
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+function modelPriceAutoOpenStorageKey() {
+  const account = state.user?.id || state.user?.username || 'anonymous';
+  return `${modelPriceAutoOpenKey}:${encodeURIComponent(String(account))}`;
+}
+function hasAutoOpenedModelPricesToday() {
+  try { return localStorage.getItem(modelPriceAutoOpenStorageKey()) === localDateKey(); }
+  catch { return false; }
+}
+function markModelPricesAutoOpened() {
+  try { localStorage.setItem(modelPriceAutoOpenStorageKey(), localDateKey()); }
+  catch {}
+}
+async function openModelPriceDialog({ auto = false } = {}) {
   const dialog = $('#modelPriceDialog');
+  if (!dialog || dialog.open || (auto && hasAutoOpenedModelPricesToday())) return;
+  if (auto) markModelPricesAutoOpened();
   renderModelPrices();
   dialog.showModal();
   try { const config = await api('/api/config'); state.config = { ...state.config, ...config }; renderModelPrices(config.modelPrices || []); }
   catch { if (!(state.config?.modelPrices || []).length) $('#modelPriceBody').innerHTML = '<div class="price-catalog-empty">价格获取失败，请稍后重试。</div>'; }
-};
+}
+$('#modelPriceButton').onclick = () => { void openModelPriceDialog(); };
 $('#closeModelPrice').onclick = () => $('#modelPriceDialog').close();
 $('#modelPriceDialog').addEventListener('click', event => { if (event.target === event.currentTarget) event.currentTarget.close(); });
 

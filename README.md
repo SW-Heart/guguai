@@ -63,7 +63,7 @@ cp .env.example .env
 | Veo 3.1 视频 | `OAI_API_BASE`、`OAIAPI_VEO_KEY`、`OAI_VEO_31_MODEL` | 使用 oairegbox 的 `firefly-veo-3.1`，支持 4/6/8 秒文生视频和单图参考图视频 |
 | MiniMax H3 视频 | `OAI_API_BASE`、`OAIAPI_MINIMAX_KEY`、`OAI_MINIMAX_H3_768_MODEL`、`OAI_MINIMAX_H3_2K_MODEL` | 平台统一展示为 MiniMax H3；选择 768p 路由到 768p 模型，选择 2K 路由到 2K 模型，支持 4–15 秒文本、参考图和首尾帧视频 |
 | Seedance 2.0 / 2.5 动态线路 | `DIW_API_BASE`、`DIW_KEY`、`WJ_API_BASE`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY`、`CNTCN_API_BASE`、`CNTCN_KEY` | 后台按模型与分辨率维护完整调用线路；每 10 分钟通过 `/v1/models` 自动停用或恢复缺失模型，支持手动指定优先线路 |
-| Seedance 2.0 Fast 视频 | `CNTCN_API_BASE`、`CNTCN_KEY`、`CNTCN_SD2_FAST_MODEL` | 保留原 CNTCN Fast 调用；支持 5–15 秒、720p 和参考素材 |
+| Seedance 2.0 Fast 视频 | `DIW_API_BASE`、`DIW_KEY` | 使用 DIW 的 `ed-seedance 2.0 fast 720p`，固定 15 秒/720p，支持 9 图 + 3 视频 + 3 音频参考 |
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
@@ -100,13 +100,14 @@ OAI_MAX_POLL_DURATION_MS=1800000
 CNTCN_API_BASE=https://api.ai.kbai.cc
 CNTCN_KEY=your_cntcn_key
 CNTCN_SD2_MODEL=933qudao-g
-CNTCN_SD2_FAST_MODEL=933qudao-fast
 DIW_API_BASE=https://mjnewapi.diwdiw.cn
 DIW_KEY=your_diw_key
 WJ_API_BASE=https://www.weijinapi.top
 WJ_TJWD_KEY=your_wj_tjwd_key
 WJ_SD_PY_900_KEY=your_wj_seedance_900_key
 MODEL_ROUTE_CHECK_INTERVAL_MS=600000
+# 动态视频线路创建任务的提交请求超时时间（默认 180 秒）
+VIDEO_ROUTE_SUBMIT_TIMEOUT_MS=180000
 # 异步视频提交后，超过此时间仍未取得上游 taskId 则失败并退款（默认 5 分钟）
 VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS=300000
 
@@ -525,11 +526,11 @@ http://127.0.0.1:4317/guguadmin
 | 模式 | 图片要求 | 时长 | 画幅 | 清晰度 |
 | --- | --- | --- | --- | --- |
 | 文生视频 | 不可带参考素材 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒；Seedance 2.5：30 秒 | 依模型能力 | MiniMax H3：768p / 2K；Seedance 2.0/2.5：480p / 720p |
-| 参考素材视频 | 1 张图片（Grok Video；Veo 3.1：1 张）；MiniMax H3：图片 5 / 视频 3 / 音频 3，合计 15；Seedance 2.0：图片 9 / 视频 3 / 音频 3；Seedance 2.5：图片 30 / 视频 10 / 音频 10；Seedance 2.0 Fast：图片 9 / 视频 3 / 音频 3 | Seedance 2.0：15 秒；Seedance 2.5：30 秒；其他依模型能力 | Seedance：16:9 / 9:16 / 1:1 | 依模型能力 |
+| 参考素材视频 | 1 张图片（Grok Video；Veo 3.1：1 张）；MiniMax H3：图片 5 / 视频 3 / 音频 3，合计 15；Seedance 2.0/Fast：图片 9 / 视频 3 / 音频 3；Seedance 2.5：图片 30 / 视频 10 / 音频 10 | Seedance 2.0/Fast：15 秒；Seedance 2.5：30 秒；其他依模型能力 | Seedance：16:9 / 9:16 / 1:1 | 依模型能力 |
 | GuGu 2.0 参考素材视频 | 图片最多 9 张、音频最多 3 段，合计最多 12 个；不支持参考视频 | 1–15 秒 | 16:9 / 9:16 | 480p / 768p |
 | 首尾帧视频 | 1–2 张图片 | Veo：固定 8 秒；Omni Flash：10 秒；MiniMax H3：4–15 秒 | 依模型能力 | 依模型能力 |
 
-Seedance 2.0/2.5 使用 DIW、WJ、CNTCN 的动态完整调用线路。服务每 10 分钟按“渠道地址 + API Key”请求 `/v1/models`：目录缺失会自动停用，重新出现会自动恢复。后台可修改线路启停、优先级和成本，也可指定一条手动优先线路；指定线路不可用时仍按其余优先级降级。WJ 按 `seconds` 提交，DIW 按 `duration` 提交，CNTCN 使用 `reference_image_urls` 等参考字段；任务 ID、线路快照和价格快照都会持久化，重启后只轮询原线路，不会重复提交。
+Seedance 2.0/2.5/Fast 使用 DIW、WJ、CNTCN 的动态完整调用线路。服务每 10 分钟按“渠道地址 + API Key”请求 `/v1/models`：目录缺失会自动停用，重新出现会自动恢复。后台可修改线路启停、优先级和成本，也可指定一条手动优先线路；指定线路不可用时仍按其余优先级降级。WJ 按 `seconds` 提交，DIW 按 `duration` 提交，CNTCN 使用 `reference_image_urls` 等参考字段；任务 ID、线路快照和价格快照都会持久化，重启后只轮询原线路，不会重复提交。
 
 其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。OAI 任务最长等待 30 分钟，可用 `OAI_MAX_POLL_DURATION_MS` 调整。
 

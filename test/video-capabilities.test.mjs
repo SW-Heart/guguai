@@ -137,20 +137,22 @@ test('Seedance 2.0 exposes the dynamic route capabilities', () => {
   });
 });
 
-test('Seedance 2.0 Fast exposes the CNTCN fast model capabilities', () => {
+test('Seedance 2.0 Fast exposes the DIW fixed 15-second model capabilities', () => {
   const model = publicVideoCapabilities().models.find(item => item.id === VIDEO_MODEL_IDS.SEEDANCE_2_FAST);
   assert.ok(model);
   assert.equal(model.label, 'Seedance 2.0 Fast');
+  assert.match(model.description, /固定 15 秒、720p/);
   assert.deepEqual(model.modes[0].aspectRatios, ['16:9', '1:1', '9:16']);
-  assert.deepEqual(model.modes[0].durations, [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+  assert.deepEqual(model.modes[0].durations, [15]);
   assert.equal(model.modes[0].qualityOptions[0], '720p');
-  assert.deepEqual(model.modes[1].referenceLimits, { image: 9, video: 3, audio: 3, total: 12 });
+  assert.deepEqual(model.modes[1].referenceLimits, { image: 9, video: 3, audio: 3, total: 15 });
 
-  const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '1:1', duration: 5, quality: '720p' }, 12);
-  assert.equal(request.provider, 'cntcn');
-  assert.equal(request.model, process.env.CNTCN_SD2_FAST_MODEL || 'seedance-2.0-fast');
-  assert.equal(request.referenceLimits.total, 12);
-  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '16:9', duration: 15, quality: '720p' }, 13), /1～12 个参考素材/);
+  const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '1:1', duration: 15, quality: '720p' }, 15);
+  assert.equal(request.provider, 'route');
+  assert.equal(request.model, '');
+  assert.equal(request.referenceLimits.total, 15);
+  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '16:9', duration: 14, quality: '720p' }), /不支持 14 秒/);
+  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '16:9', duration: 15, quality: '720p' }, 16), /1～15 个参考素材/);
 
   assert.deepEqual(buildVideoPayload({
     videoModelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST,
@@ -162,7 +164,7 @@ test('Seedance 2.0 Fast exposes the CNTCN fast model capabilities', () => {
     quality: request.quality,
     referenceLimits: request.referenceLimits,
   }, { images: ['image-url'], videos: ['video-url'], audios: ['audio-url'] }), {
-    model: request.model, prompt: '@图片1 @视频1 @音频1', aspect_ratio: '1:1', seconds: 5, resolution: '720p',
+    model: request.model, prompt: '@图片1 @视频1 @音频1', aspect_ratio: '1:1', seconds: 15, resolution: '720p',
     reference_image_urls: ['image-url'], reference_videos: ['video-url'], reference_audios: ['audio-url'],
   });
 });

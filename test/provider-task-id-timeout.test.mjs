@@ -17,6 +17,10 @@ test('uncertain async submission times out five minutes after task creation', ()
   assert.equal(__test.providerTaskIdTimedOut(task, created + 5 * 60_000), true);
 });
 
+test('routed video submission timeout leaves margin for slow channel responses', () => {
+  assert.equal(__test.routedVideoSubmitTimeoutMs, 180_000);
+});
+
 test('task with an upstream task ID is never treated as a submission timeout', () => {
   const task = {
     provider: 'cntcn', status: 'running', providerTaskId: 'upstream-123',

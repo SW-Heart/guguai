@@ -13,10 +13,12 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
       { id: 'minimax-h3-15s', label: 'GuGu 2.0', modes: [{ generationType: 'TEXT', qualityOptions: ['768p'], pricing: { amount: 1, unit: 'second' } }] },
       { id: 'grok', label: 'GuGu 1.5', modes: [{ generationType: 'TEXT', qualityOptions: ['720p'], pricing: { amount: 1.5, unit: 'second' } }] },
       { id: 'seedance-2.0', label: 'Seedance 2.0' },
+      { id: 'seedance-2.0-fast', label: 'Seedance 2.0 Fast' },
       { id: 'seedance-2.5', label: 'Seedance 2.5' },
     ],
   });
   const seedance20 = catalog.find(item => item.modelId === 'seedance-2.0' && item.quality === '480p');
+  const seedance20Fast = catalog.find(item => item.modelId === 'seedance-2.0-fast' && item.quality === '720p');
   const seedance25 = catalog.find(item => item.modelId === 'seedance-2.5' && item.quality === '480p');
   assert.equal(seedance20.unit, 'second');
   assert.equal(seedance20.duration, 15);
@@ -24,5 +26,10 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
   assert.equal(seedance25.unit, 'second');
   assert.equal(seedance25.duration, 30);
   assert.equal(seedance25.yuan, seedance25.totalYuan / 30);
+  assert.equal(seedance20Fast.duration, 15);
+  assert.equal(seedance20Fast.totalYuan, 1.8);
+  assert.equal(seedance20Fast.totalCredits, 18);
+  assert.ok(Math.abs(seedance20Fast.yuan - 0.12) < 1e-9);
   assert.deepEqual(catalog.slice(0, 4).map(item => item.label), ['GuGu 2.0', 'GuGu 1.5', 'Seedance 2.0', 'Seedance 2.0']);
+  assert.ok(catalog.some(item => item.label === 'Seedance 2.0 Fast'));
 });
