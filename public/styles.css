@@ -1391,14 +1391,17 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .price-catalog-button:active, .credit-balance:active, .account-button:active { transform: scale(.985); }
 .price-catalog-button { width: 44px; height: 44px; border: 0; display: grid; place-items: center; cursor: pointer; }
 .price-catalog-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.price-catalog-button .price-pixel-icon { width: 23px; height: 23px; overflow: visible; color: var(--brand); stroke: none; }
-.price-pixel-frame { fill: none; stroke: currentColor; stroke-width: .95; opacity: .46; vector-effect: non-scaling-stroke; transition: opacity var(--ease), stroke var(--ease); }
-.price-pixel { fill: currentColor; stroke: none; transform-box: fill-box; transform-origin: center; animation: price-pixel-cycle 3s steps(4, end) infinite; animation-delay: var(--pixel-delay); }
-.price-catalog-button:hover .price-pixel-icon { color: var(--brand-hover); }
-.price-catalog-button:hover .price-pixel-frame { opacity: .74; }
-@keyframes price-pixel-cycle { 0%, 14% { opacity: .16; transform: scale(.58); } 28%, 64% { opacity: 1; transform: scale(1); } 78%, 100% { opacity: .16; transform: scale(.58); } }
+.price-catalog-button .price-pixel-icon { width: 26px; height: 26px; overflow: visible; color: var(--brand); stroke: none; }
+.price-clock-ring { fill: none; stroke: var(--line-strong); stroke-width: .85; opacity: .88; }
+.price-clock-ticks { fill: none; stroke: var(--brand); stroke-width: .85; stroke-linecap: square; opacity: .62; }
+.price-clock-progress { fill: none; stroke: var(--brand); stroke-width: 1.15; stroke-linecap: round; stroke-dasharray: 7 57; stroke-dashoffset: 0; animation: price-clock-progress 2.8s linear infinite; }
+.price-pixel { fill: var(--brand); stroke: none; animation: price-pixel-color 2.8s ease-in-out infinite; animation-delay: var(--pixel-delay); }
+.price-catalog-button:hover .price-clock-ticks, .price-catalog-button:hover .price-clock-progress { stroke: var(--brand-hover); }
+@keyframes price-clock-progress { to { stroke-dashoffset: -64px; } }
+@keyframes price-pixel-color { 0%, 100% { fill: #6366f1; opacity: .82; } 35% { fill: #8b5cf6; opacity: 1; } 70% { fill: #38bdf8; opacity: .78; } }
 @media (prefers-reduced-motion: reduce) {
-  .price-pixel { animation: none; opacity: 1; transform: none; }
+  .price-clock-progress, .price-pixel { animation: none; }
+  .price-pixel { fill: var(--brand); opacity: 1; }
 }
 .model-price-dialog { width: min(820px, calc(100% - 32px)); max-height: min(780px, calc(100dvh - 28px)); padding: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow-float); }
 .model-price-dialog::backdrop { background: rgba(20,20,24,.52); backdrop-filter: blur(3px); }
