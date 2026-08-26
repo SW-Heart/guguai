@@ -4,7 +4,7 @@
   const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c]));
   const money = value => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 });
   const date = value => value ? new Date(value).toLocaleString('zh-CN') : '—';
-  const status = value => ({ active:'正常', disabled:'已禁用', completed:'完成', failed:'失败', queued:'排队', running:'运行中', exhausted:'已用尽', expired:'已过期', enabled:'启用', disabled:'停用' }[value] || value || '—');
+  const status = value => ({ active:'正常', disabled:'已禁用', completed:'完成', failed:'失败', queued:'排队', running:'运行中', exhausted:'已用尽', expired:'已过期', enabled:'启用', available:'可用', missing:'目录缺失', unknown:'待检查', probe_error:'检查异常', credential_error:'密钥异常' }[value] || value || '—');
   const badge = (value, kind = '') => `<span class="badge ${kind || (['active','completed','enabled'].includes(value) ? 'ok' : ['failed','disabled'].includes(value) ? 'bad' : 'warn')}">${esc(status(value))}</span>`;
   const toast = message => { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 2600); };
 
@@ -160,15 +160,59 @@
 
   async function loadModels() {
     const root = $('#view-models');
-    root.innerHTML = '<h2>模型与价格</h2><p class="subtitle">管理用户展示、接单状态和平台统一价格</p><div id="modelPanel" class="panel">加载中…</div><div id="pricingPanel" class="panel">加载中…</div>';
+    root.innerHTML = '<h2>模型与价格</h2><p class="subtitle">管理用户展示、接单状态、调用线路和平台价格</p><div id="routePanel" class="panel">加载线路…</div><div id="modelPanel" class="panel">加载中…</div><div id="pricingPanel" class="panel">加载中…</div>';
     try {
-      const [models, pricing] = await Promise.all([api('/api/admin/models'), api('/api/admin/pricing')]);
+      const [models, pricing, routes] = await Promise.all([api('/api/admin/models'), api('/api/admin/pricing'), api('/api/admin/model-routes')]);
+      renderRoutePanel(routes);
       $('#modelPanel').innerHTML = `<div class="panel-head"><h3>模型控制</h3></div><div class="table-wrap"><table><thead><tr><th>模型</th><th>类型</th><th>用户可见</th><th>接受新任务</th><th>排序</th><th>操作</th></tr></thead><tbody>${models.items.map(model => `<tr><td><b>${esc(model.modelId)}</b></td><td>${esc(model.kind)}</td><td>${model.userVisible ? badge('active') : badge('disabled')}</td><td>${model.enabled ? badge('active') : badge('disabled')}</td><td>${model.sortOrder}</td><td><button class="small-button" data-model="${esc(model.modelId)}">编辑</button></td></tr>`).join('')}</tbody></table></div>`;
       $('#modelPanel').querySelectorAll('[data-model]').forEach(button => button.onclick = () => editModel(models.items.find(item => item.modelId === button.dataset.model)));
       const current = pricing.current;
       $('#pricingPanel').innerHTML = `<div class="panel-head"><h3>全局价格 · 版本 ${current.version}</h3></div><form id="pricingForm" class="price-form"><label class="control">图片积分/次<input name="imagePerRequest" value="${esc(current.imagePerRequest)}" inputmode="decimal" required></label><label class="control">视频积分/秒<input name="videoPerSecond" value="${esc(current.videoPerSecond)}" inputmode="decimal" required></label><button class="primary" type="submit">发布新价格</button></form><p class="detail">历史价格只读；新价格仅影响新提交的任务。</p>`;
       $('#pricingForm').onsubmit = async event => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api('/api/admin/pricing', { method:'POST', body:JSON.stringify({ imagePerRequest:form.get('imagePerRequest'), videoPerSecond:form.get('videoPerSecond'), expectedVersion:current.version }) }); toast('价格已发布'); loadModels(); } catch (error) { toast(error.message); } };
     } catch (error) { root.innerHTML = `<div class="panel error">${esc(error.message)}</div>`; }
+  }
+
+  function routeStatusBadge(route) {
+    if (!route.adminEnabled) return badge('disabled');
+    const kind = route.catalogStatus === 'available' ? 'ok' : ['missing','credential_error'].includes(route.catalogStatus) ? 'bad' : 'warn';
+    return badge(route.catalogStatus, kind);
+  }
+
+  function renderRoutePanel(data) {
+    const root = $('#routePanel'); if (!root) return;
+    const groups = [...new Set(data.items.map(item => `${item.logicalModelId}:${item.quality}`))];
+    root.innerHTML = `<div class="panel-head"><div><h3>Seedance 调用线路</h3><p class="detail">自动模式按优先级选择；手动指定会优先尝试该线路，异常时仍继续降级。</p></div><button class="small-button" id="checkAllRoutes">立即检查全部</button></div><div class="route-groups">${groups.map(key => {
+      const [modelId, quality] = key.split(':'); const routes = data.items.filter(item => item.logicalModelId === modelId && item.quality === quality); const policy = data.policies.find(item => item.logicalModelId === modelId && item.quality === quality); const price = data.prices.find(item => item.modelId === modelId && item.quality === quality);
+      return `<section class="route-group"><header><div><h4>${esc(modelId === 'seedance-2.0' ? 'Seedance 2.0' : 'Seedance 2.5')} · ${esc(quality)}</h4><span>${price?.available ? `当前 ¥${Number(price.yuan).toFixed(2)} / ${money(price.credits)} 积分` : '当前无可用线路'}</span></div><label>选择策略<select data-route-policy="${esc(key)}" data-version="${policy?.version || 1}"><option value="">自动按优先级</option>${routes.map(route => `<option value="${esc(route.id)}" ${policy?.forcedRouteId === route.id ? 'selected' : ''}>手动 · ${esc(route.displayName)}</option>`).join('')}</select></label></header><div class="table-wrap"><table class="route-table"><thead><tr><th>优先级</th><th>线路 / 上游模型 ID</th><th>状态</th><th>成本</th><th>用户价</th><th>检查时间</th><th>操作</th></tr></thead><tbody>${routes.map(route => `<tr class="${price?.selectedRouteId === route.id ? 'is-selected' : ''}"><td><b>${route.priority}</b></td><td><b>${esc(route.displayName)}</b><div class="detail">${esc(route.upstreamModelId)}</div></td><td>${routeStatusBadge(route)}${route.catalogMessage ? `<div class="route-message" title="${esc(route.catalogMessage)}">${esc(route.catalogMessage)}</div>` : ''}</td><td>¥${Number(route.costYuan).toFixed(2)}</td><td>¥${Number(route.salePriceYuan).toFixed(2)}<div class="detail">${money(route.salePriceCredits)} 积分</div></td><td>${date(route.catalogCheckedAt)}</td><td class="actions"><button class="small-button" data-edit-route="${esc(route.id)}">编辑</button><button class="small-button" data-check-route="${esc(route.id)}">检查</button></td></tr>`).join('')}</tbody></table></div></section>`;
+    }).join('')}</div>`;
+    $('#checkAllRoutes').onclick = () => checkRoutes();
+    root.querySelectorAll('[data-check-route]').forEach(button => button.onclick = () => checkRoutes([button.dataset.checkRoute]));
+    root.querySelectorAll('[data-edit-route]').forEach(button => button.onclick = () => editRoute(data.items.find(item => item.id === button.dataset.editRoute)));
+    root.querySelectorAll('[data-route-policy]').forEach(select => select.onchange = () => changeRoutePolicy(select));
+  }
+
+  async function checkRoutes(routeIds = null) {
+    const button = routeIds ? $(`[data-check-route="${CSS.escape(routeIds[0])}"]`) : $('#checkAllRoutes');
+    if (button) { button.disabled = true; button.textContent = '检查中…'; }
+    try { await api('/api/admin/model-routes/check', { method:'POST', body:JSON.stringify(routeIds ? { routeIds } : {}) }); toast('模型目录检查完成'); loadModels(); }
+    catch (error) { toast(error.message); if (button) button.disabled = false; }
+  }
+
+  async function changeRoutePolicy(select) {
+    const [logicalModelId, quality] = select.dataset.routePolicy.split(':');
+    try { await api('/api/admin/model-route-policy', { method:'PATCH', body:JSON.stringify({ logicalModelId, quality, forcedRouteId:select.value, expectedVersion:Number(select.dataset.version) }) }); toast(select.value ? '已切换为手动优先线路' : '已恢复自动优先级'); loadModels(); }
+    catch (error) { toast(error.message); loadModels(); }
+  }
+
+  async function editRoute(route) {
+    const values = await showAdminDialog({ kicker:'调用线路', title:`编辑 ${route.displayName}`, description:`上游模型：${route.upstreamModelId}`, submit:'保存线路', fields:[
+      { name:'adminEnabled', type:'checkbox', label:'允许接单', checked:route.adminEnabled, help:'关闭后自动和手动选路都会跳过该线路。' },
+      { name:'priority', label:'优先级', type:'number', value:String(route.priority), min:1, max:1000, step:1, required:true, help:'数字越小越优先；同组内建议不要重复。' },
+      { name:'costYuan', label:'成本（人民币/次）', type:'number', value:Number(route.costYuan).toFixed(2), min:0, max:100000, step:.01, required:true, help:'用户价自动按成本上浮 20%，1 积分 = ¥0.1。' },
+    ], validate: input => Number.isSafeInteger(Number(input.priority)) && Number(input.priority) >= 1 && Number(input.priority) <= 1000 && Number.isFinite(Number(input.costYuan)) && Number(input.costYuan) >= 0 ? null : '请检查优先级和成本。' });
+    if (!values) return;
+    try { await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method:'PATCH', body:JSON.stringify({ adminEnabled:values.adminEnabled, priority:Number(values.priority), costYuan:Number(values.costYuan), expectedVersion:route.version }) }); toast('线路配置已更新'); loadModels(); }
+    catch (error) { toast(error.message); }
   }
 
   async function editModel(model) {

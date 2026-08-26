@@ -103,14 +103,44 @@ function compactResource(resource, mode) {
   return [`${typeName(resource?.type)}「${clean(resource?.name)}」`,clean(bible.appearance||resource?.description),clean(bible.costume),clean(bible.stateNotes)].filter(Boolean).join('；');
 }
 
+const mentionToken = mention => `@${String(mention?.label || '').replace(/^@/, '').trim()}`;
+const mentionPrefix = kind => ({ image:'Image', video:'Video', audio:'Audio' }[kind] || 'Image');
+
+export function replaceAssetMentions(text, mentions = []) {
+  const source = clean(text);
+  const list = (Array.isArray(mentions) ? mentions : [])
+    .map(item => ({ id:String(item?.id || ''), label:String(item?.label || '').replace(/^@/, '').trim(), kind:['image','video','audio'].includes(item?.kind) ? item.kind : 'image' }))
+    .filter(item => item.id && item.label);
+  if (!source || !list.length) return source;
+  const counters = { image:0, video:0, audio:0 };
+  const replacements = new Map();
+  list.forEach(mention => { if (!replacements.has(mention.id)) { counters[mention.kind] += 1; replacements.set(mention.id, `${mentionPrefix(mention.kind)}${counters[mention.kind]}`); } });
+  const pattern = new RegExp([...list].sort((a,b) => mentionToken(b).length - mentionToken(a).length).map(item => mentionToken(item).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  return source.replace(pattern, token => {
+    const mention = list.find(item => mentionToken(item) === token);
+    if (!mention) return token;
+    return replacements.get(mention.id);
+  });
+}
+
+function compileShotText(shot) {
+  const compiled = { ...(shot || {}) };
+  for (const key of ['script','prompt','visualDirection','action','startState','endState','framing','continuityNotes','sound','negativePrompt']) {
+    if (typeof compiled[key] === 'string') compiled[key] = replaceAssetMentions(compiled[key], shot?.assetMentions);
+  }
+  return compiled;
+}
+
 export function buildShotVideoPrompt({ project, shot, scene, resources = [] }) {
   const manualOverride = clean(shot?.promptOverride);
-  if (manualOverride) return clip(manualOverride, 4000);
-  const mode = shot?.generation?.type || 'TEXT';
-  const duration = Number(shot?.duration) || 6;
-  const timeline = promptMotionPlan(shot, project?.workflowVersion);
-  const dialogue = dialogueLines(scene, shot);
-  const visualDirection = safeVisualDirection(shot, project?.workflowVersion);
+  if (manualOverride) return clip(replaceAssetMentions(manualOverride, shot?.assetMentions), 4000);
+  const compiledShot = compileShotText(shot);
+  const hasAssetReferences = Array.isArray(shot?.assetMentions) && shot.assetMentions.some(item => item?.id);
+  const mode = compiledShot?.generation?.type === 'TEXT' && hasAssetReferences ? 'REFERENCE' : (compiledShot?.generation?.type || 'TEXT');
+  const duration = Number(compiledShot?.duration) || 6;
+  const timeline = promptMotionPlan(compiledShot, project?.workflowVersion);
+  const dialogue = dialogueLines(scene, compiledShot);
+  const visualDirection = safeVisualDirection(compiledShot, project?.workflowVersion);
   const modeLine = {
     TEXT:'文本控制；按时间轴执行，不得自由改编。',
     REFERENCE:'参考图只锁定人物、场景、物品身份；动作严格按时间轴执行。',
@@ -121,18 +151,19 @@ export function buildShotVideoPrompt({ project, shot, scene, resources = [] }) {
   );
   const sceneLine = [clean(scene?.location),clean(scene?.timeOfDay),clean(scene?.lighting)].filter(Boolean).join('；');
   const sections = [
-    `连续单镜头｜${duration}s｜${clean(shot?.aspectRatio)||'9:16'}｜${clean(shot?.shotSize)||'中景'}`,
+    `连续单镜头｜${duration}s｜${clean(compiledShot?.aspectRatio)||'9:16'}｜${clean(compiledShot?.shotSize)||'中景'}`,
     modeLine,
-    `首帧 0.0s：${clean(shot?.startState)||'保持输入首帧姿态'}${clean(shot?.framing)?`；构图：${clean(shot.framing)}`:''}。`,
+    `首帧 0.0s：${clean(compiledShot?.startState)||'保持输入首帧姿态'}${clean(compiledShot?.framing)?`；构图：${clean(compiledShot.framing)}`:''}。`,
     `运动时间轴：\n${timelineLines.join('\n')}`,
-    `尾帧 ${duration.toFixed(1)}s：${clean(shot?.endState)||'动作完全停止并保持结束姿态'}；最后定格，不追加动作。`,
+    `尾帧 ${duration.toFixed(1)}s：${clean(compiledShot?.endState)||'动作完全停止并保持结束姿态'}；最后定格，不追加动作。`,
     dialogue.length ? `对白（逐字，不增删）：\n${dialogue.join('\n')}` : '',
-    visualDirection ? `必要画面约束：${normalizeVisualDetail(visualDirection,shot?.aspectRatio)}` : '',
+    visualDirection ? `必要画面约束：${normalizeVisualDetail(visualDirection,compiledShot?.aspectRatio)}` : '',
     sceneLine ? `环境锁定：${sceneLine}` : '',
     resources.length ? (mode === 'TEXT' ? `可见对象：\n${resources.map(resource=>`- ${compactResource(resource,mode)}`).join('\n')}` : `参考图锁定：${resources.map(resource=>clean(resource.name)).filter(Boolean).join('、')}；仅锁定外观身份，不引用其他场次状态。`) : '',
-    clean(shot?.continuityNotes) ? `本镜连续性：${clean(shot.continuityNotes)}` : '',
-    clean(shot?.sound) ? `同步声音：${clean(shot.sound)}` : '',
-    `禁止：中途切镜、转场、蒙太奇、插入空镜或反应镜头；禁止新增动作和角色；禁止改写台词；${clean(shot?.negativePrompt)||'禁止人物变脸、服装变化、道具消失、轴线跳变'}。`,
+    clean(compiledShot?.continuityNotes) ? `本镜连续性：${clean(compiledShot.continuityNotes)}` : '',
+    clean(compiledShot?.sound) ? `同步声音：${clean(compiledShot.sound)}` : '',
+    Array.isArray(shot?.assetMentions)&&shot.assetMentions.length ? `素材引用已替换为模型输入占位符：${shot.assetMentions.map((item,index)=>`${mentionPrefix(item.kind)}${(shot.assetMentions.slice(0,index+1).filter(other=>other.kind===item.kind).length)}（${String(item.label||'').replace(/^@/,'')}）`).join('、')}` : '',
+    `禁止：中途切镜、转场、蒙太奇、插入空镜或反应镜头；禁止新增动作和角色；禁止改写台词；${clean(compiledShot?.negativePrompt)||'禁止人物变脸、服装变化、道具消失、轴线跳变'}。`,
   ].filter(Boolean);
   return clip(sections.join('\n'), 4000);
 }

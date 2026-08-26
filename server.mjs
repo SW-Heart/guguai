@@ -16,11 +16,12 @@ import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, cou
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
-import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
+import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
 import { createLoginAttemptLimiter } from './lib/auth.mjs';
 import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
+import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 
 const scrypt = promisify(scryptCallback);
@@ -40,21 +41,23 @@ const cntcnBase = /\/v1$/i.test(configuredCntcnBase) ? configuredCntcnBase : `${
 const configuredOaiBase = (process.env.OAI_API_BASE || 'https://newapi.oairegbox.cc/v1').replace(/\/$/, '');
 const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${configuredOaiBase}/v1`;
 const autodlBase = (process.env.AUTODL_API_BASE || 'https://autodl.art').replace(/\/$/, '');
-const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
+const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_15S_WORKFLOW_ID || process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
 const autodlConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlWorkflowId);
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
-const oaiGrokConfigured = Boolean(process.env.OAIAPI_GROK_KEY);
 const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
 const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
+const oaiMaxPollDurationMs = Math.max(oaiPollIntervalMs, Number(process.env.OAI_MAX_POLL_DURATION_MS || 30 * 60_000));
+const oaiMaxPolls = Math.max(1, Math.ceil(oaiMaxPollDurationMs / oaiPollIntervalMs));
 const ttapiPollIntervalMs = 8_000;
 const ttapiMaxPollBackoffMs = 60_000;
 const ttapiRequestTimeoutMs = 60_000;
 const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
+const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 5 * 60_000));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
 const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || 360));
@@ -71,6 +74,8 @@ const directOssUploadEnabled = String(process.env.DIRECT_OSS_UPLOAD_ENABLED || '
 const uploadIntentExpiresSeconds = Math.max(60, Number(process.env.UPLOAD_INTENT_EXPIRES_SECONDS || 600));
 const ossUploadExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS || 300));
 const ossAssetUrlExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS || 900));
+const assetPreviewWidth = 480;
+const assetPreviewCacheSeconds = Math.max(30, Math.min(300, ossAssetUrlExpiresSeconds - 30));
 const uploadMaxPendingPerUser = Math.max(1, Number(process.env.UPLOAD_MAX_PENDING_PER_USER || 3));
 const uploadInitLimitPerMinute = Math.max(1, Number(process.env.UPLOAD_INIT_LIMIT_PER_MINUTE || 10));
 const uploadInitAttempts = new Map();
@@ -79,6 +84,7 @@ const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
 const activeGenerations = new Map();
 const generationRetryTimers = new Map();
+const providerTaskIdTimeoutTimers = new Map();
 const assetRestores = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -106,6 +112,7 @@ for (const entry of await fs.readdir(mediaTmpDir, { withFileTypes: true })) {
 
 // Metadata lives in SQLite; only media binaries stay on disk (plus OSS).
 openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' ? ':memory:' : null });
+ensureDefaultModelRoutes();
 
 // Refuse to start on a half-migrated data directory, otherwise the server would
 // silently serve an empty database while the real records sit in JSON files.
@@ -166,6 +173,7 @@ const generationFailureCatalog = Object.freeze({
   INVALID_REQUEST: Object.freeze({ message: '生成参数不符合要求', suggestion: '请检查提示词、画幅、时长和生成模式后重试。', action: 'edit_input' }),
   RATE_LIMITED: Object.freeze({ message: '当前生成请求较多', suggestion: '请稍等几分钟再试，不要连续重复提交。', action: 'retry_later' }),
   TIMEOUT: Object.freeze({ message: '生成等待超时', suggestion: '本次任务已停止，可重新生成；若持续发生，请稍后再试。', action: 'retry' }),
+  MODEL_UNRESPONSIVE: Object.freeze({ message: '模型无响应', suggestion: '上游未在规定时间内返回任务编号，本次任务已停止，请稍后重试。', action: 'retry_later' }),
   SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
   UPSTREAM_BILLING: Object.freeze({ message: '视频供应商账户余额不足', suggestion: '请为当前视频供应商账户充值，或切换到已开通且有余额的渠道后再试。', action: 'contact_support' }),
   RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
@@ -179,6 +187,7 @@ function generationFailureCode(task) {
   const raw = String(task.error || '').toLowerCase();
   if ((task.providerTaskId && task.sourceUrl) || /成品下载|归档|文件存储|空文件/.test(raw)) return 'ARCHIVE_FAILED';
   if (/服务重启|任务.*中断|interrupted|cancelled|canceled/.test(raw)) return 'INTERRUPTED';
+  if (/模型无响应|未获得上游任务\s*id|未返回上游任务编号/.test(raw)) return 'MODEL_UNRESPONSIVE';
   if (/content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情|rejected/.test(raw)) return 'CONTENT_REJECTED';
   if (/unmarshal.*images|image.*\[\]string|参考图|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
   if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
@@ -193,7 +202,9 @@ function publicGeneration(task) {
   const {
     ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError,
     rawResponse, requestUrl, lastPollError, lastPollErrorAt, lastArchiveError, lastArchiveErrorAt,
-    pollFailureCount, archiveFailureCount, submissionUncertain, archivePending, ...value
+    lastSubmissionError, lastSubmissionErrorAt, pollFailureCount, archiveFailureCount,
+    submissionUncertain, submissionUncertainAt, submissionTimedOut, archivePending,
+    routeBaseUrl, routeCredentialId, routeAdapter, routeVersion, ...value
   } = task;
   const failure = task.status === 'failed'
     ? { code: generationFailureCode(task), ...generationFailureCatalog[generationFailureCode(task)] }
@@ -215,6 +226,10 @@ function publicGeneration(task) {
 const normalizeInviteCode = value => String(value || '').trim().toUpperCase();
 const isKnownInviteCode = value => invitationCodes.has(normalizeInviteCode(value));
 const generationCost = (type, duration = 0) => type === 'image' ? creditPricing.image : Math.max(1, Math.round(Number(duration) || 1)) * creditPricing.videoPerSecond;
+function resolveVideoPrompt(submittedPrompt, fallbackPrompt = '') {
+  const submitted = String(submittedPrompt ?? '');
+  return submitted.trim() ? submitted : String(fallbackPrompt ?? '');
+}
 
 function userDir(userId) { return path.join(userDataDir, safeId(userId)); }
 /** Local cache of media binaries. The authoritative copy lives in OSS. */
@@ -255,15 +270,51 @@ function setPageHeaders(res, page) {
   res.setHeader('X-Total-Count', String(page.total));
   if (page.nextCursor) res.setHeader('X-Next-Cursor', page.nextCursor);
 }
+function publicPlatformPrices(pricing, videoCapabilities) {
+  const dynamicByModel = new Map();
+  for (const item of publicModelPrices()) {
+    const group = dynamicByModel.get(item.modelId) || [];
+    group.push(item);
+    dynamicByModel.set(item.modelId, group);
+  }
+  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_25];
+  const modelOrder = { [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50 };
+  const models = [...(videoCapabilities.models || [])].sort((a, b) => (modelOrder[a.id] ?? 100) - (modelOrder[b.id] ?? 100));
+  const items = [];
+  for (const model of models) {
+    if (model.enabled === false || model.availability === 'coming-soon') continue;
+    if (seedanceIds.includes(model.id)) {
+      const routeItems = dynamicByModel.get(model.id) || [];
+      for (const item of routeItems) {
+        if (!item.available || item.credits === null || item.yuan === null) continue;
+        const seconds = Math.max(1, Number(item.duration) || 1);
+        items.push({ ...item, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits, totalYuan: item.yuan, credits: item.credits / seconds, yuan: item.yuan / seconds });
+      }
+      continue;
+    }
+    const mode = model.modes?.find(item => item.generationType === 'TEXT') || model.modes?.[0];
+    if (!mode) continue;
+    for (const quality of mode.qualityOptions?.length ? mode.qualityOptions : ['标准']) {
+      const price = mode.pricingByQuality?.[quality] || mode.pricing || { currency: 'credit', amount: pricing.videoPerSecond, unit: 'second' };
+      const credits = Number(price.amount || 0);
+      items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`platform:${pricing.version}:${model.id}:${quality}` });
+    }
+  }
+  if (isModelEnabled(fixedModels.image)) items.push({ modelId: fixedModels.image, label: 'GuGu 图像', quality: '标准', duration: null, available: true, enabled: true, availability: 'available', credits: pricing.imagePerRequest, yuan: pricing.imagePerRequest * 0.1, unit: 'request', priceVersion: `platform:${pricing.version}:image` });
+  return items;
+}
+
 function configState() {
   const pricing = currentPricing();
+  const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY),
     oss: ossConfigured,
     directOssUpload: ossConfigured && directOssUploadEnabled,
     llm: isLlmConfigured(llmConfig),
     pricing: { version: pricing.version, imagePerRequest: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond },
-    videoCapabilities: publicVideoCapabilitiesWithControls(),
+    videoCapabilities,
+    modelPrices: publicPlatformPrices(pricing, videoCapabilities),
   };
 }
 
@@ -272,6 +323,20 @@ function errorMessage(value, fallback = '') {
   if (Array.isArray(value)) return value.map(item => errorMessage(item)).filter(Boolean).join('；');
   if (value && typeof value === 'object') return errorMessage(value.message || value.msg || value.detail || value.error || value.errors || value.code) || fallback;
   return fallback;
+}
+function videoProgress(value) {
+  const hasProgress = Object.prototype.hasOwnProperty.call(value || {}, 'progress')
+    || Object.prototype.hasOwnProperty.call(value?.data || {}, 'progress');
+  if (!hasProgress) return null;
+  const raw = Object.prototype.hasOwnProperty.call(value || {}, 'progress') ? value.progress : value.data.progress;
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+async function notifyVideoProgress(hooks, state) {
+  const progress = videoProgress(state);
+  if (progress === null) return hooks.onProgressAbsent?.();
+  return hooks.onProgress?.({ progress });
 }
 async function fetchJson(url, options = {}) {
   const response = await fetch(url, options);
@@ -338,6 +403,7 @@ async function pollTtapiVideo(taskId, hooks = {}) {
         signal: AbortSignal.timeout(ttapiRequestTimeoutMs),
       });
     } catch (error) {
+      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
       consecutiveErrors++;
       recovering = true;
       const detail = upstreamRequestErrorDetail(error);
@@ -353,6 +419,7 @@ async function pollTtapiVideo(taskId, hooks = {}) {
     }
     consecutiveErrors = 0;
     recovering = false;
+    await notifyVideoProgress(hooks, state);
     const videoUrl = state.data?.videoUrl;
     if (videoUrl) return { provider: 'ttapi', taskId, url: videoUrl };
     const status = String(state.status || state.data?.status || '').toUpperCase();
@@ -435,6 +502,7 @@ async function pollCntcnVideo(taskId, hooks = {}) {
     }
     consecutiveErrors = 0;
     recovering = false;
+    await notifyVideoProgress(hooks, state);
     const videoUrl = cntcnVideoUrl(state);
     if (videoUrl) return { provider: 'cntcn', taskId, url: videoUrl };
     const status = cntcnStatus(state);
@@ -462,6 +530,84 @@ async function createCntcnVideo(task, refs, hooks = {}) {
     if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'cntcn', upstreamTerminal: true });
     if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'cntcn', providerTaskId: taskId });
     throw Object.assign(new Error(`CNTCN 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'cntcn', submissionUncertain: true, cause: error });
+  }
+}
+
+function routedVideoPayload(task, refs) {
+  const groups = Array.isArray(refs) ? { images: refs, videos: [], audios: [] } : (refs || { images: [], videos: [], audios: [] });
+  const limits = task.referenceLimits || {};
+  const images = groups.images?.slice(0, limits.image || 0) || [];
+  const videos = groups.videos?.slice(0, limits.video || 0) || [];
+  const audios = groups.audios?.slice(0, limits.audio || 0) || [];
+  if (task.routeAdapter === 'cntcn-video') {
+    return {
+      model: task.model, prompt: task.prompt, seconds: task.duration,
+      aspect_ratio: task.aspectRatio, resolution: task.quality,
+      ...(images.length ? { reference_image_urls: images } : {}),
+      ...(videos.length ? { reference_videos: videos } : {}),
+      ...(audios.length ? { reference_audios: audios } : {}),
+    };
+  }
+  const payload = {
+    model: task.model, prompt: task.prompt,
+    [task.routeAdapter === 'wj-video' ? 'seconds' : 'duration']: task.duration,
+    aspect_ratio: task.aspectRatio,
+  };
+  if (task.routeAdapter === 'diw-video') payload.resolution = task.quality;
+  if (images.length) payload.images = images;
+  if (videos.length) payload.videos = videos;
+  if (audios.length) payload.audios = audios;
+  return payload;
+}
+
+async function pollRoutedVideo(task, hooks = {}) {
+  const key = routeCredential(task.routeCredentialId);
+  if (!key) throw Object.assign(new Error('任务原调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
+  const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
+  let consecutiveErrors = 0;
+  for (;;) {
+    await sleep(consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000);
+    let state;
+    try {
+      state = await fetchJson(`${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}`, {
+        headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(60_000),
+      });
+    } catch (error) {
+      consecutiveErrors++;
+      await hooks.onPollError?.({ consecutiveErrors, detail: upstreamRequestErrorDetail(error) });
+      continue;
+    }
+    if (consecutiveErrors) await hooks.onPollRecovered?.();
+    consecutiveErrors = 0;
+    await notifyVideoProgress(hooks, state);
+    const status = String(state.status || state.data?.status || '').trim().toLowerCase();
+    const resultUrl = cntcnVideoUrl(state);
+    if (resultUrl) return { provider: task.provider, taskId: task.providerTaskId, url: new URL(resultUrl, `${base}/`).href, requiresAuth: /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(resultUrl) };
+    if (['completed', 'succeeded', 'success', 'done'].includes(status)) return { provider: task.provider, taskId: task.providerTaskId, url: `${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}/content`, requiresAuth: true };
+    if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) throw Object.assign(new Error(errorMessage(state.error || state, '视频生成失败')), { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
+  }
+}
+
+async function createRoutedVideo(task, refs, hooks = {}) {
+  const key = routeCredential(task.routeCredentialId);
+  if (!key) throw Object.assign(new Error('当前调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
+  const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
+  let taskId = '';
+  try {
+    const created = await fetchJson(`${base}/v1/videos`, {
+      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(routedVideoPayload(task, refs)), signal: AbortSignal.timeout(90_000),
+    });
+    taskId = cntcnTaskId(created);
+    if (!taskId) throw new Error('渠道已接受请求，但没有返回任务 ID');
+    await hooks.onSubmitted?.({ provider: task.provider, taskId });
+    task.providerTaskId = taskId;
+    return pollRoutedVideo(task, hooks);
+  } catch (error) {
+    if (error.upstreamTerminal) throw error;
+    if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: task.provider, upstreamTerminal: true });
+    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: task.provider, providerTaskId: taskId });
+    throw Object.assign(new Error(`${task.routeDisplayName || '视频线路'}提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: task.provider, submissionUncertain: true, cause: error });
   }
 }
 function autodlStatus(value) {
@@ -530,6 +676,7 @@ async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
     }
     consecutiveErrors = 0;
     recovering = false;
+    await notifyVideoProgress(hooks, state);
     const videoUrl = autodlVideoUrl(state);
     const status = autodlStatus(state);
     if (videoUrl) return { provider: 'autodl', taskId, url: videoUrl };
@@ -586,8 +733,15 @@ function oaiTaskId(value) {
 function oaiStatus(value) {
   return String(value?.status || value?.state || value?.data?.status || value?.data?.state || value?.data?.[0]?.status || value?.data?.[0]?.state || '').trim().toUpperCase();
 }
+function isLegacyOaiGrokTask(task) {
+  return task?.provider === 'oai' && [LEGACY_VIDEO_MODEL_IDS.GUGU_2, LEGACY_VIDEO_MODEL_IDS.GROK_VIDEO_1_5].includes(task?.videoModelId);
+}
+function canonicalVideoModelId(value) {
+  const modelId = String(value || '').trim().toLowerCase();
+  return modelId === LEGACY_VIDEO_MODEL_IDS.GUGU_2 ? VIDEO_MODEL_IDS.MINIMAX_H3_15S : modelId;
+}
 function oaiKeyForTask(task) {
-  if (task.videoModelId === VIDEO_MODEL_IDS.GROK_15) return process.env.OAIAPI_GROK_KEY;
+  if (isLegacyOaiGrokTask(task)) return process.env.OAIAPI_GROK_KEY;
   if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) return process.env.OAIAPI_VEO_KEY;
   if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) return process.env.OAIAPI_MINIMAX_KEY;
   return process.env.OAIAPI_GEMINI_KEY;
@@ -618,9 +772,9 @@ function buildOaiVideoPayload(task, refs) {
     }
     return payload;
   }
-  const isGrok15 = task.videoModelId === VIDEO_MODEL_IDS.GROK_15;
-  const payload = { model: task.model, prompt: task.prompt, aspect_ratio: task.aspectRatio, seconds: isGrok15 ? String(task.duration) : task.duration };
-  if (isGrok15) {
+  const isLegacyGrokOai = isLegacyOaiGrokTask(task);
+  const payload = { model: task.model, prompt: task.prompt, aspect_ratio: task.aspectRatio, seconds: isLegacyGrokOai ? String(task.duration) : task.duration };
+  if (isLegacyGrokOai) {
     payload.resolution = task.quality || '720p';
     if (refs[0]) payload.image = refs[0];
   } else if (task.generationType === 'FIRST&LAST') {
@@ -651,7 +805,7 @@ async function createOaiVideo(task, refs) {
     const submittedUrl = oaiVideoUrl(created);
     if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl };
     if (!taskId) throw new Error('OAI 视频任务没有返回任务 ID');
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < oaiMaxPolls; i++) {
       await sleep(oaiPollIntervalMs);
       const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
       const videoUrl = oaiVideoUrl(state);
@@ -671,6 +825,7 @@ async function createOaiVideo(task, refs) {
   }
 }
 async function createVideo(task, refs, hooks = {}) {
+  if (task.routeId) return createRoutedVideo(task, refs, hooks);
   if (task.provider === 'ttapi') {
     if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置');
     return createTtapiVideo(task, refs, hooks);
@@ -686,8 +841,8 @@ async function createVideo(task, refs, hooks = {}) {
   }
   if (task.provider === 'oai') {
     if (!oaiKeyForTask(task)) {
-      const message = task.videoModelId === VIDEO_MODEL_IDS.GROK_15
-        ? 'Grok Video 服务尚未配置'
+      const message = isLegacyOaiGrokTask(task)
+        ? '历史 Grok Video 服务尚未配置'
         : task.videoModelId === VIDEO_MODEL_IDS.VEO_31
           ? 'Veo 3.1 服务尚未配置'
           : task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3
@@ -743,6 +898,8 @@ function normalizeDramaProject(project) {
   project.step ||= project.storyboard ? 'storyboard' : 'script'; project.input ||= project.script || '';
   project.synopsis ||= project.analysis?.logline || '';
   project.settings = { shotCount:Math.max(1, Math.min(120, Number(project.settings?.shotCount) || project.storyboard?.shots?.length || 5)), totalDuration:Math.max(20, Math.min(3600, Number(project.settings?.totalDuration) || (project.storyboard?.shots?.length || 5) * 20)), shotDuration:dramaVideoDurations.has(Number(project.settings?.shotDuration)) ? Number(project.settings.shotDuration) : 20, aspectRatio:videoAspectRatios.has(project.settings?.aspectRatio) ? project.settings.aspectRatio : '9:16' };
+  project.projectAssetIds = Array.isArray(project.projectAssetIds) ? [...new Set(project.projectAssetIds.map(String).filter(Boolean))].slice(0, 200) : [];
+  project.projectAssetCategories = project.projectAssetCategories && typeof project.projectAssetCategories === 'object' && !Array.isArray(project.projectAssetCategories) ? Object.fromEntries(Object.entries(project.projectAssetCategories).filter(([id, category]) => project.projectAssetIds.includes(String(id)) && ['characters','locations','props','other'].includes(category)).slice(0, 200)) : {};
   if (!Array.isArray(project.episodes)) project.episodes = [{ id:randomUUID(), number:1, title:'第 1 集', synopsis:project.synopsis, status:'draft' }];
   project.episodes = project.episodes.map((episode,index)=>({ id:episode.id || randomUUID(), number:index+1, title:String(episode.title || `第 ${index+1} 集`), synopsis:String(episode.synopsis || ''), status:String(episode.status || 'draft') }));
   if (!Array.isArray(project.scenes)) project.scenes = [];
@@ -760,8 +917,13 @@ function normalizeDramaProject(project) {
       locations:[...new Set(Array.isArray(shot.professionalAssets?.locations) ? shot.professionalAssets.locations.map(String) : [])],
     };
     const categorizedIds = [...professionalAssets.characters, ...professionalAssets.locations];
-    const referenceAssetIds = [...new Set([...(Array.isArray(shot.referenceAssetIds) ? shot.referenceAssetIds.map(String) : []), ...categorizedIds])];
-    const generationType = ['TEXT','FIRST&LAST','REFERENCE'].includes(shot.generation?.type) ? shot.generation.type : (referenceAssetIds.length ? 'REFERENCE' : 'TEXT');
+    const assetMentions = Array.isArray(shot.assetMentions)
+      ? shot.assetMentions.map(item => ({ id:String(item?.id || ''), label:String(item?.label || '').replace(/^@/, '').trim().slice(0, 120), kind:['image','video','audio'].includes(item?.kind) ? item.kind : 'image' })).filter(item => item.id && item.label).slice(0, 40)
+      : [];
+    const mentionedIds = assetMentions.map(item => item.id);
+    const referenceAssetIds = [...new Set([...(Array.isArray(shot.referenceAssetIds) ? shot.referenceAssetIds.map(String) : []), ...categorizedIds, ...mentionedIds])];
+    const requestedGenerationType = ['TEXT','FIRST&LAST','REFERENCE'].includes(shot.generation?.type) ? shot.generation.type : (referenceAssetIds.length ? 'REFERENCE' : 'TEXT');
+    const generationType = requestedGenerationType;
     const professionalShot = project.mode === 'professional';
     const firstFrameAssetId = String(shot.generation?.firstFrameAssetId || (!professionalShot ? referenceAssetIds[0] : '') || '');
     const lastFrameAssetId = String(shot.generation?.lastFrameAssetId || '');
@@ -770,7 +932,7 @@ function normalizeDramaProject(project) {
       ? []
       : generationType === 'FIRST&LAST'
         ? [firstFrameAssetId, lastFrameAssetId].filter(Boolean).slice(0, 2)
-        : (explicitReferences.length ? explicitReferences : referenceAssetIds).slice(0, 7);
+        : [...new Set([...explicitReferences, ...referenceAssetIds])];
     const pendingImageGenerations = professionalShot && Array.isArray(shot.pendingImageGenerations)
       ? shot.pendingImageGenerations.slice(0, 20).map(item => ({
           id:String(item.id || item.taskId || randomUUID()),
@@ -785,7 +947,7 @@ function normalizeDramaProject(project) {
           referenceAssetIds:Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.map(String).slice(0, 7) : [],
         }))
       : [];
-    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:String(shot.generation?.modelId || ''), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p' }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
+    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), assetMentions, prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:canonicalVideoModelId(shot.generation?.modelId), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p', count:[1,2,4].includes(Number(shot.generation?.count)) ? Number(shot.generation.count) : 1 }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
   });
   project.shots.forEach((shot,index) => { shot.promptOverride = dramaPromptOverrides[index] || ''; });
   project.productionQuality = productionQualitySummary({scenes:project.scenes,shots:project.shots}, project.settings);
@@ -802,7 +964,12 @@ async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetReco
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.ossKey && oss) await oss.delete(asset.ossKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 function publicAsset(asset) {
   const { ownerId, storageName, sourceUrl, sourceGenerationId, ossKey, ossUploadedAt, ...value } = asset;
-  return { ...value, url: `/api/files/${asset.id}/content` };
+  const url = `/api/files/${encodeURIComponent(asset.id)}/content`;
+  return {
+    ...value,
+    url,
+    ...(asset.kind === 'image' ? { previewUrl: `/api/files/${encodeURIComponent(asset.id)}/preview` } : {}),
+  };
 }
 function ossObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [ossPrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
 async function withMediaTempDir(label, callback) {
@@ -956,7 +1123,7 @@ async function uploadAssetToOss(userId, asset) {
   return key;
 }
 function publicOssUrl(key) { return oss.generateObjectUrl(key); }
-async function signedOssUrl(key, expires = ossAssetUrlExpiresSeconds) { return oss.signatureUrl(key, { expires, method: 'GET' }); }
+async function signedOssUrl(key, expires = ossAssetUrlExpiresSeconds, options = {}) { return oss.signatureUrl(key, { expires, method: 'GET', ...options }); }
 async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)) {
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
   if (await fs.access(permanentFile).then(() => true).catch(() => false)) return permanentFile;
@@ -976,14 +1143,14 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   return restore;
 }
 async function resolveRefs(userId, ids, task = {}) {
-  const mixed = task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
+  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
     const asset = findAsset(userId, id);
     if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
     if (!mixed && asset.kind !== 'image') continue;
     const key = asset.ossKey || await uploadAssetToOss(userId, asset);
-    const url = task.provider === 'cntcn' || task.provider === 'autodl' ? publicOssUrl(key) : await signedOssUrl(key);
+    const url = task.routeId || task.provider === 'cntcn' || task.provider === 'autodl' ? publicOssUrl(key) : await signedOssUrl(key);
     if (mixed) refs[`${asset.kind}s`].push(url);
     else refs.push(url);
   }
@@ -1005,6 +1172,14 @@ async function validateReferenceAssets(userId, value, limits = null) {
   }
   return ids;
 }
+function referenceAssetCounts(userId, ids) {
+  const counts = { image: 0, video: 0, audio: 0 };
+  for (const id of ids || []) {
+    const asset = findAsset(userId, id);
+    if (asset && Object.hasOwn(counts, asset.kind)) counts[asset.kind]++;
+  }
+  return counts;
+}
 async function archiveGenerationResult(userId, task, resultUrl) {
   const assetId = task.assetId || `generation-${task.id}`;
   const existing = findAsset(userId, assetId);
@@ -1019,7 +1194,9 @@ async function archiveGenerationResult(userId, task, resultUrl) {
     const storageName = `${assetId}${extension}`;
     const localFile = path.join(jobDir, storageName);
     const contentUrl = task.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
-    const downloadHeaders = resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
+    const routeKey = task.routeId ? routeCredential(task.routeCredentialId) : '';
+    const routeContent = task.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(resultUrl);
+    const downloadHeaders = routeContent ? { Authorization: `Bearer ${routeKey}` } : resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
     const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
     const asset = { id: assetId, ownerId: userId, name: `${task.type === 'image' ? '生成图片' : '生成视频'} ${new Date().toLocaleString('zh-CN')}${extension}`, kind: task.type, mimeType: saved.contentType, size: saved.size, storageName, source: 'generation', sourceGenerationId: task.id, sourceUrl: resultUrl, createdAt: now(), updatedAt: now() };
     await uploadAssetFileToOss(userId, asset, localFile);
@@ -1057,9 +1234,25 @@ async function assembleDramaProject(userId, project) {
     project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
   });
 }
+function progressPersistenceHooks(userId, task) {
+  return {
+    onProgress: async ({ progress }) => {
+      if (task.progress === progress) return;
+      task.progress = progress;
+      await saveGeneration(userId, task);
+    },
+    onProgressAbsent: async () => {
+      if (!Object.prototype.hasOwnProperty.call(task, 'progress')) return;
+      delete task.progress;
+      await saveGeneration(userId, task);
+    },
+  };
+}
 function ttapiPersistenceHooks(userId, task) {
   return {
+    ...progressPersistenceHooks(userId, task),
     onSubmitted: async ({ provider, taskId }) => {
+      clearProviderTaskIdTimeout(task.id);
       task.provider = provider;
       task.providerTaskId = taskId;
       task.submittedAt ||= now();
@@ -1087,7 +1280,9 @@ function ttapiPersistenceHooks(userId, task) {
 }
 function cntcnPersistenceHooks(userId, task) {
   return {
+    ...progressPersistenceHooks(userId, task),
     onSubmitted: async ({ provider, taskId }) => {
+      clearProviderTaskIdTimeout(task.id);
       task.provider = provider;
       task.providerTaskId = taskId;
       task.submittedAt ||= now();
@@ -1113,9 +1308,12 @@ function cntcnPersistenceHooks(userId, task) {
     },
   };
 }
+function routedPersistenceHooks(userId, task) { return cntcnPersistenceHooks(userId, task); }
 function autodlPersistenceHooks(userId, task) {
   return {
+    ...progressPersistenceHooks(userId, task),
     onSubmitted: async ({ provider, taskId }) => {
+      clearProviderTaskIdTimeout(task.id);
       task.provider = provider;
       task.providerTaskId = taskId;
       task.submittedAt ||= now();
@@ -1203,6 +1401,52 @@ async function failGeneration(userId, task, error) {
     task.error += `；自动退款失败：${refundError.message}`;
   }
 }
+function providerTaskIdDeadline(task) {
+  const anchor = Date.parse(task.createdAt || task.submissionUncertainAt || '');
+  return (Number.isFinite(anchor) ? anchor : Date.now()) + providerTaskIdTimeoutMs;
+}
+function awaitingProviderTaskId(task) {
+  return ['queued', 'running'].includes(task.status)
+    && !task.providerTaskId
+    && !task.sourceUrl
+    && Boolean(task.submissionUncertain);
+}
+function providerTaskIdTimedOut(task, at = Date.now()) {
+  return awaitingProviderTaskId(task) && at >= providerTaskIdDeadline(task);
+}
+function clearProviderTaskIdTimeout(generationId) {
+  const timer = providerTaskIdTimeoutTimers.get(generationId);
+  if (timer) clearTimeout(timer);
+  providerTaskIdTimeoutTimers.delete(generationId);
+}
+async function failMissingProviderTaskId(userId, task) {
+  clearProviderTaskIdTimeout(task.id);
+  task.lastSubmissionError ||= task.error || '';
+  task.lastSubmissionErrorAt ||= task.submissionUncertainAt || task.updatedAt || now();
+  task.submissionUncertain = false;
+  task.submissionTimedOut = true;
+  await failGeneration(userId, task, new Error('模型无响应：超过5分钟未获得上游任务 ID'));
+  task.finishedAt = now();
+  await saveGenerationWithRetry(userId, task, 'provider-task-id-timeout');
+}
+function scheduleProviderTaskIdTimeout(userId, task) {
+  if (!awaitingProviderTaskId(task) || providerTaskIdTimeoutTimers.has(task.id)) return;
+  const delay = Math.max(0, providerTaskIdDeadline(task) - Date.now());
+  const timer = setTimeout(async () => {
+    providerTaskIdTimeoutTimers.delete(task.id);
+    try {
+      const current = findGeneration(userId, task.id);
+      if (current && providerTaskIdTimedOut(current)) {
+        await failMissingProviderTaskId(userId, current);
+        console.error('[generation] provider task ID timeout', { generationId: current.id, provider: current.provider });
+      }
+    } catch (error) {
+      console.error('[generation] provider task ID timeout handling failed', { generationId: task.id, message: error.message });
+    }
+  }, delay);
+  timer.unref();
+  providerTaskIdTimeoutTimers.set(task.id, timer);
+}
 function startGeneration(userId, task) {
   const promise = (async () => {
     try {
@@ -1210,7 +1454,9 @@ function startGeneration(userId, task) {
       task.finishedAt = null;
       await saveGenerationWithRetry(userId, task, 'generation-running');
       const refs = await resolveRefs(userId, task.referenceAssetIds, task);
-      const hooks = task.provider === 'ttapi'
+      const hooks = task.routeId
+        ? routedPersistenceHooks(userId, task)
+        : task.provider === 'ttapi'
         ? ttapiPersistenceHooks(userId, task)
         : task.provider === 'cntcn'
           ? cntcnPersistenceHooks(userId, task)
@@ -1224,10 +1470,13 @@ function startGeneration(userId, task) {
       if (error.submissionUncertain) {
         task.status = 'running';
         task.submissionUncertain = true;
+        task.submissionUncertainAt ||= now();
+        task.lastSubmissionError = error.message;
+        task.lastSubmissionErrorAt = now();
         task.error = error.message;
         task.creditStatus = 'charged';
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if (['ttapi', 'cntcn', 'autodl'].includes(task.provider) && task.providerTaskId && !error.upstreamTerminal) {
+      } else if ((task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
         task.status = 'running';
         task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
         task.creditStatus = 'charged';
@@ -1238,7 +1487,10 @@ function startGeneration(userId, task) {
     } finally {
       task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
       try { await saveGenerationWithRetry(userId, task, 'generation-final'); }
-      finally { activeGenerations.delete(task.id); }
+      finally {
+        activeGenerations.delete(task.id);
+        scheduleProviderTaskIdTimeout(userId, task);
+      }
     }
   })();
   activeGenerations.set(task.id, promise);
@@ -1293,6 +1545,29 @@ function resumeCntcnGeneration(userId, task) {
     } finally {
       task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
       try { await saveGenerationWithRetry(userId, task, 'cntcn-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
+function resumeRoutedGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running'; task.finishedAt = null; task.error = '';
+      await saveGeneration(userId, task);
+      const result = await pollRoutedVideo(task, routedPersistenceHooks(userId, task));
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.upstreamTerminal) await failGeneration(userId, task, error);
+      else {
+        task.status = 'running'; task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`; task.creditStatus = 'charged';
+        console.error('[video] routed recovery paused without refund', { generationId: task.id, routeId: task.routeId, message: error.message });
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'routed-recovery-final'); }
       finally { activeGenerations.delete(task.id); }
     }
   })();
@@ -1355,9 +1630,12 @@ async function recoverPendingGenerations() {
   let awaitingReconciliation = 0;
 
   for (const { userId, task } of pending) {
-    if (task.providerTaskId && task.sourceUrl && !task.assetId) {
+    if (task.sourceUrl && !task.assetId) {
       resumeGenerationArchive(userId, task);
       archiving++;
+    } else if (task.routeId && task.providerTaskId) {
+      resumeRoutedGeneration(userId, task);
+      polling++;
     } else if (task.provider === 'ttapi' && task.providerTaskId) {
       resumeTtapiGeneration(userId, task);
       polling++;
@@ -1367,14 +1645,21 @@ async function recoverPendingGenerations() {
     } else if (task.provider === 'autodl' && task.providerTaskId) {
       resumeAutodlGeneration(userId, task);
       polling++;
-    } else if (task.submissionUncertain || (['ttapi', 'cntcn', 'autodl'].includes(task.provider) && !task.providerTaskId)) {
+    } else if (!task.providerTaskId) {
       task.status = 'running';
       task.finishedAt = null;
       task.creditStatus = 'charged';
       task.submissionUncertain = true;
+      task.submissionUncertainAt ||= task.updatedAt || task.createdAt || now();
       task.error ||= '服务中断时未能确认上游任务 ID，任务保留待核对且不会自动退款';
-      saveGeneration(userId, task);
-      awaitingReconciliation++;
+      if (providerTaskIdTimedOut(task)) {
+        await failMissingProviderTaskId(userId, task);
+        refunded++;
+      } else {
+        saveGeneration(userId, task);
+        scheduleProviderTaskIdTimeout(userId, task);
+        awaitingReconciliation++;
+      }
     } else {
       await failGeneration(userId, task, new Error(task.error || '服务重启时任务尚未提交到模型服务'));
       task.finishedAt = now();
@@ -1394,7 +1679,7 @@ const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/fi
 
 async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, oaiMaxPollDurationMs, oaiMaxPolls };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1480,6 +1765,8 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(input.scenes)) project.scenes = input.scenes;
       if (Array.isArray(input.resources)) project.resources = input.resources;
       if (Array.isArray(input.shots)) project.shots = input.shots;
+      if (Array.isArray(input.projectAssetIds)) project.projectAssetIds = input.projectAssetIds;
+      if (input.projectAssetCategories && typeof input.projectAssetCategories === 'object' && !Array.isArray(input.projectAssetCategories)) project.projectAssetCategories = input.projectAssetCategories;
       normalizeDramaProject(project); await saveDramaProject(user.id, project); return sendJson(res, 200, { project:publicDramaProject(project) });
     }
     const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);
@@ -1658,7 +1945,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const usage = usageSummary();
-        project.workflowVersion=pack.workflowVersion; project.title=pack.title; project.synopsis=pack.synopsis; project.script=pack.script; project.scenes=pack.scenes.map(item=>({id:randomUUID(),...item})); project.resources=pack.resources.map(item=>({id:randomUUID(),...item,versions:[],selectedTaskId:''})); const byName=new Map(project.resources.map(item=>[item.name,item.id])); project.shots=pack.shots.map(item=>({id:randomUUID(),...item,sceneId:project.scenes[Math.max(0,item.sceneNumber-1)]?.id || project.scenes[0]?.id || '',resourceIds:item.resourceNames.map(name=>byName.get(name)).filter(Boolean),referenceAssetIds:[],generation:{type:'TEXT',firstFrameAssetId:'',lastFrameAssetId:'',referenceAssetIds:[],quality:'720p'},videoVersions:[],selectedVideoTaskId:'',tailFrameAssetId:''})); project.productionQuality=pack.productionQuality; project.status='designed'; project.directorUsage=usage; normalizeDramaProject(project); await saveDramaProject(user.id,project);
+        project.workflowVersion=pack.workflowVersion; project.title=pack.title; project.synopsis=pack.synopsis; project.script=pack.script; project.scenes=pack.scenes.map(item=>({id:randomUUID(),...item})); project.resources=pack.resources.map(item=>({id:randomUUID(),...item,versions:[],selectedTaskId:''})); const byName=new Map(project.resources.map(item=>[item.name,item.id])); project.shots=pack.shots.map(item=>({id:randomUUID(),...item,sceneId:project.scenes[Math.max(0,item.sceneNumber-1)]?.id || project.scenes[0]?.id || '',resourceIds:item.resourceNames.map(name=>byName.get(name)).filter(Boolean),referenceAssetIds:[],generation:{type:'TEXT',firstFrameAssetId:'',lastFrameAssetId:'',referenceAssetIds:[],quality:'720p',count:1},videoVersions:[],selectedVideoTaskId:'',tailFrameAssetId:''})); project.productionQuality=pack.productionQuality; project.status='designed'; project.directorUsage=usage; normalizeDramaProject(project); await saveDramaProject(user.id,project);
         console.info('smart-director',JSON.stringify({projectId:project.id,attemptCount:usage.attemptCount,maxAttemptCount:maxDirectorAttempts,recoveryAttempts:recoveryAttemptCount,recoveryMode,recoveryHistory,initialShotCount,recoveredShotCount,inputTokens:usage.inputTokens,outputTokens:usage.outputTokens,chargedCredits:usage.chargedCredits,status:'succeeded'}));
         return sendJson(res,200,{project:publicDramaProject(project),usage,balance:settlements.at(-1).wallet.balance});
       } catch(error) {
@@ -1760,6 +2047,20 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { project: publicDramaProject(project) });
     }
 
+    if (url.pathname === '/api/model-quote' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const input = await bodyJson(req);
+      const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
+      const request = validateVideoRequest(input, requestedReferenceCount);
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits);
+      const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: referenceAssetCounts(user.id, referenceAssetIds) }) : null;
+      if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前选项没有兼容且可用的调用线路' });
+      if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:`${route.id}:${route.version}` });
+      const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
+      const credits = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) * request.duration : currentPricing().videoPerSecond * request.duration;
+      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:`static:${request.modelId}:${request.quality}:${request.duration}` });
+    }
+
     if (url.pathname === '/api/generations' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
       const page = listGenerations(user.id, { type: url.searchParams.get('type'), limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
@@ -1768,12 +2069,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/generations' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req); const type = input.type;
-      if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt || ''); if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
+      if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt ?? '');
       await ensureUserDirs(user.id);
       let dramaProjectId = ''; let dramaShotId = ''; let dramaShot = null;
-      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);const dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}); }
+      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);const dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
+      if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
       const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
-      const promptMaxLength = type === 'image' ? 5000 : requestedVideoModelId === VIDEO_MODEL_IDS.GROK_15 ? 10000 : 4096;
+      const promptMaxLength = type === 'image' ? 5000 : [VIDEO_MODEL_IDS.MINIMAX_H3_15S, LEGACY_VIDEO_MODEL_IDS.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
       if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` });
       if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error: '请选择视频模型' });
       if (type === 'video' && dramaShot) {
@@ -1789,27 +2091,27 @@ const server = http.createServer(async (req, res) => {
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
       const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
       if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
-      const provider = type === 'image' ? 'duomi' : videoRequest.provider;
+      const routeSelection = type === 'video' && videoRequest.provider === 'route'
+        ? selectModelRoute({ logicalModelId: modelId, quality: videoRequest.quality, duration, aspectRatio, referenceCounts: referenceAssetCounts(user.id, referenceAssetIds) })
+        : null;
+      if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error: '当前模型没有兼容且可用的调用线路，请稍后重试' });
+      const provider = type === 'image' ? 'duomi' : routeSelection?.provider || videoRequest.provider;
       if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: 'CNTCN Seedance 视频服务尚未配置' });
       if (provider === 'autodl' && !autodlConfigured) return sendJson(res, 503, { error: 'AutoDL GuGu 2.0 视频服务尚未配置' });
       if (provider === 'oai') {
-        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15
-          ? oaiGrokConfigured
-          : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
-            ? oaiVeoConfigured
-            : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
-              ? oaiMinimaxConfigured
-              : oaiConfigured;
+        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
+          ? oaiVeoConfigured
+          : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
+            ? oaiMinimaxConfigured
+            : oaiConfigured;
         if (!configured) {
-          const message = videoRequest.modelId === VIDEO_MODEL_IDS.GROK_15
-            ? 'Grok Video 服务尚未配置'
-            : videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
-              ? 'Veo 3.1 服务尚未配置'
-              : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
-                ? 'MiniMax H3 服务尚未配置'
-                : '视频生成服务尚未配置';
+          const message = videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
+            ? 'Veo 3.1 服务尚未配置'
+            : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
+              ? 'MiniMax H3 服务尚未配置'
+              : '视频生成服务尚未配置';
           return sendJson(res, 503, { error: message });
         }
       }
@@ -1819,14 +2121,24 @@ const server = http.createServer(async (req, res) => {
         : pricing;
       const quantity = type === 'image' ? (input.quantity === undefined ? 1 : input.quantity) : 1;
       if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10) return sendJson(res, 400, { error: '图片生成数量需为 1–10 的整数' });
-      const pricingSnapshotValue = pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
+      const pricingSnapshotValue = routeSelection ? {
+        version: pricing.version, contentType: type, billingUnit: 'request', quantity: 1,
+        unitPriceMicro: routeSelection.salePriceMicro, totalMicro: routeSelection.salePriceMicro,
+        unitPrice: routeSelection.salePriceCredits, total: routeSelection.salePriceCredits,
+        routeId: routeSelection.id, routeVersion: routeSelection.version,
+        upstreamModelId: routeSelection.upstreamModelId, costYuan: routeSelection.costYuan,
+        markupPercent: 20, salePriceYuan: routeSelection.salePriceYuan,
+        priceVersion: `${routeSelection.id}:${routeSelection.version}`,
+      } : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
+      if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error: '调用线路或价格已变化，请确认最新价格后重试', code: 'PRICE_CHANGED', price: { credits: pricingSnapshotValue.total, yuan: pricingSnapshotValue.salePriceYuan, priceVersion: pricingSnapshotValue.priceVersion } });
       const batchId = quantity > 1 ? randomUUID() : '';
       const tasks = Array.from({ length: quantity }, (_, index) => ({
         id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider,
-        model: type === 'video' ? videoRequest.model : fixedModels.image, modelId, size,
+        model: type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : fixedModels.image, modelId, size,
         quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality,
         aspectRatio, duration,
-        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits: videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
+        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits: routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
+        ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
         ...(quantity > 1 ? { batchId, batchIndex: index + 1, batchSize: quantity } : {}),
         creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro,
         pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue,
@@ -1852,6 +2164,7 @@ const server = http.createServer(async (req, res) => {
       if (activeGenerations.has(id)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
       const task = findGeneration(user.id, id); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
       const retryTimer = generationRetryTimers.get(id); if (retryTimer) { clearTimeout(retryTimer); generationRetryTimers.delete(id); }
+      clearProviderTaskIdTimeout(id);
       const asset = task.assetId ? findAsset(user.id, task.assetId) : null;
       await deleteAssetRecord(user.id, asset);
       deleteGeneration(user.id, id);
@@ -1992,6 +2305,26 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/files/upload' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 20 MB' : '视频或音频不能超过 25 MB' }); const suppliedHash = String(req.headers['x-file-sha256'] || '').trim().toLowerCase(); if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const upload = await streamUpload(req, localFile, uploadLimit, createHash('sha256')); const size = upload.size; if (!size) return sendJson(res, 400, { error: '文件为空' }); if (suppliedHash && suppliedHash === upload.sha256) { const existing = findAssetBySha256(user.id, suppliedHash, size); if (existing && existing.mimeType === mimeType && existing.kind === kind) { await fs.unlink(localFile).catch(() => {}); return sendJson(res, 200, { ...publicAsset(existing), mode: 'reuse', sha256: suppliedHash }); } } const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, sha256: upload.sha256, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
     }
+    const assetPreviewMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/preview$/);
+    if (assetPreviewMatch && req.method === 'GET') {
+      const user = await requireUser(req, res); if (!user) return;
+      const asset = findAsset(user.id, assetPreviewMatch[1]);
+      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
+      if (asset.kind !== 'image') return sendJson(res, 415, { error: '只有图片支持缩略图预览' });
+      if (asset.ossKey && oss) {
+        const previewUrl = await signedOssUrl(asset.ossKey, assetPreviewCacheSeconds + 60, {
+          process: `image/resize,m_lfit,w_${assetPreviewWidth}`,
+          response: { 'cache-control': `private, max-age=${assetPreviewCacheSeconds}` },
+        });
+        res.writeHead(302, { Location: previewUrl, 'Cache-Control': `private, max-age=${assetPreviewCacheSeconds}` });
+        return res.end();
+      }
+      const localFile = path.join(assetFilesDir(user.id), asset.storageName);
+      if (await fs.access(localFile).then(() => true).catch(() => false)) {
+        return serveFile(res, localFile, asset.mimeType, '', `private, max-age=${assetPreviewCacheSeconds}`);
+      }
+      return sendJson(res, 404, { error: '文件内容不存在' });
+    }
     const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
     if (directMediaMatch && req.method === 'GET') {
       const user = await requireUser(req, res); if (!user) return;
@@ -2020,6 +2353,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`GuGu AI: http://127.0.0.1:${port}`);
     // Recovery runs after the port is open so a backlog never delays startup.
     recoverPendingGenerations().catch(error => console.error('启动恢复失败', error));
+    startModelRouteMonitor();
   });
 
   // Checkpoint the WAL on the way out so the .db file is self-contained.

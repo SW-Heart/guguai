@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildShotVideoPrompt } from '../public/video-prompt.js';
+import { buildShotVideoPrompt, replaceAssetMentions } from '../public/video-prompt.js';
 
 test('legacy video prompt is rebuilt from storyboard facts and ignores unsafe historical raw prompt', () => {
   const project = { title:'道友烧什么油', synopsis:'女侠遭遇现代战斗机。', resources:[{name:'修仙女侠'},{name:'战斗机'}] };
@@ -20,4 +20,20 @@ test('legacy video prompt is rebuilt from storyboard facts and ignores unsafe hi
 test('a saved manual storyboard prompt is submitted verbatim instead of being recompiled', () => {
   const prompt = buildShotVideoPrompt({project:{workflowVersion:3},shot:{promptOverride:'0–1s：保持首帧\n1–6s：手动动作\n6s：定格尾帧'},scene:{},resources:[]});
   assert.equal(prompt, '0–1s：保持首帧\n1–6s：手动动作\n6s：定格尾帧');
+});
+
+test('asset mentions compile to typed model placeholders and preserve repeated references', () => {
+  const assetMentions = [
+    { id:'image-a', label:'图片 1', kind:'image' },
+    { id:'video-a', label:'视频 1', kind:'video' },
+    { id:'image-b', label:'图片 2', kind:'image' },
+    { id:'audio-a', label:'音频 1', kind:'audio' },
+  ];
+  const source = '@图片 1 作为主角，参考 @视频 1；@图片 2 是场景，@图片 1 再次出现，融合 @音频 1。';
+  assert.equal(replaceAssetMentions(source, assetMentions), 'Image1 作为主角，参考 Video1；Image2 是场景，Image1 再次出现，融合 Audio1。');
+  const prompt = buildShotVideoPrompt({ project:{workflowVersion:3}, shot:{script:source, action:source, visualDirection:source, duration:8, aspectRatio:'9:16', assetMentions, generation:{type:'TEXT'}}, scene:{beats:[]}, resources:[] });
+  assert.match(prompt, /Image1/);
+  assert.match(prompt, /Video1/);
+  assert.match(prompt, /Audio1/);
+  assert.doesNotMatch(prompt, /@图片 1/);
 });

@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 
 const apiBase = 'https://autodl.art';
-const workflowId = process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
+const workflowId = process.env.AUTODL_MINIMAX_H3_15S_WORKFLOW_ID || process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
 const resumeTaskId = process.env.AUTODL_TASK_ID || '';
 const apiKey = process.env.AUTODL_COMFYUI_KEY;
 const duration = 15;
@@ -131,7 +131,7 @@ function authHeaders() {
 
 async function main() {
   required('AUTODL_COMFYUI_KEY', apiKey);
-  required('AUTODL_MINIMAX_H3_ID', workflowId);
+  required('AUTODL_MINIMAX_H3_15S_WORKFLOW_ID', workflowId);
   await fs.mkdir(outputDir, { recursive: true });
 
   const startedAt = new Date();

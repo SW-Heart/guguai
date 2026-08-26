@@ -64,6 +64,11 @@ test('generation credits follow platform pricing', () => {
   assert.equal(__test.generationCost('video', 15), 15);
 });
 
+test('drama video generation preserves the submitted prompt and only falls back when absent', () => {
+  assert.equal(__test.resolveVideoPrompt('用户最终 Prompt', '系统编译 Prompt'), '用户最终 Prompt');
+  assert.equal(__test.resolveVideoPrompt('  ', '系统编译 Prompt'), '系统编译 Prompt');
+});
+
 test('nested provider errors are rendered as readable messages', () => {
   assert.equal(__test.errorMessage({ error: { code: 'invalid_request', message: 'fail_to_submit_task' } }), 'fail_to_submit_task');
   assert.equal(__test.errorMessage({ detail: [{ msg: '图片过大' }] }), '图片过大');
