@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron';
 import updater from 'electron-updater';
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
@@ -8,7 +9,7 @@ import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
-import { macDmgUpdateFile } from './manual-update.mjs';
+import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -31,6 +32,9 @@ let packageMetadata = {};
 let updateConfigured = false;
 let macUpdateDownloadPromise;
 let downloadedMacUpdatePath = '';
+let downloadedMacUpdateVersion = '';
+let macUpdateInstallStarted = false;
+let macUpdatePromptPromise;
 
 function commandLineApiBase() {
   const value = process.argv.find(argument => argument.startsWith('--api-base='));
@@ -279,7 +283,7 @@ async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
   const response = await fetchRemoteMedia(session.defaultSession, targetUrl);
   if (!response.ok || !response.body) throw new Error(`媒体下载失败（${response.status}）`);
   const originalName = safeName(name, `${kind === 'video' ? '生成视频' : '生成图片'}-${cloudAssetId}`);
-  const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov' }[mimeType] || '');
+  const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
   const temporary = path.join(workspace, '.gugu', 'transfers', `${cloudAssetId}.${randomUUID()}.part`);
   const output = path.join(workspace, 'library');
   await fs.mkdir(output, { recursive: true });
@@ -294,7 +298,8 @@ async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
     const target = path.join(workspace, relativePath);
     await fs.rename(temporary, target);
     const asset = {
-      id: `local_${randomUUID()}`,
+      ...(existing || {}),
+      id: existing?.id || `local_${randomUUID()}`,
       cloudAssetId,
       name: originalName,
       relativePath,
@@ -302,11 +307,12 @@ async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
       kind: kind || 'image',
       size,
       sha256,
-      createdAt: new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
       remoteStatus: 'ready',
       localStatus: 'saved',
     };
-    libraryIndex.assets.unshift(asset);
+    if (existing) Object.assign(existing, asset);
+    else libraryIndex.assets.unshift(asset);
     await persistLibrary();
     return { ...asset, url: localMediaUrl(asset.id), reused: false };
   } catch (error) {
@@ -388,11 +394,50 @@ async function macUpdateDigest(filePath) {
   return { size, sha512: hash.digest('base64') };
 }
 
-async function openMacUpdateInstaller(filePath, version) {
+async function launchMacUpdateInstaller() {
+  if (macUpdateInstallStarted) return true;
+  if (!downloadedMacUpdatePath) return false;
+  await fs.access(downloadedMacUpdatePath);
+  const launcher = macDmgInstallerLauncher(downloadedMacUpdatePath);
+  const child = spawn(launcher.command, launcher.args, { detached: true, stdio: 'ignore' });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+  macUpdateInstallStarted = true;
+  sendUpdateStatus('installing', { version: downloadedMacUpdateVersion });
+  app.quit();
+  return true;
+}
+
+function promptMacUpdateInstall(version) {
+  if (macUpdatePromptPromise || macUpdateInstallStarted) return macUpdatePromptPromise;
+  const promise = dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'GuGu AI 更新已准备好',
+    message: `GuGu AI ${version || '新版本'} 已下载完成`,
+    detail: '点击“退出并安装”后，客户端会先完全退出，再打开系统安装窗口。请将新版本拖入“应用程序”并选择覆盖。',
+    buttons: ['退出并安装', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }).then(async result => {
+    if (result.response === 0) await launchMacUpdateInstaller();
+  }).catch(error => {
+    sendUpdateStatus('error', { message: error.message });
+  }).finally(() => {
+    if (macUpdatePromptPromise === promise) macUpdatePromptPromise = undefined;
+  });
+  macUpdatePromptPromise = promise;
+  return promise;
+}
+
+function macUpdateReady(filePath, version) {
   downloadedMacUpdatePath = filePath;
-  const errorMessage = await shell.openPath(filePath);
-  if (errorMessage) throw new Error(`无法打开更新安装包：${errorMessage}`);
-  sendUpdateStatus('installer-opened', { version });
+  downloadedMacUpdateVersion = version;
+  sendUpdateStatus('downloaded', { version });
+  void promptMacUpdateInstall(version);
   return true;
 }
 
@@ -405,7 +450,7 @@ async function downloadMacUpdate(updateInfo) {
   await fs.mkdir(updateDir, { recursive: true });
   try {
     const cached = await macUpdateDigest(target).catch(() => null);
-    if (cached?.size === Number(file.size) && cached.sha512 === file.sha512) return openMacUpdateInstaller(target, updateInfo.version);
+    if (cached?.size === Number(file.size) && cached.sha512 === file.sha512) return macUpdateReady(target, updateInfo.version);
     const response = await net.fetch(file.downloadUrl, { redirect: 'follow' });
     if (!response.ok || !response.body) throw new Error(`更新安装包下载失败（${response.status}）`);
     const hash = createHash('sha512');
@@ -427,7 +472,7 @@ async function downloadMacUpdate(updateInfo) {
     if (transferred !== total || sha512 !== file.sha512) throw new Error('更新安装包完整性校验失败');
     await fs.rm(target, { force: true });
     await fs.rename(temporary, target);
-    return openMacUpdateInstaller(target, updateInfo.version);
+    return macUpdateReady(target, updateInfo.version);
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => {});
     throw error;
@@ -497,6 +542,15 @@ async function loadStudio() {
   }
 }
 
+function isMainWindowEvent(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && event?.sender === mainWindow.webContents);
+}
+
+function sendWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('desktop:window-state', { maximized: mainWindow.isMaximized() });
+}
+
 function registerIpc() {
   ipcMain.handle('desktop:get-info', () => ({
     productName,
@@ -532,14 +586,28 @@ function registerIpc() {
     return { updateUrl: settings.updateUrl, restartRequired: app.isPackaged };
   });
   ipcMain.handle('desktop:retry', () => loadStudio());
+  ipcMain.handle('window:minimize', event => {
+    if (!isMainWindowEvent(event)) return false;
+    mainWindow.minimize();
+    return true;
+  });
+  ipcMain.handle('window:toggle-maximize', event => {
+    if (!isMainWindowEvent(event)) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+  ipcMain.handle('window:is-maximized', event => isMainWindowEvent(event) && mainWindow.isMaximized());
+  ipcMain.handle('window:close', event => {
+    if (!isMainWindowEvent(event)) return false;
+    mainWindow.close();
+    return true;
+  });
   ipcMain.handle('updates:check', () => checkForUpdates());
   ipcMain.handle('updates:install', async () => {
     if (!updateConfigured) return false;
     if (process.platform === 'darwin') {
-      if (!downloadedMacUpdatePath) return false;
-      const errorMessage = await shell.openPath(downloadedMacUpdatePath);
-      if (errorMessage) throw new Error(`无法打开更新安装包：${errorMessage}`);
-      return true;
+      return launchMacUpdateInstaller();
     }
     autoUpdater.quitAndInstall(false, true);
     return true;
@@ -575,13 +643,19 @@ function registerIpc() {
 }
 
 async function createWindow() {
+  const usesNativeMacTitlebar = process.platform === 'darwin';
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1080,
     minHeight: 700,
     title: productName,
-    backgroundColor: '#080c11',
+    backgroundColor: '#f7f7f8',
+    frame: usesNativeMacTitlebar,
+    ...(usesNativeMacTitlebar ? {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 16, y: 18 },
+    } : {}),
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
       contextIsolation: true,
@@ -600,7 +674,10 @@ async function createWindow() {
     } catch {}
     event.preventDefault();
   });
+  mainWindow.on('maximize', sendWindowState);
+  mainWindow.on('unmaximize', sendWindowState);
   await loadStudio();
+  sendWindowState();
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -616,6 +693,9 @@ async function bootstrap() {
   protocol.handle('gugu-media', serveLocalMedia);
   registerIpc();
   configureAutoUpdater();
+  // This is a web-based studio inside Electron, so the browser-style default
+  // application menu is noise rather than a useful part of the client UI.
+  Menu.setApplicationMenu(null);
   await createWindow();
 }
 

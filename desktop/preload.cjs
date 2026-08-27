@@ -8,6 +8,17 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   setApiBase: value => invoke('desktop:set-api-base', value),
   setUpdateUrl: value => invoke('desktop:set-update-url', value),
   retry: () => invoke('desktop:retry'),
+  window: Object.freeze({
+    minimize: () => invoke('window:minimize'),
+    toggleMaximize: () => invoke('window:toggle-maximize'),
+    isMaximized: () => invoke('window:is-maximized'),
+    close: () => invoke('window:close'),
+    onState: callback => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('desktop:window-state', listener);
+      return () => ipcRenderer.removeListener('desktop:window-state', listener);
+    },
+  }),
   updates: Object.freeze({
     check: () => invoke('updates:check'),
     install: () => invoke('updates:install'),

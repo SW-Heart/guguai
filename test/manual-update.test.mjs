@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { macDmgUpdateFile } from '../desktop/manual-update.mjs';
+import { macDmgInstallerLauncher, macDmgUpdateFile } from '../desktop/manual-update.mjs';
 
 test('macOS manual updater selects the same-origin HTTPS DMG', () => {
   const result = macDmgUpdateFile({ files: [
@@ -16,4 +16,15 @@ test('macOS manual updater selects the same-origin HTTPS DMG', () => {
 test('macOS manual updater rejects insecure or cross-origin installers', () => {
   assert.throws(() => macDmgUpdateFile({ files: [{ url: 'update.dmg' }] }, 'http://download.example.com'), /必须是 HTTPS/);
   assert.throws(() => macDmgUpdateFile({ files: [{ url: 'https://other.example.com/update.dmg' }] }, 'https://download.example.com'), /缺少同源 HTTPS DMG/);
+});
+
+test('macOS installer launcher waits for the client to exit before opening the DMG', () => {
+  const launcher = macDmgInstallerLauncher('/tmp/GuGu AI update.dmg', 4321);
+  assert.equal(launcher.command, '/bin/sh');
+  assert.deepEqual(launcher.args.slice(-2), ['4321', '/tmp/GuGu AI update.dmg']);
+  assert.match(launcher.args[1], /kill -0/);
+  assert.match(launcher.args[1], /exec \/usr\/bin\/open/);
+  assert.doesNotMatch(launcher.args[1], /GuGu AI update/);
+  assert.throws(() => macDmgInstallerLauncher('relative/update.dmg', 4321), /路径无效/);
+  assert.throws(() => macDmgInstallerLauncher('/tmp/update.zip', 4321), /路径无效/);
 });

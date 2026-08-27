@@ -23,6 +23,7 @@ import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
+import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
 
 const scrypt = promisify(scryptCallback);
 const execFile = promisify(execFileCallback);
@@ -66,6 +67,7 @@ const autodlMaxPollDurationMs = autodlMaxPolls * autodlPollIntervalMs;
 const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
+const desktopDirectDeliveryGraceMs = Math.max(10_000, Number(process.env.DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS || 120) * 1_000);
 const llmConfig = llmConfigFromEnv();
 const llmRates = llmRatesFromEnv();
 const ossPrefix = String(process.env.ALIYUN_OSS_PREFIX || 'model-studio').replace(/^\/+|\/+$/g, '');
@@ -204,7 +206,7 @@ function publicGeneration(task) {
     ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError,
     rawResponse, requestUrl, lastPollError, lastPollErrorAt, lastArchiveError, lastArchiveErrorAt,
     lastSubmissionError, lastSubmissionErrorAt, pollFailureCount, archiveFailureCount,
-    submissionUncertain, submissionUncertainAt, submissionTimedOut, archivePending,
+    submissionUncertain, submissionUncertainAt, submissionTimedOut, archivePending, sourceRequiresAuth, localReadyAt, localDeliveryDeadlineAt,
     routeBaseUrl, routeCredentialId, routeAdapter, routeVersion, ...value
   } = task;
   const failure = task.status === 'failed'
@@ -212,7 +214,7 @@ function publicGeneration(task) {
     : null;
   const progressStage = task.status !== 'running' ? task.status
     : task.submissionUncertain ? 'awaiting_reconciliation'
-      : task.sourceUrl && !task.assetId ? 'archiving'
+      : task.archivePending ? 'archiving'
         : task.lastPollError ? 'polling_retry'
           : task.providerTaskId ? 'provider_processing'
             : 'submitting';
@@ -804,14 +806,14 @@ async function createOaiVideo(task, refs) {
     const created = await fetchJson(`${oaiBase}/videos`, { method: 'POST', ...request, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
     taskId = oaiTaskId(created);
     const submittedUrl = oaiVideoUrl(created);
-    if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl };
+    if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(submittedUrl) };
     if (!taskId) throw new Error('OAI 视频任务没有返回任务 ID');
     for (let i = 0; i < oaiMaxPolls; i++) {
       await sleep(oaiPollIntervalMs);
       const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
       const videoUrl = oaiVideoUrl(state);
       const status = oaiStatus(state);
-      if (videoUrl) return { provider: 'oai', taskId, url: videoUrl };
+      if (videoUrl) return { provider: 'oai', taskId, url: videoUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(videoUrl) };
       if (['SUCCEEDED', 'SUCCESS', 'COMPLETED', 'COMPLETE', 'DONE'].includes(status)) {
         if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) throw new Error('Veo 3.1 任务已完成，但响应没有返回顶层 video_url');
         if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) throw new Error('MiniMax H3 任务已完成，但响应没有返回 video_url');
@@ -964,11 +966,12 @@ async function loadDramaProject(userId, id) { const project = findDramaProject(u
 async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.ossKey && oss) await oss.delete(asset.ossKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 function publicAsset(asset) {
-  const { ownerId, storageName, sourceUrl, sourceGenerationId, ossKey, ossUploadedAt, ...value } = asset;
+  const { ownerId, storageName, sourceUrl, sourceGenerationId, sourceRequiresAuth, ossKey, ossUploadedAt, ...value } = asset;
   const url = `/api/files/${encodeURIComponent(asset.id)}/content`;
   return {
     ...value,
     url,
+    directUrl: `/api/files/${encodeURIComponent(asset.id)}/direct`,
     ...(asset.kind === 'image' ? { previewUrl: `/api/files/${encodeURIComponent(asset.id)}/preview` } : {}),
   };
 }
@@ -1181,25 +1184,100 @@ function referenceAssetCounts(userId, ids) {
   }
   return counts;
 }
+function generationSourceHeaders(task, resultUrl) {
+  const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''));
+  if (routeContent) return { Authorization: `Bearer ${routeCredential(task.routeCredentialId)}` };
+  const contentUrl = task?.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
+  if (contentUrl && resultUrl === contentUrl) return { Authorization: `Bearer ${oaiKeyForTask(task)}` };
+  return {};
+}
+function generationAssetExtension(task) { return task?.type === 'image' ? '.png' : '.mp4'; }
+function generationAssetName(task, extension = generationAssetExtension(task)) {
+  return `${task?.type === 'image' ? '生成图片' : '生成视频'} ${new Date(task?.createdAt || Date.now()).toLocaleString('zh-CN')}${extension}`;
+}
+async function prepareGenerationAsset(userId, task, result) {
+  const assetId = task.assetId || `generation-${task.id}`;
+  const extension = generationAssetExtension(task);
+  const existing = findAsset(userId, assetId);
+  if (existing?.sourceGenerationId === task.id && existing.ossKey) return existing;
+  const asset = {
+    ...(existing || {}),
+    id: assetId,
+    ownerId: userId,
+    name: existing?.name || generationAssetName(task, extension),
+    kind: task.type,
+    mimeType: existing?.mimeType || (task.type === 'image' ? 'image/png' : 'video/mp4'),
+    size: Number(existing?.size) || 0,
+    storageName: existing?.storageName || `${assetId}${extension}`,
+    source: 'generation',
+    sourceGenerationId: task.id,
+    sourceUrl: result.url,
+    sourceRequiresAuth: Boolean(result.requiresAuth),
+    deliveryStatus: existing?.deliveryStatus === 'local_ready' ? 'local_ready' : 'awaiting_local',
+    remoteStatus: existing?.ossKey ? 'ready' : 'pending',
+    createdAt: existing?.createdAt || now(),
+    updatedAt: now(),
+  };
+  await saveAsset(userId, asset);
+  return asset;
+}
+async function servePendingGenerationSource(res, asset, { download = false } = {}) {
+  if (!asset?.sourceUrl || asset.ossKey) return false;
+  const sourceUrl = new URL(asset.sourceUrl);
+  if (!['http:', 'https:'].includes(sourceUrl.protocol)) return false;
+  if (!asset.sourceRequiresAuth) {
+    res.writeHead(302, { Location: sourceUrl.toString(), 'Cache-Control': 'private, no-store' });
+    res.end();
+    return true;
+  }
+  const task = asset.sourceGenerationId ? findGeneration(asset.ownerId, asset.sourceGenerationId) : null;
+  const response = await fetch(sourceUrl, { headers: generationSourceHeaders(task, sourceUrl.toString()), signal: AbortSignal.timeout(180_000) });
+  if (!response.ok || !response.body) {
+    sendJson(res, response.status || 502, { error: `上游成品下载失败（${response.status || '无响应'}）` });
+    return true;
+  }
+  const contentType = response.headers.get('content-type')?.split(';')[0] || asset.mimeType || 'application/octet-stream';
+  const contentLength = response.headers.get('content-length');
+  const headers = { 'Content-Type': contentType, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
+  if (contentLength) headers['Content-Length'] = contentLength;
+  if (download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(asset.name)}`;
+  res.writeHead(200, headers);
+  Readable.fromWeb(response.body).pipe(res);
+  return true;
+}
 async function archiveGenerationResult(userId, task, resultUrl) {
   const assetId = task.assetId || `generation-${task.id}`;
   const existing = findAsset(userId, assetId);
-  if (existing?.sourceGenerationId === task.id) {
+  if (existing?.sourceGenerationId === task.id && existing.ossKey) {
     task.assetId = assetId;
     task.status = 'completed';
     task.error = '';
     return;
   }
   return withMediaTempDir(`generation-${task.id}`, async jobDir => {
-    const extension = task.type === 'image' ? '.png' : '.mp4';
+    const extension = generationAssetExtension(task);
     const storageName = `${assetId}${extension}`;
     const localFile = path.join(jobDir, storageName);
-    const contentUrl = task.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
-    const routeKey = task.routeId ? routeCredential(task.routeCredentialId) : '';
-    const routeContent = task.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(resultUrl);
-    const downloadHeaders = routeContent ? { Authorization: `Bearer ${routeKey}` } : resultUrl === contentUrl ? { Authorization: `Bearer ${oaiKeyForTask(task)}` } : {};
+    const downloadHeaders = generationSourceHeaders(task, resultUrl);
     const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
-    const asset = { id: assetId, ownerId: userId, name: `${task.type === 'image' ? '生成图片' : '生成视频'} ${new Date().toLocaleString('zh-CN')}${extension}`, kind: task.type, mimeType: saved.contentType, size: saved.size, storageName, source: 'generation', sourceGenerationId: task.id, sourceUrl: resultUrl, createdAt: now(), updatedAt: now() };
+    const asset = {
+      ...(existing || {}),
+      id: assetId,
+      ownerId: userId,
+      name: existing?.name || generationAssetName(task, extension),
+      kind: task.type,
+      mimeType: saved.contentType,
+      size: saved.size,
+      storageName,
+      source: 'generation',
+      sourceGenerationId: task.id,
+      sourceUrl: resultUrl,
+      sourceRequiresAuth: Boolean(task.sourceRequiresAuth),
+      deliveryStatus: 'remote_backed_up',
+      remoteStatus: 'ready',
+      createdAt: existing?.createdAt || now(),
+      updatedAt: now(),
+    };
     await uploadAssetFileToOss(userId, asset, localFile);
     task.assetId = assetId;
     task.status = 'completed';
@@ -1342,23 +1420,28 @@ function autodlPersistenceHooks(userId, task) {
 }
 function scheduleGenerationArchive(userId, task) {
   if (generationRetryTimers.has(task.id)) return;
+  const deadline = Date.parse(task.localDeliveryDeadlineAt || '');
+  const remaining = Number.isFinite(deadline) ? deadline - Date.now() : NaN;
+  const delay = Number.isFinite(remaining) && remaining > 0 ? remaining : archiveRescheduleMs;
   const timer = setTimeout(() => {
     generationRetryTimers.delete(task.id);
     const current = findGeneration(userId, task.id);
-    if (current?.status === 'running' && current.sourceUrl && !current.assetId) {
+    if (current?.archivePending && current.sourceUrl && !current.localReadyAt) {
       resumeGenerationArchive(userId, current);
     }
-  }, archiveRescheduleMs);
+  }, delay);
   timer.unref();
   generationRetryTimers.set(task.id, timer);
 }
 async function archiveGenerationWithRetry(userId, task) {
+  if (!task.archivePending || task.localReadyAt) return true;
   let failures = Number(task.archiveFailureCount) || 0;
   for (let attempt = 1; attempt <= archiveAttemptsPerRun; attempt++) {
     try {
       await archiveGenerationResult(userId, task, task.sourceUrl);
       task.archiveFailureCount = 0;
       task.archivePending = false;
+      task.localDeliveryDeadlineAt = '';
       task.lastArchiveError = '';
       task.lastArchiveErrorAt = null;
       return true;
@@ -1384,12 +1467,19 @@ async function completeGenerationResult(userId, task, result) {
   task.provider = result.provider || task.provider;
   task.providerTaskId = result.taskId || task.providerTaskId;
   task.sourceUrl = result.url;
-  task.status = 'running';
+  task.sourceRequiresAuth = Boolean(result.requiresAuth);
+  const asset = await prepareGenerationAsset(userId, task, result);
+  task.assetId = asset.id;
+  task.archivePending = true;
+  task.localReadyAt = '';
+  task.localDeliveryDeadlineAt = new Date(Date.now() + desktopDirectDeliveryGraceMs).toISOString();
+  task.status = 'completed';
   task.error = '';
   await saveGenerationWithRetry(userId, task, 'provider-result');
-  const archived = await archiveGenerationWithRetry(userId, task);
   task.creditStatus = 'charged';
-  return archived;
+  await saveGenerationWithRetry(userId, task, 'local-delivery-ready');
+  scheduleGenerationArchive(userId, task);
+  return true;
 }
 async function failGeneration(userId, task, error) {
   task.status = 'failed';
@@ -1631,8 +1721,10 @@ async function recoverPendingGenerations() {
   let awaitingReconciliation = 0;
 
   for (const { userId, task } of pending) {
-    if (task.sourceUrl && !task.assetId) {
-      resumeGenerationArchive(userId, task);
+    if (task.archivePending && task.sourceUrl && !task.localReadyAt) {
+      const deadline = Date.parse(task.localDeliveryDeadlineAt || '');
+      if (Number.isFinite(deadline) && deadline > Date.now()) scheduleGenerationArchive(userId, task);
+      else resumeGenerationArchive(userId, task);
       archiving++;
     } else if (task.routeId && task.providerTaskId) {
       resumeRoutedGeneration(userId, task);
@@ -1680,7 +1772,7 @@ const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/fi
 
 async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1734,6 +1826,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }
     if (url.pathname === '/api/config' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, configState()); }
     if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
+    if (url.pathname === '/api/notifications' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, listNotifications(user.id, { limit: url.searchParams.get('limit') })); }
+    const notificationReadMatch = url.pathname.match(/^\/api\/notifications\/([\w-]+)\/read$/);
+    if (notificationReadMatch && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markNotificationRead(user.id, notificationReadMatch[1]); return sendJson(res, 200, listNotifications(user.id)); }
+    if (url.pathname === '/api/notifications/read-all' && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markAllNotificationsRead(user.id); return sendJson(res, 200, listNotifications(user.id)); }
 
     if (url.pathname === '/api/drama/projects' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
@@ -2326,6 +2422,43 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
+    const localReadyMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/local-ready$/);
+    if (localReadyMatch && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const asset = findAsset(user.id, localReadyMatch[1]);
+      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
+      const input = await bodyJson(req);
+      const size = Number(input.size);
+      const sha256 = String(input.sha256 || '').trim().toLowerCase();
+      const mimeType = String(input.mimeType || '').trim().toLowerCase();
+      if (!Number.isSafeInteger(size) || size <= 0) return sendJson(res, 400, { error: '本地文件大小无效' });
+      if (!/^[a-f0-9]{64}$/.test(sha256)) return sendJson(res, 400, { error: '本地文件 SHA-256 无效' });
+      if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 400, { error: '本地文件类型无效' });
+      asset.size = size;
+      asset.sha256 = sha256;
+      asset.mimeType = mimeType;
+      asset.deliveryStatus = 'local_ready';
+      asset.localReadyAt = now();
+      asset.remoteStatus = asset.ossKey ? 'ready' : 'local_only';
+      await saveAsset(user.id, asset);
+      if (asset.sourceGenerationId) {
+        const task = findGeneration(user.id, asset.sourceGenerationId);
+        if (task?.assetId === asset.id) {
+          task.archivePending = false;
+          task.localReadyAt = asset.localReadyAt;
+          task.localDeliveryDeadlineAt = '';
+          task.lastArchiveError = '';
+          task.lastArchiveErrorAt = null;
+          task.status = 'completed';
+          task.error = '';
+          task.finishedAt ||= asset.localReadyAt;
+          await saveGenerationWithRetry(user.id, task, 'local-delivery-ack');
+          const timer = generationRetryTimers.get(task.id);
+          if (timer) { clearTimeout(timer); generationRetryTimers.delete(task.id); }
+        }
+      }
+      return sendJson(res, 200, publicAsset(asset));
+    }
     const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
     if (directMediaMatch && req.method === 'GET') {
       const user = await requireUser(req, res); if (!user) return;
@@ -2335,6 +2468,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' });
         return res.end();
       }
+      if (await servePendingGenerationSource(res, asset, { download: false })) return;
       const localFile = path.join(assetFilesDir(user.id), asset.storageName);
       if (await fs.access(localFile).then(() => true).catch(() => false)) {
         res.writeHead(302, { Location: `/api/files/${asset.id}/content`, 'Cache-Control': 'private, no-store' });
@@ -2343,7 +2477,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
-    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
+    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset, { download: fileMatch[2] === 'download' })) return; return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
 
     return await serveStatic(res, url.pathname);
   } catch (error) { console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
+import { SCHEMA_VERSION, closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { configureCursors } from '../lib/store.mjs';
 import { configureLedger, adjustCredits, grantSignupBonus, walletOf } from '../lib/ledger.mjs';
 import { createPricingVersion, currentPricing, pricingSnapshot } from '../lib/pricing.mjs';
@@ -122,10 +122,10 @@ test('schema upgrades create a verified pre-upgrade snapshot', () => {
 
     resetForTests();
     openDatabase({ file });
-    assert.equal(sql("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, '6');
+    assert.equal(sql("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
     closeDatabase({ checkpoint: false });
 
-    const backupName = readdirSync(dir).find(name => name.startsWith('studio.db.pre-schema-1-to-6-'));
+    const backupName = readdirSync(dir).find(name => name.startsWith(`studio.db.pre-schema-1-to-${SCHEMA_VERSION}-`));
     assert.ok(backupName);
     const backup = new DatabaseSync(path.join(dir, backupName), { readOnly: true });
     assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');

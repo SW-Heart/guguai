@@ -6,26 +6,46 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
 const taskSignatureFields = ['id','type','status','progress','assetId','updatedAt','error','creditStatus','prompt','size','quality','aspectRatio','duration','createdAt'];
-const fileSignatureFields = ['id','name','kind','mimeType','size','url','updatedAt','sourceGenerationId','createdAt'];
+const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
 let tasksRequest = null;
 let filesRequest = null;
 let pollTimer = 0;
+let notificationPanelCloseTimer = 0;
 const activePollDelay = 6000;
 const idlePollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
+let desktopWindowStateUnsubscribe = null;
+const desktopHydrationQueue = [];
+const desktopHydrationQueued = new Set();
+let desktopHydrationRunning = false;
 
 async function api(url, options = {}) {
   const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
   let data = {}; try { data = await response.json(); } catch {}
   if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
   return data;
+}
+async function listAllRemoteFiles() {
+  const files = [];
+  let cursor = '';
+  do {
+    const query = new URLSearchParams({ limit:'200' });
+    if (cursor) query.set('cursor', cursor);
+    const response = await fetch(`/api/files?${query}`, { credentials:'same-origin' });
+    let data = []; try { data = await response.json(); } catch {}
+    if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
+    if (!Array.isArray(data)) throw new Error('文件列表格式无效');
+    files.push(...data);
+    cursor = response.headers.get('x-next-cursor') || '';
+  } while (cursor);
+  return files;
 }
 function desktopLocalClientAsset(item) {
   const cloudAssetId = String(item?.cloudAssetId || '');
@@ -64,10 +84,68 @@ function mergeDesktopFiles(remoteFiles, localFiles) {
   localFiles.filter(file => file.localOnly || !remoteIds.has(file.id)).forEach(file => merged.push(file));
   return merged;
 }
+function renderAfterDesktopAssetHydration() {
+  if (state.route === 'files') renderFiles();
+  renderReferences();
+  if (['image', 'video'].includes(state.route)) renderTasks();
+  else if (state.route === 'drama') dramaController.render();
+}
+function applyDesktopLocalAsset(remoteFile, localAsset) {
+  const local = desktopLocalClientAsset(localAsset);
+  if (!local) return;
+  state.files = state.files.map(file => file.id === remoteFile.id
+    ? { ...file, ...local, id: remoteFile.id, localId: local.localId, cloudAssetId: remoteFile.id, remoteUrl: remoteFile.url, localStatus: 'saved', localPath: local.relativePath }
+    : file);
+  renderAfterDesktopAssetHydration();
+}
+async function hydrateDesktopAsset(file) {
+  const bridge = window.guguDesktop;
+  if (!bridge || !file || file.localOnly || file.localStatus === 'saved') return;
+  const result = await bridge.media.downloadRemote({
+    assetId: file.id,
+    url: file.directUrl || `/api/files/${encodeURIComponent(file.id)}/direct`,
+    name: file.name,
+    kind: file.kind,
+    mimeType: file.mimeType,
+  });
+  applyDesktopLocalAsset(file, result);
+  try {
+    await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
+      method: 'POST',
+      body: JSON.stringify({ size: result.size, sha256: result.sha256, mimeType: result.mimeType || file.mimeType }),
+    });
+  } catch (error) {
+    console.warn('[desktop] 本地文件已保存，但本地接收确认失败', { assetId: file.id, message: error.message });
+  }
+}
+async function runDesktopHydrationQueue() {
+  if (desktopHydrationRunning) return;
+  desktopHydrationRunning = true;
+  try {
+    while (desktopHydrationQueue.length) {
+      const file = desktopHydrationQueue.shift();
+      try { await hydrateDesktopAsset(file); }
+      catch (error) { console.warn('[desktop] 自动同步素材失败', { assetId: file?.id, message: error.message }); }
+      finally { desktopHydrationQueued.delete(file?.id); }
+    }
+  } finally {
+    desktopHydrationRunning = false;
+    if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
+  }
+}
+function queueDesktopHydration(files) {
+  if (!window.guguDesktop) return;
+  for (const file of files) {
+    if (!file?.id || file.localOnly || file.localStatus === 'saved' || desktopHydrationQueued.has(file.id)) continue;
+    desktopHydrationQueued.add(file.id);
+    desktopHydrationQueue.push(file);
+  }
+  if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
+}
 const esc = (value='') => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
   const preview = assetPreviewUrl(file);
-  const original = String(file?.url || '');
+  const original = String(file?.remoteUrl || file?.url || '');
   const fallback = preview && original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
   return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
 }
@@ -430,12 +508,87 @@ async function loadCredits() {
     updateVideoCost();
   } catch (error) { if (error.status === 401) location.reload(); }
 }
+
+function notificationCountText(count) { return Number(count) > 99 ? '99+' : String(Math.max(0, Number(count) || 0)); }
+function notificationDateText(value) {
+  const date = new Date(value);
+  return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' }) : '—';
+}
+function renderNotifications() {
+  const count = Math.max(0, Number(state.unreadNotifications) || 0);
+  const countText = notificationCountText(count);
+  const countEl = $('#notificationCount');
+  const avatarBadge = $('#avatarNotificationBadge');
+  const summary = $('#notificationSummary');
+  const list = $('#notificationList');
+  if (!list) return;
+  countEl.textContent = countText;
+  countEl.classList.toggle('hidden', count === 0);
+  avatarBadge.textContent = countText;
+  avatarBadge.setAttribute('aria-label', `${count} 条未读消息`);
+  avatarBadge.classList.toggle('hidden', count === 0);
+  summary.textContent = count ? `${countText} 条未读消息 · 共 ${state.notifications.length} 条历史` : `共 ${state.notifications.length} 条历史消息`;
+  $('#markAllNotifications').disabled = count === 0;
+  if (!state.notifications.length) {
+    list.innerHTML = '<div class="notification-empty"><span aria-hidden="true">—</span><b>暂无消息</b><small>新的公告会出现在这里。</small></div>';
+    return;
+  }
+  list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(notificationDateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(item.content)}</span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
+  list.querySelectorAll('[data-notification-id]').forEach(button => button.onclick = () => markNotificationRead(button.dataset.notificationId));
+}
+function setNotificationPanelOpen(open) {
+  const item = $('.notification-menu-item');
+  const panel = $('#notificationPanel');
+  const trigger = $('#notificationMenuButton');
+  if (!item || !panel || !trigger) return;
+  window.clearTimeout(notificationPanelCloseTimer);
+  notificationPanelCloseTimer = 0;
+  item.classList.toggle('is-open', open);
+  panel.setAttribute('aria-hidden', String(!open));
+  trigger.setAttribute('aria-expanded', String(open));
+  if (open) renderNotifications();
+}
+function scheduleNotificationPanelClose() {
+  window.clearTimeout(notificationPanelCloseTimer);
+  notificationPanelCloseTimer = window.setTimeout(() => {
+    notificationPanelCloseTimer = 0;
+    const item = $('.notification-menu-item');
+    if (!item?.matches(':hover') && !item?.matches(':focus-within')) setNotificationPanelOpen(false);
+  }, 180);
+}
+async function loadNotifications() {
+  try {
+    const result = await api('/api/notifications?limit=200');
+    state.notifications = Array.isArray(result.items) ? result.items : [];
+    state.unreadNotifications = Number(result.unreadCount) || 0;
+    renderNotifications();
+  } catch (error) { if (error.status === 401) location.reload(); }
+}
+async function markNotificationRead(id) {
+  const item = state.notifications.find(notification => notification.id === id);
+  if (!item || item.isRead) return;
+  item.isRead = true;
+  state.unreadNotifications = Math.max(0, state.unreadNotifications - 1);
+  renderNotifications();
+  try { await api(`/api/notifications/${encodeURIComponent(id)}/read`, { method:'POST', body:'{}' }); }
+  catch { item.isRead = false; state.unreadNotifications += 1; renderNotifications(); toast('消息状态更新失败，请稍后重试'); }
+}
+async function markAllNotificationsRead() {
+  if (!state.unreadNotifications) return;
+  const previous = state.notifications.map(item => item.isRead);
+  state.notifications.forEach(item => { item.isRead = true; });
+  state.unreadNotifications = 0;
+  renderNotifications();
+  try { await api('/api/notifications/read-all', { method:'POST', body:'{}' }); }
+  catch { state.notifications.forEach((item, index) => { item.isRead = previous[index]; }); state.unreadNotifications = state.notifications.filter(item => !item.isRead).length; renderNotifications(); toast('消息状态更新失败，请稍后重试'); }
+}
 function closeCreditDetail() {
   const dialog = $('#creditDetailDialog'); if (dialog.open) dialog.close(); dialog.hidden = true;
 }
 async function openCreditDetail() {
   const dialog = $('#creditDetailDialog'); if (!dialog || dialog.open) return;
   state.creditDetailRestoreFocus = document.activeElement;
+  setNotificationPanelOpen(false);
   $('#accountMenu').classList.add('hidden');
   dialog.hidden = false;
   renderCreditDetail();
@@ -450,7 +603,49 @@ $('#creditEarnTab').onclick = () => setCreditDetailTab('earn');
 $('#creditDetailDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('cancel', event => { event.preventDefault(); closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('close', () => { $('#creditDetailDialog').hidden = true; const restore = state.creditDetailRestoreFocus; state.creditDetailRestoreFocus = null; requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
+function setDesktopSurface(surface) {
+  const desktop = Boolean(window.guguDesktop);
+  document.body.classList.toggle('desktop-app-visible', desktop && surface === 'app');
+  toggleClass($('#desktopDragRegion'), 'hidden', !desktop || surface === 'app');
+}
+function updateWindowState(maximized) {
+  const button = $('#windowMaximize');
+  const isMaximized = Boolean(maximized);
+  toggleClass(button?.querySelector('.maximize-icon'), 'hidden', isMaximized);
+  toggleClass(button?.querySelector('.restore-icon'), 'hidden', !isMaximized);
+  button?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
+  if (button) button.title = isMaximized ? '还原' : '最大化';
+}
+function initWindowControls(bridge, info = {}) {
+  const controls = $('#desktopWindowControls');
+  const windowApi = bridge?.window;
+  if (!controls || !windowApi) return;
+  const custom = info.platform !== 'darwin';
+  desktopWindowStateUnsubscribe?.();
+  desktopWindowStateUnsubscribe = null;
+  toggleClass(controls, 'hidden', !custom);
+  if (!custom) return;
+  const safeAction = action => Promise.resolve().then(action).catch(error => console.warn('[desktop] 窗口操作失败', error));
+  if (controls.dataset.bound !== 'true') {
+    $('#windowMinimize').onclick = () => void safeAction(() => windowApi.minimize());
+    $('#windowMaximize').onclick = () => void safeAction(() => windowApi.toggleMaximize());
+    $('#windowClose').onclick = () => void safeAction(() => windowApi.close());
+    controls.dataset.bound = 'true';
+  }
+  desktopWindowStateUnsubscribe = typeof windowApi.onState === 'function' ? windowApi.onState(payload => updateWindowState(payload?.maximized)) : null;
+  Promise.resolve(windowApi.isMaximized?.()).then(updateWindowState).catch(() => updateWindowState(false));
+  const topbar = $('.topbar');
+  if (topbar && topbar.dataset.windowDragBound !== 'true') {
+    topbar.addEventListener('dblclick', event => {
+      const target = event.target;
+      if (target?.closest?.('button, a, input, textarea, select, [contenteditable="true"], .top-actions, .drama-steps, .account-menu')) return;
+      void safeAction(() => windowApi.toggleMaximize());
+    });
+    topbar.dataset.windowDragBound = 'true';
+  }
+}
 function showBoot(title = '正在恢复工作区', message = '正在确认登录状态，请稍候。', { retry = false } = {}) {
+  setDesktopSurface('boot');
   $('#bootTitle').textContent = title;
   $('#bootMessage').textContent = message;
   toggleClass($('#bootRetry'), 'hidden', !retry);
@@ -461,10 +656,18 @@ function showBoot(title = '正在恢复工作区', message = '正在确认登录
 async function initDesktopBridge() {
   const bridge = window.guguDesktop;
   const button = $('#desktopWorkspaceButton');
-  if (!bridge || !button) return;
-  button.classList.remove('hidden');
+  if (!bridge) {
+    toggleClass($('#desktopWindowControls'), 'hidden', true);
+    return;
+  }
+  document.body.classList.add('desktop-runtime');
+  initWindowControls(bridge);
   try {
     const info = await bridge.getInfo();
+    document.body.classList.add(`desktop-${info.platform}`);
+    initWindowControls(bridge, info);
+    if (!button) return;
+    button.classList.remove('hidden');
     button.title = `本地工作区：${info.workspacePath || '未设置'}`;
     button.onclick = async () => {
       const result = await bridge.workspace.choose();
@@ -497,8 +700,8 @@ async function initDesktopBridge() {
         if (status === 'checking') { setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; }
         else if (status === 'available') { setUpdateLabel('正在下载更新…'); setUpdateTitle(`正在下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = true; toast(`发现 GuGu AI ${payload.version || ''}，正在后台下载`); }
         else if (status === 'downloading') { setUpdateLabel(`更新 ${payload.percent || 0}%`); setUpdateTitle('正在下载更新'); updateButton.disabled = true; }
-        else if (status === 'downloaded') { setUpdateLabel('重启更新'); setUpdateTitle('点击重启更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.install(); toast(`GuGu AI ${payload.version || ''} 已下载完成，点击重启更新`); }
-        else if (status === 'installer-opened') { setUpdateLabel('更新'); setUpdateTitle('安装窗口已打开'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.install(); }
+        else if (status === 'downloaded') { setUpdateLabel('退出并安装'); setUpdateTitle('退出客户端后安装更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.install(); toast(`GuGu AI ${payload.version || ''} 已下载完成，点击退出并安装`); }
+        else if (status === 'installing') { setUpdateLabel('正在退出…'); setUpdateTitle('退出后将打开安装窗口'); updateButton.disabled = true; }
         else if (status === 'error') { setUpdateLabel('检查更新'); setUpdateTitle('检查更新'); updateButton.disabled = false; updateButton.onclick = () => bridge.updates.check(); if (!document.hidden) toast(`自动更新暂不可用：${payload.message || '未知错误'}`); }
       };
       desktopUpdateUnsubscribe?.();
@@ -506,10 +709,11 @@ async function initDesktopBridge() {
       updateButton.onclick = () => bridge.updates.check();
     }
   } catch (error) {
-    button.title = `本地工作区不可用：${error.message}`;
+    if (button) button.title = `本地工作区不可用：${error.message}`;
   }
 }
 function showAuth() {
+  setDesktopSurface('auth');
   state.user = null;
   toggleClass($('#bootView'), 'hidden', true);
   toggleClass($('#authView'), 'hidden', false);
@@ -517,6 +721,7 @@ function showAuth() {
   document.title = '登录 · GuGu AI';
 }
 function showApp() {
+  setDesktopSurface('app');
   toggleClass($('#bootView'), 'hidden', true);
   toggleClass($('#authView'), 'hidden', true);
   toggleClass($('#appView'), 'hidden', false);
@@ -530,7 +735,7 @@ async function enterApp(user) {
   $('#accountInitial').textContent = initial;
   $('#menuInitial').textContent = initial;
   setCreditBalance(user.credits);
-  await Promise.all([loadConfig(), loadCredits(), loadFiles(), loadTasks()]);
+  await Promise.all([loadConfig(), loadCredits(), loadNotifications(), loadFiles(), loadTasks()]);
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
   showApp();
   void openModelPriceDialog({ auto:true });
@@ -586,8 +791,17 @@ const dramaController = createDramaStudio({ api, state, esc, toast, setCreditBal
 function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; toggleClass($('#appView'), 'library-mode', files); toggleClass($('#appView'), 'wide-mode', drama); toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject)); toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional'); toggleClass($('#creatorPanel'), 'hidden', wide); toggleClass($('#generationView'), 'hidden', wide); toggleClass($('#filesView'), 'hidden', !files); toggleClass($('#dramaView'), 'hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute)); $('#galleryTitle').textContent = nextRoute === 'image' ? '图像作品' : '视频作品'; renderTasks(); } else if (files) renderFiles(); else { updateDramaModelState(); dramaController.load(); } }
 $$('.rail-button[data-route]').forEach(button => button.onclick = () => navigate(button.dataset.route));
 window.addEventListener('popstate', () => { if (state.user) navigate(routeFromPath(window.location.pathname), { historyMode:'none' }); });
-$('#accountButton').onclick = event => { event.stopPropagation(); $('#accountMenu').classList.toggle('hidden'); };
-document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target)) $('#accountMenu').classList.add('hidden'); });
+const notificationMenuItem = $('.notification-menu-item');
+const notificationMenuButton = $('#notificationMenuButton');
+notificationMenuItem?.addEventListener('mouseenter', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
+notificationMenuItem?.addEventListener('mouseleave', () => { if (!notificationMenuItem.matches(':focus-within')) scheduleNotificationPanelClose(); });
+notificationMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
+notificationMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!notificationMenuItem.matches(':focus-within') && !notificationMenuItem.matches(':hover')) scheduleNotificationPanelClose(); }));
+notificationMenuButton?.addEventListener('click', event => { event.stopPropagation(); setNotificationPanelOpen(true); });
+$('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) setNotificationPanelOpen(false); if (opening) renderNotifications(); };
+$('#markAllNotifications').onclick = event => { event.stopPropagation(); void markAllNotificationsRead(); };
+document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
 $('#logoutButton').onclick = async () => { await api('/api/auth/logout', { method:'POST', body:'{}' }); location.reload(); };
 async function loadConfig() {
   const service = $('#serviceState');
@@ -895,7 +1109,7 @@ async function loadFiles({ background=false }={}) {
           if (['image','video'].includes(state.route)) renderTasks();
         }
       }
-      const files = mergeDesktopFiles(await enrichDesktopFiles(await api('/api/files'), localFiles), localFiles);
+      const files = mergeDesktopFiles(await enrichDesktopFiles(await listAllRemoteFiles(), localFiles), localFiles);
       const changed = listSignature(state.files, fileSignatureFields) !== listSignature(files, fileSignatureFields);
       if (changed) {
         state.files = mergeTransientFields(state.files, files, ['width','height']);
@@ -904,6 +1118,7 @@ async function loadFiles({ background=false }={}) {
         if (['image','video'].includes(state.route)) renderTasks();
         else if (state.route === 'drama') dramaController.refreshTasks();
       }
+      queueDesktopHydration(state.files);
       if (!changed) return state.files;
       return state.files;
     } catch (error) {
@@ -1615,11 +1830,11 @@ function nextPollDelay() { return state.tasks.some(task => ['queued','running'].
 function scheduleTaskPoll(delay=nextPollDelay()) {
   clearTimeout(pollTimer);
   if (!state.user || document.hidden) return;
-  pollTimer = setTimeout(async () => { await loadTasks({ background:true }); scheduleTaskPoll(); }, delay);
+  pollTimer = setTimeout(async () => { await Promise.all([loadTasks({ background:true }), loadNotifications()]); scheduleTaskPoll(); }, delay);
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearTimeout(pollTimer);
-  else if (state.user) { loadTasks({ background:true }).finally(() => scheduleTaskPoll()); }
+  else if (state.user) { Promise.all([loadTasks({ background:true }), loadNotifications()]).finally(() => scheduleTaskPoll()); }
 });
 await bootstrap();
 scheduleTaskPoll();

@@ -29,6 +29,38 @@ export function normalizeShotVideoParameters(shot, parameters) {
   return changed;
 }
 
+function shotPreviewRenderSignatureFromMaps(shot, taskById, fileById) {
+  const ids = [...new Set([shot?.selectedVideoTaskId, ...(shot?.videoVersions || [])].filter(Boolean))];
+  return [shot?.selectedVideoTaskId || '', ...ids.map(id => {
+    const generation = taskById.get(id);
+    const file = fileById.get(generation?.assetId);
+    return `${id}:${generation?.status || ''}:${generation?.assetId || ''}:${file?.url || ''}`;
+  })].join('|');
+}
+
+export function shotPreviewRenderSignature(shot, tasks = [], files = []) {
+  return shotPreviewRenderSignatureFromMaps(shot, new Map(tasks.map(item => [item.id, item])), new Map(files.map(item => [item.id, item])));
+}
+
+export function calculateVirtualShotRange(heights, scrollTop, viewportHeight, { overscan = 4, estimatedHeight = 430 } = {}) {
+  const values = Array.isArray(heights) ? heights : [];
+  const heightAt = index => Math.max(1, Number(values[index]) || estimatedHeight);
+  const top = Math.max(0, Number(scrollTop) || 0);
+  const bottom = top + Math.max(1, Number(viewportHeight) || 1);
+  let offset = 0;
+  let first = 0;
+  while (first < values.length && offset + heightAt(first) <= top) {
+    offset += heightAt(first);
+    first += 1;
+  }
+  let last = first;
+  while (last < values.length && offset < bottom) {
+    offset += heightAt(last);
+    last += 1;
+  }
+  return { start:Math.max(0, first - Math.max(0, overscan)), end:Math.min(values.length, last + Math.max(0, overscan)) };
+}
+
 export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage, uploadAsset, confirmDelete, taskFailure }) {
   const root = document.querySelector('#dramaStage');
   let projects = [];
@@ -61,6 +93,17 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   let mentionPicker = { shotId:'', editor:null, range:null, query:'' };
   let mentionDismissBound = false;
   let workbenchDropdownDismissBound = false;
+  let workbenchVideoObserver = null;
+  const shotPreviewSignatures = new Map();
+  let virtualShotResizeObserver = null;
+  let virtualScrollFrame = 0;
+  let virtualRangeKey = '';
+  let virtualStart = 0;
+  let virtualEnd = 0;
+  const virtualShotHeights = new Map();
+  let virtualShotProjectId = '';
+  const virtualEstimatedShotHeight = 430;
+  const virtualOverscan = 4;
   const refreshProfessionalUploadSurfaces = () => {
     const assetDialog = document.querySelector('#professionalAssetDialog');
     const referenceDialog = document.querySelector('#professionalGenerationReferenceDialog');
@@ -82,11 +125,89 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
   const assetImageMarkup = (file, alt = '', attributes = ' loading="lazy" decoding="async"') => {
     const preview = assetPreviewUrl(file);
-    const original = String(file?.url || '');
+    const original = String(file?.remoteUrl || file?.url || '');
     const fallback = preview && original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
     return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
   };
   const taskAsset = id => asset(task(id)?.assetId);
+  const workbenchVideoMarkup = (url, attributes = '') => `<video data-wb-video-src="${esc(url)}" preload="none" ${attributes}></video>`;
+  const resetWorkbenchVideoObserver = () => { workbenchVideoObserver?.disconnect(); workbenchVideoObserver = null; };
+  const hydrateWorkbenchVideos = (scope = root) => {
+    const videos = [...scope.querySelectorAll('[data-wb-video-src]')];
+    if (!videos.length) return;
+    const loadVideo = video => {
+      const src = video.dataset.wbVideoSrc;
+      if (!src) return;
+      delete video.dataset.wbVideoSrc;
+      video.src = src;
+    };
+    if (!('IntersectionObserver' in window)) { videos.forEach(loadVideo); return; }
+    workbenchVideoObserver ||= new IntersectionObserver(entries => entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      workbenchVideoObserver?.unobserve(entry.target);
+      loadVideo(entry.target);
+    }), { rootMargin:'320px 0px' });
+    videos.forEach(video => workbenchVideoObserver.observe(video));
+  };
+  const resetVirtualShotWindow = () => {
+    if (virtualScrollFrame) cancelAnimationFrame(virtualScrollFrame);
+    virtualScrollFrame = 0;
+    virtualShotResizeObserver?.disconnect();
+    virtualShotResizeObserver = null;
+    virtualRangeKey = '';
+    virtualStart = 0;
+    virtualEnd = 0;
+  };
+  const virtualShotHeight = index => {
+    const shot = project?.shots?.[index];
+    return Math.max(220, Number(virtualShotHeights.get(shot?.id)) || virtualEstimatedShotHeight);
+  };
+  const virtualHeightBefore = index => {
+    let total = 0;
+    for (let cursor = 0; cursor < index; cursor += 1) total += virtualShotHeight(cursor);
+    return total;
+  };
+  const virtualRangeFor = (scrollTop, viewportHeight) => {
+    return calculateVirtualShotRange(project?.shots?.map((_, index) => virtualShotHeight(index)) || [], scrollTop, viewportHeight, { overscan:virtualOverscan, estimatedHeight:virtualEstimatedShotHeight });
+  };
+  const updateVirtualSpacers = scroll => {
+    if (!scroll) return;
+    const top = scroll.querySelector('[data-wb-virtual-spacer="top"]');
+    const bottom = scroll.querySelector('[data-wb-virtual-spacer="bottom"]');
+    if (top) top.style.height = `${virtualHeightBefore(virtualStart)}px`;
+    if (bottom) bottom.style.height = `${Math.max(0, virtualHeightBefore(project.shots.length) - virtualHeightBefore(virtualEnd))}px`;
+  };
+  const observeVirtualShotHeights = scroll => {
+    if (!('ResizeObserver' in window)) return;
+    virtualShotResizeObserver ||= new ResizeObserver(entries => {
+      let changed = false;
+      entries.forEach(entry => {
+        const card = entry.target;
+        const index = Number(card.dataset.wbShotIndex);
+        const shot = project?.shots?.[index];
+        if (!shot || !Number.isFinite(index)) return;
+        const style = getComputedStyle(card);
+        const next = entry.contentRect.height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+        const previous = virtualShotHeight(index);
+        if (Math.abs(next - previous) < 1) return;
+        virtualShotHeights.set(shot.id, next);
+        changed = true;
+        if (index < virtualStart) scroll.scrollTop += next - previous;
+      });
+      if (changed) updateVirtualSpacers(scroll);
+    });
+    scroll.querySelectorAll('[data-wb-shot]').forEach(card => virtualShotResizeObserver.observe(card));
+  };
+  const scheduleVirtualShotWindow = () => {
+    if (virtualScrollFrame) return;
+    virtualScrollFrame = requestAnimationFrame(() => {
+      virtualScrollFrame = 0;
+      const scroll = root.querySelector('.wb-shot-scroll');
+      const active = document.activeElement;
+      if (active && root.contains(active) && active.closest('[data-wb-shot]') && active.matches('textarea,input,select,[contenteditable="true"]')) return;
+      renderProfessionalShotWindow({ scroll });
+    });
+  };
   const imageAssets = () => state.files.filter(file=>file.kind==='image');
   const frameOptions = current => `<option value="">未指定</option>${imageAssets().map(file=>`<option value="${file.id}" ${file.id===current?'selected':''}>${esc(file.name)}</option>`).join('')}`;
   const generationModeName = value => ({TEXT:'文本生成','FIRST&LAST':'首尾帧','REFERENCE':'参考元素'}[value] || '文本生成');
@@ -158,7 +279,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   async function load(force=false) { if(busy)return; busy=true; try { const result=await api('/api/drama/projects'); projects=result.projects; if(project&&!force){ const fresh=projects.find(item=>item.id===project.id); if(fresh)project=fresh; render(); } else renderProjects(); } catch(error){toast(error.message)} finally{busy=false} }
   async function createProject(mode) { try { const result=await api('/api/drama/projects',{method:'POST',body:JSON.stringify({title:mode==='smart'?'未命名智能短剧':'未命名剧本',mode,settings:{shotCount:5,totalDuration:100,shotDuration:20,aspectRatio:'9:16'}})}); projects=[result.project,...projects]; await openProject(result.project.id); return true; }catch(error){toast(error.message);return false;} }
   async function openProject(id) { try { const result=await api(`/api/drama/projects/${id}`); project=normalizeProjectData(result.project); projectAssetIds=[...project.projectAssetIds]; projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{})); viewStep=project.step; scriptDraft=null; state.dramaProject=project; setStudioVisible(true); syncProjectHeader(); modelState(); render(); }catch(error){toast(error.message)} }
-  async function closeProject(){ await flushSave(); project=null; viewStep=null; scriptDraft=null; assetPickerShotId=''; state.dramaProject=null; syncProjectHeader(); renderProjects(); }
+  async function closeProject(){ await flushSave(); resetWorkbenchVideoObserver(); resetVirtualShotWindow(); virtualShotHeights.clear(); virtualShotProjectId=''; project=null; viewStep=null; scriptDraft=null; assetPickerShotId=''; state.dramaProject=null; syncProjectHeader(); renderProjects(); }
   async function patch(changes,{quiet=false}={}) { if(!project)return; Object.keys(changes).forEach(key=>pendingKeys.delete(key)); saveLabel('保存中…'); try { const result=await api(`/api/drama/projects/${project.id}`,{method:'PATCH',body:JSON.stringify(changes)}); project=normalizeProjectData(result.project); state.dramaProject=project; saveLabel('已保存'); if(!quiet)render(true); return project; }catch(error){saveLabel('保存失败');toast(error.message);throw error} }
   async function navigateStep(step){ await flushSave(); const frontier=professional()?stepOrder.length-1:stepOrder.indexOf(project.maxStep||project.step); if(stepOrder.indexOf(step)>frontier)return; viewStep=step; assetPickerShotId=''; dropFocus(); render(true); const host=scroller(); if(host)host.scrollTop=0; }
   async function advanceStep(step){ await flushSave(); const result=await patch({step},{quiet:true}); project=result; viewStep=step; assetPickerShotId=''; dropFocus(); render(true); const host=scroller(); if(host)host.scrollTop=0; }
@@ -191,9 +312,11 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     project=normalizeProjectData(project);viewStep||=project.step;state.dramaProject=project;syncProjectHeader();
     if(professional()){
       renderProfessionalWorkspace({focus:focus&&!focusedField});
-      if(focusedField){const next=document.getElementById(focusedField.id);if(next&&root.contains(next)){next.focus();if(typeof focusedField.start==='number'&&typeof next.setSelectionRange==='function')next.setSelectionRange(focusedField.start,focusedField.end);}}
       const nextHost=scroller();
-      if(nextHost)nextHost.scrollTop=offset;
+      if(nextHost){nextHost.scrollTop=offset;if(offset)renderProfessionalShotWindow({scroll:nextHost,force:true});}
+      // Restore focus only after the preserved scroll window is mounted. A field
+      // edited in a non-first virtual window is not present until this point.
+      if(focusedField){const next=document.getElementById(focusedField.id);if(next&&root.contains(next)){next.focus();if(typeof focusedField.start==='number'&&typeof next.setSelectionRange==='function')next.setSelectionRange(focusedField.start,focusedField.end);}}
       return;
     }
     stepNav();({script:renderScript,resources:renderResources,storyboard:renderStoryboard,video:renderVideo}[viewStep]||renderScript)(); minimizeStageHead(); if(viewStep==='script')pinStageAction();
@@ -203,7 +326,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function refreshTasks(){
     if(!project)return;
     const signature=state.tasks.map(item=>`${item.id}:${item.status}:${item.assetId||''}`).sort().join('|');
-    const fileSignature=professional()?state.files.map(item=>`${item.id}:${item.name}:${item.kind}`).sort().join('|'):'';
+    const fileSignature=professional()?state.files.map(item=>`${item.id}:${item.name}:${item.kind}:${item.url||''}:${item.localStatus||''}:${item.localPath||''}`).sort().join('|'):'';
     const changed=signature!==taskRenderSignature||fileSignature!==fileRenderSignature;
     taskRenderSignature=signature;
     fileRenderSignature=fileSignature;
@@ -236,25 +359,76 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     if(!professional()&&root.contains(active)&&active?.matches('textarea,input,select,[contenteditable="true"]'))return;
     const dialog=document.querySelector('#professionalAssetDialog');
     if(professional()&&dialog?.open){paintProfessionalAssetDialog();return;}
+    if(professional()){patchProfessionalTaskSurfaces();return;}
     render(true,{focus:false});
+  }
+
+  function renderProfessionalShotWindow({scroll=root.querySelector('.wb-shot-scroll'), force=false}={}){
+    if (!scroll || !project?.shots?.length) return;
+    const range = virtualRangeFor(scroll.scrollTop, scroll.clientHeight || window.innerHeight || 800);
+    const active = document.activeElement;
+    const activeCard = active?.closest?.('[data-wb-shot]');
+    const activeIndex = activeCard ? Number(activeCard.dataset.wbShotIndex) : -1;
+    if (Number.isInteger(activeIndex) && activeIndex >= 0) {
+      range.start = Math.min(range.start, activeIndex);
+      range.end = Math.max(range.end, activeIndex + 1);
+    }
+    const key = `${range.start}:${range.end}`;
+    if (!force && key === virtualRangeKey) {
+      updateVirtualSpacers(scroll);
+      return;
+    }
+    const previousScrollTop = scroll.scrollTop;
+    virtualStart = range.start;
+    virtualEnd = range.end;
+    virtualRangeKey = key;
+    const locked = Boolean(project.finalAssetId);
+    const cards = project.shots.slice(range.start, range.end).map((shot, offset) => workbenchShotCard(shot, range.start + offset, locked)).join('');
+    // Window replacement detaches the previous cards. Stop observing those nodes
+    // before replacing them so long scroll sessions do not retain stale DOM/media.
+    virtualShotResizeObserver?.disconnect();
+    virtualShotResizeObserver = null;
+    scroll.querySelectorAll('[data-wb-video-src]').forEach(video => workbenchVideoObserver?.unobserve(video));
+    scroll.innerHTML = `<div data-wb-virtual-spacer="top" aria-hidden="true"></div><div data-wb-virtual-items>${cards}</div><div data-wb-virtual-spacer="bottom" aria-hidden="true"></div>${locked ? workbenchFinalCut(project.finalAssetId) : ''}`;
+    // Set the spacer geometry before restoring scrollTop; otherwise the browser
+    // can clamp a deep position to the short, newly-mounted window.
+    updateVirtualSpacers(scroll);
+    scroll.scrollTop = previousScrollTop;
+    const taskById = new Map(state.tasks.map(item => [item.id, item]));
+    const fileById = new Map(state.files.map(item => [item.id, item]));
+    project.shots.slice(range.start, range.end).forEach(shot => shotPreviewSignatures.set(shot.id, shotPreviewRenderSignatureFromMaps(shot, taskById, fileById)));
+    bindStoryboardWorkbench({ focus:false, cardsOnly:true });
+    updateVirtualSpacers(scroll);
+    observeVirtualShotHeights(scroll);
   }
 
   function renderProfessionalWorkspace({focus=true}={}){
     if(!project.shots.length){ project.shots.push(createProfessionalShot(1)); queueProfessionalSave(); }
+    if (virtualShotProjectId !== project.id) {
+      virtualShotHeights.clear();
+      virtualShotProjectId = project.id;
+    }
     professionalShotId=project.shots.some(shot=>shot.id===professionalShotId)?professionalShotId:project.shots[0]?.id||'';
     professionalPreviewShotId=project.shots.some(shot=>shot.id===professionalPreviewShotId)?professionalPreviewShotId:professionalShotId;
     seedProjectAssets();
     const locked=Boolean(project.finalAssetId);
     const completed=project.shots.filter(item=>task(item.selectedVideoTaskId)?.status==='completed').length;
     const previewShot=project.shots.find(item=>item.id===professionalPreviewShotId)||project.shots[0];
+    resetWorkbenchVideoObserver();
+    resetVirtualShotWindow();
     root.innerHTML=`<section class="professional-workspace storyboard-workbench ${locked?'is-locked':''}" aria-label="短剧分镜创作工作台">
       ${projectAssetsPanel(locked)}
       <main class="professional-shot-editor wb-editor-panel">
-        <div class="professional-shot-editor-scroll wb-shot-scroll">${project.shots.map((item,index)=>workbenchShotCard(item,index,locked)).join('')}${locked?workbenchFinalCut(project.finalAssetId):''}</div>
+        <div class="professional-shot-editor-scroll wb-shot-scroll"><div data-wb-virtual-spacer="top" aria-hidden="true"></div><div data-wb-virtual-items></div><div data-wb-virtual-spacer="bottom" aria-hidden="true"></div></div>
         <footer class="wb-action-bar"><button type="button" class="wb-add-shot secondary-button" ${locked?'disabled':''}>＋ 添加分镜</button>${project.shots.length>2&&!locked?`<button type="button" class="wb-assemble stage-next" ${completed===project.shots.length?'':'disabled'}>分镜合成 <span>${completed}/${project.shots.length}</span></button>`:''}${locked?'<span class="wb-locked-note">成片已生成，后续不可继续添加分镜和编辑</span>':''}</footer>
       </main>
     </section>`;
-    bindStoryboardWorkbench({focus});
+    shotPreviewSignatures.clear();
+    const taskById=new Map(state.tasks.map(item=>[item.id,item]));const fileById=new Map(state.files.map(item=>[item.id,item]));
+    project.shots.forEach(shot=>shotPreviewSignatures.set(shot.id,shotPreviewRenderSignatureFromMaps(shot,taskById,fileById)));
+    bindStoryboardWorkbench({focus:false});
+    renderProfessionalShotWindow({ force:true });
+    if(focus)root.querySelector('.wb-shot-card:not(.is-locked) .wb-rich-input[contenteditable="true"]')?.focus();
   }
 
   function createProfessionalShot(index){
@@ -285,7 +459,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
 
   function projectAssetMedia(file){
     if(file.kind==='image')return assetImageMarkup(file, file.name);
-    if(file.kind==='video')return `<video src="${esc(file.url)}" muted preload="metadata"></video><span class="wb-media-play">▶</span>`;
+    if(file.kind==='video')return `${workbenchVideoMarkup(file.url,'muted playsinline')}<span class="wb-media-play">▶</span>`;
     return '<span class="wb-audio-mark">♫</span>';
   }
 
@@ -299,7 +473,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function mentionChipMarkup(mention){
     const file=asset(mention.id); if(!file)return esc(`@${mentionLabel(mention)}`);
     const label=mentionLabel(mention,file);
-    const preview=file.kind==='image'?assetImageMarkup(file, label):file.kind==='video'?`<video src="${esc(file.url)}" muted preload="metadata"></video><i>▶</i>`:'<b>♫</b>';
+    const preview=file.kind==='image'?assetImageMarkup(file, label):file.kind==='video'?`${workbenchVideoMarkup(file.url,'muted playsinline')}<i>▶</i>`:'<b>♫</b>';
     return `<span class="wb-mention-chip" data-mention-id="${esc(file.id)}" data-mention-label="${esc(label)}" data-mention-kind="${esc(file.kind)}" contenteditable="false" aria-label="引用${esc(label)}，${mentionKindLabel(file.kind)}"><span class="wb-mention-thumb">${preview}</span><span class="wb-mention-name">${esc(label)}</span></span>`;
   }
   function renderMentionEditorContent(shot){
@@ -528,8 +702,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const selectedFile=taskAsset(shot?.selectedVideoTaskId);
     const selectedTask=task(shot?.selectedVideoTaskId);
     const versions=(shot?.videoVersions||[]).map(id=>({id,file:taskAsset(id),task:task(id)}));
-    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频"><video src="${selectedFile.url}" muted playsinline preload="metadata"></video><span class="wb-preview-expand">点击查看大视频</span></button>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${selectedTask?.status==='running'?'视频生成中…':'生成后在这里预览'}</b></div>`;
-    const versionStrip=versions.length?`<div class="wb-preview-versions" aria-label="视频版本">${versions.map(item=>`<button type="button" class="wb-preview-thumb ${item.id===shot.selectedVideoTaskId?'selected':''}" data-wb-preview-video="${item.id}" data-wb-preview-shot="${shot.id}" aria-label="点击查看${esc(shot.title)}第${String(versions.indexOf(item)+1).padStart(2,'0')}版大视频"><span>${item.file?`<video src="${item.file.url}" muted preload="metadata"></video>`:'<i>…</i>'}</span><b>${String(versions.indexOf(item)+1).padStart(2,'0')}</b></button>`).join('')}</div>`:'';
+    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile.url,'muted playsinline')}<span class="wb-preview-expand">点击查看大视频</span></button>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${selectedTask?.status==='running'?'视频生成中…':selectedTask?.status==='queued'?'视频排队中…':'生成后在这里预览'}</b></div>`;
+    const versionStrip=versions.length?`<div class="wb-preview-versions" aria-label="视频版本">${versions.map(item=>`<button type="button" class="wb-preview-thumb ${item.id===shot.selectedVideoTaskId?'selected':''}" data-wb-preview-video="${item.id}" data-wb-preview-shot="${shot.id}" aria-label="点击查看${esc(shot.title)}第${String(versions.indexOf(item)+1).padStart(2,'0')}版大视频"><span>${item.file?workbenchVideoMarkup(item.file.url,'muted playsinline'):'<i>…</i>'}</span><b>${String(versions.indexOf(item)+1).padStart(2,'0')}</b></button>`).join('')}</div>`:'';
     return `<section class="wb-shot-preview" aria-label="${esc(shot?.title||'分镜')}预览"><header><b>预览</b><span>${versions.length?`${versions.length} 个版本`:'暂无视频'}</span></header><div class="wb-preview-stage" style="--video-ratio:${ratioCss(shot?.aspectRatio||'9:16')}">${media}</div>${versionStrip}</section>`;
   }
 
@@ -564,7 +738,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const references=workbenchReferenceRow(shot);
     const editorContent=shot.script.trim()?renderMentionEditorContent(shot):richEditorEmptyChar;
     const tooltip=capability.message||'';
-    return `<article class="wb-shot-card ${active?'is-active':''} ${status==='completed'?'is-generated':''}" data-wb-shot="${shot.id}">
+    return `<article class="wb-shot-card ${active?'is-active':''} ${status==='completed'?'is-generated':''}" data-wb-shot="${shot.id}" data-wb-shot-index="${index}">
       <div class="wb-shot-legend"><input class="wb-shot-title" data-wb-field="title" value="${esc(shot.title)}" maxlength="120" aria-label="分镜${index+1}名称" style="width:${workbenchTitleWidth(shot.title)}px" ${locked?'disabled':''}></div><button type="button" class="wb-shot-delete" data-wb-delete-shot="${shot.id}" aria-label="删除${esc(shot.title)}" title="删除分镜" ${locked?'disabled':''}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
       <div class="wb-shot-layout"><section class="wb-shot-edit-column"><label class="wb-prompt-label" for="wb-script-${shot.id}">输入分镜内容</label><div id="wb-script-${shot.id}" class="wb-rich-input ${references?'has-reference':''}" data-wb-rich-editor="script" data-shot-id="${shot.id}" data-empty="${shot.script.trim()?'false':'true'}" data-placeholder="${esc(placeholder)}" contenteditable="${locked?'false':'true'}" role="textbox" aria-multiline="true" aria-label="分镜${index+1}内容">${references}${editorContent}</div><footer class="wb-shot-controls"><button type="button" class="wb-control-plus" data-wb-add-reference="${shot.id}" aria-label="添加分镜参考素材" ${locked?'disabled':''}>＋</button><div class="wb-control-select wb-model-select">${modelSelect}</div><div class="wb-dropdown-control wb-mode-control">${modeSelect}</div><div class="wb-dropdown-control wb-specs-control">${specs}</div><button type="button" class="wb-generate-button" data-wb-generate="${shot.id}" ${locked||!capability.ok?'disabled':''} title="${esc(tooltip)}"><span class="wb-credit-pill">◈ ${creditText(cost)}</span><span>${status==='completed'?'再次生成':'生成'}</span></button></footer></section>${workbenchShotPreview(shot)}</div>
     </article>`;
@@ -589,6 +763,40 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     if(!card||!shot)return;const capability=professionalCapabilityState(shot);const generate=card.querySelector('[data-wb-generate]');if(generate){generate.disabled=Boolean(project.finalAssetId||!capability.ok);generate.title=capability.message||'';const credits=generate.querySelector('.wb-credit-pill');if(credits)credits.textContent=`◈ ${creditText(professionalVideoCost(shot))}`;}const editor=card.querySelector('.wb-rich-input');if(editor)editor.dataset.empty=shot.script.trim()?'false':'true';
   }
 
+  function bindWorkbenchPreviewActions(scope=root){
+    scope.querySelectorAll('[data-wb-preview-file]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();openProfessionalMediaPreview(button.dataset.wbPreviewFile);}));
+    scope.querySelectorAll('[data-wb-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();professionalPreviewShotId=button.dataset.wbPreviewShot;professionalShotId=button.dataset.wbPreviewShot;const shot=project.shots.find(item=>item.id===professionalShotId);const selectedTask=task(button.dataset.wbPreviewVideo);const selectedFile=taskAsset(button.dataset.wbPreviewVideo);const canPreview=Boolean(selectedFile&&selectedTask?.status==='completed');activateProfessionalShot(professionalShotId);if(shot&&canPreview){shot.selectedVideoTaskId=button.dataset.wbPreviewVideo;queueProfessionalSave();patchProfessionalTaskSurfaces();openProfessionalMediaPreview(selectedFile.id);}}));
+  }
+
+  function patchProfessionalTaskSurfaces(){
+    let completed=0;
+    const taskById=new Map(state.tasks.map(item=>[item.id,item]));const fileById=new Map(state.files.map(item=>[item.id,item]));
+    project.shots.forEach(shot=>{
+      const selectedStatus=task(shot.selectedVideoTaskId)?.status;
+      if(selectedStatus==='completed')completed+=1;
+      const card=root.querySelector(`[data-wb-shot="${CSS.escape(shot.id)}"]`);
+      if(!card)return;
+      card.classList.toggle('is-generated',selectedStatus==='completed');
+      const generateLabel=card.querySelector('[data-wb-generate] span:last-child');
+      if(generateLabel)generateLabel.textContent=selectedStatus==='completed'?'再次生成':'生成';
+      const signature=shotPreviewRenderSignatureFromMaps(shot,taskById,fileById);
+      if(signature===shotPreviewSignatures.get(shot.id))return;
+      shotPreviewSignatures.set(shot.id,signature);
+      const current=card.querySelector('.wb-shot-preview');
+      if(!current)return;
+      current.querySelectorAll('[data-wb-video-src]').forEach(video=>workbenchVideoObserver?.unobserve(video));
+      const template=document.createElement('template');
+      template.innerHTML=workbenchShotPreview(shot);
+      const next=template.content.firstElementChild;
+      current.replaceWith(next);
+      bindWorkbenchPreviewActions(next);
+      bindWorkbenchVideoRatios(next);
+      hydrateWorkbenchVideos(next);
+    });
+    const assemble=root.querySelector('.wb-assemble');
+    if(assemble){assemble.disabled=completed!==project.shots.length;const count=assemble.querySelector('span');if(count)count.textContent=`${completed}/${project.shots.length}`;}
+  }
+
   function activateProfessionalShot(id){
     if(!project.shots.some(shot=>shot.id===id))return;
     professionalShotId=id;
@@ -596,7 +804,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     root.querySelectorAll('[data-wb-shot]').forEach(item=>item.classList.toggle('is-active',item.dataset.wbShot===id));
   }
 
-  function bindStoryboardWorkbench({focus=true}={}){
+  function bindStoryboardWorkbench({focus=true,cardsOnly=false}={}){
     const updateShot=(id,field,value)=>{const shot=project.shots.find(item=>item.id===id);if(!shot||project.finalAssetId)return false;let target=shot;if(field==='generation.type'){if(value==='TEXT'&&shotReferenceIds(target).length){toast('当前分镜已有参考素材，不能切换为文本生成');return false;}if(value==='FIRST&LAST'&&shotReferenceIds(target).length){toast('当前分镜已有参考素材，请先移除后再使用首尾帧');return false;}const model=state.config?.videoCapabilities?.models?.find(item=>item.id===target.generation.modelId);if(!model?.modes?.some(mode=>mode.generationType===value)){toast('当前模型不支持该生成模式，请先切换模型');return false;}target.generation.type=value;target.generation.referenceAssetIds=value==='TEXT'||value==='FIRST&LAST'?[]:target.generation.referenceAssetIds;ensureProfessionalVideoSettings(target);}else if(field==='generation.modelId'){const models=professionalVideoModels(target);if(!models.some(model=>model.id===value&&professionalModelIsAvailable(model))){toast('当前模型不可用或不支持此模式');return false;}target.generation.modelId=value;ensureProfessionalVideoSettings(target);}else target[field]=field==='duration'?Number(value):value;target.action=field==='script'?value:target.action;target.visualDirection=field==='script'?value:target.visualDirection;invalidateProfessionalShot(target,'分镜参数已修改');queueProfessionalSave();return true;};
     bindWorkbenchDropdowns();
     root.querySelectorAll('[data-wb-shot]').forEach(card=>{
@@ -623,18 +831,21 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       card.querySelectorAll('[data-wb-remove-reference]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();removeWorkbenchReference(id,button.dataset.wbRemoveReference);}));
       card.querySelector('[data-wb-generate]')?.addEventListener('click',async event=>{event.stopPropagation();professionalShotId=id;professionalPreviewShotId=id;await generateProfessionalVideo();});
     });
+    bindWorkbenchPreviewActions();
+    bindWorkbenchVideoRatios();
+    hydrateWorkbenchVideos();
+    if(cardsOnly){
+      if(focus)root.querySelector('.wb-shot-card:not(.is-locked) .wb-rich-input[contenteditable="true"]')?.focus();
+      return;
+    }
     root.querySelector('.wb-add-asset')?.addEventListener('click',()=>openProjectAssetDialog('other'));
     root.querySelectorAll('[data-project-asset-add]').forEach(button=>button.addEventListener('click',()=>openProjectAssetDialog(button.dataset.projectAssetAdd)));
     root.querySelectorAll('[data-project-asset]').forEach(tile=>{const activate=()=>{if(tile.disabled||tile.getAttribute('aria-disabled')==='true')return;projectAssetCategory=tile.dataset.projectAssetKind||'other';applyProjectAssetToShot(tile.dataset.projectAsset,professionalShotId);};tile.addEventListener('click',event=>{if(event.target.closest?.('[data-project-asset-remove]'))return;activate();});tile.addEventListener('keydown',event=>{if(event.target.closest?.('[data-project-asset-remove]'))return;if(event.key!=='Enter'&&event.key!==' ')return;event.preventDefault();activate();});});
     root.querySelectorAll('[data-project-asset-remove]').forEach(button=>button.addEventListener('click',async event=>{event.stopPropagation();await removeProjectAsset(button.dataset.projectAssetRemove);}));
     root.querySelector('.wb-add-shot')?.addEventListener('click',addProfessionalShot);
     root.querySelector('.wb-assemble')?.addEventListener('click',assembleProfessionalProject);
-    root.querySelectorAll('[data-wb-preview-file]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();openProfessionalMediaPreview(button.dataset.wbPreviewFile);}));
-    root.querySelectorAll('[data-wb-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();professionalPreviewShotId=button.dataset.wbPreviewShot;professionalShotId=button.dataset.wbPreviewShot;const shot=project.shots.find(item=>item.id===professionalShotId);const selectedTask=task(button.dataset.wbPreviewVideo);const selectedFile=taskAsset(button.dataset.wbPreviewVideo);const canPreview=Boolean(selectedFile&&selectedTask?.status==='completed');if(shot&&canPreview){shot.selectedVideoTaskId=button.dataset.wbPreviewVideo;queueProfessionalSave();}render(true,{focus:false});if(canPreview)openProfessionalMediaPreview(selectedFile.id);}));
-    root.querySelector('.wb-shot-scroll')?.addEventListener('scroll',()=>{closeWorkbenchDropdowns();closeMentionPicker();},{passive:true});
-    if(!mentionDismissBound||!workbenchDropdownDismissBound){document.addEventListener('pointerdown',event=>{if(!event.target.closest('#wbMentionPicker,.wb-rich-input'))closeMentionPicker();if(!event.target.closest('#wbDropdownPortal,.wb-dropdown,.wb-spec-control'))closeWorkbenchDropdowns();});window.addEventListener('resize',()=>{closeWorkbenchDropdowns();closeMentionPicker();},{passive:true});mentionDismissBound=true;workbenchDropdownDismissBound=true;}
-    bindWorkbenchVideoRatios();
-    if(focus)root.querySelector('.wb-shot-card:not(.is-locked) .wb-rich-input[contenteditable="true"]')?.focus();
+    root.querySelector('.wb-shot-scroll')?.addEventListener('scroll',()=>{closeWorkbenchDropdowns();closeMentionPicker();scheduleVirtualShotWindow();},{passive:true});
+    if(!mentionDismissBound||!workbenchDropdownDismissBound){document.addEventListener('pointerdown',event=>{if(!event.target.closest('#wbMentionPicker,.wb-rich-input'))closeMentionPicker();if(!event.target.closest('#wbDropdownPortal,.wb-dropdown,.wb-spec-control'))closeWorkbenchDropdowns();});window.addEventListener('resize',()=>{closeWorkbenchDropdowns();closeMentionPicker();scheduleVirtualShotWindow();},{passive:true});mentionDismissBound=true;workbenchDropdownDismissBound=true;}
   }
 
   function applyProjectAssetToShot(assetId,shotId){
@@ -698,7 +909,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
   function paintProjectAssetDialog(){
     const dialog=document.querySelector('#projectAssetDialog');if(!dialog)return;const query=projectAssetQuery.trim().toLocaleLowerCase('zh-CN');const files=state.files.filter(file=>['image','video','audio'].includes(file.kind)&&(!query||String(file.name).toLocaleLowerCase('zh-CN').includes(query)));const chosen=new Set(projectAssetSelection);const categoryLabel={characters:'人物',locations:'场景',props:'物品',other:'其他'}[projectAssetCategory]||'其他';
-    dialog.innerHTML=`<div class="dialog-head"><div><h2>添加${categoryLabel}资产</h2><p>上传本地素材，或从文件库选择图片、视频、音频。</p></div><button type="button" data-project-asset-close aria-label="关闭">×</button></div><div class="project-asset-dialog-toolbar"><label><span>文件库</span><input id="projectAssetSearch" type="search" value="${esc(projectAssetQuery)}" placeholder="搜索文件名"></label><button type="button" class="secondary-button" data-project-asset-upload>↑ 上传素材</button><span>已选 ${projectAssetSelection.length} 个</span></div><div class="project-asset-dialog-grid">${files.map(file=>`<button type="button" class="${chosen.has(file.id)?'selected':''}" data-project-asset-option="${file.id}">${projectAssetMedia(file)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('')||'<p>文件库中还没有可用素材。</p>'}</div><footer><button type="button" class="secondary-button" data-project-asset-close>取消</button><button type="button" class="gradient-button" data-project-asset-confirm>加入项目</button></footer>`;
+    dialog.querySelectorAll('[data-wb-video-src]').forEach(video=>workbenchVideoObserver?.unobserve(video));dialog.innerHTML=`<div class="dialog-head"><div><h2>添加${categoryLabel}资产</h2><p>上传本地素材，或从文件库选择图片、视频、音频。</p></div><button type="button" data-project-asset-close aria-label="关闭">×</button></div><div class="project-asset-dialog-toolbar"><label><span>文件库</span><input id="projectAssetSearch" type="search" value="${esc(projectAssetQuery)}" placeholder="搜索文件名"></label><button type="button" class="secondary-button" data-project-asset-upload>↑ 上传素材</button><span>已选 ${projectAssetSelection.length} 个</span></div><div class="project-asset-dialog-grid">${files.map(file=>`<button type="button" class="${chosen.has(file.id)?'selected':''}" data-project-asset-option="${file.id}">${projectAssetMedia(file)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('')||'<p>文件库中还没有可用素材。</p>'}</div><footer><button type="button" class="secondary-button" data-project-asset-close>取消</button><button type="button" class="gradient-button" data-project-asset-confirm>加入项目</button></footer>`;hydrateWorkbenchVideos(dialog);
     dialog.querySelectorAll('[data-project-asset-close]').forEach(button=>button.onclick=()=>{projectAssetTargetShotId='';dialog.close();});dialog.querySelector('#projectAssetSearch')?.addEventListener('input',event=>{projectAssetQuery=event.target.value;paintProjectAssetDialog();});dialog.querySelectorAll('[data-project-asset-option]').forEach(button=>button.onclick=()=>{const id=button.dataset.projectAssetOption;projectAssetSelection=projectAssetSelection.includes(id)?projectAssetSelection.filter(value=>value!==id):[...projectAssetSelection,id];paintProjectAssetDialog();});dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async()=>{try{const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});if(file){projectAssetSelection=[...new Set([...projectAssetSelection,file.id])];projectAssetCategories.set(file.id,projectAssetCategory);state.files=[file,...state.files.filter(item=>item.id!==file.id)];paintProjectAssetDialog();}}catch(error){toast(error.message);}});dialog.querySelector('[data-project-asset-confirm]')?.addEventListener('click',()=>{const selected=[...projectAssetSelection];const targetShot=projectAssetTargetShotId?project.shots.find(item=>item.id===projectAssetTargetShotId):null;selected.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));projectAssetIds=[...new Set([...projectAssetIds,...selected])];project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);if(targetShot){selected.forEach(id=>addReferenceAssetToShot(targetShot,id));ensureProfessionalVideoSettings(targetShot);invalidateProfessionalShot(targetShot,'参考素材已加入本镜');queueProfessionalSave();professionalPreviewShotId=targetShot.id;}projectAssetTargetShotId='';queueSave('projectAssetIds','projectAssetCategories');dialog.close();render(true,{focus:false});toast(targetShot?`已添加 ${selected.length} 个分镜参考`:`已添加 ${selected.length} 个项目资产`);});
   }
 
@@ -781,8 +992,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       if(video.readyState>=1)sync();else video.addEventListener('loadedmetadata',sync,{once:true});
     });
   }
-  function bindWorkbenchVideoRatios(){
-    root.querySelectorAll('.wb-preview-stage video').forEach(video=>{
+  function bindWorkbenchVideoRatios(scope=root){
+    scope.querySelectorAll('.wb-preview-stage video').forEach(video=>{
       const stage=video.closest('.wb-preview-stage');
       const sync=()=>{if(stage&&video.videoWidth&&video.videoHeight)stage.style.setProperty('--video-ratio',`${video.videoWidth} / ${video.videoHeight}`);};
       if(video.readyState>=1)sync();else video.addEventListener('loadedmetadata',sync,{once:true});

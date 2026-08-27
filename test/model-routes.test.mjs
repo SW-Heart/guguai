@@ -5,7 +5,9 @@ import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import {
   __test as routeTest,
   checkModelRoutes,
+  createModelRoute,
   ensureDefaultModelRoutes,
+  listModelRouteChannels,
   listModelRoutes,
   publicModelPrices,
   selectModelRoute,
@@ -104,5 +106,23 @@ test('Seedance route selection, pricing and catalog health', async t => {
     await checkModelRoutes({ routeIds: ['sd20-fast-720-diw-ed'], fetchImpl: response(['ed-seedance 2.0 fast 720p']) });
     assert.equal(sql("SELECT catalog_status FROM model_routes WHERE id='sd20-fast-720-diw-ed'").get().catalog_status, 'available');
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.0-fast' && item.quality === '720p').available, true);
+  });
+
+  await t.test('admin can add a channel route with an independent user price', () => {
+    const channels = listModelRouteChannels();
+    assert.equal(channels.find(item => item.id === 'wj-py900').configured, true);
+    const created = createModelRoute({
+      logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'wj-py900', upstreamModelId: 'custom-seedance-720p',
+      priority: 12, costYuan: 1.23, salePriceYuan: 4.56,
+    }, { actorUserId: 'admin' });
+    assert.equal(created.costYuan, 1.23);
+    assert.equal(created.salePriceYuan, 4.56);
+    assert.equal(created.salePriceCredits, 45.6);
+    assert.equal(created.salePriceConfigured, true);
+    assert.equal(created.catalogStatus, 'unknown');
+    assert.throws(() => createModelRoute({
+      logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'wj-py900', upstreamModelId: 'custom-seedance-720p',
+      priority: 13, costYuan: 1, salePriceYuan: 2,
+    }), /相同的上游模型 ID/);
   });
 });

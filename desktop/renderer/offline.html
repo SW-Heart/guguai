@@ -7,6 +7,17 @@
   <style>
     :root { color-scheme: dark; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #080c11; color: #eef5f2; }
     body { min-height: 100vh; margin: 0; padding: 32px; background: radial-gradient(circle at 50% 0, #17352c 0, transparent 42%), #080c11; }
+    body.desktop-runtime { padding-top: 56px; }
+    body.desktop-runtime:not(.desktop-darwin) { padding-top: 72px; }
+    .hidden { display: none !important; }
+    .desktop-drag-region { position: fixed; z-index: 10; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; }
+    .desktop-window-controls { position: fixed; z-index: 20; top: 0; right: 0; height: 56px; display: flex; border-left: 1px solid #26352f; background: rgba(16,23,27,.92); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
+    .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: #9baaa5; background: transparent; display: grid; place-items: center; cursor: pointer; -webkit-app-region: no-drag; }
+    .desktop-window-controls button:hover { color: #eef5f2; background: #24352f; }
+    .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
+    .desktop-window-controls .window-close:hover { color: #fff; background: #b94a54; }
+    .desktop-window-controls .window-icon { width: 13px; height: 13px; }
+    .desktop-window-controls button:focus-visible { outline: 2px solid #8cf0ca; outline-offset: -2px; }
     main { width: min(980px, 100%); margin: 0 auto; padding: 38px; border: 1px solid #26352f; border-radius: 20px; background: #10171b; box-shadow: 0 24px 80px #0008; }
     .mark { color: #8cf0ca; font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; }
     h1 { margin: 12px 0 8px; font-size: 26px; } p { color: #9baaa5; line-height: 1.65; font-size: 14px; }
@@ -18,6 +29,12 @@
   </style>
 </head>
 <body>
+  <div id="desktopDragRegion" class="desktop-drag-region hidden" aria-hidden="true"></div>
+  <div id="desktopWindowControls" class="desktop-window-controls hidden" role="group" aria-label="窗口控制">
+    <button id="windowMinimize" type="button" aria-label="最小化窗口" title="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+    <button id="windowMaximize" type="button" aria-label="最大化窗口" title="最大化"><svg class="window-icon maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg><svg class="window-icon restore-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v10H8z"/><path d="M6 16H5V6h10v1"/></svg></button>
+    <button id="windowClose" class="window-close" type="button" aria-label="关闭窗口" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </div>
   <main>
     <span class="mark">GUGU AI / DESKTOP</span>
     <h1>创作服务暂时无法连接</h1>
@@ -41,7 +58,28 @@
     const localGrid = document.querySelector('#localGrid');
     const localSummary = document.querySelector('#localSummary');
     const localSearch = document.querySelector('#localSearch');
+    const windowControls = document.querySelector('#desktopWindowControls');
+    const dragRegion = document.querySelector('#desktopDragRegion');
     let localAssets = [];
+    function setupWindowControls(info) {
+      document.body.classList.add('desktop-runtime', `desktop-${info?.platform || 'win32'}`);
+      const windowApi = window.guguDesktop?.window;
+      if (!windowApi || info?.platform === 'darwin') return;
+      windowControls.classList.remove('hidden');
+      dragRegion.classList.remove('hidden');
+      const updateState = maximized => {
+        const isMaximized = Boolean(maximized);
+        document.querySelector('#windowMaximize')?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
+        document.querySelector('#windowMaximize').title = isMaximized ? '还原' : '最大化';
+        document.querySelector('.maximize-icon')?.classList.toggle('hidden', isMaximized);
+        document.querySelector('.restore-icon')?.classList.toggle('hidden', !isMaximized);
+      };
+      document.querySelector('#windowMinimize').onclick = () => void windowApi.minimize();
+      document.querySelector('#windowMaximize').onclick = () => void windowApi.toggleMaximize();
+      document.querySelector('#windowClose').onclick = () => void windowApi.close();
+      windowApi.onState?.(payload => updateState(payload?.maximized));
+      Promise.resolve(windowApi.isMaximized?.()).then(updateState).catch(() => updateState(false));
+    }
     const message = new URLSearchParams(location.search).get('message');
     detail.textContent = message || '未提供错误信息';
     const kindOf = item => item.kind || (String(item.mimeType || '').startsWith('image/') ? 'image' : String(item.mimeType || '').startsWith('video/') ? 'video' : String(item.mimeType || '').startsWith('audio/') ? 'audio' : '');
@@ -66,7 +104,7 @@
     }
     localSearch.oninput = renderLocal;
     window.guguDesktop?.media?.listLocal?.().then(assets => { localAssets = Array.isArray(assets) ? assets : []; renderLocal(); }).catch(error => { localSummary.textContent = `本地工作区读取失败：${error.message}`; });
-    window.guguDesktop?.getInfo?.().then(info => { apiBase.value = info.apiBase || ''; updateUrl.value = info.updateUrl || ''; }).catch(() => {});
+    window.guguDesktop?.getInfo?.().then(info => { apiBase.value = info.apiBase || ''; updateUrl.value = info.updateUrl || ''; setupWindowControls(info); }).catch(() => {});
     document.querySelector('#saveAndRetry').onclick = async () => { const button = document.querySelector('#saveAndRetry'); button.disabled = true; detail.textContent = '正在保存地址并连接…'; try { await window.guguDesktop?.setApiBase?.(apiBase.value); } catch (error) { detail.textContent = error.message; button.disabled = false; } };
     document.querySelector('#retry').onclick = () => window.guguDesktop?.retry?.() || location.reload();
     document.querySelector('#saveUpdateUrl').onclick = async () => { const button = document.querySelector('#saveUpdateUrl'); button.disabled = true; detail.textContent = '正在保存自动更新地址…'; try { const result = await window.guguDesktop?.setUpdateUrl?.(updateUrl.value); detail.textContent = result?.restartRequired ? '更新地址已保存，请重启客户端后生效。' : '更新地址已保存。'; } catch (error) { detail.textContent = error.message; } finally { button.disabled = false; } };

@@ -213,15 +213,20 @@ test('store pagination', async t => {
     assert.deepEqual(findGeneration(userId, 'rt-1'), task, '记录应逐字段往返一致');
   });
 
-  await t.test('pending generations query only returns non-terminal tasks', () => {
+  await t.test('pending generations query includes results waiting for local delivery or backup', () => {
     const userId = makeUser();
     const statuses = ['queued', 'running', 'completed', 'failed'];
     for (const [i, status] of statuses.entries()) {
       const createdAt = new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString();
       saveGenerationRecord(userId, { id: `s-${status}`, type: 'image', status, createdAt, updatedAt: createdAt });
     }
+    saveGenerationRecord(userId, {
+      id: 's-awaiting-backup', type: 'image', status: 'completed', sourceUrl: 'https://upstream.example/result.png',
+      archivePending: true, createdAt: '2026-01-01T00:05:00.000Z', updatedAt: '2026-01-01T00:05:00.000Z',
+    });
     const pending = listPendingGenerations();
-    assert.deepEqual(pending.map(p => p.task.status).sort(), ['queued', 'running']);
+    assert.deepEqual(pending.map(p => p.task.status).sort(), ['completed', 'queued', 'running']);
+    assert.ok(pending.some(p => p.task.id === 's-awaiting-backup'));
     assert.ok(pending.every(p => p.userId === userId));
   });
 

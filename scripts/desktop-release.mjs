@@ -126,12 +126,14 @@ if (missing.length) throw new Error(`缺少 OSS 配置：${missing.join(', ')}`)
 if (!publicUrl) throw new Error('发布时必须提供 DESKTOP_UPDATE_PUBLIC_URL 或 GUGU_UPDATE_URL');
 if (!apiBase) throw new Error('发布时必须提供 DESKTOP_API_BASE 或 GUGU_API_BASE');
 
+const ossTimeout = Number(process.env.ALIYUN_OSS_TIMEOUT_MS || 600000);
 const client = new OSS({
   accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
   accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET,
   endpoint: process.env.ALIYUN_OSS_ENDPOINT,
   bucket: process.env.ALIYUN_OSS_BUCKET,
   secure: true,
+  timeout: Number.isFinite(ossTimeout) && ossTimeout > 0 ? ossTimeout : 600000,
 });
 
 for (const name of files) {

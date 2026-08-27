@@ -247,7 +247,8 @@ GuGu AI Projects/
 
 - 从客户端导入的图片、视频、音频会先复制到 `library/` 并计算 SHA-256；相同内容再次导入会直接复用本地文件。
 - 导入完成后再向服务端发起 OSS 直传或兼容上传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
-- AI 生成完成后，客户端通过服务端签名下载地址把成品自动落到本地 `library/`；文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
+- AI 生成完成后，客户端优先通过受保护的交付地址直接从上游结果链接把成品落到本地 `library/`；上游需要鉴权时由服务端代为转发，避免把密钥交给客户端。文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
+- 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传 OSS；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到 OSS，作为临时兜底和跨设备来源。
 - 客户端启动时先读取本地索引；网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。联网后会在后台补齐尚未落地的历史云端素材。
 - 云端 OSS 是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
 
@@ -296,7 +297,7 @@ npm run desktop:release -- --win
 2. 确认 `DESKTOP_API_BASE` 是线上 API 的 HTTPS 地址，`DESKTOP_UPDATE_PUBLIC_URL` 是浏览器可访问的更新 feed 地址；并准备 OSS 四项凭据。
 3. 执行带两个地址的 `npm run desktop:release` 检查文件清单。
 4. 执行 `DESKTOP_API_BASE=https://api.example.com DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai npm run desktop:release -- --publish`。
-5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。macOS 发现新版本后会在后台下载 DMG，完成完整性校验后自动打开系统安装窗口；其他平台继续使用 electron-updater 的原生安装流程。
+5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。macOS 发现新版本后会在后台下载并校验 DMG，然后提示“退出并安装”；确认后客户端会先完全退出，再打开系统安装窗口。其他平台继续使用 electron-updater 的原生安装流程。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 
@@ -304,7 +305,7 @@ npm run desktop:release -- --win
 
 目前这是本机一键发布流程，还没有绑定 GitHub Actions 等 CI。后续如果确定代码托管平台，可以再把同一条命令接到打 tag 自动构建发布。当前 Codex 环境已提供 `gugu-desktop-release` skill；下次直接说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单，只有明确要求上传时才执行 OSS 发布。
 
-未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包，再自动挂载并打开系统安装窗口。产品内仍显示原有「更新」按钮，用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
+未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包。用户确认“退出并安装”后，会启动独立安装引导进程，GuGu AI 完全退出后才挂载并打开 DMG，避免 Finder 因旧版本仍在运行而无法覆盖。随后用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
 
 取得 `Developer ID Application` 证书后，可再切回签名应用的原生自动替换流程并配置 Apple 公证。证书应通过钥匙串或 `CSC_LINK`、`CSC_KEY_PASSWORD` 注入，不要提交到仓库。
 
@@ -588,7 +589,7 @@ npm run migrate -- --verify
 
 ### 备份与恢复
 
-元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和生成结果归档后，媒体主副本保存在 OSS，生成结果使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认 OSS 对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
+元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到 OSS，生成结果归档使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认 OSS 对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
 
 桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和 OSS 关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library-index.json` 与 `library/` 必须一起备份，不能只备份索引文件。
 

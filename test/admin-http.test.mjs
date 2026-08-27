@@ -79,6 +79,13 @@ test('admin HTTP permissions and core workflows', async t => {
   const models = await admin.call('/api/admin/models');
   assert.equal(models.response.status, 200);
   assert.ok(models.data.items.some(item => item.modelId === 'grok'));
+  const routes = await admin.call('/api/admin/model-routes');
+  assert.equal(routes.response.status, 200);
+  assert.ok(routes.data.channels.some(item => item.id === 'diw-main'));
+  const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
+  assert.equal(createdRoute.response.status, 201);
+  assert.equal(createdRoute.data.route.salePriceYuan, 2.2);
+  assert.equal(createdRoute.data.route.adminEnabled, false);
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
   const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
@@ -102,12 +109,17 @@ test('admin HTTP permissions and core workflows', async t => {
   const users = await admin.call('/api/admin/users?query=http_user');
   assert.equal(users.data.items.length, 1);
   const target = users.data.items[0];
+  assert.equal(target.totalSpent, 0);
   const adjustment = await admin.call(`/api/admin/users/${target.id}/credit-adjustments`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { amount: '-1.25', reasonCode: 'customer_service', note: 'http test', idempotencyKey: 'http-adjust-1' } });
   assert.equal(adjustment.response.status, 200);
   assert.equal(adjustment.data.balance, 3.25);
   const replay = await admin.call(`/api/admin/users/${target.id}/credit-adjustments`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { amount: '-1.25', reasonCode: 'customer_service', note: 'http test', idempotencyKey: 'http-adjust-1' } });
   assert.equal(replay.response.status, 200);
   assert.equal(replay.data.replay, true);
+  const usersAfterAdjustment = await admin.call(`/api/admin/users?query=${encodeURIComponent(target.username)}`);
+  assert.equal(usersAfterAdjustment.data.items[0].totalSpent, 1.25);
+  const detailAfterAdjustment = await admin.call(`/api/admin/users/${target.id}`);
+  assert.equal(detailAfterAdjustment.data.user.totalSpent, 1.25);
   const audit = await admin.call('/api/admin/logs/audit?limit=100');
   assert.ok(audit.data.items.some(item => item.action === 'user.credit_adjustment'));
 

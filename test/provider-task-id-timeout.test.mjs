@@ -65,3 +65,17 @@ test('model-unresponsive failures expose the dedicated public failure message', 
   assert.match(value.error, /^模型无响应。/);
   assert.match(value.error, /预扣积分已退回/);
 });
+
+test('public assets expose authenticated delivery endpoints without leaking upstream URLs', () => {
+  const value = __test.publicAsset({
+    id: 'generation-1', ownerId: 'user-1', storageName: 'generation-1.mp4',
+    sourceUrl: 'https://upstream.example/result.mp4', sourceRequiresAuth: true,
+    sourceGenerationId: 'generation-task-1', kind: 'video', mimeType: 'video/mp4',
+    size: 42, createdAt: '2026-08-24T06:44:07.975Z', updatedAt: '2026-08-24T06:44:07.975Z',
+  });
+
+  assert.equal(value.url, '/api/files/generation-1/content');
+  assert.equal(value.directUrl, '/api/files/generation-1/direct');
+  assert.equal(value.sourceUrl, undefined);
+  assert.equal(value.sourceRequiresAuth, undefined);
+});
