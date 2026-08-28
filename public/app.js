@@ -822,7 +822,9 @@ function initWindowControls(bridge, info = {}) {
   const controls = $('#desktopWindowControls');
   const windowApi = bridge?.window;
   if (!windowApi) return;
-  const custom = info.platform !== 'darwin';
+  // Windows uses Electron's native Window Controls Overlay. Keep the HTML
+  // controls only for platforms that still need the custom fallback.
+  const custom = Boolean(info.platform) && info.platform !== 'darwin' && info.nativeWindowControls !== true;
   desktopWindowStateUnsubscribe?.();
   desktopWindowStateUnsubscribe = null;
   toggleClass(controls, 'hidden', !custom);

@@ -387,6 +387,9 @@ async function serveLocalMedia(request) {
 
 async function openOfflinePage(message = '') {
   if (!mainWindow) return;
+  if (process.platform === 'win32') {
+    mainWindow.setTitleBarOverlay({ color: '#10171b', symbolColor: '#9baaa5', height: 56 });
+  }
   await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: { message } });
 }
 
@@ -559,6 +562,9 @@ async function loadStudio() {
     desktopRequestHeaderInstalled = true;
   }
   try {
+    if (process.platform === 'win32') {
+      mainWindow.setTitleBarOverlay({ color: '#ffffff', symbolColor: '#667085', height: 56 });
+    }
     const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`服务返回 ${response.status}`);
     await mainWindow.loadURL(`${apiBase}/`);
@@ -586,6 +592,7 @@ function registerIpc() {
     platform: process.platform,
     arch: process.arch,
     version: app.getVersion(),
+    nativeWindowControls: process.platform === 'win32',
     apiBase: configuredApiBase(),
     workspacePath: workspace,
     updateUrl: updateFeedUrl(),
@@ -679,6 +686,7 @@ function registerIpc() {
 
 async function createWindow() {
   const usesNativeMacTitlebar = process.platform === 'darwin';
+  const usesNativeWindowsControls = process.platform === 'win32';
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -686,10 +694,14 @@ async function createWindow() {
     minHeight: 700,
     title: productName,
     backgroundColor: '#f7f7f8',
-    frame: usesNativeMacTitlebar,
+    frame: usesNativeMacTitlebar || usesNativeWindowsControls,
     ...(usesNativeMacTitlebar ? {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 8, y: 18 },
+    } : {}),
+    ...(usesNativeWindowsControls ? {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#ffffff', symbolColor: '#667085', height: 56 },
     } : {}),
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),

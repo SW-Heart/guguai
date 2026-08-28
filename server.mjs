@@ -96,12 +96,27 @@ const r2 = r2Configured ? new S3Client({
   forcePathStyle: true,
   credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY },
 }) : null;
+// Reference images use a separate public bucket. Credentials and connection
+// settings may be shared with the private media bucket, but the bucket itself
+// must be configured explicitly so a public domain never exposes user media.
+const r2ReferenceAccessKeyId = String(process.env.R2_REFERENCE_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID || '').trim();
+const r2ReferenceSecretAccessKey = String(process.env.R2_REFERENCE_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY || '').trim();
+const r2ReferenceEndpoint = String(process.env.R2_REFERENCE_ENDPOINT || process.env.R2_ENDPOINT || '').trim().replace(/\/+$/, '');
+const r2ReferenceBucket = String(process.env.R2_REFERENCE_BUCKET || '').trim();
+const r2ReferenceRegion = String(process.env.R2_REFERENCE_REGION || process.env.R2_REGION || 'auto').trim() || 'auto';
+const r2ReferenceConfigured = Boolean(r2ReferenceAccessKeyId && r2ReferenceSecretAccessKey && r2ReferenceEndpoint && r2ReferenceBucket);
+const r2Reference = r2ReferenceConfigured ? new S3Client({
+  region: r2ReferenceRegion,
+  endpoint: r2ReferenceEndpoint,
+  forcePathStyle: true,
+  credentials: { accessKeyId: r2ReferenceAccessKeyId, secretAccessKey: r2ReferenceSecretAccessKey },
+}) : null;
 const storageConfigured = mediaStorageProvider === 'r2' ? r2Configured : aliOssConfigured;
 // Kept as a compatibility alias for the legacy raw upload route.
 const ossConfigured = storageConfigured;
 const storagePrefix = String(process.env.MEDIA_STORAGE_PREFIX || ossPrefix).replace(/^\/+|\/+$/g, '');
-const r2PublicBaseUrl = String(process.env.R2_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
-const r2ReferenceImagePrefix = String(process.env.R2_REFERENCE_IMAGE_PREFIX || `${storagePrefix}/temporary/reference-images`).trim().replace(/^\/+|\/+$/g, '');
+const r2ReferencePublicBaseUrl = String(process.env.R2_REFERENCE_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+const r2ReferenceImagePrefix = String(process.env.R2_REFERENCE_IMAGE_PREFIX || 'model-studio/temporary/reference-images').trim().replace(/^\/+|\/+$/g, '');
 const configuredR2ReferenceImageTtlMinutes = Number(process.env.R2_REFERENCE_IMAGE_TTL_MINUTES || 60);
 const r2ReferenceImageTtlMinutes = Number.isFinite(configuredR2ReferenceImageTtlMinutes) && configuredR2ReferenceImageTtlMinutes > 0 ? configuredR2ReferenceImageTtlMinutes : 60;
 const r2ReferenceImageTtlMs = Math.round(r2ReferenceImageTtlMinutes * 60_000);
@@ -1061,6 +1076,17 @@ async function putStorageObject(key, sourceFile, mimeType, provider = mediaStora
   await oss.put(key, sourceFile, { headers: { 'Content-Type': mimeType } });
   return key;
 }
+async function putR2ReferenceObject(key, sourceFile, mimeType) {
+  if (!r2Reference) throw storageUnavailable('r2-reference');
+  const body = typeof sourceFile === 'string' ? createReadStream(sourceFile) : sourceFile;
+  const contentLength = typeof sourceFile === 'string' ? (await fs.stat(sourceFile)).size : undefined;
+  await r2Reference.send(new PutObjectCommand({ Bucket: r2ReferenceBucket, Key: key, Body: body, ...(contentLength === undefined ? {} : { ContentLength: contentLength }), ContentType: mimeType }));
+  return key;
+}
+async function deleteR2ReferenceObject(key) {
+  if (!r2Reference) throw storageUnavailable('r2-reference');
+  await r2Reference.send(new DeleteObjectCommand({ Bucket: r2ReferenceBucket, Key: key }));
+}
 async function deleteStorageObject(key, provider = mediaStorageProvider) {
   provider = normalizeStorageProvider(provider);
   if (provider === 'r2') {
@@ -1084,26 +1110,26 @@ function scheduleR2ReferenceImageCleanup(key, deleteAt = Date.now() + r2Referenc
   clearR2ReferenceImageCleanup(key);
   const timer = setTimeout(async () => {
     r2ReferenceImageCleanupTimers.delete(key);
-    try { await deleteStorageObject(key, 'r2'); }
+    try { await deleteR2ReferenceObject(key); }
     catch (error) { console.error('[image-reference] R2 临时参考图清理失败', { key, message: error.message }); }
   }, Math.max(0, deleteAt - Date.now()));
   timer.unref();
   r2ReferenceImageCleanupTimers.set(key, timer);
 }
 async function sweepExpiredR2ReferenceImages() {
-  if (!r2 || !r2ReferenceImagePrefix) return 0;
+  if (!r2Reference || !r2ReferenceImagePrefix) return 0;
   const cutoff = Date.now() - r2ReferenceImageTtlMs;
   const prefix = `${r2ReferenceImagePrefix}/`;
   let continuationToken;
   let removed = 0;
   do {
-    const result = await r2.send(new ListObjectsV2Command({ Bucket: r2Bucket, Prefix: prefix, ...(continuationToken ? { ContinuationToken: continuationToken } : {}) }));
+    const result = await r2Reference.send(new ListObjectsV2Command({ Bucket: r2ReferenceBucket, Prefix: prefix, ...(continuationToken ? { ContinuationToken: continuationToken } : {}) }));
     for (const object of result.Contents || []) {
       const key = String(object.Key || '');
       const lastModified = object.LastModified instanceof Date ? object.LastModified.getTime() : Date.parse(String(object.LastModified || ''));
       if (!key || !Number.isFinite(lastModified) || lastModified > cutoff) continue;
       clearR2ReferenceImageCleanup(key);
-      await deleteStorageObject(key, 'r2');
+      await deleteR2ReferenceObject(key);
       removed++;
     }
     continuationToken = result.IsTruncated ? result.NextContinuationToken : '';
@@ -1111,13 +1137,13 @@ async function sweepExpiredR2ReferenceImages() {
   return removed;
 }
 const r2ReferenceImageSweeper = setInterval(() => {
-  if (!r2) return;
+  if (!r2Reference) return;
   sweepExpiredR2ReferenceImages()
     .then(removed => { if (removed) console.log(`[image-reference] 清理 R2 临时参考图 ${removed} 个`); })
     .catch(error => console.error('[image-reference] R2 临时参考图定期清理失败', error));
 }, r2ReferenceImageSweepIntervalMs);
 r2ReferenceImageSweeper.unref();
-if (r2) sweepExpiredR2ReferenceImages()
+if (r2Reference) sweepExpiredR2ReferenceImages()
   .then(removed => { if (removed) console.log(`[image-reference] 启动清理 R2 临时参考图 ${removed} 个`); })
   .catch(error => console.error('[image-reference] R2 临时参考图启动清理失败', error));
 function storageStatus(error) { return error?.$metadata?.httpStatusCode || error?.status || error?.statusCode || error?.res?.status; }
@@ -1168,8 +1194,13 @@ async function copyStorageObject(sourceKey, destinationKey, mimeType, provider =
 }
 function publicStorageUrl(key, provider = mediaStorageProvider) {
   provider = normalizeStorageProvider(provider);
-  if (provider === 'r2') return r2PublicBaseUrl ? `${r2PublicBaseUrl}/${key.split('/').map(encodeURIComponent).join('/')}` : '';
+  // The primary R2 bucket is private by design. Public model-input URLs use
+  // publicR2ReferenceUrl() and the separate reference bucket below.
+  if (provider === 'r2') return '';
   return oss ? oss.generateObjectUrl(key) : '';
+}
+function publicR2ReferenceUrl(key) {
+  return r2ReferencePublicBaseUrl ? `${r2ReferencePublicBaseUrl}/${key.split('/').map(encodeURIComponent).join('/')}` : '';
 }
 async function signedStorageUrl(key, expires = ossAssetUrlExpiresSeconds, options = {}, provider = mediaStorageProvider) {
   provider = normalizeStorageProvider(provider);
@@ -1338,26 +1369,26 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   return restore;
 }
 async function stageImageReference(userId, task, asset, targetDir) {
-  if (!r2) throw storageUnavailable('r2');
+  if (!r2Reference) throw storageUnavailable('r2-reference');
   const sourceFile = await ensureLocalAsset(userId, asset, targetDir);
   const key = r2ReferenceImageKey(userId, task.id, asset);
   let uploaded = false;
   try {
-    await putStorageObject(key, sourceFile, asset.mimeType, 'r2');
+    await putR2ReferenceObject(key, sourceFile, asset.mimeType);
     uploaded = true;
-    const publicUrl = publicStorageUrl(key, 'r2');
-    const url = publicUrl || await signedStorageUrl(key, Math.ceil(r2ReferenceImageTtlMs / 1_000), { ResponseCacheControl: 'private, no-store' }, 'r2');
+    const publicUrl = publicR2ReferenceUrl(key);
+    const url = publicUrl || await getSignedUrl(r2Reference, new GetObjectCommand({ Bucket: r2ReferenceBucket, Key: key, ResponseCacheControl: 'private, no-store' }), { expiresIn: Math.ceil(r2ReferenceImageTtlMs / 1_000) });
     scheduleR2ReferenceImageCleanup(key);
     return url;
   } catch (error) {
-    if (uploaded) await deleteStorageObject(key, 'r2').catch(cleanupError => console.error('[image-reference] R2 临时参考图回滚失败', { key, message: cleanupError.message }));
+    if (uploaded) await deleteR2ReferenceObject(key).catch(cleanupError => console.error('[image-reference] R2 临时参考图回滚失败', { key, message: cleanupError.message }));
     throw error;
   }
 }
 async function resolveImageRefs(userId, ids, task = {}) {
   const referenceIds = ids.slice(0, task.referenceLimits?.image || 7);
   if (!referenceIds.length) return [];
-  if (!r2) throw storageUnavailable('r2');
+  if (!r2Reference) throw storageUnavailable('r2-reference');
   // Image providers may fetch the reference after submission. Never pass the
   // asset's original OSS URL through: make a short-lived R2 copy instead.
   return withMediaTempDir(`image-reference-${task.id}`, async jobDir => {
@@ -1373,19 +1404,29 @@ async function resolveImageRefs(userId, ids, task = {}) {
 async function resolveRefs(userId, ids, task = {}) {
   const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
-  for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
-    const asset = findAsset(userId, id);
-    if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
-    if (!mixed && asset.kind !== 'image') continue;
-    const key = asset.ossKey || await uploadAssetToOss(userId, asset);
-    const needsPublicUrl = Boolean(task.routeId || task.provider === 'cntcn' || task.provider === 'autodl');
-    const provider = storageProviderForAsset(asset);
-    const publicUrl = needsPublicUrl ? publicOssUrl(key, provider) : '';
-    const url = publicUrl || await signedOssUrl(key, ossAssetUrlExpiresSeconds, {}, provider);
-    if (mixed) refs[`${asset.kind}s`].push(url);
-    else refs.push(url);
-  }
-  return refs;
+  // Video providers may fetch image references after submission. Keep the
+  // image path consistent across image-to-image and image-to-video: stage a
+  // short-lived R2 copy instead of passing the asset's original OSS URL.
+  return withMediaTempDir(`video-reference-${task.id}`, async jobDir => {
+    for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
+      const asset = findAsset(userId, id);
+      if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
+      if (!mixed && asset.kind !== 'image') continue;
+      let url;
+      if (asset.kind === 'image') {
+        url = await stageImageReference(userId, task, asset, jobDir);
+      } else {
+        const key = asset.ossKey || await uploadAssetToOss(userId, asset);
+        const needsPublicUrl = Boolean(task.routeId || task.provider === 'cntcn' || task.provider === 'autodl');
+        const provider = storageProviderForAsset(asset);
+        const publicUrl = needsPublicUrl ? publicOssUrl(key, provider) : '';
+        url = publicUrl || await signedOssUrl(key, ossAssetUrlExpiresSeconds, {}, provider);
+      }
+      if (mixed) refs[`${asset.kind}s`].push(url);
+      else refs.push(url);
+    }
+    return refs;
+  });
 }
 async function validateReferenceAssets(userId, value, limits = null) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
@@ -2436,14 +2477,20 @@ const server = http.createServer(async (req, res) => {
       let aspectRatio = null; let duration = null; let videoRequest = null;
       if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
-      if (type === 'image' && referenceAssetIds.length && !r2Configured) return sendJson(res, 503, { error: '图生图参考图片暂时不可用：R2 临时参考图存储尚未配置' });
+      const referenceCounts = referenceAssetCounts(user.id, referenceAssetIds);
+      if (referenceCounts.image && !r2ReferenceConfigured) {
+        return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用：R2 临时参考图存储尚未配置` });
+      }
       const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
       if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
       const routeSelection = type === 'video' && videoRequest.provider === 'route'
-        ? selectModelRoute({ logicalModelId: modelId, quality: videoRequest.quality, duration, aspectRatio, referenceCounts: referenceAssetCounts(user.id, referenceAssetIds) })
+        ? selectModelRoute({ logicalModelId: modelId, quality: videoRequest.quality, duration, aspectRatio, referenceCounts })
         : null;
       if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error: '当前模型没有兼容且可用的调用线路，请稍后重试' });
       const provider = type === 'image' ? 'duomi' : routeSelection?.provider || videoRequest.provider;
+      if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) {
+        return sendJson(res, 503, { error: '图生视频参考图片暂时不可用：所有视频模型都需要配置 R2_REFERENCE_PUBLIC_BASE_URL' });
+      }
       if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: 'CNTCN Seedance 视频服务尚未配置' });

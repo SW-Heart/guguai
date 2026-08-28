@@ -67,7 +67,7 @@ cp .env.example .env
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
-| 文件存储 | `MEDIA_STORAGE_PROVIDER`、`ALIYUN_*` 或 `R2_*` | 用户素材、参考图、生成结果和成片；可用 `oss`/`r2` 切换，桌面安装包发布仍固定使用 OSS |
+| 文件存储 | `MEDIA_STORAGE_PROVIDER`、`ALIYUN_*`、`R2_*`、`R2_REFERENCE_*` | 用户素材、生成结果和成片使用主存储；模型参考图片使用独立临时 R2 Bucket，桌面安装包发布仍固定使用 OSS |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
 | 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`/`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传；R2 使用预签名 PUT，OSS 使用 POST Policy，默认关闭 |
 
@@ -133,9 +133,15 @@ MEDIA_STORAGE_PREFIX=
 R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
-R2_BUCKET=your_r2_bucket
+R2_BUCKET=your_private_media_bucket
 R2_REGION=auto
-R2_PUBLIC_BASE_URL=
+# 模型参考图专用公共 R2 Bucket；凭据留空时复用上面的 R2_*，但 Bucket 必须单独填写
+R2_REFERENCE_ACCESS_KEY_ID=
+R2_REFERENCE_SECRET_ACCESS_KEY=
+R2_REFERENCE_ENDPOINT=
+R2_REFERENCE_BUCKET=your_public_reference_bucket
+R2_REFERENCE_REGION=auto
+R2_REFERENCE_PUBLIC_BASE_URL=https://r2-ref.example.com
 R2_REFERENCE_IMAGE_PREFIX=model-studio/temporary/reference-images
 R2_REFERENCE_IMAGE_TTL_MINUTES=60
 R2_REFERENCE_IMAGE_SWEEP_INTERVAL_MINUTES=10
@@ -153,8 +159,9 @@ MEDIA_JOB_CONCURRENCY=2
 
 - `MEDIA_STORAGE_PROVIDER=oss` 时需要完整配置 OSS 四项；设置为 `r2` 时需要完整配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`。桌面发布脚本始终读取 OSS 配置。
 - 资产记录会保存所属存储后端；没有该字段的历史记录按 OSS 处理，因此切换到 R2 后客户端仍可同步此前网页端上传的 OSS 素材。
-- `R2_PUBLIC_BASE_URL` 仅在模型供应商需要无签名参考素材 URL 时配置，应指向 R2 自定义域名或已配置访问策略的公开域名。
-- 图生图不会把素材原有的 OSS 地址直接提交给模型。服务端会先把参考图片复制到 R2 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用 R2 公共地址或 60 分钟签名地址提交，默认 60 分钟后自动删除；因此即使主素材仍在 OSS，图生图也需要配置完整的 R2 四项凭据。
+- `R2_REFERENCE_BUCKET` 是模型参考图专用 Bucket，必须和 `R2_BUCKET` 分开；参考图凭据和连接参数可留空以复用主 R2 配置。
+- `R2_REFERENCE_PUBLIC_BASE_URL` 必须指向绑定到 `R2_REFERENCE_BUCKET` 的公共自定义域名，不能填 R2 S3 API Endpoint，也不能填 Bucket 名称；所有视频模型带参考图片时都必须配置，保证供应商拿到统一的无签名 R2 URL。
+- 图生图和图生视频不会把素材原有的 OSS 地址直接提交给模型。服务端会先把参考图片复制到 `R2_REFERENCE_BUCKET` 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用公共地址或 60 分钟签名地址提交，默认 60 分钟后自动删除；因此带参考图片的生成需要配置参考图专用 R2。
 - 智能导演需要完整的 `DIRECTOR_AGENT_*` 三项。项目也兼容旧命名 `LLM_API_BASE`、`LLM_API_KEY`、`LLM_MODEL`。
 - `LLM_API_PROTOCOL` 可设为 `openai-compatible`（默认）或 `anthropic`。
 - 开发环境不设置 `DATA_DIR` 时默认使用项目下的 `data/`；生产环境应显式设置项目目录外的持久化绝对路径。
@@ -648,7 +655,7 @@ npm run db:backup
 
 ### Seedance 2.0 参考图返回 403
 
-需要无签名参考 URL 的渠道（例如 CNTCN）应配置 `R2_PUBLIC_BASE_URL`（或 OSS 的公开访问策略），使渠道的 `HEAD` 可用性预检和后续 `GET` 下载都能成功。R2 未配置公共域名时，服务端会使用短期签名 URL；若渠道不接受带签名 query 的 URL，请补充该配置。
+所有视频模型带参考图片时都需要配置 `R2_REFERENCE_PUBLIC_BASE_URL`，使供应商的 `HEAD` 可用性预检和后续 `GET` 下载都能成功。图生图在未配置公共域名时仍可使用短期签名 URL；视频参考图不再允许走签名 URL，避免不同供应商的兼容性差异。
 
 ### 智能导演不可用
 

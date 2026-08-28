@@ -78,11 +78,15 @@ body.desktop-runtime .topbar select,
 body.desktop-runtime .topbar textarea { -webkit-app-region: no-drag; }
 body.desktop-runtime .topbar .workspace-name { -webkit-app-region: drag; }
 body.desktop-runtime .topbar #dramaProjectTitle { -webkit-app-region: no-drag; user-select: text; }
-body.desktop-runtime.desktop-win32 .topbar,
+body.desktop-runtime.desktop-win32 .topbar { padding-right: max(144px, calc(100vw - env(titlebar-area-width, calc(100vw - 144px)))); }
 body.desktop-runtime.desktop-linux .topbar { padding-right: 144px; }
 body.desktop-runtime.desktop-darwin .topbar { padding-left: 72px; grid-template-columns: 0 420px 1fr; }
 body.desktop-runtime.desktop-darwin .topbar .brand { min-width: 0; overflow: hidden; }
 body.desktop-runtime.desktop-darwin .desktop-window-controls { display: none; }
+/* Windows uses Electron's native Window Controls Overlay. The old HTML
+   controls remain in the markup for fallback compatibility but must not sit
+   under the native hit area. */
+body.desktop-runtime.desktop-win32 .desktop-window-controls { display: none; }
 
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
@@ -1886,7 +1890,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 
 /* Desktop titlebar identity: keep the titlebar clean while preserving the original grid. */
 @media (min-width: 781px) {
-  body.desktop-runtime .app-shell .topbar .brand { visibility: hidden; pointer-events: none; }
+  body.desktop-runtime.desktop-darwin .app-shell .topbar .brand { visibility: hidden; pointer-events: none; }
   body.desktop-runtime .app-shell:not(.drama-project-open) .topbar { grid-template-columns: 72px 420px minmax(0, 1fr); }
   body.desktop-runtime.desktop-darwin .app-shell:not(.drama-project-open) .topbar { grid-template-columns: 0 420px minmax(0, 1fr); }
   body.desktop-runtime.desktop-darwin .app-shell:not(.drama-project-open) .topbar .brand { min-width: 0; overflow: hidden; }
@@ -1900,3 +1904,31 @@ body.desktop-runtime.desktop-darwin.desktop-app-visible .desktop-titlebar-logo {
 body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { opacity: 1; }
 .desktop-titlebar-logo .brand-gem { width: 27px; height: 27px; }
 @media (prefers-reduced-motion: reduce) { .desktop-titlebar-logo { transition: none; } }
+
+/* Keep the original close-control dimensions while making the visual glyph
+   defer all pointer input to its button. */
+.dialog-head > button,
+.detail-close,
+.desktop-update-close,
+.professional-asset-dialog .dialog-head > button,
+.professional-generation-reference-dialog .dialog-head > button,
+.professional-media-close {
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+.dialog-head > button svg,
+.detail-close svg,
+.desktop-update-close svg,
+.professional-media-close svg {
+  pointer-events: none;
+}
+.dialog-head > button:active,
+.detail-close:active,
+.desktop-update-close:active,
+.professional-asset-dialog .dialog-head > button:active,
+.professional-generation-reference-dialog .dialog-head > button:active,
+.professional-media-close:active {
+  transform: scale(.96);
+}

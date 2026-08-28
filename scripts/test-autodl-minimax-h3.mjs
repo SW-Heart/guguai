@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import OSS from 'ali-oss';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -91,33 +91,33 @@ async function fetchJson(url, options = {}) {
 
 async function loadReferenceUrls() {
   const assets = await Promise.all(assetFiles.map(file => fs.readFile(file, 'utf8').then(JSON.parse)));
-  const canSignOss = process.env.ALIYUN_ACCESS_KEY_ID
-    && process.env.ALIYUN_ACCESS_KEY_SECRET
-    && process.env.ALIYUN_OSS_BUCKET
-    && process.env.ALIYUN_OSS_ENDPOINT;
-
-  if (!canSignOss) {
-    throw new Error('缺少 OSS 配置，无法上传本地参考图并生成公网 URL');
+  const accessKeyId = process.env.R2_REFERENCE_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_REFERENCE_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY;
+  const endpoint = process.env.R2_REFERENCE_ENDPOINT || process.env.R2_ENDPOINT;
+  const bucket = process.env.R2_REFERENCE_BUCKET;
+  const publicBaseUrl = String(process.env.R2_REFERENCE_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!accessKeyId || !secretAccessKey || !endpoint || !bucket) {
+    throw new Error('缺少 R2 参考图 Bucket 配置（R2_REFERENCE_BUCKET 或对应 R2 凭据）');
   }
+  if (!publicBaseUrl) throw new Error('缺少 R2_REFERENCE_PUBLIC_BASE_URL，AutoDL 测试需要无签名公网 URL');
 
-  const client = new OSS({
-    region: process.env.ALIYUN_OSS_ENDPOINT.replace(/^oss-/, '').replace(/\.aliyuncs\.com$/, ''),
-    endpoint: process.env.ALIYUN_OSS_ENDPOINT,
-    accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
-    accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET,
-    bucket: process.env.ALIYUN_OSS_BUCKET,
-    secure: true,
+  const client = new S3Client({
+    region: process.env.R2_REFERENCE_REGION || process.env.R2_REGION || 'auto',
+    endpoint: String(endpoint).replace(/\/+$/, ''),
+    forcePathStyle: true,
+    credentials: { accessKeyId, secretAccessKey },
   });
-  const uploadPrefix = `autodl-tests/${Date.now()}`;
+  const referencePrefix = String(process.env.R2_REFERENCE_IMAGE_PREFIX || 'model-studio/temporary/reference-images').replace(/^\/+|\/+$/g, '');
+  const uploadPrefix = `${referencePrefix}/manual-tests/${Date.now()}`;
 
   return Promise.all(assets.map(async asset => {
     if (!asset.storageName) throw new Error(`资产 ${asset.id} 没有本地文件名`);
     const localFile = path.join(rootDir, 'data', 'users', asset.ownerId, 'files', asset.storageName);
     await fs.access(localFile);
     const key = `${uploadPrefix}/${asset.storageName}`;
-    await client.put(key, localFile, { headers: { 'Content-Type': asset.mimeType || 'image/png' } });
-    // Bucket objects are public; use an unsigned URL because AutoDL validates URLs with HEAD.
-    return client.generateObjectUrl(key);
+    await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: await fs.readFile(localFile), ContentType: asset.mimeType || 'image/png' }));
+    // The reference bucket is public; use an unsigned URL because AutoDL validates URLs with HEAD.
+    return `${publicBaseUrl}/${key.split('/').map(encodeURIComponent).join('/')}`;
   }));
 }
 

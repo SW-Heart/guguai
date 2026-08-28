@@ -65,8 +65,9 @@
       document.body.classList.add('desktop-runtime', `desktop-${info?.platform || 'win32'}`);
       const windowApi = window.guguDesktop?.window;
       if (!windowApi || info?.platform === 'darwin') return;
-      windowControls.classList.remove('hidden');
       dragRegion.classList.remove('hidden');
+      if (info?.nativeWindowControls === true) return;
+      windowControls.classList.remove('hidden');
       const updateState = maximized => {
         const isMaximized = Boolean(maximized);
         document.querySelector('#windowMaximize')?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
