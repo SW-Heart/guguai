@@ -58,7 +58,15 @@ if (args.includes('--help') || args.includes('-h')) {
 
 function run(command, commandArgs) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, commandArgs, { cwd: root, stdio: 'inherit', env: process.env });
+    // Windows exposes npm as a .cmd shim, which needs a shell when launched
+    // through child_process.spawn. Without this, the GitHub Windows runner
+    // fails immediately with spawn EINVAL before electron-builder starts.
+    const child = spawn(command, commandArgs, {
+      cwd: root,
+      stdio: 'inherit',
+      env: process.env,
+      shell: process.platform === 'win32',
+    });
     child.once('error', reject);
     child.once('exit', code => code === 0 ? resolve() : reject(new Error(`${command} 退出码 ${code}`)));
   });
