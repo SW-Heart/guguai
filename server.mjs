@@ -2797,7 +2797,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     return await serveStatic(res, url.pathname, req);
-  } catch (error) { console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
+  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
 });
 
 if (process.env.NODE_ENV !== 'test') {

@@ -7,7 +7,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
 import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 
@@ -389,15 +389,72 @@ function localMediaUrl(assetId) {
   return `gugu-media://asset/${encodeURIComponent(assetId)}`;
 }
 
+function parseLocalMediaRange(value, size) {
+  const raw = String(value || '');
+  if (!raw) return null;
+  if (!/^bytes=/i.test(raw) || !Number.isSafeInteger(size) || size <= 0) return { unsatisfiable: true };
+  const spec = raw.slice(6).split(',')[0].trim();
+  const separator = spec.indexOf('-');
+  if (separator < 0) return { unsatisfiable: true };
+  const startText = spec.slice(0, separator).trim();
+  const endText = spec.slice(separator + 1).trim();
+  let start;
+  let end;
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return { unsatisfiable: true };
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(startText);
+    end = endText ? Number(endText) : size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) return { unsatisfiable: true };
+    end = Math.min(end, size - 1);
+  }
+  return { start, end };
+}
+
+async function listLocalAssets() {
+  if (!workspace || !Array.isArray(libraryIndex?.assets)) return [];
+  const assets = await Promise.all(libraryIndex.assets.map(async item => {
+    const relativePath = String(item?.relativePath || '');
+    if (!relativePath) return null;
+    const target = path.resolve(workspace, relativePath);
+    if (!isInside(workspace, target)) return null;
+    const stat = await fs.stat(target).catch(() => null);
+    if (!stat?.isFile()) return null;
+    return { ...item, localStatus: 'saved', url: localMediaUrl(item.id) };
+  }));
+  return assets.filter(Boolean);
+}
+
 async function serveLocalMedia(request) {
+  if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
   const url = new URL(request.url);
   const assetId = decodeURIComponent(url.pathname.replace(/^\//, ''));
   const asset = libraryAsset(assetId);
   if (!asset || !workspace) return new Response('Not Found', { status: 404 });
   const target = path.resolve(workspace, asset.relativePath);
   if (!isInside(workspace, target)) return new Response('Forbidden', { status: 403 });
-  try { await fs.access(target); } catch { return new Response('Not Found', { status: 404 }); }
-  return net.fetch(pathToFileURL(target).toString());
+  const stat = await fs.stat(target).catch(() => null);
+  if (!stat?.isFile()) return new Response('Not Found', { status: 404 });
+
+  const range = parseLocalMediaRange(request.headers.get('range'), stat.size);
+  if (range?.unsatisfiable) return new Response(null, { status: 416, headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${stat.size}` } });
+  const start = range?.start ?? 0;
+  const end = range?.end ?? Math.max(0, stat.size - 1);
+  const headers = {
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=0, must-revalidate',
+    'Content-Length': String(Math.max(0, end - start + 1)),
+    'Content-Type': asset.mimeType || mimeFromName(target),
+    'X-Content-Type-Options': 'nosniff',
+  };
+  const status = range ? 206 : 200;
+  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${stat.size}`;
+  if (request.method === 'HEAD' || stat.size === 0) return new Response(null, { status, headers });
+  const body = Readable.toWeb(createReadStream(target, { start, end }));
+  return new Response(body, { status, headers });
 }
 
 async function openOfflinePage(message = '') {
@@ -706,7 +763,7 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('media:choose-and-import', chooseAndImportFiles);
-  ipcMain.handle('media:list-local', () => libraryIndex.assets.map(item => ({ ...item, url: localMediaUrl(item.id) })));
+  ipcMain.handle('media:list-local', () => listLocalAssets());
   ipcMain.handle('media:download-remote', (_event, payload) => downloadRemoteAsset(payload || {}));
   ipcMain.handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
   ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));

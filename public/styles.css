@@ -414,9 +414,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .view-toggle { width: 30px; height: 32px; padding: 5px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; display: grid; place-items: center; }
 .view-toggle:hover, .view-toggle.active { color: var(--ink); background: var(--panel); box-shadow: 0 1px 3px rgba(24,24,27,.08); }
 .view-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
-.creation-grid { padding: 12px; column-count: 3; column-gap: 12px; }
-.creation-grid.small-view { column-count: 5; }
-.task-card { position: relative; break-inside: avoid; overflow: hidden; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); transition: border-color var(--ease), box-shadow var(--ease); }
+.creation-grid { padding: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row; grid-auto-rows: max-content; align-content: start; align-items: start; gap: 12px; }
+.creation-grid.small-view { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.task-card { position: relative; overflow: hidden; margin-bottom: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); transition: border-color var(--ease), box-shadow var(--ease); }
 .task-card:hover, .task-card:focus-within { border-color: var(--line-strong); box-shadow: 0 3px 12px rgba(24,24,27,.06); }
 .card-visual { position: relative; overflow: hidden; }
 .media-open { position: absolute; z-index: 2; inset: 0; width: 100%; border: 0; background: transparent; }
@@ -472,7 +472,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .running .status-pill i, .queued .status-pill i { background: var(--brand); }
 .completed .status-pill i { display: none; }
 .failed .status-pill i { background: var(--danger); }
-.empty-state { height: calc(100dvh - 104px); min-height: 350px; column-span: all; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
+.empty-state { height: calc(100dvh - 104px); min-height: 350px; column-span: all; grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .empty-state::before { content: ""; width: 48px; height: 42px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); box-shadow: 7px 7px 0 -3px var(--surface), 7px 7px 0 -2px var(--line); }
 .empty-state h3 { margin: 20px 0 6px; color: var(--ink-soft); font-size: 14px; font-weight: 600; }
 .empty-state p { max-width: 340px; margin: 0; font-size: 11px; line-height: 1.65; }
@@ -908,8 +908,8 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .app-shell.library-mode { grid-template-columns: 68px minmax(0, 1fr); }
   .app-shell.wide-mode { grid-template-columns: 68px minmax(0, 1fr); }
   .topbar { grid-template-columns: 68px 328px 1fr; }
-  .creation-grid { column-count: 3; }
-  .creation-grid.small-view { column-count: 5; }
+  .creation-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .creation-grid.small-view { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .account-button b { display: none; }
   .account-button .avatar-notification-badge { display: grid; }
   .ratio-grid { grid-template-columns: repeat(6, 1fr); }
@@ -955,8 +955,8 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .prompt-presets button, .text-button, .filter, .type-tabs button { min-height: 44px; }
   .content-panel { overflow: visible; }
   .content-head { position: static; }
-  .creation-grid { column-count: 2; padding: 10px; column-gap: 10px; }
-  .creation-grid.small-view { column-count: 3; }
+  .creation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 10px; gap: 10px; }
+  .creation-grid.small-view { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .auth-card input, .prompt-box textarea, .prompt-box .rich-prompt-editor, .search-box input { font-size: 16px; }
   .library-toolbar { flex-wrap: wrap; }
   .search-box { width: 100%; }
@@ -989,8 +989,8 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .intro-copy h1 { font-size: 29px; }
   .auth-copy h2 { font-size: 25px; }
   .workspace-name small { display: none; }
-  .creation-grid { column-count: 1; }
-  .creation-grid.small-view { column-count: 1; }
+  .creation-grid { grid-template-columns: 1fr; }
+  .creation-grid.small-view { grid-template-columns: 1fr; }
   .content-head { padding-inline: 14px; }
   .head-actions .filter:nth-child(3) { display: none; }
   .file-grid { grid-template-columns: 1fr 1fr; }
