@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray } from 'electron';
 import updater from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,6 +24,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow;
+let tray;
+let isQuitting = false;
 let settings;
 let workspace;
 let libraryIndex;
@@ -678,6 +680,44 @@ function setWindowsModalState(active) {
   }
 }
 
+function createTrayIcon() {
+  const isMac = process.platform === 'darwin';
+  const svg = isMac
+    ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#000" d="M11 16.5h28v9H11z" transform="rotate(-38 25 21)"/><path fill="#000" d="M25 38.5h28v9H25z" transform="rotate(-38 39 43)"/></svg>'
+    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#18181b"/><rect x="11" y="16.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 25 21)"/><rect x="25" y="38.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 39 43)"/></svg>';
+  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+  if (isMac) image.setTemplateImage(true);
+  return image.resize({ width: isMac ? 18 : 16, height: isMac ? 18 : 16 });
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hideMainWindowToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.hide();
+  return true;
+}
+
+function createTray() {
+  if (tray) return;
+  tray = new Tray(createTrayIcon());
+  tray.setToolTip(productName);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开 GuGu AI', click: showMainWindow },
+    { type: 'separator' },
+    { label: '退出客户端', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on('click', showMainWindow);
+}
+
 function registerIpc() {
   ipcMain.handle('desktop:get-info', () => ({
     productName,
@@ -733,8 +773,7 @@ function registerIpc() {
   });
   ipcMain.handle('window:close', event => {
     if (!isMainWindowEvent(event)) return false;
-    mainWindow.close();
-    return true;
+    return hideMainWindowToTray();
   });
   ipcMain.handle('updates:check', () => checkForUpdates());
   ipcMain.handle('updates:get-status', () => currentUpdateStatus);
@@ -807,6 +846,11 @@ async function createWindow() {
       devTools: !app.isPackaged,
     },
   });
+  mainWindow.on('close', event => {
+    if (isQuitting) return;
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -847,6 +891,7 @@ async function bootstrap() {
   protocol.handle('gugu-media', serveLocalMedia);
   registerIpc();
   configureAutoUpdater();
+  createTray();
   // This is a web-based studio inside Electron, so the browser-style default
   // application menu is noise rather than a useful part of the client UI.
   Menu.setApplicationMenu(null);
@@ -858,5 +903,17 @@ app.whenReady().then(bootstrap).catch(async error => {
   if (mainWindow) await openOfflinePage(`客户端启动失败：${error.message}`);
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('activate', () => { if (!mainWindow) createWindow(); });
+app.on('before-quit', () => { isQuitting = true; });
+app.on('will-quit', () => {
+  tray?.destroy();
+  tray = null;
+});
+app.on('window-all-closed', () => {
+  // Keep the process alive for the tray when the last window is hidden or
+  // otherwise removed. Explicit quit and update installation still exit.
+  if (isQuitting) app.quit();
+});
+app.on('activate', () => {
+  if (!mainWindow) void createWindow();
+  else showMainWindow();
+});
