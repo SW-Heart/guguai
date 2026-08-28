@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     toggleMaximize: () => invoke('window:toggle-maximize'),
     isMaximized: () => invoke('window:is-maximized'),
     isFullScreen: () => invoke('window:is-fullscreen'),
+    setModalState: active => invoke('window:set-modal-state', Boolean(active)),
     close: () => invoke('window:close'),
     onState: callback => {
       const listener = (_event, payload) => callback(payload);

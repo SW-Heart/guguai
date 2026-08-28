@@ -41,6 +41,21 @@ let updateInstallStarted = false;
 let currentUpdateStatus = { status: 'idle' };
 let windowFullscreenTransition = false;
 
+const windowsTitleBarOverlayHeight = 56;
+const windowsTitleBarOverlay = {
+  color: '#ffffff',
+  symbolColor: '#667085',
+  height: windowsTitleBarOverlayHeight,
+};
+const windowsModalTitleBarOverlay = {
+  // The HTML dialog backdrop must remain visible beneath the native caption
+  // buttons. Native WCO is outside the renderer's z-index stack, so make its
+  // surface and symbols transparent while the modal is active.
+  color: 'rgba(0, 0, 0, 0)',
+  symbolColor: 'rgba(255, 255, 255, 0)',
+  height: windowsTitleBarOverlayHeight,
+};
+
 function commandLineApiBase() {
   const value = process.argv.find(argument => argument.startsWith('--api-base='));
   return value ? value.slice('--api-base='.length) : '';
@@ -388,7 +403,8 @@ async function serveLocalMedia(request) {
 async function openOfflinePage(message = '') {
   if (!mainWindow) return;
   if (process.platform === 'win32') {
-    mainWindow.setTitleBarOverlay({ color: '#10171b', symbolColor: '#9baaa5', height: 56 });
+    setWindowsModalState(false);
+    mainWindow.setTitleBarOverlay({ color: '#10171b', symbolColor: '#9baaa5', height: windowsTitleBarOverlayHeight });
   }
   await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: { message } });
 }
@@ -563,7 +579,8 @@ async function loadStudio() {
   }
   try {
     if (process.platform === 'win32') {
-      mainWindow.setTitleBarOverlay({ color: '#ffffff', symbolColor: '#667085', height: 56 });
+      setWindowsModalState(false);
+      mainWindow.setTitleBarOverlay(windowsTitleBarOverlay);
     }
     const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error(`服务返回 ${response.status}`);
@@ -584,6 +601,24 @@ function sendWindowState() {
     fullscreen: mainWindow.isFullScreen(),
     transitioning: windowFullscreenTransition,
   });
+}
+
+function setWindowsModalState(active) {
+  if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return false;
+  const modal = Boolean(active);
+  try {
+    // WCO caption buttons are native and always hit-tested above the renderer.
+    // Update the overlay first, then disable their commands while a renderer
+    // modal is open so the backdrop owns the complete interactive surface.
+    mainWindow.setTitleBarOverlay(modal ? windowsModalTitleBarOverlay : windowsTitleBarOverlay);
+    mainWindow.setMinimizable(!modal);
+    mainWindow.setMaximizable(!modal);
+    mainWindow.setClosable(!modal);
+    return true;
+  } catch (error) {
+    console.warn('[desktop] 更新 Windows 弹窗标题栏状态失败', error);
+    return false;
+  }
 }
 
 function registerIpc() {
@@ -635,6 +670,10 @@ function registerIpc() {
   });
   ipcMain.handle('window:is-maximized', event => isMainWindowEvent(event) && mainWindow.isMaximized());
   ipcMain.handle('window:is-fullscreen', event => isMainWindowEvent(event) && mainWindow.isFullScreen());
+  ipcMain.handle('window:set-modal-state', (event, active) => {
+    if (!isMainWindowEvent(event)) return false;
+    return setWindowsModalState(Boolean(active));
+  });
   ipcMain.handle('window:close', event => {
     if (!isMainWindowEvent(event)) return false;
     mainWindow.close();
@@ -701,7 +740,7 @@ async function createWindow() {
     } : {}),
     ...(usesNativeWindowsControls ? {
       titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#ffffff', symbolColor: '#667085', height: 56 },
+      titleBarOverlay: windowsTitleBarOverlay,
     } : {}),
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),

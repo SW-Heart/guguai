@@ -851,6 +851,27 @@ function initWindowControls(bridge, info = {}) {
     topbar.dataset.windowDragBound = 'true';
   }
 }
+function initDesktopModalState(bridge) {
+  const setModalState = bridge?.window?.setModalState;
+  if (typeof setModalState !== 'function' || document.body.dataset.desktopModalStateBound === 'true') return;
+  let queuedFrame = 0;
+  let active = false;
+  const sync = () => {
+    queuedFrame = 0;
+    const next = Boolean(document.querySelector('dialog[open]'));
+    if (next === active) return;
+    active = next;
+    void Promise.resolve(setModalState(active)).catch(error => console.warn('[desktop] 弹窗标题栏状态同步失败', error));
+  };
+  const queueSync = () => {
+    if (queuedFrame) return;
+    queuedFrame = window.requestAnimationFrame(sync);
+  };
+  const observer = new MutationObserver(queueSync);
+  observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
+  document.body.dataset.desktopModalStateBound = 'true';
+  sync();
+}
 function showBoot(title = '正在恢复工作区', message = '正在确认登录状态，请稍候。', { retry = false } = {}) {
   setDesktopSurface('boot');
   $('#bootTitle').textContent = title;
@@ -873,6 +894,7 @@ async function initDesktopBridge() {
     const info = await bridge.getInfo();
     document.body.classList.add(`desktop-${info.platform}`);
     initWindowControls(bridge, info);
+    initDesktopModalState(bridge);
     initDesktopUpdateDialog(bridge);
     buttons.forEach(button => {
       button.classList.remove('hidden');
