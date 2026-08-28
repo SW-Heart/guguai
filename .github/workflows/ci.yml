@@ -1,0 +1,143 @@
+name: CI and Desktop Packages
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Check and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.5.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Run tests
+        run: npm test
+        env:
+          DESKTOP_APP_ONLY: "false"
+
+  build-windows:
+    name: Build Windows x64 package
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: quality
+    runs-on: windows-latest
+    env:
+      DESKTOP_API_BASE: ${{ vars.DESKTOP_API_BASE }}
+      DESKTOP_UPDATE_PUBLIC_URL: ${{ vars.DESKTOP_UPDATE_PUBLIC_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.5.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release configuration
+        run: node -e "for (const key of ['DESKTOP_API_BASE','DESKTOP_UPDATE_PUBLIC_URL']) { const value = process.env[key]; if (!value || !value.startsWith('https://')) throw new Error(key + ' must be a non-empty https URL'); }"
+
+      - name: Check tag version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}".Substring(1)
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+
+          if ($tagVersion -ne $packageVersion) {
+            throw "Tag version $tagVersion does not match package.json version $packageVersion"
+          }
+
+      - name: Build Windows installer
+        run: npm run desktop:release -- --win --x64
+        env:
+          DESKTOP_API_BASE: ${{ vars.DESKTOP_API_BASE }}
+          DESKTOP_UPDATE_PUBLIC_URL: ${{ vars.DESKTOP_UPDATE_PUBLIC_URL }}
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: gugu-ai-windows-x64-${{ github.run_number }}
+          path: release/**
+          if-no-files-found: error
+          retention-days: 30
+
+  build-macos:
+    name: Build macOS arm64 package
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: quality
+    runs-on: macos-14
+    env:
+      DESKTOP_API_BASE: ${{ vars.DESKTOP_API_BASE }}
+      DESKTOP_UPDATE_PUBLIC_URL: ${{ vars.DESKTOP_UPDATE_PUBLIC_URL }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.5.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Validate release configuration
+        run: node -e "for (const key of ['DESKTOP_API_BASE','DESKTOP_UPDATE_PUBLIC_URL']) { const value = process.env[key]; if (!value || !value.startsWith('https://')) throw new Error(key + ' must be a non-empty https URL'); }"
+
+      - name: Check tag version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          test "$tag_version" = "$package_version" || {
+            echo "Tag version $tag_version does not match package.json version $package_version"
+            exit 1
+          }
+
+      - name: Build macOS arm64 installer
+        run: npm run desktop:release -- --mac --arm64
+
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: gugu-ai-macos-arm64-${{ github.run_number }}
+          path: release/**
+          if-no-files-found: error
+          retention-days: 30

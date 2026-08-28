@@ -61,7 +61,7 @@ test('admin HTTP permissions and core workflows', async t => {
   insertUser({ id: adminId, username: 'http_admin', role: 'admin', status: 'active', passwordHash: await hashPassword(adminPassword), credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', DESKTOP_APP_ONLY: 'false', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
   const admin = client(base);

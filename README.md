@@ -8,7 +8,7 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 
 - **个人创作空间**：账号注册/登录、邀请码注册、积分流水、用户数据隔离。
 - **管理后台**：仅管理员可登录 `/guguadmin`，管理用户、模型、全局价格、邀请码、积分和运行日志。
-- **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；云端 OSS 只作为备份与跨设备同步来源。
+- **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；云端对象存储（OSS/R2）只作为备份与跨设备同步来源。
 - **图片生成**：支持提示词、比例、质量和最多 7 张参考图；成品自动进入文件库。
 - **视频生成**：支持文生视频、参考图视频、首尾帧视频；按时长和模式自动选择视频服务。
 - **短剧创作**：提供「智能导演」和「专业编辑」两种工作模式，支持资源定稿、分镜、镜头视频、尾帧衔接与一键成片。
@@ -67,9 +67,9 @@ cp .env.example .env
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
-| 文件存储 | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`、`ALIYUN_OSS_PREFIX` | 上传文件、使用参考图、保存生成结果或成片 |
+| 文件存储 | `MEDIA_STORAGE_PROVIDER`、`ALIYUN_*` 或 `R2_*` | 用户素材、参考图、生成结果和成片；可用 `oss`/`r2` 切换，桌面安装包发布仍固定使用 OSS |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
-| 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传杭州 OSS；默认关闭，需先完成 OSS CORS 验证 |
+| 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`/`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传；R2 使用预签名 PUT，OSS 使用 POST Policy，默认关闭 |
 
 最小示例（请替换为真实值）：
 
@@ -128,6 +128,17 @@ ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
 ALIYUN_OSS_ENDPOINT=your_oss_endpoint
 ALIYUN_OSS_BUCKET=your_bucket
 ALIYUN_OSS_PREFIX=model-studio
+MEDIA_STORAGE_PROVIDER=oss
+MEDIA_STORAGE_PREFIX=
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
+R2_BUCKET=your_r2_bucket
+R2_REGION=auto
+R2_PUBLIC_BASE_URL=
+R2_REFERENCE_IMAGE_PREFIX=model-studio/temporary/reference-images
+R2_REFERENCE_IMAGE_TTL_MINUTES=60
+R2_REFERENCE_IMAGE_SWEEP_INTERVAL_MINUTES=10
 DIRECT_OSS_UPLOAD_ENABLED=false
 ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS=300
 ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS=900
@@ -140,7 +151,10 @@ MEDIA_JOB_CONCURRENCY=2
 
 说明：
 
-- OSS 的前四项必须同时配置；否则无法上传素材，也无法归档模型生成结果。
+- `MEDIA_STORAGE_PROVIDER=oss` 时需要完整配置 OSS 四项；设置为 `r2` 时需要完整配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`。桌面发布脚本始终读取 OSS 配置。
+- 资产记录会保存所属存储后端；没有该字段的历史记录按 OSS 处理，因此切换到 R2 后客户端仍可同步此前网页端上传的 OSS 素材。
+- `R2_PUBLIC_BASE_URL` 仅在模型供应商需要无签名参考素材 URL 时配置，应指向 R2 自定义域名或已配置访问策略的公开域名。
+- 图生图不会把素材原有的 OSS 地址直接提交给模型。服务端会先把参考图片复制到 R2 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用 R2 公共地址或 60 分钟签名地址提交，默认 60 分钟后自动删除；因此即使主素材仍在 OSS，图生图也需要配置完整的 R2 四项凭据。
 - 智能导演需要完整的 `DIRECTOR_AGENT_*` 三项。项目也兼容旧命名 `LLM_API_BASE`、`LLM_API_KEY`、`LLM_MODEL`。
 - `LLM_API_PROTOCOL` 可设为 `openai-compatible`（默认）或 `anthropic`。
 - 开发环境不设置 `DATA_DIR` 时默认使用项目下的 `data/`；生产环境应显式设置项目目录外的持久化绝对路径。
@@ -184,6 +198,11 @@ NODE_ENV=development
 PORT=4317
 DATA_DIR=./data
 TRUST_PROXY=
+DESKTOP_APP_ONLY=true
+# 官网下载按钮（未配置的平台会提示尚未发布）
+PUBLIC_MAC_DOWNLOAD_URL=
+PUBLIC_WINDOWS_DOWNLOAD_URL=
+PUBLIC_LINUX_DOWNLOAD_URL=
 
 # 下面三项仅用于桌面发布，本地 desktop:dev 不需要填写
 DESKTOP_UPDATE_OSS_PREFIX=
@@ -194,6 +213,8 @@ DESKTOP_API_BASE=
 运行 `npm run desktop:dev` 时，脚本会自动启动 `server.mjs`，并将桌面端连接到 `http://127.0.0.1:4317`。`DATA_DIR=./data` 表示数据库和本地运行数据放在项目根目录的 `data/` 下；如需隔离测试数据，可改成 `./data-desktop-dev`。本地没有 Nginx 反向代理时，`TRUST_PROXY` 保持为空。
 
 生产安装包采用标准的“桌面客户端 + 线上 API 服务”架构：客户端只连接构建时写入的线上 API 地址，不内置或自动启动 Node 服务，也不会把项目 `.env`、模型密钥或 OSS 密钥打进安装包。若地址未配置或服务暂时不可达，客户端会打开服务连接页；填写 HTTPS API 地址并保存后即可重试。`npm run desktop:dev` 仅用于本地开发，会启动项目服务并把桌面端指向本机地址。
+
+网页入口默认是 GuGu AI 官网，创作工作台只对桌面客户端开放；`/guguadmin` 和 `/api/admin/*` 仍供管理后台使用。客户端通过受控请求标识访问工作台，普通浏览器访问 `/image`、`/video`、`/drama`、`/files` 会回到官网。需要临时启用网页工作台时，可在服务环境设置 `DESKTOP_APP_ONLY=false`，不建议在生产环境长期使用。
 
 发布生产/内测包时必须设置 `DESKTOP_API_BASE`，例如：
 
@@ -243,44 +264,54 @@ GuGu AI Projects/
     └── logs/
 ```
 
-### 本地优先与 OSS 备份
+### 本地优先与云端对象存储备份
 
 - 从客户端导入的图片、视频、音频会先复制到 `library/` 并计算 SHA-256；相同内容再次导入会直接复用本地文件。
-- 导入完成后再向服务端发起 OSS 直传或兼容上传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
+- 导入完成后再向服务端发起云端直传或兼容上传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
 - AI 生成完成后，客户端优先通过受保护的交付地址直接从上游结果链接把成品落到本地 `library/`；上游需要鉴权时由服务端代为转发，避免把密钥交给客户端。文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
-- 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传 OSS；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到 OSS，作为临时兜底和跨设备来源。
-- 客户端启动时先读取本地索引；网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。联网后会在后台补齐尚未落地的历史云端素材。
-- 云端 OSS 是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
+- 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传云端；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到所选对象存储，作为临时兜底和跨设备来源。
+- 客户端启动时先读取本地索引；首次成功联网会用串行队列把尚未落地的历史云端素材回填到本地，之后文件库、任务卡片和预览只使用本地副本（仅新生成或本地副本缺失的素材会再次进入同步队列）。网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。
+- 云端对象存储是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
 
 删除云端文件时，客户端会同时删除对应的本地副本；需要保留素材时请先在工作区或其他备份介质中复制一份。
 
-### 自动更新
+### 自动更新与标准 CI
 
-生产或内测分发时，为客户端提供一个静态 Generic Update Feed。当前仓库提供一键构建并发布到 OSS 的脚本：
+生产或内测分发时，为客户端提供一个静态 Generic Update Feed。仓库的 GitHub Actions 负责质量检查和构建安装包，但不会上传 OSS：
+
+- Pull Request 和 `main` 分支提交：运行语法检查和全部测试。
+- `v*` tag 或手动触发：在 Linux 通过质量检查后，并行构建 Windows x64 与 macOS arm64，分别上传到 GitHub Actions Artifact。
+- Artifact 下载后先安装、启动、登录并验证正式包；确认无误后，再使用 `$gugu-desktop-oss-publish` Skill 人工上传 OSS。
+
+GitHub 仓库需要先配置两个 Repository variables（不是 Secrets）：
+
+| 变量 | 示例 | 用途 |
+| --- | --- | --- |
+| `DESKTOP_API_BASE` | `https://ai.example.com` | 安装包连接的线上 API 根地址 |
+| `DESKTOP_UPDATE_PUBLIC_URL` | `https://download.example.com/gugu-ai` | 用户设备可访问的 Generic Update Feed 根地址 |
+
+两个地址必须是 HTTPS，且 `DESKTOP_UPDATE_PUBLIC_URL` 必须对应 OSS/CDN 的公开目录。OSS AccessKey 不要配置到 GitHub Actions，也不要提交到仓库。
+
+手动构建并预览仍可使用本地脚本：
 
 ```bash
-# 第一次先预览：构建安装包，并列出将要上传的文件（不会上传）
+# 本地预览：构建安装包，并列出发布清单（不会上传）
 DESKTOP_API_BASE=https://api.example.com \
   DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
   npm run desktop:release
-
-# 配好线上 API、更新地址和 OSS 凭据后，构建并上传到 OSS
-DESKTOP_API_BASE=https://api.example.com \
-  DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
-  npm run desktop:release -- --publish
 ```
 
-脚本会读取现有的 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`，默认上传到 `${ALIYUN_OSS_PREFIX}/desktop-updates/`。如需指定目录，可设置 `DESKTOP_UPDATE_OSS_PREFIX`。它会自动上传安装包、zip、`latest-*.yml` 和 blockmap 文件，并对 `latest-*.yml` 使用不缓存策略。
+CI 构建使用 `macos-14` Apple Silicon runner 生成 macOS arm64 包，使用 Windows runner 生成 Windows x64 包。macOS 当前默认关闭签名发现，因此没有 Apple Developer ID 证书时会生成未签名包；用于公开分发前应补充签名和公证配置。
 
 当 `DESKTOP_API_BASE` 或 `DESKTOP_UPDATE_PUBLIC_URL` 已配置时，脚本会在构建过程中把线上 API 地址和更新地址临时写入安装包元数据，构建结束后恢复源码。因此用户从 Finder 双击安装包即可连接线上服务并自动检查更新，不需要在用户电脑上设置环境变量。
 
 按平台分别构建：
 
 ```bash
-# macOS：在 macOS 上执行，生成 DMG、ZIP 和对应 blockmap/feed
+# macOS Apple Silicon：在 macOS arm64 上执行，生成 DMG、ZIP 和对应 blockmap/feed
 DESKTOP_API_BASE=https://guguai.xyz \
   DESKTOP_UPDATE_PUBLIC_URL=https://你的更新公开地址 \
-  npm run desktop:release -- --mac
+  npm run desktop:release -- --mac --arm64
 
 # Windows：建议在 Windows 构建机上执行，生成 NSIS 安装包
 # PowerShell
@@ -291,19 +322,20 @@ npm run desktop:release -- --win
 
 当前 macOS 主机未安装 Wine，不能直接在这台 Mac 上可靠生成 Windows NSIS 安装包；Windows 包请在 Windows 构建机或 CI 上执行。`--mac`、`--win`、`--linux` 参数会传递给 electron-builder，也可以使用 `--x64` 或 `--arm64` 指定架构。
 
-每次发布只需要：
+使用 GitHub Actions 发布构建包只需要：
 
 1. 修改 `package.json` 的 `version`，例如从 `0.1.0` 改为 `0.1.1`。
-2. 确认 `DESKTOP_API_BASE` 是线上 API 的 HTTPS 地址，`DESKTOP_UPDATE_PUBLIC_URL` 是浏览器可访问的更新 feed 地址；并准备 OSS 四项凭据。
-3. 执行带两个地址的 `npm run desktop:release` 检查文件清单。
-4. 执行 `DESKTOP_API_BASE=https://api.example.com DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai npm run desktop:release -- --publish`。
-5. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。macOS 发现新版本后会在后台下载并校验 DMG，然后提示“退出并安装”；确认后客户端会先完全退出，再打开系统安装窗口。其他平台继续使用 electron-updater 的原生安装流程。
+2. 提交并推送版本变更，然后创建并推送匹配的 tag，例如 `git tag v0.1.1 && git push origin v0.1.1`。
+3. 在 Actions 中等待 `quality`、Windows x64 和 macOS arm64 三个 job 成功。
+4. 下载两个 Artifact，分别测试 Windows 安装包和 macOS arm64 DMG/ZIP。
+5. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap 和目标目录，并在上传前要求明确确认。
+6. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会弹出版本提示并默认开始下载，下载完成后再次提示“重启更新”；确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 
 更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest-*.yml`。
 
-目前这是本机一键发布流程，还没有绑定 GitHub Actions 等 CI。后续如果确定代码托管平台，可以再把同一条命令接到打 tag 自动构建发布。当前 Codex 环境已提供 `gugu-desktop-release` skill；下次直接说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单，只有明确要求上传时才执行 OSS 发布。
+OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`；它不会构建新包、不会删除旧版本，也不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单。
 
 未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包。用户确认“退出并安装”后，会启动独立安装引导进程，GuGu AI 完全退出后才挂载并打开 DMG，避免 Finder 因旧版本仍在运行而无法覆盖。随后用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
 
@@ -589,9 +621,9 @@ npm run migrate -- --verify
 
 ### 备份与恢复
 
-元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到 OSS，生成结果归档使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认 OSS 对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含 OSS 对象，生产环境还必须为 OSS 配置版本控制、生命周期保护或独立备份策略。
+元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到 `MEDIA_STORAGE_PROVIDER` 选择的对象存储，生成结果归档使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认对应云端对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含云端对象，生产环境还必须为所选对象存储配置版本控制、生命周期保护或独立备份策略。
 
-桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和 OSS 关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library-index.json` 与 `library/` 必须一起备份，不能只备份索引文件。
+桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和云端对象关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library-index.json` 与 `library/` 必须一起备份，不能只备份索引文件。
 
 备份请使用：
 
@@ -612,11 +644,11 @@ npm run db:backup
 
 ### 上传或生成结果归档失败
 
-检查 OSS 的 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET` 是否完整配置，且 Bucket、Endpoint 与访问权限匹配。
+检查 `MEDIA_STORAGE_PROVIDER` 对应的凭据：`oss` 使用 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`；`r2` 使用 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`。同时确认 Bucket、Endpoint 与访问权限匹配。
 
 ### Seedance 2.0 参考图返回 403
 
-当前 OSS Bucket 使用公共读。CNTCN 参考素材必须提交不带签名 query 的公开对象 URL，使渠道的 `HEAD` 可用性预检和后续 `GET` 下载都能成功。不要为 CNTCN 使用按 GET 方法签发的 OSS 临时 URL；该 URL 在渠道发起 HEAD 请求时会因签名方法不匹配返回 403。
+需要无签名参考 URL 的渠道（例如 CNTCN）应配置 `R2_PUBLIC_BASE_URL`（或 OSS 的公开访问策略），使渠道的 `HEAD` 可用性预检和后续 `GET` 下载都能成功。R2 未配置公共域名时，服务端会使用短期签名 URL；若渠道不接受带签名 query 的 URL，请补充该配置。
 
 ### 智能导演不可用
 
@@ -641,7 +673,7 @@ npm run db:backup
 ## 数据与安全边界
 
 - 服务使用 SQLite 保存用户、项目、任务、文件元数据、会话和积分流水；账号、任务、素材和项目均按用户隔离。
-- 上传素材、生成结果、尾帧和成片会归档到 OSS，服务本地保留缓存。
+- 上传素材、生成结果、尾帧和成片会归档到所选对象存储（OSS/R2），服务本地保留缓存；桌面安装包和自动更新文件仍固定发布到 OSS。
 - 密码使用带随机盐的 `scrypt` 哈希保存；会话 Cookie 为 `HttpOnly`、`SameSite=Lax`。
 - 写操作会校验同源请求；登录失败过多会被临时限流。
 - 当前设计适合单机单进程运行。不要让多个服务进程同时使用同一个 SQLite 数据目录。

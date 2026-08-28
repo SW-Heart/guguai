@@ -15,6 +15,7 @@
     "db:check": "node --env-file=.env scripts/db-check.mjs",
     "db:backup": "node --env-file=.env scripts/db-backup.mjs",
     "media:audit": "node --env-file=.env scripts/cleanup-local-media.mjs",
+    "benchmark:r2": "node --env-file=.env scripts/benchmark-r2.mjs",
     "desktop:dev": "node scripts/desktop-dev.mjs",
     "desktop:run": "electron desktop/main.mjs",
     "desktop:pack": "electron-builder --config desktop/electron-builder.yml",
@@ -28,6 +29,8 @@
     "node": ">=22.5.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1120.0",
+    "@aws-sdk/s3-request-presigner": "^3.1120.0",
     "ali-oss": "^6.23.0",
     "electron-updater": "^6.8.9"
   },

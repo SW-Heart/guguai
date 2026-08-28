@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     minimize: () => invoke('window:minimize'),
     toggleMaximize: () => invoke('window:toggle-maximize'),
     isMaximized: () => invoke('window:is-maximized'),
+    isFullScreen: () => invoke('window:is-fullscreen'),
     close: () => invoke('window:close'),
     onState: callback => {
       const listener = (_event, payload) => callback(payload);
@@ -21,6 +22,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   }),
   updates: Object.freeze({
     check: () => invoke('updates:check'),
+    getStatus: () => invoke('updates:get-status'),
     install: () => invoke('updates:install'),
     onStatus: callback => {
       const listener = (_event, payload) => callback(payload);

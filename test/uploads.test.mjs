@@ -15,6 +15,12 @@ test('direct upload keys are scoped and policy fixes the object key', () => {
   assert.ok(policy.conditions.some(item => Array.isArray(item) && item[0] === 'content-length-range' && item[2] === 20 * 1024 * 1024));
 });
 
+test('image generation reference copies use an isolated R2 temporary prefix', () => {
+  const key = __test.r2ReferenceImageKey('user/unsafe', 'generation/unsafe', { mimeType: 'image/png', storageName: 'source.png' });
+  assert.match(key, new RegExp(`^${__test.r2ReferenceImagePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/userunsafe/generationunsafe/\\d+-[0-9a-f-]+\\.png$`));
+  assert.equal(__test.r2ReferenceImageTtlMs, 60 * 60_000);
+});
+
 test('supported media magic bytes are recognized', () => {
   assert.equal(__test.magicMatches('image/png', Buffer.from('89504e470d0a1a0a', 'hex')), true);
   assert.equal(__test.magicMatches('image/jpeg', Buffer.from('ffd8ffe000', 'hex')), true);

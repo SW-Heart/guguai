@@ -29,6 +29,7 @@ const child = spawn(process.execPath, ['server.mjs'], {
     DATA_DIR: dataDir,
     PORT: String(port),
     NODE_ENV: 'development',
+    DESKTOP_APP_ONLY: 'false',
     DUOMI_API_KEY: 'smoke-key',
     YUAN_PER_CREDIT: '0.1',
     LLM_INPUT_PRICE_YUAN_PER_MILLION: '3',

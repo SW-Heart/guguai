@@ -3,6 +3,8 @@ import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSa
 import { execFile as execFileCallback } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import OSS from 'ali-oss';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -68,15 +70,47 @@ const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
 const desktopDirectDeliveryGraceMs = Math.max(10_000, Number(process.env.DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS || 120) * 1_000);
+// The web surface is a public product page. The creator workspace is served
+// only to requests carrying the desktop client marker; tests can opt out to
+// exercise the HTTP API without having to add that marker.
+const desktopAppOnly = String(process.env.DESKTOP_APP_ONLY ?? (process.env.NODE_ENV === 'test' ? 'false' : 'true')).toLowerCase() !== 'false';
+const publicDownloadUrls = Object.freeze({
+  mac: String(process.env.PUBLIC_MAC_DOWNLOAD_URL || '').trim(),
+  windows: String(process.env.PUBLIC_WINDOWS_DOWNLOAD_URL || '').trim(),
+  linux: String(process.env.PUBLIC_LINUX_DOWNLOAD_URL || '').trim(),
+});
 const llmConfig = llmConfigFromEnv();
 const llmRates = llmRatesFromEnv();
 const ossPrefix = String(process.env.ALIYUN_OSS_PREFIX || 'model-studio').replace(/^\/+|\/+$/g, '');
-const ossConfigured = Boolean(process.env.ALIYUN_ACCESS_KEY_ID && process.env.ALIYUN_ACCESS_KEY_SECRET && process.env.ALIYUN_OSS_ENDPOINT && process.env.ALIYUN_OSS_BUCKET);
-const oss = ossConfigured ? new OSS({ accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID, accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET, endpoint: process.env.ALIYUN_OSS_ENDPOINT, bucket: process.env.ALIYUN_OSS_BUCKET, secure: true }) : null;
+const aliOssConfigured = Boolean(process.env.ALIYUN_ACCESS_KEY_ID && process.env.ALIYUN_ACCESS_KEY_SECRET && process.env.ALIYUN_OSS_ENDPOINT && process.env.ALIYUN_OSS_BUCKET);
+const oss = aliOssConfigured ? new OSS({ accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID, accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET, endpoint: process.env.ALIYUN_OSS_ENDPOINT, bucket: process.env.ALIYUN_OSS_BUCKET, secure: true }) : null;
+const mediaStorageProvider = String(process.env.MEDIA_STORAGE_PROVIDER || 'oss').trim().toLowerCase();
+if (!['oss', 'r2'].includes(mediaStorageProvider)) throw new Error('MEDIA_STORAGE_PROVIDER 必须是 oss 或 r2');
+const r2Endpoint = String(process.env.R2_ENDPOINT || '').trim().replace(/\/+$/, '');
+const r2Bucket = String(process.env.R2_BUCKET || '').trim();
+const r2Region = String(process.env.R2_REGION || 'auto').trim() || 'auto';
+const r2Configured = Boolean(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && r2Endpoint && r2Bucket);
+const r2 = r2Configured ? new S3Client({
+  region: r2Region,
+  endpoint: r2Endpoint,
+  forcePathStyle: true,
+  credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY },
+}) : null;
+const storageConfigured = mediaStorageProvider === 'r2' ? r2Configured : aliOssConfigured;
+// Kept as a compatibility alias for the legacy raw upload route.
+const ossConfigured = storageConfigured;
+const storagePrefix = String(process.env.MEDIA_STORAGE_PREFIX || ossPrefix).replace(/^\/+|\/+$/g, '');
+const r2PublicBaseUrl = String(process.env.R2_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+const r2ReferenceImagePrefix = String(process.env.R2_REFERENCE_IMAGE_PREFIX || `${storagePrefix}/temporary/reference-images`).trim().replace(/^\/+|\/+$/g, '');
+const configuredR2ReferenceImageTtlMinutes = Number(process.env.R2_REFERENCE_IMAGE_TTL_MINUTES || 60);
+const r2ReferenceImageTtlMinutes = Number.isFinite(configuredR2ReferenceImageTtlMinutes) && configuredR2ReferenceImageTtlMinutes > 0 ? configuredR2ReferenceImageTtlMinutes : 60;
+const r2ReferenceImageTtlMs = Math.round(r2ReferenceImageTtlMinutes * 60_000);
+const configuredR2ReferenceImageSweepIntervalMinutes = Number(process.env.R2_REFERENCE_IMAGE_SWEEP_INTERVAL_MINUTES || 10);
+const r2ReferenceImageSweepIntervalMs = Math.max(60_000, Math.round((Number.isFinite(configuredR2ReferenceImageSweepIntervalMinutes) && configuredR2ReferenceImageSweepIntervalMinutes > 0 ? configuredR2ReferenceImageSweepIntervalMinutes : 10) * 60_000));
 const directOssUploadEnabled = String(process.env.DIRECT_OSS_UPLOAD_ENABLED || '').toLowerCase() === 'true';
 const uploadIntentExpiresSeconds = Math.max(60, Number(process.env.UPLOAD_INTENT_EXPIRES_SECONDS || 600));
-const ossUploadExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS || 300));
-const ossAssetUrlExpiresSeconds = Math.max(60, Number(process.env.ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS || 900));
+const ossUploadExpiresSeconds = Math.max(60, Number(process.env.R2_UPLOAD_EXPIRES_SECONDS || process.env.ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS || 300));
+const ossAssetUrlExpiresSeconds = Math.max(60, Number(process.env.R2_ASSET_URL_EXPIRES_SECONDS || process.env.ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS || 900));
 const assetPreviewWidth = 480;
 const assetPreviewCacheSeconds = Math.max(30, Math.min(300, ossAssetUrlExpiresSeconds - 30));
 const uploadMaxPendingPerUser = Math.max(1, Number(process.env.UPLOAD_MAX_PENDING_PER_USER || 3));
@@ -85,10 +119,22 @@ const uploadInitAttempts = new Map();
 const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
+
+// Asset records predate the storage switch and only carry an `ossKey`. Treat
+// those records as OSS unless a newer record explicitly records its provider.
+// New records always persist the provider selected for the current upload.
+function normalizeStorageProvider(value, fallback = mediaStorageProvider) {
+  const provider = String(value || '').trim().toLowerCase();
+  return ['oss', 'r2'].includes(provider) ? provider : fallback;
+}
+function storageProviderForAsset(asset) { return normalizeStorageProvider(asset?.storageProvider, 'oss'); }
+function storageProviderForIntent(intent) { return normalizeStorageProvider(intent?.storageProvider, 'oss'); }
+function storageConfiguredFor(provider) { return provider === 'r2' ? r2Configured : aliOssConfigured; }
 const activeGenerations = new Map();
 const generationRetryTimers = new Map();
 const providerTaskIdTimeoutTimers = new Map();
 const assetRestores = new Map();
+const r2ReferenceImageCleanupTimers = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
@@ -154,17 +200,18 @@ const publicUser = user => ({ id: user.id, username: user.username, role: user.r
 const uploadSweepIntervalMs = Math.max(60_000, Number(process.env.UPLOAD_SWEEP_INTERVAL_MINUTES || 10) * 60_000);
 const uploadVerifyStaleMs = Math.max(60_000, Number(process.env.UPLOAD_VERIFY_STALE_MINUTES || 10) * 60_000);
 const uploadSweeper = setInterval(() => {
-  if (!directOssUploadEnabled || !ossConfigured) return;
+  if (!directOssUploadEnabled || !storageConfigured) return;
   const nowIso = now();
   try {
     const expired = expireUploadIntents(nowIso);
-    if (expired.length) expired.forEach(intent => oss.delete(intent.temporaryOssKey).catch(() => {}));
+    if (expired.length) expired.forEach(intent => deleteStorageObject(intent.temporaryOssKey, storageProviderForIntent(intent)).catch(() => {}));
     const staleBefore = new Date(Date.now() - uploadVerifyStaleMs).toISOString();
     const stale = listRecoverableUploadIntents(nowIso, staleBefore);
     stale.forEach(intent => {
       markUploadIntentFailed(intent.userId, intent.id, { errorCode: 'UPLOAD_VERIFY_TIMEOUT', nowIso });
-      oss.delete(intent.temporaryOssKey).catch(() => {});
-      oss.delete(intent.finalOssKey).catch(() => {});
+      const provider = storageProviderForIntent(intent);
+      deleteStorageObject(intent.temporaryOssKey, provider).catch(() => {});
+      deleteStorageObject(intent.finalOssKey, provider).catch(() => {});
     });
     if (expired.length || stale.length) console.log(`[uploads] 清理过期 ${expired.length} 条，超时 ${stale.length} 条`);
   } catch (error) { console.error('[uploads] 定期清理失败', error); }
@@ -312,8 +359,9 @@ function configState() {
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY),
-    oss: ossConfigured,
-    directOssUpload: ossConfigured && directOssUploadEnabled,
+    oss: storageConfigured,
+    directOssUpload: storageConfigured && directOssUploadEnabled,
+    storageProvider: mediaStorageProvider,
     llm: isLlmConfigured(llmConfig),
     pricing: { version: pricing.version, imagePerRequest: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond },
     videoCapabilities,
@@ -964,9 +1012,9 @@ function normalizeDramaProject(project) {
 }
 async function loadDramaProject(userId, id) { const project = findDramaProject(userId, id); return project ? normalizeDramaProject(project) : null; }
 async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
-async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.ossKey && oss) await oss.delete(asset.ossKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+async function deleteAssetRecord(userId, asset) { if (!asset) return; const provider = storageProviderForAsset(asset); if (asset.ossKey && storageConfiguredFor(provider)) await deleteStorageObject(asset.ossKey, provider); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 function publicAsset(asset) {
-  const { ownerId, storageName, sourceUrl, sourceGenerationId, sourceRequiresAuth, ossKey, ossUploadedAt, ...value } = asset;
+  const { ownerId, storageName, sourceUrl, sourceGenerationId, sourceRequiresAuth, ossKey, ossUploadedAt, storageProvider, ...value } = asset;
   const url = `/api/files/${encodeURIComponent(asset.id)}/content`;
   return {
     ...value,
@@ -975,7 +1023,7 @@ function publicAsset(asset) {
     ...(asset.kind === 'image' ? { previewUrl: `/api/files/${encodeURIComponent(asset.id)}/preview` } : {}),
   };
 }
-function ossObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [ossPrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
+function ossObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [storagePrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
 async function withMediaTempDir(label, callback) {
   const jobDir = path.join(mediaTmpDir, `${safeId(label) || 'job'}-${randomUUID()}`);
   await fs.mkdir(jobDir, { recursive: true, mode: 0o700 });
@@ -983,10 +1031,11 @@ async function withMediaTempDir(label, callback) {
   finally { await fs.rm(jobDir, { recursive: true, force: true }).catch(error => console.error(`[media] 临时目录清理失败 ${jobDir}`, error.message)); }
 }
 async function uploadAssetFileToOss(userId, asset, sourceFile) {
-  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  const provider = mediaStorageProvider;
+  if (!storageConfiguredFor(provider)) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
   const key = asset.ossKey || ossObjectKey(userId, asset.storageName);
-  await oss.put(key, sourceFile, { headers: { 'Content-Type': asset.mimeType } });
-  asset.ossKey = key; asset.ossUploadedAt = now();
+  await putStorageObject(key, sourceFile, asset.mimeType, provider);
+  asset.ossKey = key; asset.storageProvider = provider; asset.ossUploadedAt = now();
   await saveAsset(userId, asset);
   return key;
 }
@@ -995,9 +1044,149 @@ function uploadExtension(mimeType, name = '') {
   if (requested && requested.length <= 10) return requested;
   return ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
 }
-function pendingUploadKey(userId, uploadId, mimeType, name) { return [ossPrefix, 'pending', safeId(userId), `${safeId(uploadId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
-function finalUploadKey(userId, assetId, mimeType, name) { return [ossPrefix, 'assets', safeId(userId), `${safeId(assetId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
+function pendingUploadKey(userId, uploadId, mimeType, name) { return [storagePrefix, 'pending', safeId(userId), `${safeId(uploadId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
+function finalUploadKey(userId, assetId, mimeType, name) { return [storagePrefix, 'assets', safeId(userId), `${safeId(assetId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
 function ossUploadUrl() { return oss ? `${oss.generateObjectUrl('').replace(/\/+$/, '')}/` : ''; }
+function storageUnavailable(provider = mediaStorageProvider) { return Object.assign(new Error(`${String(provider).toUpperCase()} 文件存储服务尚未配置`), { statusCode: 503 }); }
+async function putStorageObject(key, sourceFile, mimeType, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    const body = typeof sourceFile === 'string' ? createReadStream(sourceFile) : sourceFile;
+    const contentLength = typeof sourceFile === 'string' ? (await fs.stat(sourceFile)).size : undefined;
+    await r2.send(new PutObjectCommand({ Bucket: r2Bucket, Key: key, Body: body, ...(contentLength === undefined ? {} : { ContentLength: contentLength }), ContentType: mimeType }));
+    return key;
+  }
+  if (!oss) throw storageUnavailable(provider);
+  await oss.put(key, sourceFile, { headers: { 'Content-Type': mimeType } });
+  return key;
+}
+async function deleteStorageObject(key, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    await r2.send(new DeleteObjectCommand({ Bucket: r2Bucket, Key: key }));
+    return;
+  }
+  if (!oss) throw storageUnavailable(provider);
+  await oss.delete(key);
+}
+function r2ReferenceImageKey(userId, generationId, asset) {
+  const extension = uploadExtension(asset?.mimeType, asset?.storageName) || '.bin';
+  return [r2ReferenceImagePrefix, safeId(userId), safeId(generationId), `${Date.now()}-${randomUUID()}${extension}`].filter(Boolean).join('/');
+}
+function clearR2ReferenceImageCleanup(key) {
+  const timer = r2ReferenceImageCleanupTimers.get(key);
+  if (timer) clearTimeout(timer);
+  r2ReferenceImageCleanupTimers.delete(key);
+}
+function scheduleR2ReferenceImageCleanup(key, deleteAt = Date.now() + r2ReferenceImageTtlMs) {
+  clearR2ReferenceImageCleanup(key);
+  const timer = setTimeout(async () => {
+    r2ReferenceImageCleanupTimers.delete(key);
+    try { await deleteStorageObject(key, 'r2'); }
+    catch (error) { console.error('[image-reference] R2 临时参考图清理失败', { key, message: error.message }); }
+  }, Math.max(0, deleteAt - Date.now()));
+  timer.unref();
+  r2ReferenceImageCleanupTimers.set(key, timer);
+}
+async function sweepExpiredR2ReferenceImages() {
+  if (!r2 || !r2ReferenceImagePrefix) return 0;
+  const cutoff = Date.now() - r2ReferenceImageTtlMs;
+  const prefix = `${r2ReferenceImagePrefix}/`;
+  let continuationToken;
+  let removed = 0;
+  do {
+    const result = await r2.send(new ListObjectsV2Command({ Bucket: r2Bucket, Prefix: prefix, ...(continuationToken ? { ContinuationToken: continuationToken } : {}) }));
+    for (const object of result.Contents || []) {
+      const key = String(object.Key || '');
+      const lastModified = object.LastModified instanceof Date ? object.LastModified.getTime() : Date.parse(String(object.LastModified || ''));
+      if (!key || !Number.isFinite(lastModified) || lastModified > cutoff) continue;
+      clearR2ReferenceImageCleanup(key);
+      await deleteStorageObject(key, 'r2');
+      removed++;
+    }
+    continuationToken = result.IsTruncated ? result.NextContinuationToken : '';
+  } while (continuationToken);
+  return removed;
+}
+const r2ReferenceImageSweeper = setInterval(() => {
+  if (!r2) return;
+  sweepExpiredR2ReferenceImages()
+    .then(removed => { if (removed) console.log(`[image-reference] 清理 R2 临时参考图 ${removed} 个`); })
+    .catch(error => console.error('[image-reference] R2 临时参考图定期清理失败', error));
+}, r2ReferenceImageSweepIntervalMs);
+r2ReferenceImageSweeper.unref();
+if (r2) sweepExpiredR2ReferenceImages()
+  .then(removed => { if (removed) console.log(`[image-reference] 启动清理 R2 临时参考图 ${removed} 个`); })
+  .catch(error => console.error('[image-reference] R2 临时参考图启动清理失败', error));
+function storageStatus(error) { return error?.$metadata?.httpStatusCode || error?.status || error?.statusCode || error?.res?.status; }
+function isStorageNotFound(error) {
+  const status = storageStatus(error);
+  const code = String(error?.name || error?.code || '');
+  return status === 404 || /NoSuchKey|NotFound|NoSuchObject/i.test(code);
+}
+async function headStorageObject(key, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    try {
+      const result = await r2.send(new HeadObjectCommand({ Bucket: r2Bucket, Key: key }));
+      return { size: Number(result.ContentLength || 0), mimeType: String(result.ContentType || '').split(';')[0].toLowerCase(), etag: String(result.ETag || '').replace(/^"|"$/g, ''), status: result.$metadata?.httpStatusCode || 200 };
+    } catch (error) {
+      error.status = storageStatus(error);
+      throw error;
+    }
+  }
+  if (!oss) throw storageUnavailable(provider);
+  const [metaResult, headResult] = await Promise.all([oss.getObjectMeta(key), oss.head(key)]);
+  return combinedOssObjectMetadata(metaResult, headResult);
+}
+async function readStoragePrefix(key, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    const result = await r2.send(new GetObjectCommand({ Bucket: r2Bucket, Key: key, Range: 'bytes=0-63' }));
+    const chunks = [];
+    for await (const chunk of result.Body) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks).subarray(0, 64);
+  }
+  if (!oss) throw storageUnavailable(provider);
+  const result = await oss.get(key, { headers: { Range: 'bytes=0-63' } });
+  return Buffer.from(result.content || '');
+}
+async function copyStorageObject(sourceKey, destinationKey, mimeType, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    const copySource = `/${r2Bucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`;
+    await r2.send(new CopyObjectCommand({ Bucket: r2Bucket, Key: destinationKey, CopySource: copySource, MetadataDirective: 'REPLACE', ContentType: mimeType }));
+    return;
+  }
+  if (!oss) throw storageUnavailable(provider);
+  await oss.copy(destinationKey, sourceKey, { headers: { 'Content-Type': mimeType, 'x-oss-forbid-overwrite': 'true' } });
+}
+function publicStorageUrl(key, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') return r2PublicBaseUrl ? `${r2PublicBaseUrl}/${key.split('/').map(encodeURIComponent).join('/')}` : '';
+  return oss ? oss.generateObjectUrl(key) : '';
+}
+async function signedStorageUrl(key, expires = ossAssetUrlExpiresSeconds, options = {}, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider === 'r2') {
+    if (!r2) throw storageUnavailable(provider);
+    const responseCacheControl = options.response?.['cache-control'] || options.ResponseCacheControl;
+    return getSignedUrl(r2, new GetObjectCommand({ Bucket: r2Bucket, Key: key, ...(responseCacheControl ? { ResponseCacheControl: responseCacheControl } : {}) }), { expiresIn: expires });
+  }
+  if (!oss) throw storageUnavailable(provider);
+  return oss.signatureUrl(key, { expires, method: 'GET', ...options });
+}
+async function signedStoragePutUrl(key, mimeType, expires = ossUploadExpiresSeconds, provider = mediaStorageProvider) {
+  provider = normalizeStorageProvider(provider);
+  if (provider !== 'r2') return '';
+  if (!r2) throw storageUnavailable(provider);
+  return getSignedUrl(r2, new PutObjectCommand({ Bucket: r2Bucket, Key: key, ContentType: mimeType }), { expiresIn: expires });
+}
 function uploadInitRateAllowed(userId, timestamp = Date.now()) {
   const key = String(userId);
   const current = uploadInitAttempts.get(key);
@@ -1091,47 +1280,49 @@ function magicMatches(mimeType, content) {
   return false;
 }
 async function verifyUploadedObject(intent) {
+  const provider = storageProviderForIntent(intent);
   let meta;
-  try { meta = await headOssObject(intent.temporaryOssKey); } catch (error) {
+  try { meta = await headStorageObject(intent.temporaryOssKey, provider); } catch (error) {
     throw Object.assign(new Error('上传对象不存在或暂时不可读取'), { statusCode: 422, code: 'UPLOAD_OBJECT_MISSING', cause: error });
   }
   if (meta.size !== Number(intent.expectedSize)) throw Object.assign(new Error('上传文件大小校验失败'), { statusCode: 422, code: 'UPLOAD_SIZE_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
   if (normalizeUploadMime(meta.mimeType) !== String(intent.mimeType).toLowerCase()) throw Object.assign(new Error('上传文件类型校验失败'), { statusCode: 422, code: 'UPLOAD_MIME_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
-  const prefix = await readOssPrefix(intent.temporaryOssKey);
+  const prefix = await readStoragePrefix(intent.temporaryOssKey, provider);
   if (!magicMatches(intent.mimeType, prefix)) throw Object.assign(new Error('文件内容与声明类型不一致'), { statusCode: 422, code: 'UPLOAD_MAGIC_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
   return meta;
 }
 async function promoteUploadedObject(intent) {
-  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  const provider = storageProviderForIntent(intent);
+  if (!storageConfiguredFor(provider)) throw storageUnavailable(provider);
   try {
-    const existing = await headOssObject(intent.finalOssKey);
+    const existing = await headStorageObject(intent.finalOssKey, provider);
     if (existing.size === Number(intent.expectedSize) && existing.mimeType === String(intent.mimeType).toLowerCase()) return existing;
     throw Object.assign(new Error('正式对象已存在但内容不匹配'), { statusCode: 409, code: 'UPLOAD_FINAL_CONFLICT' });
   } catch (error) {
     if (error.code === 'UPLOAD_FINAL_CONFLICT') throw error;
     // A missing final object is the normal first-promotion path. Other OSS
     // errors must still surface instead of being mistaken for a 404.
-    const status = error?.status || error?.statusCode || error?.res?.status;
-    const code = String(error?.code || '');
-    if (status && status !== 404 && !/NoSuchKey|NotFound|NoSuchObject/i.test(code)) throw error;
+    if (!isStorageNotFound(error)) throw error;
   }
-  await oss.copy(intent.finalOssKey, intent.temporaryOssKey, { headers: { 'Content-Type': intent.mimeType, 'x-oss-forbid-overwrite': 'true' } });
-  return headOssObject(intent.finalOssKey);
+  await copyStorageObject(intent.temporaryOssKey, intent.finalOssKey, intent.mimeType, provider);
+  return headStorageObject(intent.finalOssKey, provider);
 }
 async function uploadAssetToOss(userId, asset) {
-  if (!oss) throw Object.assign(new Error('文件存储服务尚未配置'), { statusCode: 503 });
+  const provider = mediaStorageProvider;
+  if (!storageConfiguredFor(provider)) throw storageUnavailable(provider);
   const key = asset.ossKey || ossObjectKey(userId, asset.storageName);
-  await oss.put(key, path.join(assetFilesDir(userId), asset.storageName), { headers: { 'Content-Type': asset.mimeType } });
-  asset.ossKey = key; asset.ossUploadedAt = now();
+  await putStorageObject(key, path.join(assetFilesDir(userId), asset.storageName), asset.mimeType, provider);
+  asset.ossKey = key; asset.storageProvider = provider; asset.ossUploadedAt = now();
   await saveAsset(userId, asset);
   return key;
 }
-function publicOssUrl(key) { return oss.generateObjectUrl(key); }
-async function signedOssUrl(key, expires = ossAssetUrlExpiresSeconds, options = {}) { return oss.signatureUrl(key, { expires, method: 'GET', ...options }); }
+function publicOssUrl(key, provider = mediaStorageProvider) { return publicStorageUrl(key, provider); }
+async function signedOssUrl(key, expires = ossAssetUrlExpiresSeconds, options = {}, provider = mediaStorageProvider) { return signedStorageUrl(key, expires, options, provider); }
 async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)) {
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
   if (await fs.access(permanentFile).then(() => true).catch(() => false)) return permanentFile;
-  if (!oss || !asset.ossKey) throw Object.assign(new Error('文件本地缓存缺失，且没有可用的 OSS 归档'), { statusCode: 503 });
+  const provider = storageProviderForAsset(asset);
+  if (!storageConfiguredFor(provider) || !asset.ossKey) throw Object.assign(new Error('文件本地缓存缺失，且没有可用的云端归档'), { statusCode: 503 });
 
   const localFile = path.join(targetDir, asset.storageName);
   const restoreKey = `${safeId(userId)}:${asset.id}:${targetDir}`;
@@ -1139,12 +1330,45 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   const restore = (async () => {
     await fs.mkdir(targetDir, { recursive: true, mode: 0o700 });
     if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
-    const url = await signedOssUrl(asset.ossKey);
+    const url = await signedOssUrl(asset.ossKey, ossAssetUrlExpiresSeconds, {}, provider);
     await downloadToFile(url, localFile, 4);
     return localFile;
   })().finally(() => assetRestores.delete(restoreKey));
   assetRestores.set(restoreKey, restore);
   return restore;
+}
+async function stageImageReference(userId, task, asset, targetDir) {
+  if (!r2) throw storageUnavailable('r2');
+  const sourceFile = await ensureLocalAsset(userId, asset, targetDir);
+  const key = r2ReferenceImageKey(userId, task.id, asset);
+  let uploaded = false;
+  try {
+    await putStorageObject(key, sourceFile, asset.mimeType, 'r2');
+    uploaded = true;
+    const publicUrl = publicStorageUrl(key, 'r2');
+    const url = publicUrl || await signedStorageUrl(key, Math.ceil(r2ReferenceImageTtlMs / 1_000), { ResponseCacheControl: 'private, no-store' }, 'r2');
+    scheduleR2ReferenceImageCleanup(key);
+    return url;
+  } catch (error) {
+    if (uploaded) await deleteStorageObject(key, 'r2').catch(cleanupError => console.error('[image-reference] R2 临时参考图回滚失败', { key, message: cleanupError.message }));
+    throw error;
+  }
+}
+async function resolveImageRefs(userId, ids, task = {}) {
+  const referenceIds = ids.slice(0, task.referenceLimits?.image || 7);
+  if (!referenceIds.length) return [];
+  if (!r2) throw storageUnavailable('r2');
+  // Image providers may fetch the reference after submission. Never pass the
+  // asset's original OSS URL through: make a short-lived R2 copy instead.
+  return withMediaTempDir(`image-reference-${task.id}`, async jobDir => {
+    const refs = [];
+    for (const id of referenceIds) {
+      const asset = findAsset(userId, id);
+      if (!asset || asset.kind !== 'image') continue;
+      refs.push(await stageImageReference(userId, task, asset, jobDir));
+    }
+    return refs;
+  });
 }
 async function resolveRefs(userId, ids, task = {}) {
   const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
@@ -1154,7 +1378,10 @@ async function resolveRefs(userId, ids, task = {}) {
     if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
     if (!mixed && asset.kind !== 'image') continue;
     const key = asset.ossKey || await uploadAssetToOss(userId, asset);
-    const url = task.routeId || task.provider === 'cntcn' || task.provider === 'autodl' ? publicOssUrl(key) : await signedOssUrl(key);
+    const needsPublicUrl = Boolean(task.routeId || task.provider === 'cntcn' || task.provider === 'autodl');
+    const provider = storageProviderForAsset(asset);
+    const publicUrl = needsPublicUrl ? publicOssUrl(key, provider) : '';
+    const url = publicUrl || await signedOssUrl(key, ossAssetUrlExpiresSeconds, {}, provider);
     if (mixed) refs[`${asset.kind}s`].push(url);
     else refs.push(url);
   }
@@ -1209,6 +1436,7 @@ async function prepareGenerationAsset(userId, task, result) {
     mimeType: existing?.mimeType || (task.type === 'image' ? 'image/png' : 'video/mp4'),
     size: Number(existing?.size) || 0,
     storageName: existing?.storageName || `${assetId}${extension}`,
+    storageProvider: existing?.storageProvider || mediaStorageProvider,
     source: 'generation',
     sourceGenerationId: task.id,
     sourceUrl: result.url,
@@ -1544,7 +1772,9 @@ function startGeneration(userId, task) {
       task.status = 'running';
       task.finishedAt = null;
       await saveGenerationWithRetry(userId, task, 'generation-running');
-      const refs = await resolveRefs(userId, task.referenceAssetIds, task);
+      const refs = task.type === 'image'
+        ? await resolveImageRefs(userId, task.referenceAssetIds, task)
+        : await resolveRefs(userId, task.referenceAssetIds, task);
       const hooks = task.routeId
         ? routedPersistenceHooks(userId, task)
         : task.provider === 'ttapi'
@@ -1769,10 +1999,29 @@ async function recoverPendingGenerations() {
 async function streamUpload(req, target, limit = maxUploadBytes, digest = null) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 20 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); digest?.update(chunk); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return digest ? { size, sha256: digest.digest('hex') } : size; }
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
+function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
-async function serveStatic(res, pathname) { const relative = pathname === '/guguadmin' || pathname === '/guguadmin/' ? 'guguadmin.html' : pathname === '/' || frontendRoutePaths.has(pathname) ? 'index.html' : pathname.slice(1); const file = path.resolve(publicDir, relative); if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' }); const ext = path.extname(file); const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream'; const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache'; try { await serveFile(res, file, mime, '', cacheControl); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; } }
+async function serveStatic(res, pathname, req = null) {
+  const desktop = Boolean(req && isDesktopRequest(req));
+  const relative = pathname === '/guguadmin' || pathname === '/guguadmin/'
+    ? 'guguadmin.html'
+    : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
+      ? (desktop || !desktopAppOnly ? 'index.html' : 'home.html')
+      : pathname.slice(1);
+  const file = path.resolve(publicDir, relative);
+  if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
+  const ext = path.extname(file);
+  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
+  const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
+  // The same route serves the public home page or the desktop workspace
+  // depending on the request marker. Keep an intermediary cache from serving
+  // one variant to the other.
+  if (desktopAppOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
+  try { await serveFile(res, file, mime, '', cacheControl); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
+}
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -1789,6 +2038,7 @@ const server = http.createServer(async (req, res) => {
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
+    if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
 
     if (url.pathname === '/api/auth/register' && req.method === 'POST') {
       const input = await bodyJson(req); const username = String(input.username || '').trim().toLowerCase(); const password = String(input.password || ''); const inviteCode = normalizeInviteCode(input.inviteCode);
@@ -2186,6 +2436,7 @@ const server = http.createServer(async (req, res) => {
       let aspectRatio = null; let duration = null; let videoRequest = null;
       if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
+      if (type === 'image' && referenceAssetIds.length && !r2Configured) return sendJson(res, 503, { error: '图生图参考图片暂时不可用：R2 临时参考图存储尚未配置' });
       const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
       if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
       const routeSelection = type === 'video' && videoRequest.provider === 'route'
@@ -2276,7 +2527,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/files/uploads/init' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
-      if (!directOssUploadEnabled || !ossConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
+      if (!directOssUploadEnabled || !storageConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
       if (!uploadInitRateAllowed(user.id)) return sendJson(res, 429, { error: '上传请求过于频繁，请稍后再试' });
       if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) return sendJson(res, 429, { error: '未完成上传数量过多，请先完成或稍后重试' });
       const input = await bodyJson(req, 32_000);
@@ -2303,6 +2554,7 @@ const server = http.createServer(async (req, res) => {
         id: uploadId,
         userId: user.id,
         assetId,
+        storageProvider: mediaStorageProvider,
         temporaryOssKey: pendingUploadKey(user.id, uploadId, mimeType, name),
         finalOssKey: finalUploadKey(user.id, assetId, mimeType, name),
         name,
@@ -2318,13 +2570,15 @@ const server = http.createServer(async (req, res) => {
         updatedAt: createdAt,
       };
       createUploadIntent(intent);
-      const policy = buildUploadPostPolicy({ key: intent.temporaryOssKey, mimeType, sizeLimit, expiresAt });
+      const r2UploadUrl = mediaStorageProvider === 'r2' ? await signedStoragePutUrl(intent.temporaryOssKey, mimeType, Math.min(uploadIntentExpiresSeconds, ossUploadExpiresSeconds)) : '';
+      const policy = mediaStorageProvider === 'oss' ? buildUploadPostPolicy({ key: intent.temporaryOssKey, mimeType, sizeLimit, expiresAt }) : null;
       return sendJson(res, 201, {
         uploadId,
         assetId,
-        method: 'POST',
-        uploadUrl: ossUploadUrl(),
-        fields: uploadPolicyFields(policy),
+        method: mediaStorageProvider === 'r2' ? 'PUT' : 'POST',
+        uploadUrl: mediaStorageProvider === 'r2' ? r2UploadUrl : ossUploadUrl(),
+        headers: mediaStorageProvider === 'r2' ? { 'Content-Type': mimeType } : {},
+        fields: mediaStorageProvider === 'oss' ? uploadPolicyFields(policy) : {},
         expiresAt,
       });
     }
@@ -2339,7 +2593,7 @@ const server = http.createServer(async (req, res) => {
     const uploadCompleteMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)\/complete$/);
     if (uploadCompleteMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
-      if (!directOssUploadEnabled || !ossConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
+      if (!directOssUploadEnabled || !storageConfigured) return sendJson(res, 503, { error: '直传暂未启用' });
       const uploadId = uploadCompleteMatch[1];
       const existing = findUploadIntent(user.id, uploadId);
       if (!existing) return sendJson(res, 404, { error: '上传任务不存在' });
@@ -2377,6 +2631,7 @@ const server = http.createServer(async (req, res) => {
           size: meta.size,
           ...(intent.sha256 ? { sha256: intent.sha256 } : {}),
           storageName: `${intent.assetId}${extension}`,
+          storageProvider: storageProviderForIntent(intent),
           source: 'upload',
           sourceGenerationId: '',
           sourceUrl: '',
@@ -2387,13 +2642,13 @@ const server = http.createServer(async (req, res) => {
           updatedAt: nowIso,
         };
         completeUploadIntentWithAsset(user.id, uploadId, { actualSize: finalMeta.size || meta.size, objectEtag: finalMeta.etag || meta.etag, asset, nowIso });
-        await oss.delete(intent.temporaryOssKey).catch(error => console.warn(`[upload] 清理 pending 失败 uploadId=${uploadId}`, error.message));
+        await deleteStorageObject(intent.temporaryOssKey, storageProviderForIntent(intent)).catch(error => console.warn(`[upload] 清理 pending 失败 uploadId=${uploadId}`, error.message));
         return sendJson(res, 201, publicAsset(asset));
       } catch (error) {
         const code = error.code || 'UPLOAD_VERIFY_FAILED';
         if (code.startsWith('UPLOAD_')) {
           markUploadIntentFailed(user.id, uploadId, { errorCode: code, actualSize: error.actualSize ?? meta?.size ?? null, objectEtag: error.objectEtag ?? meta?.etag ?? null, nowIso: now() });
-          await oss.delete(intent.temporaryOssKey).catch(() => {});
+          await deleteStorageObject(intent.temporaryOssKey, storageProviderForIntent(intent)).catch(() => {});
           return sendJson(res, error.statusCode || 422, { error: error.message || '上传文件验证失败', code });
         }
         throw Object.assign(new Error(`上传文件归档失败：${error.message}`), { statusCode: 502, cause: error });
@@ -2408,17 +2663,21 @@ const server = http.createServer(async (req, res) => {
       const asset = findAsset(user.id, assetPreviewMatch[1]);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       if (asset.kind !== 'image') return sendJson(res, 415, { error: '只有图片支持缩略图预览' });
-      if (asset.ossKey && oss) {
-        const previewUrl = await signedOssUrl(asset.ossKey, assetPreviewCacheSeconds + 60, {
-          process: `image/resize,m_lfit,w_${assetPreviewWidth}`,
-          response: { 'cache-control': `private, max-age=${assetPreviewCacheSeconds}` },
-        });
-        res.writeHead(302, { Location: previewUrl, 'Cache-Control': `private, max-age=${assetPreviewCacheSeconds}` });
-        return res.end();
-      }
+      // Desktop clients may already have a local copy while the legacy OSS
+      // key is stale or the selected remote store is slow. Serve the local
+      // image first so a gallery render never waits on remote storage.
       const localFile = path.join(assetFilesDir(user.id), asset.storageName);
       if (await fs.access(localFile).then(() => true).catch(() => false)) {
         return serveFile(res, localFile, asset.mimeType, '', `private, max-age=${assetPreviewCacheSeconds}`);
+      }
+      const provider = storageProviderForAsset(asset);
+      if (asset.ossKey && storageConfiguredFor(provider)) {
+        const previewUrl = await signedOssUrl(asset.ossKey, assetPreviewCacheSeconds + 60, {
+          process: `image/resize,m_lfit,w_${assetPreviewWidth}`,
+          response: { 'cache-control': `private, max-age=${assetPreviewCacheSeconds}` },
+        }, provider);
+        res.writeHead(302, { Location: previewUrl, 'Cache-Control': `private, max-age=${assetPreviewCacheSeconds}` });
+        return res.end();
       }
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
@@ -2464,22 +2723,33 @@ const server = http.createServer(async (req, res) => {
       const user = await requireUser(req, res); if (!user) return;
       const asset = findAsset(user.id, directMediaMatch[1]);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
-      if (asset.ossKey && oss) {
-        res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' });
-        return res.end();
-      }
-      if (await servePendingGenerationSource(res, asset, { download: false })) return;
+      // A legacy asset can still have a valid server-side copy even when its
+      // archived OSS object has since been removed. Prefer that local copy so
+      // desktop startup can hydrate historical web assets without following a
+      // stale signed-storage redirect.
       const localFile = path.join(assetFilesDir(user.id), asset.storageName);
       if (await fs.access(localFile).then(() => true).catch(() => false)) {
         res.writeHead(302, { Location: `/api/files/${asset.id}/content`, 'Cache-Control': 'private, no-store' });
         return res.end();
       }
+      if (asset.ossKey && storageConfiguredFor(storageProviderForAsset(asset))) {
+        res.writeHead(302, { Location: await signedOssUrl(asset.ossKey, ossAssetUrlExpiresSeconds, {}, storageProviderForAsset(asset)), 'Cache-Control': 'private, no-store' });
+        return res.end();
+      }
+      if (await servePendingGenerationSource(res, asset, { download: false })) return;
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
-    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey), 'Cache-Control': 'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset, { download: fileMatch[2] === 'download' })) return; return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
+    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.ossKey) { res.writeHead(302, { Location: await signedOssUrl(asset.ossKey, ossAssetUrlExpiresSeconds, {}, storageProviderForAsset(asset)), 'Cache-Control': 'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset, { download: fileMatch[2] === 'download' })) return; return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
 
-    return await serveStatic(res, url.pathname);
+    const downloadMatch = url.pathname.match(/^\/downloads\/(mac|windows|linux)$/);
+    if (downloadMatch && req.method === 'GET') {
+      const target = publicDownloadUrls[downloadMatch[1]];
+      if (!target) return sendJson(res, 404, { error: '该平台客户端尚未发布' });
+      res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    return await serveStatic(res, url.pathname, req);
   } catch (error) { console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
 });
 

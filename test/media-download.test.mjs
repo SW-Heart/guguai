@@ -20,6 +20,7 @@ test('desktop media downloads let Electron follow signed-storage redirects', asy
     options: {
       credentials: 'include',
       redirect: 'follow',
+      headers: { 'X-GuGu-Desktop': '1' },
     },
   }]);
 });

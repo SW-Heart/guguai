@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -30,7 +30,7 @@ async function waitForServer(child, base) {
   });
 }
 
-test('desktop delivery uses upstream before OSS and acknowledges local persistence', async t => {
+test('desktop delivery prefers local copies, falls back upstream, and acknowledges persistence', async t => {
   const dataDir = mkdtempSync(path.join(tmpdir(), 'desktop-delivery-'));
   const upstreamPayload = Buffer.from('upstream-video-payload');
   const authenticatedPayload = Buffer.from('authenticated-upstream-video-payload');
@@ -62,6 +62,8 @@ test('desktop delivery uses upstream before OSS and acknowledges local persisten
   const taskId = 'delivery-task';
   const authenticatedAssetId = 'authenticated-delivery-asset';
   const authenticatedTaskId = 'authenticated-delivery-task';
+  const legacyLocalAssetId = 'legacy-local-delivery-asset';
+  const legacyLocalPayload = Buffer.from('legacy-local-video-payload');
   const createdAt = new Date().toISOString();
   const sourceUrl = `${upstreamBase}/result.mp4`;
   const authenticatedSourceUrl = `${upstreamBase}/v1/videos/auth-task/content`;
@@ -75,6 +77,14 @@ test('desktop delivery uses upstream before OSS and acknowledges local persisten
     storageName: `${assetId}.mp4`, source: 'generation', sourceGenerationId: taskId, sourceUrl,
     sourceRequiresAuth: false, deliveryStatus: 'awaiting_local', remoteStatus: 'pending', createdAt, updatedAt: createdAt,
   });
+  saveAssetRecord(userId, {
+    id: legacyLocalAssetId, ownerId: userId, name: '旧网页视频.mp4', kind: 'video', mimeType: 'video/mp4', size: legacyLocalPayload.length,
+    storageName: `${legacyLocalAssetId}.mp4`, source: 'generation', sourceGenerationId: '', sourceUrl: '',
+    ossKey: `legacy/${legacyLocalAssetId}.mp4`, remoteStatus: 'ready', createdAt, updatedAt: createdAt,
+  });
+  const legacyLocalDir = path.join(dataDir, 'users', userId, 'files');
+  mkdirSync(legacyLocalDir, { recursive: true });
+  writeFileSync(path.join(legacyLocalDir, `${legacyLocalAssetId}.mp4`), legacyLocalPayload);
   saveAssetRecord(userId, {
     id: authenticatedAssetId, ownerId: userId, name: '鉴权生成视频.mp4', kind: 'video', mimeType: 'video/mp4', size: 0,
     storageName: `${authenticatedAssetId}.mp4`, source: 'generation', sourceGenerationId: authenticatedTaskId, sourceUrl: authenticatedSourceUrl,
@@ -94,7 +104,7 @@ test('desktop delivery uses upstream before OSS and acknowledges local persisten
 
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: path.resolve(new URL('..', import.meta.url).pathname),
-    env: { ...process.env, NODE_ENV: 'development', DATA_DIR: dataDir, PORT: String(port), OAI_API_BASE: `${upstreamBase}/v1`, OAIAPI_GEMINI_KEY: 'test-oai-key', DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS: '3600' },
+    env: { ...process.env, NODE_ENV: 'development', DESKTOP_APP_ONLY: 'false', DATA_DIR: dataDir, PORT: String(port), OAI_API_BASE: `${upstreamBase}/v1`, OAIAPI_GEMINI_KEY: 'test-oai-key', DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS: '3600' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -114,10 +124,18 @@ test('desktop delivery uses upstream before OSS and acknowledges local persisten
   const files = await list.json();
   const plainFile = files.find(file => file.id === assetId);
   const authenticatedFile = files.find(file => file.id === authenticatedAssetId);
+  const legacyLocalFile = files.find(file => file.id === legacyLocalAssetId);
   assert.equal(plainFile.directUrl, `/api/files/${assetId}/direct`);
   assert.equal(plainFile.sourceUrl, undefined);
   assert.equal(authenticatedFile.directUrl, `/api/files/${authenticatedAssetId}/direct`);
   assert.equal(authenticatedFile.sourceUrl, undefined);
+
+  const legacyDirect = await fetch(`${base}${legacyLocalFile.directUrl}`, { headers, redirect: 'manual' });
+  assert.equal(legacyDirect.status, 302);
+  assert.equal(legacyDirect.headers.get('location'), `/api/files/${legacyLocalAssetId}/content`);
+  const legacyDownloaded = await fetch(`${base}${legacyLocalFile.directUrl}`, { headers });
+  assert.equal(legacyDownloaded.status, 200);
+  assert.deepEqual(Buffer.from(await legacyDownloaded.arrayBuffer()), legacyLocalPayload);
 
   const direct = await fetch(`${base}${plainFile.directUrl}`, { headers, redirect: 'manual' });
   assert.equal(direct.status, 302);
