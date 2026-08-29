@@ -146,7 +146,7 @@ const client = new OSS({
 
 for (const name of files) {
   const objectKey = `${updatePrefix}/${name}`;
-  const cacheControl = name.startsWith('latest-') ? 'no-cache, max-age=0' : 'public, max-age=31536000, immutable';
+  const cacheControl = /^latest(?:-|\.|$)/i.test(name) ? 'no-cache, max-age=0' : 'public, max-age=31536000, immutable';
   await client.put(objectKey, path.join(releaseDir, name), { headers: { 'Content-Type': contentType(name), 'Cache-Control': cacheControl } });
   console.log(`已上传 ${publicUrl}/${name}`);
 }
