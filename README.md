@@ -206,7 +206,7 @@ PORT=4317
 DATA_DIR=./data
 TRUST_PROXY=
 DESKTOP_APP_ONLY=true
-# 官网下载按钮（未配置的平台会提示尚未发布）
+# 官网下载按钮（本地开发可留空；生产环境使用 OSS 稳定别名并配置一次）
 PUBLIC_MAC_DOWNLOAD_URL=
 PUBLIC_WINDOWS_DOWNLOAD_URL=
 PUBLIC_LINUX_DOWNLOAD_URL=
@@ -238,6 +238,15 @@ DESKTOP_API_BASE=https://api.example.com \
 | `DESKTOP_API_BASE` | 构建客户端时的环境变量 | `https://ai.example.com` | 桌面客户端连接的线上服务根地址；不是 `/api` 子路径，也不要带尾部 `/` |
 | `DESKTOP_UPDATE_OSS_PREFIX` | 发布脚本环境变量 | `model-studio/desktop-updates` | 安装包、feed、blockmap 在 OSS 中的对象前缀 |
 | `DESKTOP_UPDATE_PUBLIC_URL` | 发布脚本环境变量 | `https://download.example.com/gugu-ai` | 用户设备可以直接下载更新文件的 HTTPS 根地址，必须和 OSS/CDN 的对象前缀对应 |
+
+官网首次下载链接使用同一目录下的稳定别名，不要写死版本号，也不要使用 GitHub Artifact 地址。发布脚本每次上传新版本时会在版本文件和 feed 完成后同步覆盖这两个别名，因此服务器环境通常只需配置一次：
+
+```dotenv
+PUBLIC_MAC_DOWNLOAD_URL=https://download.example.com/gugu-ai/latest-mac.dmg
+PUBLIC_WINDOWS_DOWNLOAD_URL=https://download.example.com/gugu-ai/latest-windows.exe
+```
+
+其中 `latest-mac.dmg` 和 `latest-windows.exe` 只服务官网首次下载；Electron 自动更新仍使用同一目录下的 `latest-mac.yml` 和 `latest.yml`，不应把 `.yml` 地址填进官网安装包下载按钮。
 
 `DESKTOP_API_BASE` 不需要写进服务器 `.env`。服务器只需要正常运行 `server.mjs`，并通过域名和 HTTPS 反向代理暴露出来。例如服务器 `.env` 使用：
 
@@ -288,6 +297,7 @@ GuGu AI Projects/
 
 - Pull Request 和 `main` 分支提交：运行语法检查和全部测试。
 - `v*` tag 或手动触发：在 Linux 通过质量检查后，并行构建 Windows x64 与 macOS arm64，分别上传到 GitHub Actions Artifact。
+- Artifact 只保留安装包、feed 和 blockmap 等最终发布文件，不包含 `win-unpacked`、`mac-arm64` 等 electron-builder 中间目录。
 - Artifact 下载后先安装、启动、登录并验证正式包；确认无误后，再使用 `$gugu-desktop-oss-publish` Skill 人工上传 OSS。
 
 GitHub 仓库需要先配置两个 Repository variables（不是 Secrets）：
@@ -335,14 +345,14 @@ npm run desktop:release -- --win
 2. 提交并推送版本变更，然后创建并推送匹配的 tag，例如 `git tag v0.1.1 && git push origin v0.1.1`。
 3. 在 Actions 中等待 `quality`、Windows x64 和 macOS arm64 三个 job 成功。
 4. 下载两个 Artifact，分别测试 Windows 安装包和 macOS arm64 DMG/ZIP。
-5. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap 和目标目录，并在上传前要求明确确认。
+5. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap、官网稳定别名和目标目录，并在上传前要求明确确认。
 6. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会弹出版本提示并默认开始下载，下载完成后再次提示“重启更新”；确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 
-更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest-*.yml`。
+更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest*.yml` 或官网稳定下载别名。
 
-OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`；它不会构建新包、不会删除旧版本，也不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单。
+OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`。它会先上传当前版本的安装包、feed 和 blockmap，最后同步 `latest-mac.dmg`、`latest-windows.exe` 两个官网稳定别名；不会构建新包、不会删除旧版本，且不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单。
 
 未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包。用户确认“退出并安装”后，会启动独立安装引导进程，GuGu AI 完全退出后才挂载并打开 DMG，避免 Finder 因旧版本仍在运行而无法覆盖。随后用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
 

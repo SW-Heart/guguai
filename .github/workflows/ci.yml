@@ -88,7 +88,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gugu-ai-windows-x64-${{ github.run_number }}
-          path: release/**
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+            release/latest.yml
           if-no-files-found: error
           retention-days: 30
 
@@ -138,6 +141,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gugu-ai-macos-arm64-${{ github.run_number }}
-          path: release/**
+          path: |
+            release/*.dmg
+            release/*.dmg.blockmap
+            release/*.zip
+            release/*.zip.blockmap
+            release/latest-mac.yml
           if-no-files-found: error
           retention-days: 30

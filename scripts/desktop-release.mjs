@@ -42,6 +42,9 @@ function usage() {
                                                    构建并上传到 OSS
   npm run desktop:release -- --publish --skip-build 已有 release/ 文件时直接上传
 
+发布时还会在同一 OSS 目录同步两个稳定官网别名：
+  latest-windows.exe、latest-mac.dmg（仅这两个别名会被覆盖）
+
 可选参数：
   --prefix=...    OSS 更新目录，默认 <ALIYUN_OSS_PREFIX>/desktop-updates
   --base-url=...  用户端 GUGU_UPDATE_URL 对应的公开地址
@@ -120,8 +123,20 @@ if (!feedFiles.length) throw new Error('发布清单缺少 latest-*.yml，客户
 const differentialPackages = files.filter(name => name.includes(version) && /\.(zip|7z|AppImage)$/i.test(name));
 const missingBlockmaps = differentialPackages.filter(name => !files.includes(`${name}.blockmap`));
 if (missingBlockmaps.length) throw new Error(`发布清单缺少增量更新 blockmap：${missingBlockmaps.join(', ')}`);
+const stableAliases = [
+  {
+    sourceName: files.find(name => name.includes(version) && /-mac-arm64\.dmg$/i.test(name)),
+    objectName: 'latest-mac.dmg',
+  },
+  {
+    sourceName: files.find(name => name.includes(version) && /-win-x64\.exe$/i.test(name)),
+    objectName: 'latest-windows.exe',
+  },
+].filter(entry => entry.sourceName);
 console.log(`\n版本 ${version} 待发布文件（${files.length} 个）：`);
 files.forEach(file => console.log(`  - ${file}`));
+console.log('\n官网稳定下载别名（发布时同步）：');
+stableAliases.forEach(({ objectName, sourceName }) => console.log(`  - ${objectName} <- ${sourceName}`));
 
 if (!publish) {
   console.log('\n当前为预览模式，没有上传。确认无误后追加 --publish。');
@@ -133,6 +148,9 @@ const missing = required.filter(name => !process.env[name]);
 if (missing.length) throw new Error(`缺少 OSS 配置：${missing.join(', ')}`);
 if (!publicUrl) throw new Error('发布时必须提供 DESKTOP_UPDATE_PUBLIC_URL 或 GUGU_UPDATE_URL');
 if (!apiBase) throw new Error('发布时必须提供 DESKTOP_API_BASE 或 GUGU_API_BASE');
+if (stableAliases.length !== 2) {
+  throw new Error('发布清单必须同时包含当前版本的 macOS arm64 DMG 与 Windows x64 EXE，才能同步官网稳定下载别名');
+}
 
 const ossTimeout = Number(process.env.ALIYUN_OSS_TIMEOUT_MS || 600000);
 const client = new OSS({
@@ -144,11 +162,15 @@ const client = new OSS({
   timeout: Number.isFinite(ossTimeout) && ossTimeout > 0 ? ossTimeout : 600000,
 });
 
-for (const name of files) {
-  const objectKey = `${updatePrefix}/${name}`;
-  const cacheControl = /^latest(?:-|\.|$)/i.test(name) ? 'no-cache, max-age=0' : 'public, max-age=31536000, immutable';
-  await client.put(objectKey, path.join(releaseDir, name), { headers: { 'Content-Type': contentType(name), 'Cache-Control': cacheControl } });
-  console.log(`已上传 ${publicUrl}/${name}`);
+const uploadEntries = [
+  ...files.map(name => ({ sourceName: name, objectName: name })),
+  ...stableAliases,
+];
+for (const { objectName, sourceName } of uploadEntries) {
+  const objectKey = `${updatePrefix}/${objectName}`;
+  const cacheControl = /^latest(?:-|\.|$)/i.test(objectName) ? 'no-cache, max-age=0' : 'public, max-age=31536000, immutable';
+  await client.put(objectKey, path.join(releaseDir, sourceName), { headers: { 'Content-Type': contentType(objectName), 'Cache-Control': cacheControl } });
+  console.log(`已上传 ${publicUrl}/${objectName}`);
 }
 
 console.log(`\n客户端 API 地址：${apiBase}`);
