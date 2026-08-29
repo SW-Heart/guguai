@@ -91,17 +91,14 @@ try {
   r = await call('GET', '/api/auth/me');
   check('未登录访问 /api/auth/me 返回 401', () => assert.equal(r.status, 401));
 
-  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'bad-code' });
-  check('无效邀请码被拒', () => { assert.equal(r.status, 400); assert.match(r.body.error, /邀请码无效/); });
-
-  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'SMOKE-INVITE-A' });
-  check('注册成功返回 201', () => assert.equal(r.status, 201));
-  check('新用户获得 50 赠送积分', () => assert.equal(r.body.user.credits, 50));
+  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234' });
+  check('无需邀请码即可注册并返回 201', () => assert.equal(r.status, 201));
+  check('新用户默认积分为 0', () => assert.equal(r.body.user.credits, 0));
   check('响应不含 passwordHash', () => assert.equal(r.body.user.passwordHash, undefined));
   const userA = r.body.user.id;
 
-  r = await call('POST', '/api/auth/register', { username: 'smoke_b', password: 'password1234', inviteCode: 'SMOKE-INVITE-A' });
-  check('同一邀请码二次注册返回 409', () => { assert.equal(r.status, 409); assert.match(r.body.error, /邀请码/); });
+  r = await call('POST', '/api/auth/register', { username: 'smoke_a', password: 'password1234', inviteCode: 'ignored' });
+  check('重复账号仍返回 409', () => { assert.equal(r.status, 409); assert.match(r.body.error, /账号/); });
 
   r = await call('GET', '/api/auth/me');
   check('注册后会话可用', () => { assert.equal(r.status, 200); assert.equal(r.body.user.id, userA); });
@@ -113,11 +110,10 @@ try {
       assert.ok(key in r.body, `缺少字段 ${key}`);
     }
   });
-  check('余额为 50', () => assert.equal(r.body.balance, 50));
-  check('transactions 是数组且含赠送流水', () => {
+  check('余额为 0', () => assert.equal(r.body.balance, 0));
+  check('transactions 是空数组且不再生成注册送积分流水', () => {
     assert.ok(Array.isArray(r.body.transactions));
-    assert.equal(r.body.transactions.length, 1);
-    assert.equal(r.body.transactions[0].type, 'signup_bonus');
+    assert.equal(r.body.transactions.length, 0);
   });
   check('pricing 保留原字段', () => {
     assert.equal(r.body.pricing.image, 1);
@@ -191,7 +187,7 @@ try {
   console.log('\n跨用户隔离：');
   const cookieA = cookie;
   cookie = '';
-  r = await call('POST', '/api/auth/register', { username: 'smoke_c', password: 'password1234', inviteCode: 'SMOKE-INVITE-B' });
+  r = await call('POST', '/api/auth/register', { username: 'smoke_c', password: 'password1234', inviteCode: 'ignored' });
   check('第二个账号注册成功', () => assert.equal(r.status, 201));
   const cookieB = cookie;
 
@@ -214,6 +210,18 @@ try {
   check('错误密码返回 401', () => assert.equal(r.status, 401));
   r = await call('POST', '/api/auth/login', { username: 'smoke_a', password: 'password1234' });
   check('正确密码登录成功', () => assert.equal(r.status, 200));
+  r = await call('PATCH', '/api/auth/profile', { nickname: '烟火用户', password: 'newpassword1234' });
+  check('登录后可以设置昵称和密码', () => { assert.equal(r.status, 200); assert.equal(r.body.user.nickname, '烟火用户'); });
+  const cookieAWithProfile = cookie;
+  cookie = cookieB;
+  r = await call('PATCH', '/api/auth/profile', { nickname: '烟火用户' });
+  check('重复昵称返回 409', () => { assert.equal(r.status, 409); assert.match(r.body.error, /昵称已被占用/); });
+  cookie = cookieAWithProfile;
+  r = await call('POST', '/api/auth/logout');
+  check('设置账号后可登出', () => assert.equal(r.status, 200));
+  cookie = '';
+  r = await call('POST', '/api/auth/login', { username: '烟火用户', password: 'newpassword1234' });
+  check('可用昵称和新密码登录', () => { assert.equal(r.status, 200); assert.equal(r.body.user.id, userA); });
   r = await call('GET', '/api/drama/projects');
   check('重新登录后仍能看到自己的 7 个项目', () => assert.equal(r.body.projects.length, 7));
   void cookieB;
@@ -229,8 +237,8 @@ try {
     projects: db.prepare('SELECT COUNT(*) c FROM drama_projects').get().c,
   };
   check('users=2', () => assert.equal(counts.users, 2));
-  check('invite_code_uses=2', () => assert.equal(counts.invites, 2));
-  check('credit_entries=2 (两笔赠送)', () => assert.equal(counts.entries, 2));
+  check('invite_code_uses=0（邀请码已不参与注册）', () => assert.equal(counts.invites, 0));
+  check('credit_entries=0（注册不再赠送积分）', () => assert.equal(counts.entries, 0));
   check('drama_projects=7', () => assert.equal(counts.projects, 7));
   const drift = db.prepare(`
     SELECT u.id, u.credit_balance_micro - COALESCE((SELECT SUM(amount_micro) FROM credit_entries c WHERE c.user_id=u.id),0) AS d

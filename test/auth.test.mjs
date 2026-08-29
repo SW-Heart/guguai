@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clientIp, createLoginAttemptLimiter } from '../lib/auth.mjs';
+import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from '../lib/auth.mjs';
 import { __test } from '../server.mjs';
 
 test('password hashes are salted and verifiable', async () => {
@@ -56,6 +56,32 @@ test('login limiter enforces thresholds and a hard entry bound', () => {
   assert.equal(bounded.isBlocked(req('192.0.2.1'), 'a', 4), false);
   assert.equal(bounded.isBlocked(req('192.0.2.2'), 'b', 4), true);
   assert.equal(bounded.isBlocked(req('192.0.2.3'), 'c', 4), true);
+});
+
+test('captcha challenges are single-use and bound to the client IP', () => {
+  const store = createCaptchaStore({ ttlMs: 1000 });
+  const challenge = store.issue('192.0.2.10', 100);
+  assert.match(challenge.image, /^data:image\/svg\+xml;base64,/);
+  const svg = Buffer.from(challenge.image.split(',')[1], 'base64').toString('utf8');
+  const answer = [...svg.matchAll(/<text[^>]*>([^<])<\/text>/g)].map(match => match[1]).join('');
+  assert.equal(answer.length, 5);
+  assert.equal(store.verify(challenge.challengeId, answer, '192.0.2.11', 100).ok, false);
+  assert.equal(store.verify(challenge.challengeId, answer, '192.0.2.10', 100).ok, true);
+  assert.equal(store.verify(challenge.challengeId, answer, '192.0.2.10', 100).ok, false);
+  const expired = store.issue('192.0.2.10', 100);
+  assert.equal(store.verify(expired.challengeId, answer, '192.0.2.10', 1101).ok, false);
+});
+
+test('phone normalization accepts mainland formats and SMS send limiter has a cooldown', () => {
+  assert.equal(normalizePhoneNumber(' +86 138-0013-8000 '), '13800138000');
+  assert.equal(normalizePhoneNumber('13800138000'), '13800138000');
+  assert.equal(normalizePhoneNumber('12000138000'), '');
+  const limiter = createSmsSendLimiter({ intervalMs: 1000 });
+  const req = { socket: { remoteAddress: '192.0.2.20' }, headers: {} };
+  assert.equal(limiter.remainingMs(req, '13800138000', 100), 0);
+  limiter.record(req, '13800138000', 100);
+  assert.equal(limiter.remainingMs(req, '13800138000', 500), 600);
+  assert.equal(limiter.remainingMs(req, '13800138000', 1100), 0);
 });
 
 test('generation credits follow platform pricing', () => {

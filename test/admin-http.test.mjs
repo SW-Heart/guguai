@@ -94,10 +94,10 @@ test('admin HTTP permissions and core workflows', async t => {
 
   const invite = await admin.call('/api/admin/invite-codes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { code: 'HTTP-TEST-01', maxUses: 1, signupBonus: '4.5' } });
   assert.equal(invite.response.status, 201);
-  const userResponse = await fetch(`${base}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'http_user', password: 'user-password-123', inviteCode: 'HTTP-TEST-01' }) });
+  const userResponse = await fetch(`${base}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'http_user', password: 'user-password-123', inviteCode: 'ignored' }) });
   const userData = await userResponse.json();
   assert.equal(userResponse.status, 201);
-  assert.equal(userData.user.credits, 4.5);
+  assert.equal(userData.user.credits, 0);
   const userCookie = userResponse.headers.get('set-cookie').split(';')[0];
 
   const userClient = client(base); userClient.cookie = userCookie;
@@ -110,6 +110,9 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(users.data.items.length, 1);
   const target = users.data.items[0];
   assert.equal(target.totalSpent, 0);
+  const seedBalance = await admin.call(`/api/admin/users/${target.id}/credit-adjustments`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { amount: '4.5', reasonCode: 'customer_service', note: 'http seed', idempotencyKey: 'http-seed-1' } });
+  assert.equal(seedBalance.response.status, 200);
+  assert.equal(seedBalance.data.balance, 4.5);
   const adjustment = await admin.call(`/api/admin/users/${target.id}/credit-adjustments`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { amount: '-1.25', reasonCode: 'customer_service', note: 'http test', idempotencyKey: 'http-adjust-1' } });
   assert.equal(adjustment.response.status, 200);
   assert.equal(adjustment.data.balance, 3.25);

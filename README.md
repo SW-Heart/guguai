@@ -6,8 +6,8 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 
 ## 功能概览
 
-- **个人创作空间**：账号注册/登录、邀请码注册、积分流水、用户数据隔离。
-- **管理后台**：仅管理员可登录 `/guguadmin`，管理用户、模型、全局价格、邀请码、积分和运行日志。
+- **个人创作空间**：手机号短信登录、密码登录、账号昵称与密码设置、积分流水、用户数据隔离。
+- **管理后台**：仅管理员可登录 `/guguadmin`，管理用户、模型、全局价格、积分和运行日志。
 - **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；云端对象存储（OSS/R2）只作为备份与跨设备同步来源。
 - **图片生成**：支持提示词、比例、质量和最多 7 张参考图；成品自动进入文件库。
 - **视频生成**：支持文生视频、参考图视频、首尾帧视频；按时长和模式自动选择视频服务。
@@ -67,6 +67,7 @@ cp .env.example .env
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
+| 短信登录 | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；`SMS_ACCESS_KEY_*` 可单独配置短信专用 RAM 凭据 |
 | 文件存储 | `MEDIA_STORAGE_PROVIDER`、`ALIYUN_*`、`R2_*`、`R2_REFERENCE_*` | 用户素材、生成结果和成片使用主存储；模型参考图片使用独立临时 R2 Bucket，桌面安装包发布仍固定使用 OSS |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
 | 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`/`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传；R2 使用预签名 PUT，OSS 使用 POST Policy，默认关闭 |
@@ -125,6 +126,14 @@ YUAN_PER_CREDIT=0.1
 
 ALIYUN_ACCESS_KEY_ID=your_access_key_id
 ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
+# 短信登录：默认复用上面的阿里云 AK/SK，也可以改为 SMS_ACCESS_KEY_ID/SMS_ACCESS_KEY_SECRET
+SMS_ENDPOINT=dypnsapi.aliyuncs.com
+SMS_SIGN_NAME=速通互联验证码
+SMS_TEMPLATE_CODE=100001
+SMS_SCHEME_NAME=AIGC
+SMS_VALID_TIME_SECONDS=300
+SMS_INTERVAL_SECONDS=60
+SMS_CODE_LENGTH=6
 ALIYUN_OSS_ENDPOINT=your_oss_endpoint
 ALIYUN_OSS_BUCKET=your_bucket
 ALIYUN_OSS_PREFIX=model-studio
@@ -179,7 +188,7 @@ npm start
 http://127.0.0.1:4317
 ```
 
-首次使用前先执行 `npm run create-admin` 创建管理员，再从 `/guguadmin` 创建随机邀请码。系统不会内置或自动生成公开邀请码。普通账号要求 3–24 位小写字母、数字或下划线，密码为 8–128 位；注册赠送积分由邀请码配置决定。
+首次使用前先执行 `npm run create-admin` 创建管理员。新用户默认使用手机号短信登录，发送验证码前必须完成图形人机验证，首次验证手机号时会自动创建账号；登录后可在“账号设置”中设置昵称和密码，之后可用昵称/账号与密码登录。历史用户仍可继续使用原账号密码登录。密码长度为 8–128 位；邀请码不再参与注册，旧邀请码数据仅保留用于历史数据兼容。
 
 ## 桌面客户端（内测）
 
@@ -505,7 +514,7 @@ http://127.0.0.1:4317/guguadmin
 - 用户积分增加/减少；调账使用 micro 整数账本、原因、备注和幂等键，并写入审计日志。
 - 模型用户端展示/隐藏、启用/停用和排序控制；停用模型会同时受到服务端生成接口限制。
 - 全局图片价格（积分/次）和视频价格（积分/秒）；价格按版本保存，生成任务保留价格快照。
-- 邀请码创建、启停、最大使用次数、有效期、注册送积分和使用记录。
+- 历史邀请码数据保留查询能力，但不再参与普通用户注册。
 - 生成、积分、LLM、审计和系统日志；支持按用户、模型和时间范围筛选。
 - 冻结积分异常的人工对账查询。
 

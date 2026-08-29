@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN" data-page="pricing">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="查看 GuGu AI 今日可用模型价格，价格按当前平台线路实时同步。">
+  <meta name="robots" content="index,follow">
+  <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="stylesheet" href="/marketing.css?v=1">
+  <title>今日模型价格 · GuGu AI</title>
+</head>
+<body data-page="pricing" data-price-page>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header" id="site-header">
+    <div class="nav-shell wrap">
+      <a class="wordmark" href="/" aria-label="GuGu AI 首页">
+        <img src="/favicon.svg?v=2" alt="">
+        GuGu <span>AI</span>
+      </a>
+      <nav class="site-nav" aria-label="主导航">
+        <a data-page-link="features" href="/features">功能介绍</a>
+        <a data-page-link="pricing" href="/pricing">模型价格</a>
+        <a href="/#capabilities">能力概览</a>
+        <a class="nav-cta" href="/#download">下载客户端
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="marketing-main" id="main">
+    <section class="page-hero pricing-hero wrap" aria-labelledby="pricing-title">
+      <div class="reveal"><span class="eyebrow">PRICING / LIVE CATALOG</span></div>
+      <div class="reveal delay-1">
+        <h1 id="pricing-title">今天用什么模型，<span>价格一目了然。</span></h1>
+        <p>页面展示当前平台可用线路的实时价格。动态线路、模型状态与价格版本变化后，刷新即可看到最新结果。</p>
+      </div>
+      <div class="price-toolbar reveal delay-2" aria-live="polite">
+        <div class="price-status" id="priceStatus">正在准备价格服务…</div>
+        <time id="priceUpdated"></time>
+        <button class="refresh-button" id="priceRefresh" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4L4 9"/><path d="M4 5v4h4M4 13a8 8 0 0 0 14.8 4L20 15"/><path d="M20 19v-4h-4"/></svg>
+          刷新价格
+        </button>
+      </div>
+    </section>
+
+    <section class="section wrap" aria-labelledby="catalog-title">
+      <div class="section-heading reveal">
+        <span class="eyebrow">TODAY'S MODELS</span>
+        <h2 id="catalog-title">按次或按秒，清楚计费。</h2>
+        <p>人民币价格与积分价格同时展示。视频模型按秒计费时，卡片也会标出当前固定时长的预计总价。</p>
+      </div>
+      <div class="price-catalog" id="priceCatalog" aria-live="polite" aria-busy="true">
+        <div class="price-loading">正在同步今日模型价格</div>
+      </div>
+      <div class="price-footnote reveal" aria-label="价格说明">
+        <article><b>实时同步</b><p>页面每 60 秒自动刷新，也可以随时手动刷新。展示时间来自服务端。</p></article>
+        <article><b>价格确认</b><p>提交生成任务时，系统会再次确认当前线路和价格，避免使用过期报价。</p></article>
+        <article><b>积分换算</b><p>1 积分按 ¥0.10 展示。最终扣除金额以任务提交时的价格快照为准。</p></article>
+      </div>
+    </section>
+
+    <section class="cta-section wrap" aria-labelledby="pricing-cta-title">
+      <div class="callout reveal">
+        <h2 id="pricing-cta-title">找到适合这一次创作的模型。</h2>
+        <p>价格之外，画面、时长和参考素材能力也很重要。打开 GuGu AI，开始你的下一次尝试。</p>
+        <div class="page-actions">
+          <a class="primary-button" href="/#download">下载客户端
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
+          </a>
+          <a class="secondary-button" href="/features">了解全部功能</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer wrap">
+    <a class="footer-brand" href="/"><img src="/favicon.svg?v=2" alt="">GuGu AI</a>
+    <div class="footer-links"><a href="/features">功能介绍</a><a href="/pricing">模型价格</a><a href="/#download">下载客户端</a></div>
+    <p>让灵感成为作品。 © 2026</p>
+  </footer>
+  <script src="/marketing.js?v=1"></script>
+</body>
+</html>

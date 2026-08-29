@@ -13,14 +13,15 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, migrationCompleted, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
-import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, grantSignupBonus, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntents, findAsset, findAssetBySha256, findDramaProject, findGeneration, findUploadIntent, findUserByUsername, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, listRecoverableUploadIntents, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, userForSession } from './lib/store.mjs';
+import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
+import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntents, findAsset, findAssetBySha256, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssets, listDramaProjects, listGenerations, listPendingGenerations, listRecoverableUploadIntents, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
-import { createLoginAttemptLimiter } from './lib/auth.mjs';
+import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
+import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
@@ -151,6 +152,10 @@ const providerTaskIdTimeoutTimers = new Map();
 const assetRestores = new Map();
 const r2ReferenceImageCleanupTimers = new Map();
 const loginLimiter = createLoginAttemptLimiter({ maxAttempts: 8, windowMs: 15 * 60_000 });
+const smsConfig = smsConfigFromEnv();
+const captchaStore = createCaptchaStore();
+const smsSendLimiter = createSmsSendLimiter({ intervalMs: smsConfig.intervalSeconds * 1000 });
+const smsVerifyLimiter = createLoginAttemptLimiter({ maxAttempts: 6, windowMs: 15 * 60_000 });
 const imageTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/flac']);
@@ -211,7 +216,18 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
-const publicUser = user => ({ id: user.id, username: user.username, role: user.role || 'user', status: user.status || 'active', credits: normalizeWallet(user).balance, createdAt: user.createdAt });
+const profileNicknamePattern = /^[\p{L}\p{N}_-]{2,24}$/u;
+const publicUser = user => ({
+  id: user.id,
+  username: user.username,
+  nickname: user.nickname || '',
+  displayName: user.nickname || user.username,
+  phoneNumber: user.phoneNumber || '',
+  role: user.role || 'user',
+  status: user.status || 'active',
+  credits: normalizeWallet(user).balance,
+  createdAt: user.createdAt,
+});
 const uploadSweepIntervalMs = Math.max(60_000, Number(process.env.UPLOAD_SWEEP_INTERVAL_MINUTES || 10) * 60_000);
 const uploadVerifyStaleMs = Math.max(60_000, Number(process.env.UPLOAD_VERIFY_STALE_MINUTES || 10) * 60_000);
 const uploadSweeper = setInterval(() => {
@@ -374,6 +390,7 @@ function configState() {
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY),
+    smsLogin: smsConfig.configured,
     oss: storageConfigured,
     directOssUpload: storageConfigured && directOssUploadEnabled,
     storageProvider: mediaStorageProvider,
@@ -381,6 +398,38 @@ function configState() {
     pricing: { version: pricing.version, imagePerRequest: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond },
     videoCapabilities,
     modelPrices: publicPlatformPrices(pricing, videoCapabilities),
+  };
+}
+
+// The marketing site must be able to show the same prices as the workspace
+// without exposing credentials, route IDs, upstream model names, or admin
+// controls. Keep this response deliberately smaller than /api/config.
+function publicModelPriceState() {
+  const pricing = currentPricing();
+  const videoCapabilities = publicVideoCapabilitiesWithControls();
+  const items = publicPlatformPrices(pricing, videoCapabilities).map(item => {
+    const { selectedRouteId, selectedRouteName, ...safeItem } = item;
+    return safeItem;
+  });
+  const pricedModelIds = new Set(items.map(item => item.modelId));
+  const models = [
+    { id: fixedModels.image, label: 'GuGu 图像', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
+    ...(videoCapabilities.models || []).map(model => ({
+      id: model.id,
+      label: model.label,
+      description: model.description || '',
+      availability: model.availability || 'available',
+      qualityOptions: [...new Set((model.modes || []).flatMap(mode => mode.qualityOptions || []))],
+      priced: pricedModelIds.has(model.id),
+    })),
+  ];
+  return {
+    generatedAt: now(),
+    currency: 'CNY',
+    pricingVersion: pricing.version,
+    yuanPerCredit: 0.1,
+    items,
+    models,
   };
 }
 
@@ -2040,15 +2089,22 @@ async function recoverPendingGenerations() {
 async function streamUpload(req, target, limit = maxUploadBytes, digest = null) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 20 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); digest?.update(chunk); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return digest ? { size, sha256: digest.digest('hex') } : size; }
 async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
+const marketingRouteFiles = new Map([
+  ['/features', 'features.html'],
+  ['/features/', 'features.html'],
+  ['/pricing', 'pricing.html'],
+  ['/pricing/', 'pricing.html'],
+]);
 function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
 async function serveStatic(res, pathname, req = null) {
   const desktop = Boolean(req && isDesktopRequest(req));
-  const relative = pathname === '/guguadmin' || pathname === '/guguadmin/'
-    ? 'guguadmin.html'
-    : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
-      ? (desktop || !desktopAppOnly ? 'index.html' : 'home.html')
-      : pathname.slice(1);
+  const relative = marketingRouteFiles.get(pathname)
+    || (pathname === '/guguadmin' || pathname === '/guguadmin/'
+      ? 'guguadmin.html'
+      : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
+        ? (desktop || !desktopAppOnly ? 'index.html' : 'home.html')
+        : pathname.slice(1));
   const file = path.resolve(publicDir, relative);
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
@@ -2062,7 +2118,7 @@ async function serveStatic(res, pathname, req = null) {
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2079,39 +2135,137 @@ const server = http.createServer(async (req, res) => {
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
+    // This is the only unauthenticated product API. It intentionally sits
+    // before the desktop-only API guard so public visitors can read prices.
+    if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
 
+    if (url.pathname === '/api/auth/captcha' && req.method === 'GET') {
+      return sendJson(res, 200, captchaStore.issue(clientIp(req)));
+    }
+    if (url.pathname === '/api/auth/sms/send' && req.method === 'POST') {
+      const input = await bodyJson(req);
+      const phone = normalizePhoneNumber(input.phone);
+      if (!phone) return sendJson(res, 400, { error: '请输入正确的手机号' });
+      const captcha = captchaStore.verify(input.captchaId, input.captchaCode, clientIp(req));
+      if (!captcha.ok) return sendJson(res, 400, { error: '人机验证失败，请刷新验证码后重试' });
+      if (!smsConfig.configured) return sendJson(res, 503, { error: '短信登录服务尚未配置' });
+      const remainingMs = smsSendLimiter.remainingMs(req, phone);
+      if (remainingMs > 0) {
+        return sendJson(res, 429, { error: `请 ${Math.ceil(remainingMs / 1000)} 秒后再试`, cooldownSeconds: Math.ceil(remainingMs / 1000) });
+      }
+      try {
+        await sendSmsVerifyCode({ phone, config: smsConfig });
+        smsSendLimiter.record(req, phone);
+        return sendJson(res, 200, { ok: true, cooldownSeconds: smsConfig.intervalSeconds, expiresIn: smsConfig.validTimeSeconds });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 502, { error: error.publicMessage || '短信服务暂时不可用，请稍后再试' });
+      }
+    }
+    if (url.pathname === '/api/auth/sms/login' && req.method === 'POST') {
+      const input = await bodyJson(req);
+      const phone = normalizePhoneNumber(input.phone);
+      const code = String(input.code || '').trim();
+      if (!phone) return sendJson(res, 400, { error: '请输入正确的手机号' });
+      if (!/^\d{4,8}$/.test(code)) return sendJson(res, 400, { error: '请输入短信验证码' });
+      if (!smsConfig.configured) return sendJson(res, 503, { error: '短信登录服务尚未配置' });
+      if (smsVerifyLimiter.isBlocked(req, phone)) return sendJson(res, 429, { error: '验证码尝试次数过多，请稍后再试' });
+      let checked;
+      try {
+        checked = await checkSmsVerifyCode({ phone, code, config: smsConfig });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 502, { error: error.publicMessage || '短信服务暂时不可用，请稍后再试' });
+      }
+      if (!checked.verified) {
+        smsVerifyLimiter.recordFailure(req, phone);
+        return sendJson(res, 401, { error: '验证码错误或已过期' });
+      }
+      smsVerifyLimiter.reset(req, phone);
+      let user = findUserByPhoneNumber(phone);
+      if (user?.status === 'disabled') return sendJson(res, 403, { error: '账号已停用，请联系管理员' });
+      if (!user) {
+        const createdAt = now();
+        user = createSmsUser({ user: {
+          id: randomUUID(),
+          username: phone,
+          phoneNumber: phone,
+          role: 'user',
+          status: 'active',
+          credits: 0,
+          creditBalanceMicro: 0,
+          creditHeldMicro: 0,
+          passwordHash: await hashPassword(randomBytes(32).toString('base64url')),
+          createdAt,
+          updatedAt: createdAt,
+        } });
+      }
+      if (!user) return sendJson(res, 500, { error: '创建短信账号失败，请稍后再试' });
+      await ensureUserDirs(user.id);
+      const token = createSession(user.id);
+      setSessionCookie(res, token);
+      return sendJson(res, 200, { user: publicUser(user) });
+    }
+
     if (url.pathname === '/api/auth/register' && req.method === 'POST') {
-      const input = await bodyJson(req); const username = String(input.username || '').trim().toLowerCase(); const password = String(input.password || ''); const inviteCode = normalizeInviteCode(input.inviteCode);
+      // Keep this endpoint for old clients, but registration no longer depends
+      // on invitation codes. New accounts are created by verified phone login.
+      const input = await bodyJson(req); const username = String(input.username || '').trim().toLowerCase(); const password = String(input.password || '');
       if (!/^[a-z0-9_]{3,24}$/.test(username)) return sendJson(res, 400, { error: '账号需为 3–24 位字母、数字或下划线' });
       if (password.length < 8 || password.length > 128) return sendJson(res, 400, { error: '密码长度需为 8–128 位' });
-      if (!inviteCode) return sendJson(res, 400, { error: '请输入邀请码' });
       // Password hashing is deliberately outside the transaction: scrypt takes
       // tens of milliseconds and must not be held across a write lock.
       const passwordHash = await hashPassword(password);
-      const user = { id: randomUUID(), username, role: 'user', status: 'active', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, passwordHash, inviteCode, createdAt: now(), updatedAt: now() };
-      // The invite code is burnt in the same transaction that creates the user,
-      // so concurrent registrations on one code cannot both win.
-      const result = registerUser({ user, inviteCode, grantBonus: grantSignupBonus });
+      const user = { id: randomUUID(), username, role: 'user', status: 'active', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, passwordHash, createdAt: now(), updatedAt: now() };
+      const result = registerUser({ user });
       if (result.error) return sendJson(res, result.status, { error: result.error });
       await ensureUserDirs(result.user.id);
       const token = createSession(result.user.id); setSessionCookie(res, token); return sendJson(res, 201, { user: publicUser(result.user) });
     }
     if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       const input = await bodyJson(req);
-      const username = String(input.username || '').trim().toLowerCase();
-      if (loginLimiter.isBlocked(req, username)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
-      const user = findUserByUsername(username);
+      const identifier = String(input.username || input.identifier || '').trim();
+      if (loginLimiter.isBlocked(req, identifier)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
+      const user = findUserByLogin(identifier);
       const valid = user && user.status === 'active' ? await verifyPassword(String(input.password || ''), user.passwordHash) : false;
       if (!valid) {
-        loginLimiter.recordFailure(req, username);
+        loginLimiter.recordFailure(req, identifier);
         return sendJson(res, 401, { error: '账号或密码不正确' });
       }
-      loginLimiter.reset(req, username);
+      loginLimiter.reset(req, identifier);
       await ensureUserDirs(user.id);
       const token = createSession(user.id);
       setSessionCookie(res, token);
       return sendJson(res, 200, { user: publicUser(user) });
+    }
+    if (url.pathname === '/api/auth/profile' && req.method === 'PATCH') {
+      const user = requireUser(req, res);
+      if (!user) return;
+      const input = await bodyJson(req);
+      const hasNickname = Object.prototype.hasOwnProperty.call(input, 'nickname');
+      const hasPassword = Object.prototype.hasOwnProperty.call(input, 'password');
+      if (!hasNickname && !hasPassword) return sendJson(res, 400, { error: '没有需要保存的设置' });
+
+      let nickname;
+      if (hasNickname) {
+        if (input.nickname !== null && typeof input.nickname !== 'string') return sendJson(res, 400, { error: '昵称格式不正确' });
+        nickname = input.nickname === null ? '' : input.nickname.trim();
+        if (nickname && !profileNicknamePattern.test(nickname)) return sendJson(res, 400, { error: '昵称需为 2–24 位中文、字母、数字、下划线或短横线' });
+      }
+
+      let passwordHash;
+      if (hasPassword) {
+        if (typeof input.password !== 'string') return sendJson(res, 400, { error: '密码格式不正确' });
+        if (input.password && (input.password.length < 8 || input.password.length > 128)) return sendJson(res, 400, { error: '密码长度需为 8–128 位' });
+        if (input.password) passwordHash = await hashPassword(input.password);
+      }
+      if (!hasNickname && passwordHash === undefined) return sendJson(res, 400, { error: '请输入新密码' });
+
+      try {
+        const updated = updateUserProfile(user.id, { nickname, passwordHash, updatedAt: now() });
+        return updated ? sendJson(res, 200, { user: publicUser(updated) }) : sendJson(res, 401, { error: '登录状态已失效，请重新登录' });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 500, { error: error.statusCode === 409 ? error.message : '账号设置保存失败，请稍后重试' });
+      }
     }
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') { const token = parseCookies(req.headers.cookie).studio_session; if (token) deleteSession(tokenHash(token)); clearSessionCookie(res); return sendJson(res, 200, { ok: true }); }
     if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }

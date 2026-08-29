@@ -1,4 +1,4 @@
-import { createDramaStudio } from './drama-studio.js?v=52';
+import { createDramaStudio } from './drama-studio.js?v=55';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
 
@@ -6,7 +6,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'login', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let indexedFiles = null;
@@ -530,10 +530,183 @@ let toastTimer;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('show'); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3200); }
 function emptyState(title, body, action='') { return `<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>${esc(title)}</h3><p>${esc(body)}</p>${action}</div>`; }
 
-function setAuthMode(mode) { state.authMode = mode; const registering = mode === 'register'; $$('.auth-tabs button').forEach(button => button.classList.toggle('active', button.dataset.auth === mode)); $('#authSubmit span').textContent = registering ? '创建账号' : '登录'; $('#authPassword').autocomplete = registering ? 'new-password' : 'current-password'; $('#inviteField').classList.toggle('hidden', !registering); $('#authInvite').required = registering; $('#authError').textContent = ''; }
+let captchaRequest = null;
+let smsCountdownTimer = 0;
+let smsCooldownUntil = 0;
+function setAuthMode(mode) {
+  state.authMode = mode === 'login' ? 'login' : 'sms';
+  const smsLogin = state.authMode === 'sms';
+  $$('.auth-tabs button').forEach(button => {
+    const active = button.dataset.auth === state.authMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  $('#authSubmit span').textContent = '登录';
+  $('#authPassword').autocomplete = 'current-password';
+  $('#authUsernameField').classList.toggle('hidden', smsLogin);
+  $('#authPasswordField').classList.toggle('hidden', smsLogin);
+  $('#smsFields').classList.toggle('hidden', !smsLogin);
+  $('#authUsername').required = !smsLogin;
+  $('#authPassword').required = !smsLogin;
+  $('#authPhone').required = smsLogin;
+  $('#authSmsCode').required = smsLogin;
+  $('#captchaCode').required = false;
+  $('#authError').textContent = '';
+  if (smsLogin && !$('#captchaImage').dataset.challengeId) void loadCaptcha();
+}
+function setupIntroCardInteraction() {
+  const stage = $('#introStage');
+  const card = $('#introCard');
+  if (!stage || !card || stage.dataset.interactive === 'true') return;
+  stage.dataset.interactive = 'true';
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  const setPointerState = (x, y) => {
+    if (reduceMotion) return;
+    stage.style.setProperty('--pointer-shift-x', `${x * 24}px`);
+    stage.style.setProperty('--pointer-shift-y', `${y * 20}px`);
+    stage.style.setProperty('--pointer-tilt-x', `${x * 9}deg`);
+    stage.style.setProperty('--pointer-tilt-y', `${y * -7}deg`);
+    stage.style.setProperty('--pointer-roll', `${x * -1.4}deg`);
+    stage.style.setProperty('--orbit-shift-x', `${x * -14}px`);
+    stage.style.setProperty('--orbit-shift-y', `${y * -11}px`);
+  };
+  const resetPointerState = () => setPointerState(0, 0);
+  stage.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch') return;
+    const bounds = stage.getBoundingClientRect();
+    const x = clamp((event.clientX - (bounds.left + bounds.width / 2)) / (bounds.width / 2), -1, 1);
+    const y = clamp((event.clientY - (bounds.top + bounds.height / 2)) / (bounds.height / 2), -1, 1);
+    setPointerState(x, y);
+  });
+  stage.addEventListener('pointerleave', resetPointerState);
+  card.addEventListener('click', () => {
+    const flipped = card.classList.toggle('is-flipped');
+    card.style.setProperty('--flip-angle', flipped ? '180deg' : '0deg');
+    card.setAttribute('aria-pressed', String(flipped));
+    card.setAttribute('aria-label', flipped ? '翻回品牌卡牌正面' : '翻转品牌卡牌');
+  });
+}
+async function loadCaptcha() {
+  if (captchaRequest) return captchaRequest;
+  const image = $('#captchaImage');
+  image.removeAttribute('src');
+  delete image.dataset.challengeId;
+  captchaRequest = api('/api/auth/captcha').then(result => {
+    image.src = result.image;
+    image.dataset.challengeId = result.challengeId;
+    $('#captchaCode').value = '';
+    return result;
+  }).finally(() => { captchaRequest = null; });
+  return captchaRequest;
+}
+function updateSmsCountdown() {
+  const button = $('#sendSmsCode');
+  const remaining = Math.max(0, Math.ceil((smsCooldownUntil - Date.now()) / 1000));
+  if (remaining > 0) {
+    button.disabled = true;
+    button.textContent = `${remaining}s 后重试`;
+    smsCountdownTimer = window.setTimeout(updateSmsCountdown, 250);
+  } else {
+    button.disabled = false;
+    button.textContent = '获取验证码';
+    smsCountdownTimer = 0;
+  }
+}
+function startSmsCountdown(seconds) {
+  window.clearTimeout(smsCountdownTimer);
+  smsCooldownUntil = Date.now() + Math.max(1, Number(seconds) || 60) * 1000;
+  updateSmsCountdown();
+}
 $$('.auth-tabs button').forEach(button => button.onclick = () => setAuthMode(button.dataset.auth));
 $('#togglePassword').onclick = () => { const input = $('#authPassword'); input.type = input.type === 'password' ? 'text' : 'password'; $('#togglePassword').setAttribute('aria-label', input.type === 'password' ? '显示密码' : '隐藏密码'); };
-$('#authForm').onsubmit = async event => { event.preventDefault(); const username = $('#authUsername').value.trim(); const password = $('#authPassword').value; const inviteCode = $('#authInvite').value.trim(); const button = $('#authSubmit'); $('#authError').textContent = ''; if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) { $('#authError').textContent = '账号需为 3–24 位字母、数字或下划线'; return; } if (password.length < 8) { $('#authError').textContent = '密码至少需要 8 位'; return; } if (state.authMode === 'register' && !inviteCode) { $('#authError').textContent = '请输入邀请码'; return; } button.disabled = true; try { const result = await api(`/api/auth/${state.authMode}`, { method:'POST', body:JSON.stringify({ username, password, ...(state.authMode === 'register' ? { inviteCode } : {}) }) }); await enterApp(result.user); } catch (error) { $('#authError').textContent = error.status === 404 ? '注册服务未启动，请重启后端服务' : error.message; } finally { button.disabled = false; } };
+function captchaDialogError(message = '') {
+  const error = $('#captchaDialogError');
+  error.textContent = message;
+  error.classList.toggle('hidden', !message);
+}
+function closeCaptchaDialog() {
+  const dialog = $('#captchaDialog');
+  if (dialog?.open) dialog.close();
+}
+async function openCaptchaDialog() {
+  const dialog = $('#captchaDialog');
+  if (!dialog || dialog.open) return;
+  $('#captchaCode').value = '';
+  captchaDialogError();
+  dialog.showModal();
+  requestAnimationFrame(() => $('#captchaCode').focus());
+  if ($('#captchaImage').dataset.challengeId) return;
+  try { await loadCaptcha(); }
+  catch (error) { captchaDialogError(error.message); }
+}
+$('#refreshCaptcha').onclick = () => { captchaDialogError(); void loadCaptcha().catch(error => captchaDialogError(error.message)); };
+$('#sendSmsCode').onclick = () => {
+  const phone = $('#authPhone').value.trim();
+  $('#authError').textContent = '';
+  if (!/^1[3-9]\d{9}$/.test(phone)) { $('#authError').textContent = '请输入正确的手机号'; return; }
+  void openCaptchaDialog();
+};
+$('#captchaForm').onsubmit = async event => {
+  event.preventDefault();
+  const phone = $('#authPhone').value.trim();
+  const captchaCode = $('#captchaCode').value.trim();
+  const captchaId = $('#captchaImage').dataset.challengeId || '';
+  captchaDialogError();
+  if (!/^1[3-9]\d{9}$/.test(phone)) { captchaDialogError('手机号已变化，请返回重新输入'); return; }
+  if (!captchaId || !captchaCode) { captchaDialogError('请输入图中字符'); return; }
+  const confirm = $('#confirmCaptcha');
+  confirm.disabled = true;
+  try {
+    const result = await api('/api/auth/sms/send', { method:'POST', body:JSON.stringify({ phone, captchaId, captchaCode }) });
+    startSmsCountdown(result.cooldownSeconds);
+    toast('验证码已发送');
+    closeCaptchaDialog();
+    try { await loadCaptcha(); } catch {}
+  } catch (error) {
+    if (error.status === 429 && error.cooldownSeconds) {
+      startSmsCountdown(error.cooldownSeconds);
+      $('#authError').textContent = error.message;
+      closeCaptchaDialog();
+    } else {
+      captchaDialogError(error.message);
+      try { await loadCaptcha(); } catch {}
+    }
+  } finally {
+    confirm.disabled = false;
+  }
+};
+$('#closeCaptchaDialog').onclick = $('#cancelCaptchaDialog').onclick = closeCaptchaDialog;
+$('#captchaDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeCaptchaDialog(); });
+$('#captchaDialog').addEventListener('cancel', event => { event.preventDefault(); closeCaptchaDialog(); });
+$('#authForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = $('#authSubmit');
+  $('#authError').textContent = '';
+  if (state.authMode === 'sms') {
+    const phone = $('#authPhone').value.trim();
+    const code = $('#authSmsCode').value.trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) { $('#authError').textContent = '请输入正确的手机号'; return; }
+    if (!/^\d{4,8}$/.test(code)) { $('#authError').textContent = '请输入短信验证码'; return; }
+    button.disabled = true;
+    try {
+      const result = await api('/api/auth/sms/login', { method:'POST', body:JSON.stringify({ phone, code }) });
+      await enterApp(result.user);
+    } catch (error) { $('#authError').textContent = error.message; }
+    finally { button.disabled = false; }
+    return;
+  }
+  const username = $('#authUsername').value.trim();
+  const password = $('#authPassword').value;
+  if (!username || username.length > 64) { $('#authError').textContent = '请输入账号、昵称或手机号'; return; }
+  if (password.length < 8) { $('#authError').textContent = '密码至少需要 8 位'; return; }
+  button.disabled = true;
+  try {
+    const result = await api('/api/auth/login', { method:'POST', body:JSON.stringify({ username, password }) });
+    await enterApp(result.user);
+  } catch (error) { $('#authError').textContent = error.status === 404 ? '注册服务未启动，请重启后端服务' : error.message; }
+  finally { button.disabled = false; }
+};
 function creditText(balance) { return (Number(balance) || 0).toLocaleString('zh-CN', { maximumFractionDigits:4 }); }
 function creditEntryAmount(entry) {
   const amount = Number(entry?.amount);
@@ -562,7 +735,7 @@ function creditSpendType(entry) {
 }
 function creditEarnType(entry) {
   if (entry?.type === 'generation_refund') return '任务失败退款';
-  if (entry?.type === 'signup_bonus') return '赠送（通过邀请码注册给的积分）';
+  if (entry?.type === 'signup_bonus') return '赠送积分';
   if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
   return '积分获取';
 }
@@ -980,6 +1153,8 @@ function showAuth() {
   toggleClass($('#bootView'), 'hidden', true);
   toggleClass($('#authView'), 'hidden', false);
   toggleClass($('#appView'), 'hidden', true);
+  setAuthMode('sms');
+  setupIntroCardInteraction();
   document.title = '登录 · GuGu AI';
 }
 function showApp() {
@@ -987,6 +1162,17 @@ function showApp() {
   toggleClass($('#bootView'), 'hidden', true);
   toggleClass($('#authView'), 'hidden', true);
   toggleClass($('#appView'), 'hidden', false);
+}
+function accountDisplayName(user = state.user) {
+  return String(user?.nickname || user?.displayName || user?.username || 'user');
+}
+function updateAccountIdentity(user = state.user) {
+  const displayName = accountDisplayName(user);
+  const initial = Array.from(displayName)[0]?.toUpperCase() || 'U';
+  $('#accountName').textContent = displayName;
+  $('#menuName').textContent = displayName;
+  $('#accountInitial').textContent = initial;
+  $('#menuInitial').textContent = initial;
 }
 function finishInitialWorkspaceSync() {
   state.initialSyncReady = true;
@@ -998,11 +1184,7 @@ async function enterApp(user) {
   state.user = user;
   state.initialSyncReady = false;
   showBoot('正在加载工作区', '正在同步你的品牌素材与生成记录，请稍候。');
-  const initial = user.username[0].toUpperCase();
-  $('#accountName').textContent = user.username;
-  $('#menuName').textContent = user.username;
-  $('#accountInitial').textContent = initial;
-  $('#menuInitial').textContent = initial;
+  updateAccountIdentity(user);
   setCreditBalance(user.credits);
 
   // Route first: the shell and its controls can paint while the workspace data
@@ -1020,6 +1202,81 @@ async function enterApp(user) {
   // deferred until the initial background sync settles so it cannot compete
   // with the first page render or duplicate the config request.
 }
+
+let accountSettingsRestoreFocus = null;
+function accountSettingsError(message = '') {
+  const error = $('#accountSettingsError');
+  error.textContent = message;
+  error.classList.toggle('hidden', !message);
+}
+function maskedPhoneNumber(phone) {
+  const value = String(phone || '');
+  return /^1[3-9]\d{9}$/.test(value) ? `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7)}` : '未绑定手机号';
+}
+function openAccountSettings() {
+  const dialog = $('#accountSettingsDialog');
+  if (!dialog || dialog.open || !state.user) return;
+  accountSettingsRestoreFocus = $('#accountButton');
+  setNotificationPanelOpen(false);
+  $('#accountMenu').classList.add('hidden');
+  $('#accountPhone').value = maskedPhoneNumber(state.user.phoneNumber);
+  $('#accountNickname').value = state.user.nickname || '';
+  $('#accountNewPassword').value = '';
+  $('#accountPasswordConfirm').value = '';
+  accountSettingsError();
+  $('#saveAccountSettings').disabled = false;
+  dialog.showModal();
+  requestAnimationFrame(() => $('#accountNickname').focus());
+}
+function closeAccountSettings() {
+  const dialog = $('#accountSettingsDialog');
+  if (dialog?.open) dialog.close();
+}
+$('#accountSettingsForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const nickname = $('#accountNickname').value.trim();
+  const password = $('#accountNewPassword').value;
+  const confirmation = $('#accountPasswordConfirm').value;
+  accountSettingsError();
+  if (nickname && !/^[\p{L}\p{N}_-]{2,24}$/u.test(nickname)) {
+    accountSettingsError('昵称需为 2–24 位中文、字母、数字、下划线或短横线');
+    $('#accountNickname').focus();
+    return;
+  }
+  if (password && (password.length < 8 || password.length > 128)) {
+    accountSettingsError('密码长度需为 8–128 位');
+    $('#accountNewPassword').focus();
+    return;
+  }
+  if (password !== confirmation) {
+    accountSettingsError('两次输入的密码不一致');
+    $('#accountPasswordConfirm').focus();
+    return;
+  }
+  const button = $('#saveAccountSettings');
+  button.disabled = true;
+  try {
+    const payload = { nickname };
+    if (password) payload.password = password;
+    const result = await api('/api/auth/profile', { method:'PATCH', body:JSON.stringify(payload) });
+    state.user = result.user;
+    updateAccountIdentity(result.user);
+    closeAccountSettings();
+    toast('账号设置已保存');
+  } catch (error) {
+    accountSettingsError(error.message);
+    button.disabled = false;
+  }
+});
+$('#closeAccountSettings').onclick = $('#cancelAccountSettings').onclick = closeAccountSettings;
+$('#accountSettingsDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeAccountSettings(); });
+$('#accountSettingsDialog').addEventListener('cancel', event => { event.preventDefault(); closeAccountSettings(); });
+$('#accountSettingsDialog').addEventListener('close', () => {
+  const restore = accountSettingsRestoreFocus;
+  accountSettingsRestoreFocus = null;
+  accountSettingsError();
+  requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
+});
 
 let deleteConfirmationResolver = null;
 let deleteConfirmationRestoreFocus = null;
@@ -1078,6 +1335,7 @@ notificationMenuItem?.addEventListener('mouseleave', () => { if (!notificationMe
 notificationMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
 notificationMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!notificationMenuItem.matches(':focus-within') && !notificationMenuItem.matches(':hover')) scheduleNotificationPanelClose(); }));
 notificationMenuButton?.addEventListener('click', event => { event.stopPropagation(); setNotificationPanelOpen(true); });
+$('#accountSettingsButton').onclick = event => { event.stopPropagation(); openAccountSettings(); };
 $('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) setNotificationPanelOpen(false); if (opening) renderNotifications(); };
 $('#markAllNotifications').onclick = event => { event.stopPropagation(); void markAllNotificationsRead(); };
 document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
@@ -1257,11 +1515,60 @@ function taskCard(task) {
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedAction}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
+let generationLayoutFrame = 0;
+let generationLayoutObserver = null;
+function scheduleGenerationLayout() {
+  if (generationLayoutFrame || !$('#generationGrid')) return;
+  generationLayoutFrame = requestAnimationFrame(layoutGenerationMasonry);
+}
+function layoutGenerationMasonry() {
+  generationLayoutFrame = 0;
+  const grid = $('#generationGrid');
+  if (!grid || !['image','video'].includes(state.route)) return;
+  const cards = [...grid.children].filter(node => node.classList.contains('task-card'));
+  if (!cards.length || !grid.clientWidth) {
+    grid.classList.remove('masonry-ready');
+    grid.style.removeProperty('height');
+    generationLayoutObserver?.disconnect();
+    return;
+  }
+  const computed = getComputedStyle(grid);
+  const columns = Math.max(1, Number.parseInt(computed.getPropertyValue('--generation-columns'), 10) || 1);
+  const paddingLeft = Number.parseFloat(computed.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(computed.paddingRight) || 0;
+  const paddingTop = Number.parseFloat(computed.paddingTop) || 0;
+  const paddingBottom = Number.parseFloat(computed.paddingBottom) || 0;
+  const gap = Number.parseFloat(computed.columnGap) || Number.parseFloat(computed.gap) || 0;
+  const contentWidth = grid.clientWidth - paddingLeft - paddingRight;
+  const cardWidth = (contentWidth - gap * (columns - 1)) / columns;
+  if (cardWidth <= 0) return;
+
+  grid.classList.add('masonry-ready');
+  const columnHeights = Array.from({ length: columns }, () => 0);
+  cards.forEach((card, index) => {
+    const column = index < columns ? index : columnHeights.indexOf(Math.min(...columnHeights));
+    card.style.width = `${cardWidth}px`;
+    card.style.left = `${paddingLeft + column * (cardWidth + gap)}px`;
+    card.style.top = `${paddingTop + columnHeights[column]}px`;
+    columnHeights[column] += card.offsetHeight + gap;
+  });
+  const contentHeight = Math.max(...columnHeights, 0) - (cards.length ? gap : 0);
+  grid.style.height = `${Math.max(0, paddingTop + contentHeight + paddingBottom)}px`;
+
+  if ('ResizeObserver' in window) {
+    generationLayoutObserver ||= new ResizeObserver(() => scheduleGenerationLayout());
+    generationLayoutObserver.disconnect();
+    cards.forEach(card => generationLayoutObserver.observe(card));
+  }
+}
 function reconcileCards(container, records, { card, signature, bind, empty }) {
   const existing = new Map([...container.children].filter(node => node.dataset.recordId).map(node => [node.dataset.recordId, node]));
   if (!records.length) {
     const emptySignature = empty;
     if (container.dataset.emptySignature !== emptySignature || container.children.length !== 1 || !container.firstElementChild?.classList.contains('empty-state')) container.innerHTML = empty;
+    container.classList.remove('masonry-ready');
+    container.style.removeProperty('height');
+    generationLayoutObserver?.disconnect();
     container.dataset.emptySignature = emptySignature;
     return;
   }
@@ -1300,7 +1607,9 @@ function syncGenerationView() {
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
+  scheduleGenerationLayout();
 }
+window.addEventListener('resize', scheduleGenerationLayout, { passive:true });
 function taskRecency(task) { return String(task.finishedAt || task.updatedAt || task.createdAt || ''); }
 function compareTasksByRecency(left, right) {
   const timeOrder = taskRecency(right).localeCompare(taskRecency(left));
@@ -1323,6 +1632,7 @@ function renderTasks() {
     ? emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。')
     : emptyState('正在加载作品', '正在同步你的生成记录，页面可以先使用。');
   reconcileCards($('#generationGrid'), hasInitialData ? tasks : [], { card:taskCard, signature:taskRenderSignature, bind:bindTaskCard, empty });
+  scheduleGenerationLayout();
   lastTaskRender = renderState;
 }
 $$('.filter').forEach(button => button.onclick = () => { state.generationFilter = button.dataset.status; $$('.filter').forEach(x => x.classList.toggle('active', x === button)); renderTasks(); });
