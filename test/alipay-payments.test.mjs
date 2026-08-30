@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { __test as paymentTest, amountFenFromText, amountTextFromFen, loadAlipayConfig, paymentReturnPage, publicCreditPackages, publicNotifyUrl, publicReturnUrl } from '../lib/alipay-payments.mjs';
+import { __test as paymentTest, amountFenFromText, amountTextFromFen, createPaymentOrder, loadAlipayConfig, paymentReturnPage, publicCreditPackages, publicNotifyUrl, publicReturnUrl } from '../lib/alipay-payments.mjs';
 import { closeDatabase, openDatabase, sql } from '../lib/db.mjs';
 import { captureAlipayRefundCredits, creditAlipayPurchase, reserveAlipayRefundCredits, walletOf } from '../lib/ledger.mjs';
 
@@ -36,6 +36,22 @@ test('Alipay amount and production config boundaries', () => {
   assert.deepEqual(paymentTest.creditsAndAmount(50, { YUAN_PER_CREDIT:'0.1' }), { credits:50, creditsMicro:50_000_000, totalAmountFen:500 });
   assert.throws(() => paymentTest.creditsAndAmount(200, { YUAN_PER_CREDIT:'0.1' }), /有效的积分商品/);
   assert.throws(() => publicCreditPackages({ YUAN_PER_CREDIT:'0.2' }), /必须配置为 0.1/);
+});
+
+test('invalid Alipay packages are rejected before provider configuration is loaded', async () => {
+  await assert.rejects(
+    createPaymentOrder({
+      userId: 'ci-user',
+      credits: 200,
+      returnUrl: 'https://example.com/payments/alipay/return',
+      env: { ALIPAY_ENV:'production', YUAN_PER_CREDIT:'0.1' },
+    }),
+    error => {
+      assert.equal(error.statusCode, 400);
+      assert.match(error.message, /有效的积分商品/);
+      return true;
+    },
+  );
 });
 
 test('Alipay private key validation rejects placeholders and requires raw PKCS#1', () => {
