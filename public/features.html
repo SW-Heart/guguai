@@ -6,7 +6,7 @@
   <meta name="description" content="了解 GuGu AI 的图片、视频、短剧工作流与素材管理能力。">
   <meta name="robots" content="index,follow">
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/marketing.css?v=1">
+  <link rel="stylesheet" href="/marketing.css?v=6">
   <title>功能介绍 · GuGu AI</title>
 </head>
 <body data-page="features">
@@ -19,8 +19,17 @@
       </a>
       <nav class="site-nav" aria-label="主导航">
         <a data-page-link="features" href="/features">功能介绍</a>
-        <a data-page-link="pricing" href="/pricing">模型价格</a>
+        <a data-page-link="pricing" href="/pricing">价格与积分</a>
         <a href="/#capabilities">能力概览</a>
+        <div class="site-account-menu" id="siteAccountMenu">
+          <a class="site-login-link" id="siteLoginLink" href="/login?next=%2Fpricing" aria-haspopup="true" aria-expanded="false">
+            <span id="siteLoginText">登录</span>
+          </a>
+          <div class="site-account-dropdown" id="siteAccountDropdown" role="menu" aria-label="账号菜单" aria-hidden="true">
+            <p id="siteAccountSummary"></p>
+            <button id="siteLogoutButton" type="button" role="menuitem">退出登录</button>
+          </div>
+        </div>
         <a class="nav-cta" href="/#download">下载客户端
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
         </a>
@@ -114,7 +123,7 @@
           <a class="primary-button" href="/#download">下载 GuGu AI
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
           </a>
-          <a class="secondary-button" href="/pricing">浏览模型价格</a>
+          <a class="secondary-button" href="/pricing">查看价格与积分</a>
         </div>
       </div>
     </section>
@@ -122,9 +131,9 @@
 
   <footer class="site-footer wrap">
     <a class="footer-brand" href="/"><img src="/favicon.svg?v=2" alt="">GuGu AI</a>
-    <div class="footer-links"><a href="/features">功能介绍</a><a href="/pricing">模型价格</a><a href="/#download">下载客户端</a></div>
+    <div class="footer-links"><a href="/features">功能介绍</a><a href="/pricing">价格与积分</a><a href="/#download">下载客户端</a></div>
     <p>让灵感成为作品。 © 2026</p>
   </footer>
-  <script src="/marketing.js?v=1"></script>
+  <script src="/marketing.js?v=6"></script>
 </body>
 </html>

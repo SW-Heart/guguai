@@ -107,6 +107,17 @@ img { max-width: 100%; }
 }
 .nav-cta { min-height: 42px; padding: 0 16px; background: #17181d; color: #fff; box-shadow: 0 8px 18px rgba(20,21,27,.15); }
 .nav-cta:hover { background: #2b2d35; transform: translateY(-1px) scale(1.01); }
+.site-account-menu { position: relative; display: flex; align-items: center; }
+.site-login-link { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; max-width: 210px; padding: 0 13px; border: 1px solid rgba(18,20,28,.1); border-radius: 14px; background: rgba(255,255,255,.7); color: var(--ink-2); font-size: 12px; font-weight: 680; white-space: nowrap; overflow: hidden; box-shadow: inset 0 1px rgba(255,255,255,.9); transition: transform .25s var(--spring), background .25s ease, box-shadow .25s ease; }
+.site-login-link::after { display: none !important; }
+.site-login-link:hover { background: #fff; box-shadow: 0 8px 18px rgba(49,52,76,.1), inset 0 1px #fff; transform: translateY(-1px); }
+.site-account-menu.is-signed-in .site-login-link { border-color: rgba(45,187,131,.18); background: rgba(239,251,246,.82); }
+.site-login-link #siteLoginText { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.site-account-dropdown { position: absolute; z-index: 5; top: calc(100% + 8px); right: 0; display: none; min-width: 180px; padding: 12px; border: 1px solid rgba(255,255,255,.82); border-radius: 15px; background: rgba(255,255,255,.9); box-shadow: 0 16px 34px rgba(49,52,76,.14), inset 0 1px rgba(255,255,255,.95); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+.site-account-menu.is-signed-in:hover .site-account-dropdown, .site-account-menu.is-signed-in:focus-within .site-account-dropdown { display: block; }
+#siteAccountSummary { margin: 0 4px 9px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+#siteLogoutButton { width: 100%; padding: 8px 10px; border-radius: 9px; background: rgba(91,92,232,.08); color: var(--ink-2); cursor: pointer; font-size: 12px; text-align: left; }
+#siteLogoutButton:hover { background: rgba(91,92,232,.14); }
 .nav-cta svg, .primary-button svg, .secondary-button svg, .refresh-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .marketing-main { position: relative; }
 .page-hero { position: relative; padding: 174px 0 96px; text-align: center; }
@@ -171,9 +182,76 @@ img { max-width: 100%; }
 .reveal.in-view { opacity: 1; transform: none; }
 .delay-1 { transition-delay: .08s; }
 .delay-2 { transition-delay: .16s; }
+.delay-3 { transition-delay: .24s; }
 .page-hero .reveal { animation: intro .85s var(--spring) both; }
 .page-hero .delay-1 { animation-delay: .08s; }
 @keyframes intro { from { opacity: 0; transform: translateY(22px) scale(.99); } to { opacity: 1; transform: none; } }
+
+/* Credit store */
+.credit-store { padding-top: 16px; }
+.credit-store-heading { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 30px; }
+.credit-store-heading h2 { margin: 10px 0 7px; font-size: clamp(38px, 4vw, 56px); font-weight: 720; letter-spacing: -.07em; line-height: 1.04; }
+.credit-store-heading p { margin: 0; color: var(--muted); font-size: 14px; }
+.purchase-account { display: flex; align-items: center; gap: 9px; min-height: 44px; padding: 0 13px; border: 1px solid rgba(255,255,255,.84); border-radius: 14px; background: rgba(255,255,255,.58); box-shadow: inset 0 1px rgba(255,255,255,.92); color: var(--muted); font-size: 12px; }
+.purchase-account .account-dot { width: 8px; height: 8px; border-radius: 50%; background: #afb3be; box-shadow: 0 0 0 4px rgba(112,117,131,.08); }
+.purchase-account.is-signed-in .account-dot { background: #2dbb83; box-shadow: 0 0 0 4px rgba(45,187,131,.12); }
+.purchase-account a { margin-left: 3px; color: var(--blue-deep); font-weight: 680; }
+.purchase-account.is-signed-in a { display: none; }
+.purchase-account.is-guest a { display: inline; }
+.credit-pack-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
+.credit-pack { position: relative; display: flex; min-width: 0; min-height: 375px; flex-direction: column; overflow: hidden; padding: 23px; border: 1px solid rgba(255,255,255,.85); border-radius: 27px; background: rgba(255,255,255,.57); box-shadow: 0 18px 48px rgba(55,59,88,.09), inset 0 1px rgba(255,255,255,.98); backdrop-filter: blur(24px) saturate(1.24); transition: transform .35s var(--spring), box-shadow .3s ease, border-color .3s ease; }
+.credit-pack::after { position: absolute; z-index: -1; right: -75px; bottom: -85px; width: 190px; height: 190px; border-radius: 50%; background: rgba(91,92,232,.14); filter: blur(45px); content: ""; }
+.credit-pack:hover { border-color: rgba(91,92,232,.22); box-shadow: 0 25px 60px rgba(55,59,88,.14), inset 0 1px #fff; transform: translateY(-6px); }
+.credit-pack.is-featured { border-color: rgba(91,92,232,.34); background: linear-gradient(155deg, rgba(255,255,255,.82), rgba(238,239,255,.64)); box-shadow: 0 22px 60px rgba(82,84,187,.16), inset 0 1px #fff; }
+.credit-pack.is-requested { border-color: rgba(22,119,255,.44); box-shadow: 0 0 0 3px rgba(22,119,255,.09), 0 25px 60px rgba(55,59,88,.14); }
+.pack-signal { display: flex; height: 28px; align-items: end; gap: 4px; margin-bottom: 37px; }
+.pack-signal i { width: 7px; border-radius: 7px; background: rgba(91,92,232,.12); }
+.pack-signal i:nth-child(1) { height: 10px; }
+.pack-signal i:nth-child(2) { height: 15px; }
+.pack-signal i:nth-child(3) { height: 21px; }
+.pack-signal i:nth-child(4) { height: 28px; }
+.credit-pack:nth-child(1) .pack-signal i:nth-child(1),
+.credit-pack:nth-child(2) .pack-signal i:nth-child(-n+2),
+.credit-pack:nth-child(3) .pack-signal i:nth-child(-n+3),
+.credit-pack:nth-child(4) .pack-signal i { background: linear-gradient(180deg, var(--cyan), var(--blue)); box-shadow: 0 4px 12px rgba(91,92,232,.2); }
+.pack-label { color: var(--blue-deep); font-size: 10px; font-weight: 760; letter-spacing: .11em; }
+.credit-pack h3 { margin: 5px 0 20px; font-size: clamp(38px, 3.6vw, 50px); font-weight: 740; letter-spacing: -.075em; line-height: 1; }
+.credit-pack h3 small { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.pack-price { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0; padding-top: 15px; border-top: 1px solid var(--line); }
+.pack-price strong { font-size: 20px; font-weight: 720; letter-spacing: -.045em; }
+.pack-price span { color: var(--quiet); font-size: 10px; }
+.pack-use { min-height: 44px; margin: 13px 0 22px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.credit-buy-button { width: 100%; min-height: 45px; margin-top: auto; border: 1px solid rgba(18,20,28,.1); border-radius: 13px; background: rgba(255,255,255,.82); color: var(--ink-2); cursor: pointer; font-size: 12px; font-weight: 680; box-shadow: 0 8px 18px rgba(49,52,76,.06), inset 0 1px #fff; transition: transform .2s var(--spring), background .2s ease, box-shadow .2s ease; }
+.credit-buy-button:hover { background: #fff; box-shadow: 0 12px 24px rgba(49,52,76,.1); transform: translateY(-2px); }
+.credit-pack.is-featured .credit-buy-button { border-color: transparent; background: linear-gradient(135deg, #5659e9, #7964ed); color: #fff; box-shadow: 0 12px 24px rgba(91,92,232,.24); }
+.credit-buy-button:disabled { cursor: wait; opacity: .62; transform: none; }
+.payment-tracker { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: center; margin-top: 16px; padding: 15px 16px; border: 1px solid rgba(22,119,255,.16); border-radius: 18px; background: rgba(241,247,255,.75); box-shadow: inset 0 1px rgba(255,255,255,.92); }
+.payment-tracker[hidden] { display: none; }
+.alipay-mark { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; background: #1677ff; color: #fff; font-size: 20px; font-weight: 800; box-shadow: 0 8px 20px rgba(22,119,255,.2); }
+.payment-tracker b { display: block; font-size: 13px; }
+.payment-tracker p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+.payment-tracker button { min-height: 38px; padding: 0 14px; border: 1px solid rgba(22,119,255,.2); border-radius: 11px; background: #fff; color: #0964db; cursor: pointer; font-size: 11px; font-weight: 680; }
+.payment-tracker button:disabled { cursor: wait; opacity: .6; }
+.payment-tracker.is-paid { border-color: rgba(45,187,131,.2); background: rgba(239,251,246,.78); }
+.payment-tracker.is-paid .alipay-mark { background: #23a875; }
+.credit-store-note { margin: 15px 0 0; color: var(--quiet); font-size: 11px; text-align: center; }
+.payment-qr-dialog { width: min(420px, calc(100% - 28px)); padding: 0; border: 0; border-radius: 26px; background: transparent; box-shadow: 0 30px 100px rgba(28,35,64,.28); }
+.payment-qr-dialog::backdrop { background: rgba(21,25,39,.42); backdrop-filter: blur(10px); }
+.payment-qr-card { position: relative; display: flex; flex-direction: column; align-items: center; padding: 32px 32px 28px; border: 1px solid rgba(255,255,255,.9); border-radius: 26px; background: rgba(255,255,255,.96); box-shadow: inset 0 1px #fff; text-align: center; }
+.payment-qr-close { position: absolute; top: 14px; right: 14px; display: grid; width: 36px; height: 36px; place-items: center; border-radius: 11px; background: #f2f4f8; cursor: pointer; }
+.payment-qr-close svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.payment-qr-brand { display: inline-flex; align-items: center; gap: 8px; color: #1677ff; font-size: 11px; font-weight: 740; }
+.payment-qr-brand i { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; background: #1677ff; color: #fff; font-size: 16px; font-style: normal; }
+.payment-qr-card h2 { margin: 18px 0 4px; font-size: 25px; letter-spacing: -.045em; }
+.payment-qr-card > p { margin: 0; color: var(--muted); font-size: 11px; }
+.payment-qr-frame { width: 244px; height: 244px; margin: 20px 0 13px; padding: 9px; border: 1px solid var(--line); border-radius: 19px; background: #fff; box-shadow: 0 14px 40px rgba(42,54,90,.11); }
+.payment-qr-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.payment-qr-card > strong { font-size: 21px; letter-spacing: -.04em; }
+.payment-qr-card .payment-qr-status { min-height: 18px; margin: 5px 0 15px; }
+.payment-qr-card .payment-qr-status[data-tone="success"] { color: #188a5f; }
+.payment-qr-card .payment-qr-status[data-tone="error"] { color: #b33a3a; }
+.payment-qr-refresh { width: 100%; min-height: 44px; border: 1px solid rgba(22,119,255,.18); border-radius: 13px; background: #f2f7ff; color: #0964db; cursor: pointer; font-weight: 680; }
+.payment-qr-refresh:disabled { cursor: wait; opacity: .6; }
 
 /* Live model prices */
 .pricing-hero { padding-bottom: 68px; }
@@ -225,13 +303,15 @@ img { max-width: 100%; }
   .feature-grid { grid-template-columns: 1fr 1fr; }
   .workflow-panel { grid-template-columns: 1fr; gap: 30px; }
   .price-catalog { grid-template-columns: 1fr; }
+  .credit-pack-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 620px) {
   .wrap { width: min(100% - 28px, 520px); }
   .site-header { padding-top: max(9px, env(safe-area-inset-top)); }
   .nav-shell { min-height: 54px; padding-left: 14px; border-radius: 17px; }
   .site-nav { gap: 0; }
-  .site-nav > a:not(.nav-cta) { display: none; }
+  .site-nav > a:not(.nav-cta):not(.site-login-link) { display: none; }
+  .site-login-link { display: inline-flex; min-height: 38px; max-width: 132px; padding: 0 10px; border-radius: 12px; font-size: 11px; }
   .nav-cta { min-height: 38px; padding: 0 13px; border-radius: 12px; font-size: 12px; }
   .page-hero { padding: 132px 0 70px; }
   .page-hero::before { top: 0; height: 470px; opacity: .84; }
@@ -243,6 +323,14 @@ img { max-width: 100%; }
   .hero-fact + .hero-fact { border-top: 1px solid var(--line); border-left: 0; }
   .hero-fact { padding: 14px; }
   .section { padding: 52px 0 82px; }
+  .credit-store { padding-top: 8px; }
+  .credit-store-heading { align-items: stretch; flex-direction: column; gap: 18px; }
+  .purchase-account { justify-content: space-between; }
+  .credit-pack-grid { grid-template-columns: 1fr; }
+  .credit-pack { min-height: 330px; }
+  .pack-signal { margin-bottom: 28px; }
+  .payment-tracker { grid-template-columns: 42px 1fr; }
+  .payment-tracker button { grid-column: 1 / -1; width: 100%; }
   .section-heading { margin-bottom: 30px; }
   .section-heading h2 { font-size: 42px; }
   .section-heading p { font-size: 14px; }

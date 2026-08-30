@@ -90,6 +90,16 @@ test('generation credits follow platform pricing', () => {
   assert.equal(__test.generationCost('video', 15), 15);
 });
 
+test('website auth and Alipay APIs remain available in desktop-only mode', () => {
+  assert.equal(__test.websiteApiAllowed('/api/auth/me'), true);
+  assert.equal(__test.websiteApiAllowed('/api/auth/sms/login'), true);
+  assert.equal(__test.websiteApiAllowed('/api/credits'), true);
+  assert.equal(__test.websiteApiAllowed('/api/payments/alipay/orders'), true);
+  assert.equal(__test.websiteApiAllowed('/api/payments/alipay/orders/ORDER-1/query'), true);
+  assert.equal(__test.websiteApiAllowed('/api/files'), false);
+  assert.equal(__test.websiteApiAllowed('/api/admin/users'), false);
+});
+
 test('drama video generation preserves the submitted prompt and only falls back when absent', () => {
   assert.equal(__test.resolveVideoPrompt('用户最终 Prompt', '系统编译 Prompt'), '用户最终 Prompt');
   assert.equal(__test.resolveVideoPrompt('  ', '系统编译 Prompt'), '系统编译 Prompt');

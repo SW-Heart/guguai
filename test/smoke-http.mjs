@@ -86,8 +86,20 @@ try {
   check('/healthz 返回 ok', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ok'); });
   r = await call('GET', '/readyz');
   check('/readyz 返回 ready', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ready'); });
+  r = await call('GET', '/payments/alipay/return');
+  check('支付宝同步回跳页面可访问', () => { assert.equal(r.status, 200); assert.match(r.body, /支付结果待确认/); });
+  r = await call('GET', '/payments/alipay/return/');
+  check('支付宝同步回跳页面兼容尾斜杠', () => { assert.equal(r.status, 200); assert.match(r.body, /支付结果待确认/); });
 
   console.log('\n认证：');
+  r = await call('GET', '/api/public/credit-packages');
+  check('积分商品公开可读且价格固定', () => {
+    assert.equal(r.status, 200);
+    assert.equal(r.body.yuanPerCredit, 0.1);
+    assert.deepEqual(r.body.packages.map(item => [item.credits, item.amount]), [[10, '1.00'], [50, '5.00'], [100, '10.00'], [500, '50.00']]);
+  });
+  r = await call('POST', '/api/payments/alipay/orders', { credits: 50 });
+  check('未登录不能创建支付订单', () => assert.equal(r.status, 401));
   r = await call('GET', '/api/auth/me');
   check('未登录访问 /api/auth/me 返回 401', () => assert.equal(r.status, 401));
 
@@ -120,6 +132,10 @@ try {
     assert.equal(r.body.pricing.videoPerSecond, 1);
     assert.equal(r.body.pricing.yuanPerCredit, 0.1);
   });
+
+  console.log('\n支付宝积分订单：');
+  r = await call('POST', '/api/payments/alipay/orders', { credits: 200 });
+  check('服务端拒绝目录外积分商品', () => { assert.equal(r.status, 400); assert.match(r.body.error, /有效的积分商品/); });
 
   console.log('\n列表接口形状：');
   r = await call('GET', '/api/generations');

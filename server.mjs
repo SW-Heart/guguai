@@ -27,6 +27,19 @@ import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model
 import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
+import {
+  closePaymentOrder,
+  createPaymentOrder,
+  handleAlipayNotification,
+  paymentOrderForUser,
+  paymentReturnPage,
+  publicCreditPackages,
+  publicNotifyUrl,
+  publicReturnUrl,
+  queryPaymentOrder,
+  queryPaymentRefund,
+  refundPaymentOrder,
+} from './lib/alipay-payments.mjs';
 
 const scrypt = promisify(scryptCallback);
 const execFile = promisify(execFileCallback);
@@ -341,7 +354,9 @@ function requireUser(req, res) { const user = currentUser(req); if (!user) { sen
 function mutationAllowed(req) { if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) return true; const origin = req.headers.origin; if (!origin) return true; try { return new URL(origin).host === req.headers.host; } catch { return false; } }
 
 async function bodyJson(req, limit = 2_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { throw Object.assign(new Error('JSON 格式不正确'), { statusCode: 400 }); } }
+async function bodyForm(req, limit = 1_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } return Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))); }
 function sendJson(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
+function sendText(res, status, value, contentType = 'text/plain; charset=utf-8') { res.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(String(value)); }
 /**
  * Pagination travels in headers so the response bodies keep their original
  * shape. The front end consumes /api/generations and /api/files as bare arrays,
@@ -2087,7 +2102,7 @@ async function recoverPendingGenerations() {
 }
 
 async function streamUpload(req, target, limit = maxUploadBytes, digest = null) { const handle = await fs.open(target, 'w'); let size = 0; try { for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(limit === maxReferenceImageBytes ? '单张图片不能超过 20 MB' : '文件不能超过 25 MB'), { statusCode: 413 }); digest?.update(chunk); await handle.write(chunk); } } catch (error) { await handle.close(); await fs.unlink(target).catch(() => {}); throw error; } await handle.close(); return digest ? { size, sha256: digest.digest('hex') } : size; }
-async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600') { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; res.writeHead(200, headers); createReadStream(file).pipe(res); }
+async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600', validator = null) { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; if (validator) { const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`; headers.ETag = etag; if (validator.ifNoneMatch === etag) { delete headers['Content-Length']; res.writeHead(304, headers); return res.end(); } } res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 const marketingRouteFiles = new Map([
   ['/features', 'features.html'],
@@ -2103,22 +2118,35 @@ async function serveStatic(res, pathname, req = null) {
     || (pathname === '/guguadmin' || pathname === '/guguadmin/'
       ? 'guguadmin.html'
       : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
-        ? (desktop || !desktopAppOnly ? 'index.html' : 'home.html')
+        ? (pathname === '/login' || desktop || !desktopAppOnly ? 'index.html' : 'home.html')
         : pathname.slice(1));
   const file = path.resolve(publicDir, relative);
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
-  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
-  const cacheControl = ['.js', '.css', '.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
+  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
+  // Fonts and images keep the long immutable cache. App code does not: it used
+  // to be cache-busted by a hand-maintained ?v= number in index.html, which
+  // silently served stale CSS/JS whenever someone forgot to bump it. These now
+  // revalidate on every load and answer 304 from the ETag, so the bytes on disk
+  // are always the bytes that run.
+  const revalidate = ['.js', '.css'].includes(ext);
+  const cacheControl = revalidate ? 'no-cache' : ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
   // The same route serves the public home page or the desktop workspace
   // depending on the request marker. Keep an intermediary cache from serving
   // one variant to the other.
   if (desktopAppOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
-  try { await serveFile(res, file, mime, '', cacheControl); }
+  try { await serveFile(res, file, mime, '', cacheControl, revalidate ? { ifNoneMatch: req?.headers['if-none-match'] || '' } : null); }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls };
+function websiteApiAllowed(pathname) {
+  return pathname.startsWith('/api/auth/')
+    || pathname === '/api/credits'
+    || pathname === '/api/payments/alipay/orders'
+    || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
+}
+
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, ossObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, buildUploadPostPolicy, normalizeUploadMime, combinedOssObjectMetadata, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2135,10 +2163,33 @@ const server = http.createServer(async (req, res) => {
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
-    // This is the only unauthenticated product API. It intentionally sits
-    // before the desktop-only API guard so public visitors can read prices.
+    if (url.pathname === '/api/payments/alipay/notify' && req.method === 'POST') {
+      try {
+        await handleAlipayNotification(await bodyForm(req));
+        return sendText(res, 200, 'success');
+      } catch (error) {
+        console.warn('[alipay] notification rejected', { message: error.message });
+        return sendText(res, 200, 'fail');
+      }
+    }
+    if ((url.pathname === '/payments/alipay/return' || url.pathname === '/payments/alipay/return/') && req.method === 'GET') {
+      const user = currentUser(req);
+      const outTradeNo = String(url.searchParams.get('out_trade_no') || '').trim();
+      if (!user || !outTradeNo) return sendText(res, 200, paymentReturnPage(), 'text/html; charset=utf-8');
+      let order = null;
+      let error = '';
+      try { order = (await queryPaymentOrder(user.id, outTradeNo)).order; }
+      catch (queryError) {
+        try { order = paymentOrderForUser(user.id, outTradeNo); } catch {}
+        error = '支付结果暂时无法确认，请返回 GuGu AI 后刷新。';
+      }
+      return sendText(res, 200, paymentReturnPage({ order, error }), 'text/html; charset=utf-8');
+    }
+    // Public pricing data intentionally sits before the desktop-only API
+    // guard so website visitors can inspect prices before signing in.
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
-    if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
+    if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
+    if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
 
     if (url.pathname === '/api/auth/captcha' && req.method === 'GET') {
       return sendJson(res, 200, captchaStore.issue(clientIp(req)));
@@ -2271,6 +2322,35 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }
     if (url.pathname === '/api/config' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, configState()); }
     if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
+    if (url.pathname === '/api/payments/alipay/orders' && req.method === 'POST') {
+      const user = requireUser(req, res); if (!user) return;
+      const input = await bodyJson(req);
+      const result = await createPaymentOrder({
+        userId: user.id,
+        credits: input.credits,
+        returnUrl: publicReturnUrl(process.env, port),
+        notifyUrl: publicNotifyUrl(process.env),
+      });
+      return sendJson(res, 201, result);
+    }
+    const alipayOrderMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)$/);
+    if (alipayOrderMatch && req.method === 'GET') {
+      const user = requireUser(req, res); if (!user) return;
+      return sendJson(res, 200, { order: paymentOrderForUser(user.id, alipayOrderMatch[1]) });
+    }
+    const alipayOrderActionMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)\/(query|close|refunds)$/);
+    if (alipayOrderActionMatch && req.method === 'POST') {
+      const user = requireUser(req, res); if (!user) return;
+      const [, outTradeNo, action] = alipayOrderActionMatch;
+      if (action === 'query') return sendJson(res, 200, await queryPaymentOrder(user.id, outTradeNo));
+      if (action === 'close') return sendJson(res, 200, await closePaymentOrder(user.id, outTradeNo));
+      return sendJson(res, 200, await refundPaymentOrder(user.id, outTradeNo, await bodyJson(req)));
+    }
+    const alipayRefundMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)\/refunds\/([A-Za-z0-9_-]+)$/);
+    if (alipayRefundMatch && req.method === 'GET') {
+      const user = requireUser(req, res); if (!user) return;
+      return sendJson(res, 200, await queryPaymentRefund(user.id, alipayRefundMatch[1], alipayRefundMatch[2]));
+    }
     if (url.pathname === '/api/notifications' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, listNotifications(user.id, { limit: url.searchParams.get('limit') })); }
     const notificationReadMatch = url.pathname.match(/^\/api\/notifications\/([\w-]+)\/read$/);
     if (notificationReadMatch && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markNotificationRead(user.id, notificationReadMatch[1]); return sendJson(res, 200, listNotifications(user.id)); }

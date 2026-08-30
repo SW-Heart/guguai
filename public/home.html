@@ -124,6 +124,17 @@
     }
     .nav-download { min-height: 42px; padding: 0 16px; background: #17181d; color: #fff; box-shadow: 0 8px 18px rgba(20,21,27,.15); }
     .nav-download:hover { background: #2b2d35; transform: translateY(-1px) scale(1.01); }
+    .site-account-menu { position: relative; display: flex; align-items: center; }
+    .site-login-link { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; max-width: 210px; padding: 0 13px; border: 1px solid rgba(18,20,28,.1); border-radius: 14px; background: rgba(255,255,255,.7); color: var(--ink-2); font-size: 12px; font-weight: 680; white-space: nowrap; overflow: hidden; box-shadow: inset 0 1px rgba(255,255,255,.9); transition: transform .25s var(--spring), background .25s ease, box-shadow .25s ease; }
+    .site-login-link:hover { background: #fff; box-shadow: 0 8px 18px rgba(49,52,76,.1), inset 0 1px #fff; transform: translateY(-1px); }
+    .site-account-menu.is-signed-in .site-login-link { border-color: rgba(45,187,131,.18); background: rgba(239,251,246,.82); }
+    .site-login-link span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .site-account-dropdown { position: absolute; z-index: 5; top: calc(100% + 8px); right: 0; display: none; min-width: 180px; padding: 12px; border: 1px solid rgba(255,255,255,.82); border-radius: 15px; background: rgba(255,255,255,.9); box-shadow: 0 16px 34px rgba(49,52,76,.14), inset 0 1px rgba(255,255,255,.95); backdrop-filter: blur(22px); }
+    .site-account-menu.is-signed-in:hover .site-account-dropdown, .site-account-menu.is-signed-in:focus-within .site-account-dropdown { display: block; }
+    .site-account-summary { margin: 0; }
+    #siteAccountSummary { margin: 0 4px 9px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    #siteLogoutButton { width: 100%; padding: 8px 10px; border-radius: 9px; background: rgba(91,92,232,.08); color: var(--ink-2); cursor: pointer; font-size: 12px; text-align: left; }
+    #siteLogoutButton:hover { background: rgba(91,92,232,.14); }
     .nav-download:active, .primary-button:active, .secondary-button:active, .download-option:active { transform: scale(.97); }
     .nav-download svg, .primary-button svg, .secondary-button svg, .download-option svg, .capability-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -158,7 +169,44 @@
     .window:hover { box-shadow: 0 46px 118px rgba(48,52,83,.23), 0 4px 14px rgba(48,52,83,.08), inset 0 1px rgba(255,255,255,.95); }
     .window-media { position: relative; overflow: hidden; border: 1px solid rgba(25,27,38,.08); border-radius: 20px; background: #f5f5f6; }
     .window-media::after { position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 1px rgba(255,255,255,.7); pointer-events: none; content: ""; }
-    .window-media img { display: block; width: 100%; height: auto; aspect-ratio: 1280 / 760; object-fit: cover; }
+    .window-media { --preview-aspect: 2940 / 1846; }
+    .preview-carousel { position: relative; border-radius: inherit; }
+    .preview-viewport { position: relative; overflow: hidden; border-radius: inherit; aspect-ratio: var(--preview-aspect); background: #f5f5f6; }
+    .preview-track { position: absolute; inset: 0; display: flex; transition: transform .72s var(--spring); will-change: transform; }
+    .preview-slide { position: relative; flex: 0 0 100%; width: 100%; height: 100%; margin: 0; }
+    .preview-slide img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+    .preview-nav {
+      position: absolute;
+      top: 50%;
+      z-index: 2;
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      padding: 0;
+      border: 1px solid rgba(18,20,28,.08);
+      border-radius: 50%;
+      background: rgba(255,255,255,.76);
+      color: var(--ink-2);
+      box-shadow: 0 10px 26px rgba(48,52,83,.16), inset 0 1px rgba(255,255,255,.9);
+      cursor: pointer;
+      opacity: 0;
+      backdrop-filter: blur(14px);
+      transition: opacity .3s var(--ease), transform .3s var(--spring), background .3s ease;
+      transform: translateY(-50%);
+    }
+    .preview-nav svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .preview-nav.prev { left: 14px; }
+    .preview-nav.next { right: 14px; }
+    .preview-carousel:hover .preview-nav, .preview-nav:focus-visible { opacity: 1; }
+    .preview-nav:hover { background: #fff; transform: translateY(-50%) scale(1.06); }
+    .preview-dots { position: absolute; bottom: 14px; left: 50%; z-index: 2; display: flex; gap: 7px; padding: 6px 9px; border: 1px solid rgba(18,20,28,.06); border-radius: 999px; background: rgba(255,255,255,.6); box-shadow: 0 8px 22px rgba(48,52,83,.14); backdrop-filter: blur(14px); transform: translateX(-50%); }
+    .preview-dot { width: 22px; height: 6px; padding: 0; border: 0; border-radius: 999px; background: rgba(18,20,28,.17); cursor: pointer; transition: background .3s ease, width .35s var(--spring); }
+    .preview-dot:hover { background: rgba(18,20,28,.3); }
+    .preview-dot[aria-selected="true"] { width: 30px; background: linear-gradient(120deg, #5659e9, #9367ed); }
+    @media (hover: none) {
+      .preview-nav { opacity: .92; }
+    }
 
     .section { padding: 112px 0; }
     .section-heading { max-width: 760px; margin: 0 auto 48px; text-align: center; }
@@ -289,7 +337,8 @@
       .site-header { padding-top: max(9px, env(safe-area-inset-top)); }
       .nav-shell { min-height: 54px; padding-left: 14px; border-radius: 17px; }
       .site-nav { gap: 0; }
-      .site-nav > a:not(.nav-download) { display: none; }
+      .site-nav > a:not(.nav-download):not(.site-login-link) { display: none; }
+      .site-login-link { display: inline-flex; min-height: 38px; max-width: 132px; padding: 0 10px; border-radius: 12px; font-size: 11px; }
       .nav-download { min-height: 38px; padding: 0 13px; border-radius: 12px; font-size: 12px; }
       .hero { padding: 132px 0 70px; }
       .hero::before { top: 0; height: 470px; opacity: .84; }
@@ -300,6 +349,13 @@
       .product-stage { margin-top: 45px; }
       .window { padding: 6px; border-radius: 20px; }
       .window-media { border-radius: 14px; }
+      .preview-nav { width: 34px; height: 34px; }
+      .preview-nav svg { width: 17px; height: 17px; }
+      .preview-nav.prev { left: 8px; }
+      .preview-nav.next { right: 8px; }
+      .preview-dots { bottom: 9px; gap: 5px; padding: 5px 7px; }
+      .preview-dot { width: 16px; height: 5px; }
+      .preview-dot[aria-selected="true"] { width: 22px; }
       .section { padding: 82px 0; }
       .section-heading { margin-bottom: 31px; }
       .section-heading h2 { font-size: 42px; }
@@ -325,11 +381,12 @@
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
       .reveal, .hero .reveal { opacity: 1; transform: none; animation: none; }
+      .preview-track { transition: none !important; }
       .window { transform: none !important; }
     }
   </style>
 </head>
-<body>
+<body data-page="home">
   <a class="skip-link" href="#main">跳到主要内容</a>
   <div class="ambient ambient-one" aria-hidden="true"></div>
   <div class="ambient ambient-two" aria-hidden="true"></div>
@@ -342,9 +399,18 @@
       </a>
       <nav class="site-nav" aria-label="主导航">
         <a href="/features">功能介绍</a>
-        <a href="/pricing">模型价格</a>
+        <a href="/pricing">价格与积分</a>
         <a href="#product">产品预览</a>
         <a href="#capabilities">能力</a>
+        <div class="site-account-menu" id="siteAccountMenu">
+          <a class="site-login-link" id="siteLoginLink" href="/login?next=%2Fpricing" aria-haspopup="true" aria-expanded="false">
+            <span id="siteLoginText">登录</span>
+          </a>
+          <div class="site-account-dropdown" id="siteAccountDropdown" role="menu" aria-label="账号菜单" aria-hidden="true">
+            <p id="siteAccountSummary"></p>
+            <button id="siteLogoutButton" type="button" role="menuitem">退出登录</button>
+          </div>
+        </div>
         <a class="nav-download" href="#download" aria-haspopup="dialog">下载客户端
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
         </a>
@@ -371,7 +437,32 @@
         <div class="stage-glow" aria-hidden="true"></div>
         <div class="window" id="product-window">
           <div class="window-media">
-            <img src="/workspace-preview.png" width="1280" height="760" alt="GuGu AI 图像生成工作台界面，包含创作描述、参考图片、画布设置和作品区域。">
+            <div class="preview-carousel" id="preview-carousel" role="group" aria-roledescription="轮播" aria-label="GuGu AI 工作台界面预览">
+              <div class="preview-viewport">
+                <div class="preview-track" data-carousel-track>
+                  <figure class="preview-slide" role="group" aria-roledescription="幻灯片" aria-label="1 / 3：图像生成">
+                    <img src="/home-preview-image.png" data-fallback="/workspace-preview.png" width="2940" height="1846" fetchpriority="high" decoding="async" alt="GuGu AI 图像生成界面，左侧是创作描述、参考图片、画布比例与质量设置，右侧是已完成的图像作品瀑布流。">
+                  </figure>
+                  <figure class="preview-slide" role="group" aria-roledescription="幻灯片" aria-label="2 / 3：视频生成">
+                    <img src="/home-preview-video.png" data-fallback="/workspace-preview.png" width="2940" height="1846" loading="lazy" decoding="async" alt="GuGu AI 视频生成界面，左侧是创作描述、参考素材、模型与画幅时长设置，右侧是生成完成的视频作品列表。">
+                  </figure>
+                  <figure class="preview-slide" role="group" aria-roledescription="幻灯片" aria-label="3 / 3：短剧创作">
+                    <img src="/home-preview-drama.png" data-fallback="/workspace-preview.png" width="2940" height="1846" loading="lazy" decoding="async" alt="GuGu AI 短剧创作界面，左侧是人物、场景与物品等项目资产，右侧是逐个分镜的内容输入、模型设置与视频预览。">
+                  </figure>
+                </div>
+                <button class="preview-nav prev" type="button" data-carousel-prev aria-label="上一张界面预览">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>
+                </button>
+                <button class="preview-nav next" type="button" data-carousel-next aria-label="下一张界面预览">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg>
+                </button>
+                <div class="preview-dots" role="tablist" aria-label="选择要预览的界面">
+                  <button class="preview-dot" type="button" role="tab" data-carousel-dot="0" aria-selected="true" aria-label="图像生成"></button>
+                  <button class="preview-dot" type="button" role="tab" data-carousel-dot="1" aria-selected="false" aria-label="视频生成"></button>
+                  <button class="preview-dot" type="button" role="tab" data-carousel-dot="2" aria-selected="false" aria-label="短剧创作"></button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -455,6 +546,7 @@
     <p>让灵感成为作品。 © 2026</p>
   </footer>
 
+  <script src="/marketing.js?v=6"></script>
   <script>
     (() => {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -490,6 +582,86 @@
           productWindow.style.setProperty('--tilt-x', '0deg');
           productWindow.style.setProperty('--tilt-y', '0deg');
         });
+      }
+
+      const carousel = document.querySelector('#preview-carousel');
+      if (carousel) {
+        const track = carousel.querySelector('[data-carousel-track]');
+        const slides = [...carousel.querySelectorAll('.preview-slide')];
+        const dots = [...carousel.querySelectorAll('[data-carousel-dot]')];
+        const total = slides.length;
+        const autoplayDelay = 5200;
+        let index = 0;
+        let timer = 0;
+
+        const render = () => {
+          track.style.transform = `translate3d(-${index * 100}%, 0, 0)`;
+          slides.forEach((slide, position) => slide.setAttribute('aria-hidden', String(position !== index)));
+          dots.forEach((dot, position) => {
+            dot.setAttribute('aria-selected', String(position === index));
+            dot.tabIndex = position === index ? 0 : -1;
+          });
+        };
+        const goTo = position => { index = (position + total) % total; render(); };
+        const stop = () => { window.clearInterval(timer); timer = 0; };
+        const start = () => {
+          if (reducedMotion || total < 2 || timer || document.hidden) return;
+          timer = window.setInterval(() => goTo(index + 1), autoplayDelay);
+        };
+        const restart = () => { stop(); start(); };
+
+        carousel.querySelector('[data-carousel-prev]')?.addEventListener('click', () => { goTo(index - 1); restart(); });
+        carousel.querySelector('[data-carousel-next]')?.addEventListener('click', () => { goTo(index + 1); restart(); });
+        dots.forEach((dot, position) => dot.addEventListener('click', () => { goTo(position); restart(); }));
+        carousel.addEventListener('keydown', event => {
+          if (event.key === 'ArrowLeft') goTo(index - 1);
+          else if (event.key === 'ArrowRight') goTo(index + 1);
+          else return;
+          event.preventDefault();
+          restart();
+        });
+        carousel.addEventListener('pointerenter', stop);
+        carousel.addEventListener('pointerleave', start);
+        carousel.addEventListener('focusin', stop);
+        carousel.addEventListener('focusout', event => {
+          if (!carousel.contains(event.relatedTarget)) start();
+        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); else start(); });
+
+        // Touch devices get a horizontal swipe instead of the hover-only arrows.
+        let swipeStartX = 0;
+        let swipeActive = false;
+        carousel.addEventListener('pointerdown', event => {
+          if (event.pointerType === 'mouse') return;
+          swipeStartX = event.clientX;
+          swipeActive = true;
+          stop();
+        });
+        carousel.addEventListener('pointerup', event => {
+          if (!swipeActive) return;
+          swipeActive = false;
+          const delta = event.clientX - swipeStartX;
+          if (Math.abs(delta) > 40) goTo(index + (delta < 0 ? 1 : -1));
+          start();
+        });
+        carousel.addEventListener('pointercancel', () => { swipeActive = false; start(); });
+
+        // A missing preview file should degrade to the older workspace shot
+        // rather than leaving a blank slot in the hero.
+        slides.forEach(slide => {
+          const image = slide.querySelector('img');
+          if (!image) return;
+          image.addEventListener('error', () => {
+            const fallback = image.dataset.fallback;
+            if (!fallback || image.dataset.fallbackApplied === '1') return;
+            image.dataset.fallbackApplied = '1';
+            console.warn('[home] 预览图未找到，已回退到占位图：', image.getAttribute('src'));
+            image.src = fallback;
+          });
+        });
+
+        render();
+        start();
       }
 
       const downloadModal = document.querySelector('#download-modal');

@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
       return () => ipcRenderer.removeListener('desktop:update-status', listener);
     },
   }),
+  payments: Object.freeze({
+    open: paymentHtml => invoke('payments:open-alipay', paymentHtml),
+    complete: () => invoke('payments:complete-alipay'),
+  }),
   workspace: Object.freeze({
     get: () => invoke('workspace:get'),
     choose: () => invoke('workspace:choose'),

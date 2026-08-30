@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="查看 GuGu AI 今日可用模型价格，价格按当前平台线路实时同步。">
+  <meta name="description" content="购买 GuGu AI 创作积分，并查看今日可用模型的实时价格。1 积分等于 0.1 元。">
   <meta name="robots" content="index,follow">
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/marketing.css?v=1">
-  <title>今日模型价格 · GuGu AI</title>
+  <link rel="stylesheet" href="/marketing.css?v=6">
+  <title>价格与积分 · GuGu AI</title>
 </head>
 <body data-page="pricing" data-price-page>
   <a class="skip-link" href="#main">跳到主要内容</a>
@@ -19,8 +19,17 @@
       </a>
       <nav class="site-nav" aria-label="主导航">
         <a data-page-link="features" href="/features">功能介绍</a>
-        <a data-page-link="pricing" href="/pricing">模型价格</a>
+        <a data-page-link="pricing" href="/pricing">价格与积分</a>
         <a href="/#capabilities">能力概览</a>
+        <div class="site-account-menu" id="siteAccountMenu">
+          <a class="site-login-link" id="siteLoginLink" href="/login?next=%2Fpricing" aria-haspopup="true" aria-expanded="false">
+            <span id="siteLoginText">登录</span>
+          </a>
+          <div class="site-account-dropdown" id="siteAccountDropdown" role="menu" aria-label="账号菜单" aria-hidden="true">
+            <p id="siteAccountSummary"></p>
+            <button id="siteLogoutButton" type="button" role="menuitem">退出登录</button>
+          </div>
+        </div>
         <a class="nav-cta" href="/#download">下载客户端
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
         </a>
@@ -30,26 +39,73 @@
 
   <main class="marketing-main" id="main">
     <section class="page-hero pricing-hero wrap" aria-labelledby="pricing-title">
-      <div class="reveal"><span class="eyebrow">PRICING / LIVE CATALOG</span></div>
+      <div class="reveal"><span class="eyebrow">CREDITS / PAY AS YOU CREATE</span></div>
       <div class="reveal delay-1">
-        <h1 id="pricing-title">今天用什么模型，<span>价格一目了然。</span></h1>
-        <p>页面展示当前平台可用线路的实时价格。动态线路、模型状态与价格版本变化后，刷新即可看到最新结果。</p>
+        <h1 id="pricing-title">为下一段灵感，<span>准备刚好的创作额度。</span></h1>
+        <p>四档固定积分包，1 积分 = ¥0.10。登录后使用支付宝付款，支付确认后积分自动进入你的账户，可在不同设备继续使用。</p>
       </div>
-      <div class="price-toolbar reveal delay-2" aria-live="polite">
+    </section>
+
+    <section class="credit-store section wrap" aria-labelledby="credit-store-title">
+      <div class="credit-store-heading reveal">
+        <div>
+          <span class="eyebrow">CREDIT PACKS</span>
+          <h2 id="credit-store-title">选择积分包</h2>
+          <p>没有订阅，也没有隐藏加价。每一档都按相同单价计算。</p>
+        </div>
+        <div class="purchase-account" id="purchaseAccount" aria-live="polite">
+          <span class="account-dot" aria-hidden="true"></span>
+          <span id="purchaseAccountText">正在确认登录状态…</span>
+          <a id="purchaseLoginLink" href="/login?next=%2Fpricing">登录后购买</a>
+        </div>
+      </div>
+      <div class="credit-pack-grid" id="creditPackGrid" aria-label="积分商品">
+        <article class="credit-pack reveal" data-credit-package="10">
+          <div class="pack-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="pack-label">快速体验</span><h3>10 <small>积分</small></h3><p class="pack-price"><strong>¥1.00</strong><span>一次性购买</span></p>
+          <p class="pack-use">适合快速试用一次轻量创作。</p>
+          <button class="credit-buy-button" type="button" data-buy-credits="10">购买 10 积分</button>
+        </article>
+        <article class="credit-pack reveal delay-1" data-credit-package="50">
+          <div class="pack-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="pack-label">轻量尝试</span><h3>50 <small>积分</small></h3><p class="pack-price"><strong>¥5.00</strong><span>一次性购买</span></p>
+          <p class="pack-use">适合验证一个想法，或补充少量额度。</p>
+          <button class="credit-buy-button" type="button" data-buy-credits="50">购买 50 积分</button>
+        </article>
+        <article class="credit-pack reveal delay-2" data-credit-package="100">
+          <div class="pack-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="pack-label">单次创作</span><h3>100 <small>积分</small></h3><p class="pack-price"><strong>¥10.00</strong><span>一次性购买</span></p>
+          <p class="pack-use">适合完成一轮图片或短视频创作。</p>
+          <button class="credit-buy-button" type="button" data-buy-credits="100">购买 100 积分</button>
+        </article>
+        <article class="credit-pack is-featured reveal delay-3" data-credit-package="500">
+          <div class="pack-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <span class="pack-label">连续创作</span><h3>500 <small>积分</small></h3><p class="pack-price"><strong>¥50.00</strong><span>一次性购买</span></p>
+          <p class="pack-use">适合连续产出一组视觉内容或完整项目。</p>
+          <button class="credit-buy-button" type="button" data-buy-credits="500">购买 500 积分</button>
+        </article>
+      </div>
+      <div class="payment-tracker" id="paymentTracker" hidden aria-live="polite">
+        <span class="alipay-mark" aria-hidden="true">支</span>
+        <div><b id="paymentTrackerTitle">等待完成支付</b><p id="paymentTrackerMessage">付款完成后，在这里确认积分是否到账。</p></div>
+        <button id="paymentRefresh" type="button">刷新支付状态</button>
+      </div>
+      <p class="credit-store-note reveal">支付服务由支付宝提供。同步跳转仅用于提示，到账结果以支付宝异步通知或订单查询为准。</p>
+    </section>
+
+    <section class="section wrap" aria-labelledby="catalog-title">
+      <div class="section-heading reveal">
+        <span class="eyebrow">LIVE MODEL CATALOG</span>
+        <h2 id="catalog-title">按次或按秒，清楚计费。</h2>
+        <p>人民币价格与积分价格同时展示。视频模型按秒计费时，卡片也会标出当前固定时长的预计总价。</p>
+      </div>
+      <div class="price-toolbar reveal" aria-live="polite">
         <div class="price-status" id="priceStatus">正在准备价格服务…</div>
         <time id="priceUpdated"></time>
         <button class="refresh-button" id="priceRefresh" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.8-4L4 9"/><path d="M4 5v4h4M4 13a8 8 0 0 0 14.8 4L20 15"/><path d="M20 19v-4h-4"/></svg>
           刷新价格
         </button>
-      </div>
-    </section>
-
-    <section class="section wrap" aria-labelledby="catalog-title">
-      <div class="section-heading reveal">
-        <span class="eyebrow">TODAY'S MODELS</span>
-        <h2 id="catalog-title">按次或按秒，清楚计费。</h2>
-        <p>人民币价格与积分价格同时展示。视频模型按秒计费时，卡片也会标出当前固定时长的预计总价。</p>
       </div>
       <div class="price-catalog" id="priceCatalog" aria-live="polite" aria-busy="true">
         <div class="price-loading">正在同步今日模型价格</div>
@@ -77,9 +133,9 @@
 
   <footer class="site-footer wrap">
     <a class="footer-brand" href="/"><img src="/favicon.svg?v=2" alt="">GuGu AI</a>
-    <div class="footer-links"><a href="/features">功能介绍</a><a href="/pricing">模型价格</a><a href="/#download">下载客户端</a></div>
+    <div class="footer-links"><a href="/features">功能介绍</a><a href="/pricing">价格与积分</a><a href="/#download">下载客户端</a></div>
     <p>让灵感成为作品。 © 2026</p>
   </footer>
-  <script src="/marketing.js?v=1"></script>
+  <script src="/marketing.js?v=6"></script>
 </body>
 </html>

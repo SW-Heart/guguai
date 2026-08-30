@@ -6,3 +6,4 @@ docs/
 .DS_Store
 *.log
 release/
+/.alipay-sandbox.json

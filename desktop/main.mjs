@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import updater from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,6 +24,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow;
+let paymentWindow;
+let paymentView;
 let tray;
 let isQuitting = false;
 let settings;
@@ -42,6 +44,7 @@ let downloadedUpdateVersion = '';
 let updateInstallStarted = false;
 let currentUpdateStatus = { status: 'idle' };
 let windowFullscreenTransition = false;
+const paymentToolbarHeight = 64;
 
 const windowsTitleBarOverlayHeight = 56;
 const windowsTitleBarOverlay = {
@@ -552,12 +555,13 @@ async function downloadMacUpdate(updateInfo) {
 }
 
 function startMacUpdateDownload(updateInfo) {
-  if (macUpdateDownloadPromise) return macUpdateDownloadPromise;
-  const promise = downloadMacUpdate(updateInfo)
-    .catch(error => { sendUpdateStatus('error', { message: error.message }); return false; })
-    .finally(() => { if (macUpdateDownloadPromise === promise) macUpdateDownloadPromise = undefined; });
-  macUpdateDownloadPromise = promise;
-  return promise;
+  if (!macUpdateDownloadPromise) {
+    const promise = downloadMacUpdate(updateInfo)
+      .catch(error => { sendUpdateStatus('error', { message: error.message }); return false; })
+      .finally(() => { if (macUpdateDownloadPromise === promise) macUpdateDownloadPromise = undefined; });
+    macUpdateDownloadPromise = promise;
+  }
+  return macUpdateDownloadPromise;
 }
 
 async function launchDownloadedUpdateInstaller() {
@@ -702,7 +706,117 @@ function showMainWindow() {
 
 function hideMainWindowToTray() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (process.platform === 'darwin' && mainWindow.isFullScreen()) {
+    const windowToHide = mainWindow;
+    const hideAfterFullscreen = () => {
+      if (mainWindow === windowToHide && !windowToHide.isDestroyed()) windowToHide.hide();
+    };
+    windowToHide.once('leave-full-screen', hideAfterFullscreen);
+    windowToHide.setFullScreen(false);
+    return true;
+  }
   mainWindow.hide();
+  return true;
+}
+
+function closeMainWindow() {
+  return hideMainWindowToTray();
+}
+
+function restoreMainWindowAfterPayment() {
+  if (isQuitting) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function closePaymentWindow() {
+  if (!paymentWindow || paymentWindow.isDestroyed()) return false;
+  paymentWindow.close();
+  return true;
+}
+
+async function closePaymentWindowBeforeReplace() {
+  const existing = paymentWindow;
+  if (!existing || existing.isDestroyed()) return false;
+  await new Promise(resolve => {
+    existing.once('closed', resolve);
+    existing.close();
+    if (existing.isDestroyed()) resolve();
+  });
+  return true;
+}
+
+function layoutPaymentView() {
+  if (!paymentWindow || paymentWindow.isDestroyed() || !paymentView || paymentView.webContents.isDestroyed()) return;
+  const [width, height] = paymentWindow.getContentSize();
+  paymentView.setBounds({ x: 0, y: paymentToolbarHeight, width, height: Math.max(1, height - paymentToolbarHeight) });
+}
+
+async function openAlipayPaymentWindow(paymentHtml) {
+  const html = String(paymentHtml || '');
+  if (html.length < 100 || html.length > 100_000 || !/alipay\.trade\.page\.pay/i.test(html) || !/https:\/\/openapi(?:-sandbox\.dl)?\.alipay(?:dev)?\.com\/gateway\.do/i.test(html.replaceAll('&amp;', '&'))) {
+    throw new Error('支付宝支付表单无效');
+  }
+  await closePaymentWindowBeforeReplace();
+
+  paymentWindow = new BrowserWindow({
+    width: 1120,
+    height: 840,
+    minWidth: 760,
+    minHeight: 620,
+    title: '支付宝扫码支付 · GuGu AI',
+    frame: false,
+    show: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    closable: true,
+    skipTaskbar: true,
+    backgroundColor: '#f5f7fb',
+    webPreferences: {
+      preload: path.join(here, 'payment-shell-preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: !app.isPackaged,
+    },
+  });
+  const currentPaymentWindow = paymentWindow;
+  paymentView = new WebContentsView({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  const currentPaymentView = paymentView;
+  currentPaymentView.setBackgroundColor('#ffffff');
+  currentPaymentWindow.contentView.addChildView(currentPaymentView);
+  currentPaymentWindow.on('resize', layoutPaymentView);
+  currentPaymentWindow.on('closed', () => {
+    if (!currentPaymentView.webContents.isDestroyed()) currentPaymentView.webContents.close();
+    if (paymentWindow === currentPaymentWindow) paymentWindow = undefined;
+    if (paymentView === currentPaymentView) paymentView = undefined;
+    restoreMainWindowAfterPayment();
+  });
+  currentPaymentView.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  currentPaymentView.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      event.preventDefault();
+      closePaymentWindow();
+    }
+  });
+  currentPaymentView.webContents.on('enter-html-full-screen', () => currentPaymentWindow.setFullScreen(false));
+  await currentPaymentWindow.loadFile(path.join(here, 'payment-shell.html'));
+  layoutPaymentView();
+  currentPaymentWindow.show();
+  currentPaymentWindow.focus();
+  try {
+    await currentPaymentView.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  } catch (error) {
+    if (!/ERR_ABORTED|-3/.test(String(error?.message || '')) && !currentPaymentWindow.isDestroyed()) {
+      currentPaymentWindow.webContents.send('payment:load-error', error.message || '支付宝收银台加载失败');
+    }
+  }
   return true;
 }
 
@@ -773,7 +887,7 @@ function registerIpc() {
   });
   ipcMain.handle('window:close', event => {
     if (!isMainWindowEvent(event)) return false;
-    return hideMainWindowToTray();
+    return closeMainWindow();
   });
   ipcMain.handle('updates:check', () => checkForUpdates());
   ipcMain.handle('updates:get-status', () => currentUpdateStatus);
@@ -788,6 +902,18 @@ function registerIpc() {
       sendUpdateStatus('error', { message: error.message, version: downloadedUpdateVersion });
       throw error;
     }
+  });
+  ipcMain.handle('payments:open-alipay', async (event, paymentHtml) => {
+    if (!isMainWindowEvent(event)) throw new Error('无效的支付窗口请求');
+    return openAlipayPaymentWindow(paymentHtml);
+  });
+  ipcMain.handle('payments:complete-alipay', async event => {
+    if (!isMainWindowEvent(event)) return false;
+    return closePaymentWindowBeforeReplace();
+  });
+  ipcMain.handle('payments:close-alipay', event => {
+    if (!paymentWindow || paymentWindow.isDestroyed() || event.sender !== paymentWindow.webContents) return false;
+    return closePaymentWindow();
   });
   ipcMain.handle('workspace:get', () => ({ path: workspace, assetCount: libraryIndex.assets.length }));
   ipcMain.handle('workspace:choose', async () => {
@@ -851,6 +977,7 @@ async function createWindow() {
     event.preventDefault();
     hideMainWindowToTray();
   });
+  mainWindow.on('closed', () => { mainWindow = null; });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
@@ -876,7 +1003,6 @@ async function createWindow() {
   mainWindow.on('leave-full-screen', () => markFullscreenTransition(false));
   await loadStudio();
   sendWindowState();
-  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 async function bootstrap() {

@@ -1,4 +1,4 @@
-import { createDramaStudio } from './drama-studio.js?v=55';
+import { createDramaStudio } from './drama-studio.js?v=56';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
 
@@ -6,7 +6,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadContext:'library', uploadJobs:[], detailTaskId:null, previewFileId:null };
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let indexedFiles = null;
@@ -47,6 +47,7 @@ let tasksRequest = null;
 let filesRequest = null;
 let pollTimer = 0;
 let notificationPanelCloseTimer = 0;
+let contactPanelCloseTimer = 0;
 const activePollDelay = 6000;
 const idlePollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
@@ -527,6 +528,8 @@ const taskFailure = task => {
 const taskErrorText = task => { const failure = taskFailure(task); return failure ? `${failure.message}\n建议：${failure.suggestion}` : ''; };
 const taskFailureActionLabel = failure => ({ retry_later:'稍后重试', retry:'重新生成', contact_support:'联系支持', wait:'稍后刷新' })[failure?.action] || '调整后重试';
 let toastTimer;
+let alipayPaymentPollTimer = 0;
+let creditPopoverCloseTimer = 0;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('show'); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3200); }
 function emptyState(title, body, action='') { return `<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>${esc(title)}</h3><p>${esc(body)}</p>${action}</div>`; }
 
@@ -735,6 +738,7 @@ function creditSpendType(entry) {
 }
 function creditEarnType(entry) {
   if (entry?.type === 'generation_refund') return '任务失败退款';
+  if (entry?.type === 'alipay_purchase') return '支付宝充值';
   if (entry?.type === 'signup_bonus') return '赠送积分';
   if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
   return '积分获取';
@@ -761,8 +765,6 @@ function renderCreditDetail() {
   const dialog = $('#creditDetailDialog'); if (!dialog) return;
   const balance = Number(state.creditWallet.balance ?? state.credits) || 0;
   $('#creditDetailBalance').textContent = creditText(balance);
-  $('#creditDetailAvailable').textContent = creditText(state.creditWallet.available ?? balance);
-  $('#creditDetailHeld').textContent = creditText(state.creditWallet.held ?? 0);
   const spend = state.creditDetailTab === 'spend';
   $('#creditSpendTab').classList.toggle('active', spend);
   $('#creditEarnTab').classList.toggle('active', !spend);
@@ -774,6 +776,86 @@ function renderCreditDetail() {
   $('#creditSpendBody').innerHTML = renderCreditRows(spend ? entries : [], 'spend');
   $('#creditEarnBody').innerHTML = renderCreditRows(spend ? [] : entries, 'earn');
 }
+function renderCreditPurchase() {
+  const rate = Number(state.pricing?.yuanPerCredit) || .1;
+  $$('[data-alipay-credits]').forEach(button => {
+    const selected = Number(button.dataset.alipayCredits) === state.alipayTopupCredits;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-checked', String(selected));
+  });
+  $('#alipayTopupAmount').textContent = `¥${(state.alipayTopupCredits * rate).toFixed(2)}`;
+  const meta = $('#alipayTopupMeta');
+  if (meta) meta.textContent = `${creditText(state.alipayTopupCredits)} 积分 · 1 元 = ${creditText(1 / rate)} 积分`;
+  const balance = $('#creditPurchaseBalance');
+  if (balance) balance.textContent = creditText(state.credits);
+  $('#alipayRefreshPayment').classList.toggle('hidden', !state.alipayOrderNo);
+}
+function setAlipayStatus(message = '', tone = '') {
+  const target = $('#alipayTopupStatus');
+  if (!target) return;
+  target.textContent = message;
+  target.dataset.tone = tone;
+}
+function stopAlipayPaymentPolling() { clearTimeout(alipayPaymentPollTimer); alipayPaymentPollTimer = 0; }
+function submitAlipayPaymentForm(paymentHtml) {
+  const container = document.createElement('div');
+  container.hidden = true;
+  container.innerHTML = String(paymentHtml || '');
+  const form = container.querySelector('form');
+  if (!form) throw new Error('支付宝支付表单无效');
+  form.target = '_self';
+  document.body.appendChild(container);
+  form.submit();
+}
+function scheduleAlipayPaymentPolling() {
+  stopAlipayPaymentPolling();
+  if (!state.alipayOrderNo) return;
+  alipayPaymentPollTimer = window.setTimeout(() => { void refreshAlipayPayment({ polling:true }); }, 3000);
+}
+async function refreshAlipayPayment({ polling = false } = {}) {
+  if (!state.alipayOrderNo) return;
+  const button = $('#alipayRefreshPayment');
+  button.disabled = true;
+  if (!polling) setAlipayStatus('正在向支付宝确认订单状态…');
+  try {
+    const result = await api(`/api/payments/alipay/orders/${encodeURIComponent(state.alipayOrderNo)}/query`, { method:'POST', body:'{}' });
+    if (result.order?.status === 'PAID') {
+      stopAlipayPaymentPolling();
+      sessionStorage.removeItem('gugu_alipay_order');
+      state.alipayOrderNo = '';
+      await loadCredits();
+      setCreditBalance(state.creditWallet.balance);
+      setAlipayStatus(`${creditText(result.order.credits)} 积分已到账`, 'success');
+      renderCreditPurchase();
+      if (window.guguDesktop?.payments?.complete) {
+        try { await window.guguDesktop.payments.complete(); } catch {}
+      }
+      showPaymentSuccess(result.order.credits, state.creditWallet.balance);
+    } else { setAlipayStatus('等待扫码付款…'); scheduleAlipayPaymentPolling(); }
+  } catch (error) { setAlipayStatus(error.message || '暂时无法确认支付状态', 'error'); }
+  finally { button.disabled = false; }
+}
+async function startAlipayTopup() {
+  const button = $('#alipayTopupButton');
+  button.disabled = true;
+  setAlipayStatus('正在创建支付宝扫码收银台…');
+  try {
+    const result = await api('/api/payments/alipay/orders', { method:'POST', body:JSON.stringify({ credits:state.alipayTopupCredits }) });
+    state.alipayOrderNo = result.order.outTradeNo;
+    sessionStorage.setItem('gugu_alipay_order', state.alipayOrderNo);
+    renderCreditPurchase();
+    if (window.guguDesktop?.payments?.open) {
+      await window.guguDesktop.payments.open(result.paymentHtml);
+      setAlipayStatus('支付宝扫码收银台已打开，支付后可刷新状态。');
+      scheduleAlipayPaymentPolling();
+    } else {
+      setAlipayStatus('正在进入支付宝扫码收银台…');
+      submitAlipayPaymentForm(result.paymentHtml);
+    }
+  } catch (error) {
+    setAlipayStatus(error.message || '支付订单创建失败', 'error');
+  } finally { button.disabled = false; }
+}
 function setCreditDetailTab(tab) { state.creditDetailTab = tab === 'earn' ? 'earn' : 'spend'; renderCreditDetail(); }
 function setCreditBalance(balance) {
   state.credits = Number(balance) || 0;
@@ -781,6 +863,7 @@ function setCreditBalance(balance) {
   $('#creditAmount').textContent = creditText(state.credits);
   $('#menuAccountMeta').textContent = `${state.user?.role === 'admin' ? '管理员' : '当前账号'} · ${creditText(state.credits)} 积分`;
   renderCreditDetail();
+  if ($('#creditPurchaseDialog')?.open) renderCreditPurchase();
 }
 async function loadCredits() {
   try {
@@ -788,8 +871,13 @@ async function loadCredits() {
     state.pricing = result.pricing;
     state.creditWallet = { balance:Number(result.balance) || 0, held:Number(result.held) || 0, available:Number(result.available) || 0 };
     state.creditTransactions = Array.isArray(result.transactions) ? result.transactions : [];
+    state.credits = state.creditWallet.balance;
+    $('#creditAmount').textContent = creditText(state.credits);
+    $('#menuAccountMeta').textContent = `${state.user?.role === 'admin' ? '管理员' : '当前账号'} · ${creditText(state.credits)} 积分`;
     updateImageCost();
     updateVideoCost();
+    renderCreditDetail();
+    renderCreditPurchase();
   } catch (error) { if (error.status === 401) location.reload(); }
 }
 
@@ -821,6 +909,7 @@ function renderNotifications() {
   list.querySelectorAll('[data-notification-id]').forEach(button => button.onclick = () => markNotificationRead(button.dataset.notificationId));
 }
 function setNotificationPanelOpen(open) {
+  if (open) setContactPanelOpen(false);
   const item = $('.notification-menu-item');
   const panel = $('#notificationPanel');
   const trigger = $('#notificationMenuButton');
@@ -838,6 +927,26 @@ function scheduleNotificationPanelClose() {
     notificationPanelCloseTimer = 0;
     const item = $('.notification-menu-item');
     if (!item?.matches(':hover') && !item?.matches(':focus-within')) setNotificationPanelOpen(false);
+  }, 180);
+}
+function setContactPanelOpen(open) {
+  const item = $('.contact-menu-item');
+  const panel = $('#contactPanel');
+  const trigger = $('#contactMenuButton');
+  if (!item || !panel || !trigger) return;
+  window.clearTimeout(contactPanelCloseTimer);
+  contactPanelCloseTimer = 0;
+  item.classList.toggle('is-open', open);
+  panel.setAttribute('aria-hidden', String(!open));
+  trigger.setAttribute('aria-expanded', String(open));
+  if (open) setNotificationPanelOpen(false);
+}
+function scheduleContactPanelClose() {
+  window.clearTimeout(contactPanelCloseTimer);
+  contactPanelCloseTimer = window.setTimeout(() => {
+    contactPanelCloseTimer = 0;
+    const item = $('.contact-menu-item');
+    if (!item?.matches(':hover') && !item?.matches(':focus-within')) setContactPanelOpen(false);
   }, 180);
 }
 async function loadNotifications() {
@@ -866,27 +975,119 @@ async function markAllNotificationsRead() {
   try { await api('/api/notifications/read-all', { method:'POST', body:'{}' }); }
   catch { state.notifications.forEach((item, index) => { item.isRead = previous[index]; }); state.unreadNotifications = state.notifications.filter(item => !item.isRead).length; renderNotifications(); toast('消息状态更新失败，请稍后重试'); }
 }
+function setCreditPopoverOpen(open) {
+  ensureCreditPopoverEntry();
+  const control = $('#creditControl');
+  const popover = $('#creditDetailPopover');
+  const button = $('#creditBalance');
+  if (!control || !popover || !button) return;
+  window.clearTimeout(creditPopoverCloseTimer);
+  creditPopoverCloseTimer = 0;
+  control.classList.toggle('is-open', open);
+  toggleClass(popover, 'hidden', !open);
+  popover.setAttribute('aria-hidden', String(!open));
+  button.setAttribute('aria-expanded', String(open));
+}
+function ensureCreditPopoverEntry() {
+  const popover = $('#creditDetailPopover');
+  if (!popover || popover.dataset.entryReady === 'true') return;
+  popover.setAttribute('aria-labelledby', 'creditDetailEntryTitle');
+  popover.innerHTML = '<button id="creditDetailEntry" class="credit-detail-entry" type="button"><span class="credit-detail-entry-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.5 14.1 9l5.9 2.1-5.9 2.1L12 19l-2.1-5.8L4 11.1 9.9 9 12 3.5Z"/></svg></span><span class="credit-detail-entry-copy"><b id="creditDetailEntryTitle">积分详情</b></span><svg class="credit-detail-entry-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>';
+  popover.dataset.entryReady = 'true';
+}
+function scheduleCreditPopoverClose() {
+  window.clearTimeout(creditPopoverCloseTimer);
+  creditPopoverCloseTimer = window.setTimeout(() => {
+    const control = $('#creditControl');
+    if (!control?.matches(':hover') && !control?.matches(':focus-within')) setCreditPopoverOpen(false);
+  }, 160);
+}
+function closeCreditPurchase() {
+  const dialog = $('#creditPurchaseDialog');
+  if (dialog?.open) dialog.close();
+  if (dialog) dialog.hidden = true;
+  setCreditPopoverOpen(false);
+}
+function closePaymentSuccess() {
+  const dialog = $('#paymentSuccessDialog');
+  if (dialog?.open) dialog.close();
+  if (dialog) dialog.hidden = true;
+}
+function showPaymentSuccess(credits, balance) {
+  const purchaseDialog = $('#creditPurchaseDialog');
+  if (purchaseDialog?.open) {
+    state.creditPurchaseRestoreFocus = null;
+    purchaseDialog.close();
+    purchaseDialog.hidden = true;
+  }
+  const dialog = $('#paymentSuccessDialog');
+  if (!dialog) return;
+  $('#paymentSuccessCredits').textContent = `${creditText(credits)} 积分已到账`;
+  $('#paymentSuccessBalance').textContent = creditText(balance);
+  dialog.hidden = false;
+  if (!dialog.open) dialog.showModal();
+  requestAnimationFrame(() => $('#closePaymentSuccess').focus());
+}
 function closeCreditDetail() {
-  const dialog = $('#creditDetailDialog'); if (dialog.open) dialog.close(); dialog.hidden = true;
+  const dialog = $('#creditDetailDialog');
+  if (dialog?.open) dialog.close();
+  if (dialog) dialog.hidden = true;
+  setCreditPopoverOpen(false);
 }
 async function openCreditDetail() {
   const dialog = $('#creditDetailDialog'); if (!dialog || dialog.open) return;
   state.creditDetailRestoreFocus = document.activeElement;
   setNotificationPanelOpen(false);
   $('#accountMenu').classList.add('hidden');
+  setCreditPopoverOpen(false);
   dialog.hidden = false;
   renderCreditDetail();
   dialog.showModal();
   requestAnimationFrame(() => $('#closeCreditDetail').focus());
   await loadCredits();
 }
-$('#creditBalance').onclick = () => { void openCreditDetail(); };
-$('#closeCreditDetail').onclick = closeCreditDetail;
+async function openCreditPurchase() {
+  const dialog = $('#creditPurchaseDialog'); if (!dialog || dialog.open) return;
+  const active = document.activeElement;
+  state.creditPurchaseRestoreFocus = active?.closest?.('#creditDetailEntry, #creditDetailPurchase, #creditPopoverPurchase') ? $('#creditBalance') : active;
+  setNotificationPanelOpen(false);
+  $('#accountMenu').classList.add('hidden');
+  if ($('#creditDetailDialog')?.open) { state.creditDetailRestoreFocus = null; $('#creditDetailDialog').close(); $('#creditDetailDialog').hidden = true; }
+  setCreditPopoverOpen(false);
+  dialog.hidden = false;
+  renderCreditPurchase();
+  dialog.showModal();
+  requestAnimationFrame(() => $('#closeCreditPurchase').focus());
+  await loadCredits();
+}
+const creditControl = $('#creditControl');
+ensureCreditPopoverEntry();
+creditControl?.addEventListener('mouseenter', () => setCreditPopoverOpen(true));
+creditControl?.addEventListener('mouseleave', scheduleCreditPopoverClose);
+creditControl?.addEventListener('focusin', () => setCreditPopoverOpen(true));
+creditControl?.addEventListener('focusout', scheduleCreditPopoverClose);
+$('#creditBalance').onclick = () => { void openCreditPurchase(); };
+$('#creditDetailEntry').onclick = () => { void openCreditDetail(); };
+$('#creditDetailPurchase').onclick = () => { void openCreditPurchase(); };
 $('#creditSpendTab').onclick = () => setCreditDetailTab('spend');
 $('#creditEarnTab').onclick = () => setCreditDetailTab('earn');
+$$('[data-alipay-credits]').forEach(button => { button.onclick = () => { state.alipayTopupCredits = Number(button.dataset.alipayCredits); setAlipayStatus(); renderCreditPurchase(); }; });
+$('#alipayTopupButton').onclick = () => { void startAlipayTopup(); };
+$('#alipayRefreshPayment').onclick = () => { void refreshAlipayPayment(); };
+$('#closeCreditPurchase').onclick = () => closeCreditPurchase();
+$('#creditPurchaseDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeCreditPurchase(); });
+$('#creditPurchaseDialog').addEventListener('cancel', event => { event.preventDefault(); closeCreditPurchase(); });
+$('#creditPurchaseDialog').addEventListener('close', () => { $('#creditPurchaseDialog').hidden = true; const restore = state.creditPurchaseRestoreFocus; state.creditPurchaseRestoreFocus = null; requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
+$('#closePaymentSuccess').onclick = () => closePaymentSuccess();
+$('#paymentSuccessDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closePaymentSuccess(); });
+$('#paymentSuccessDialog').addEventListener('cancel', event => { event.preventDefault(); closePaymentSuccess(); });
+$('#paymentSuccessDialog').addEventListener('close', () => { $('#paymentSuccessDialog').hidden = true; });
 $('#creditDetailDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('cancel', event => { event.preventDefault(); closeCreditDetail(); });
 $('#creditDetailDialog').addEventListener('close', () => { $('#creditDetailDialog').hidden = true; const restore = state.creditDetailRestoreFocus; state.creditDetailRestoreFocus = null; requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
+$('#closeCreditDetail').onclick = () => closeCreditDetail();
+document.addEventListener('pointerdown', event => { if (!creditControl?.contains(event.target)) setCreditPopoverOpen(false); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#creditPurchaseDialog')?.open && !$('#creditDetailDialog')?.open) setCreditPopoverOpen(false); });
 function setDesktopSurface(surface) {
   const desktop = Boolean(window.guguDesktop);
   document.body.classList.toggle('desktop-app-visible', desktop && surface === 'app');
@@ -1163,6 +1364,16 @@ function showApp() {
   toggleClass($('#authView'), 'hidden', true);
   toggleClass($('#appView'), 'hidden', false);
 }
+function loginReturnDestination() {
+  if (window.location.pathname !== authPath) return '';
+  const value = new URLSearchParams(window.location.search).get('next');
+  if (!value) return '';
+  try {
+    const target = new URL(value, window.location.origin);
+    if (target.origin !== window.location.origin || target.pathname !== '/pricing') return '';
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch { return ''; }
+}
 function accountDisplayName(user = state.user) {
   return String(user?.nickname || user?.displayName || user?.username || 'user');
 }
@@ -1181,6 +1392,11 @@ function finishInitialWorkspaceSync() {
   else if (state.route === 'drama') dramaController.refreshTasks();
 }
 async function enterApp(user) {
+  const returnDestination = loginReturnDestination();
+  if (returnDestination) {
+    window.location.replace(returnDestination);
+    return;
+  }
   state.user = user;
   state.initialSyncReady = false;
   showBoot('正在加载工作区', '正在同步你的品牌素材与生成记录，请稍候。');
@@ -1335,11 +1551,18 @@ notificationMenuItem?.addEventListener('mouseleave', () => { if (!notificationMe
 notificationMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
 notificationMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!notificationMenuItem.matches(':focus-within') && !notificationMenuItem.matches(':hover')) scheduleNotificationPanelClose(); }));
 notificationMenuButton?.addEventListener('click', event => { event.stopPropagation(); setNotificationPanelOpen(true); });
+const contactMenuItem = $('.contact-menu-item');
+const contactMenuButton = $('#contactMenuButton');
+contactMenuItem?.addEventListener('mouseenter', () => { if (!$('#accountMenu').classList.contains('hidden')) setContactPanelOpen(true); });
+contactMenuItem?.addEventListener('mouseleave', () => { if (!contactMenuItem.matches(':focus-within')) scheduleContactPanelClose(); });
+contactMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setContactPanelOpen(true); });
+contactMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!contactMenuItem.matches(':focus-within') && !contactMenuItem.matches(':hover')) scheduleContactPanelClose(); }));
+contactMenuButton?.addEventListener('click', event => { event.stopPropagation(); setContactPanelOpen(true); });
 $('#accountSettingsButton').onclick = event => { event.stopPropagation(); openAccountSettings(); };
-$('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) setNotificationPanelOpen(false); if (opening) renderNotifications(); };
+$('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) { setNotificationPanelOpen(false); setContactPanelOpen(false); } if (opening) renderNotifications(); };
 $('#markAllNotifications').onclick = event => { event.stopPropagation(); void markAllNotificationsRead(); };
-document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
+document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
 $('#logoutButton').onclick = async () => { await api('/api/auth/logout', { method:'POST', body:'{}' }); location.reload(); };
 async function loadConfig() {
   const service = $('#serviceState');
@@ -2157,14 +2380,14 @@ function openReferenceDialog(target, { mentionRequest = null } = {}) {
   referenceDialogCommitted=false;
   referenceDialogOriginal={ target, value:[...state.refs[target]] };
   videoPromptMentionRequest = target === 'video' ? mentionRequest : null;
-  state.referenceTarget = target; state.videoFrameTarget = ''; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal();
+  state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
 function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
   referenceDialogCommitted=false;
   referenceDialogOriginal={ target:'video-frame', frame, value:state.videoFrames[frame] || '' };
   videoPromptMentionRequest = null;
-  state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal();
+  state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.referenceKind = 'all'; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
 function closeReferenceDialog() { videoPromptMentionRequest = null; $('#referenceDialog').close(); }
 $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDialog;
@@ -2204,26 +2427,32 @@ function renderReferenceDialog() {
   const promptMentionMode = isVideo && Boolean(videoPromptMentionRequest);
   const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
   const allowedKinds = isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
+  if (state.referenceKind !== 'all' && !allowedKinds.has(state.referenceKind)) state.referenceKind = 'all';
+  const visibleKind = state.referenceKind;
   state.dialogSelection = state.dialogSelection.filter(id => { const file=referenceFileById(id); return file && allowedKinds.has(file.kind); });
   const selectedFiles = state.dialogSelection.map(id => referenceFileById(id)).filter(Boolean);
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
   const totalSelected = state.dialogSelection.length;
   $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `${promptMentionMode ? '所选素材会插入创作描述，并同步添加到下方参考素材区。' : ''}当前模型支持：${referenceCapabilityText(limits)}；单个图片不超过 20 MB，视频或音频不超过 25 MB。选择本地文件后会立即显示。`;
+  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `${promptMentionMode ? '所选素材会插入创作描述，并同步添加到下方参考素材区。' : ''}当前模型支持：${referenceCapabilityText(limits)}；单个图片不超过 20 MB，视频或音频不超过 25 MB。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
   $('#selectionCount').textContent = isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${counts.audio}）`;
   const confirmLabel = isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
+  const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
+  const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, state.files.filter(file => allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === 'reference' && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
+  $('#referenceKindFilter').innerHTML = [['all', '全部'], ...['image', 'video', 'audio'].filter(kind => allowedKinds.has(kind)).map(kind => [kind, kindLabels[kind]])].map(([kind, label]) => `<button type="button" role="tab" class="${visibleKind === kind ? 'active' : ''}" data-reference-kind="${kind}" aria-selected="${visibleKind === kind}"><span>${label}</span><small>${kind === 'all' ? kindCounts.image + kindCounts.video + kindCounts.audio : kindCounts[kind]}</small></button>`).join('');
+  $$('#referenceKindFilter [data-reference-kind]').forEach(button => button.onclick = () => { state.referenceKind = button.dataset.referenceKind; renderReferenceDialog(); });
   const uploadJobs = state.uploadJobs.filter(job => job.context === 'reference');
-  const pendingJobs = uploadJobs.filter(job => job.deferUpload && allowedKinds.has(job.kind));
+  const pendingJobs = uploadJobs.filter(job => job.deferUpload && allowedKinds.has(job.kind) && (visibleKind === 'all' || job.kind === visibleKind));
   const uploadingAssetIds = new Set(uploadJobs.map(job => job.assetId).filter(Boolean));
   const pendingMarkup = pendingJobs.map(job => {
     const file=pendingReferenceFile(job); const selected=state.dialogSelection.includes(job.id); const status=job.status === 'failed' ? '素材不可用，请重新选择' : '已选择';
     return `<button class="reference-option pending-reference-option ${selected ? 'selected' : ''} ${job.status === 'failed' ? 'failed' : ''}" data-id="${esc(job.id)}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}<small>${esc(status)}</small></span><i>✓</i></button>`;
   }).join('');
-  const uploadMarkup = uploadJobs.filter(job => !job.deferUpload).map(job => uploadJobCard(job, 'reference')).join('');
+  const uploadMarkup = uploadJobs.filter(job => !job.deferUpload && (visibleKind === 'all' || job.kind === visibleKind)).map(job => uploadJobCard(job, 'reference')).join('');
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
-  const files = state.files.filter(file => allowedKinds.has(file.kind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id)));
+  const files = state.files.filter(file => allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id)));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
   $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState('没有可用参考素材', '先上传当前模型支持的素材类型。'));
   requestAnimationFrame(resetReferenceDialogScroll);
@@ -2587,16 +2816,45 @@ $('#videoDuration').onchange = () => { syncVideoModelParameters(); updateVideoCo
 $('#videoResolution').onchange = () => updateVideoCost();
 $('#videoAspect').onchange = () => updateVideoCost();
 
+const priceUnitLabels = Object.freeze({ request:'次', second:'秒' });
+function priceUnitLabel(unit) { return priceUnitLabels[unit] || '秒'; }
+// Sorts quality tiers the way people read them (480p < 720p < 2k) so the card
+// always opens on the cheapest tier without relying on upstream ordering.
+function priceQualityWeight(quality) {
+  const text = String(quality || '');
+  const kilo = text.match(/([\d.]+)\s*k/i);
+  if (kilo) return Number(kilo[1]) * 1000;
+  const plain = text.match(/[\d.]+/);
+  return plain ? Number(plain[0]) : 0;
+}
+function priceAmountText(yuan) { return Number(yuan).toFixed(2); }
+function priceCreditsText(credits, unit) { return `${creditText(credits)} 积分 / ${priceUnitLabel(unit)}`; }
+function modelPriceCard(modelId, rows, kind) {
+  const label = rows[0]?.label || modelId;
+  const tiers = [...rows].sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
+  const active = tiers.reduce((cheapest, item) => (Number(item.yuan) < Number(cheapest.yuan) ? item : cheapest), tiers[0]);
+  const meta = kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · 按秒计费';
+  const tierRow = tiers.length > 1
+    ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
+    : `<div class="price-tier-row"><span class="price-tier price-tier-static">${esc(tiers[0].quality)}</span></div>`;
+  return `<article class="price-model-card"><header class="price-model-card-head">${modelIcon(modelId)}<div><h3>${esc(label)}</h3><small>${meta}</small></div></header><div class="price-model-figure"><span class="price-model-currency">¥</span><strong class="price-model-amount">${priceAmountText(active.yuan)}</strong><span class="price-model-unit">/ ${priceUnitLabel(active.unit)}</span></div><p class="price-model-credits">${priceCreditsText(active.credits, active.unit)}</p>${tierRow}</article>`;
+}
 function renderModelPrices(items = state.config?.modelPrices || []) {
   const body = $('#modelPriceBody');
   if (!body) return;
   const visibleItems = items.filter(item => item.available === true && item.enabled !== false && item.availability !== 'coming-soon' && Number.isFinite(Number(item.credits)) && Number.isFinite(Number(item.yuan)));
-  const groups = [...new Set(visibleItems.map(item => item.modelId))];
-  body.innerHTML = groups.length ? groups.map(modelId => {
+  if (!visibleItems.length) { body.innerHTML = '<div class="price-catalog-empty">暂时没有可用的模型价格。</div>'; return; }
+  const videoModelIds = new Set((state.config?.videoCapabilities?.models || []).map(model => model.id));
+  const groups = [...new Set(visibleItems.map(item => item.modelId))].map(modelId => {
     const rows = visibleItems.filter(item => item.modelId === modelId);
-    const label = rows[0]?.label || modelId;
-    return `<section class="price-model-group"><header><div class="price-model-heading">${modelIcon(modelId)}<h3>${esc(label)}</h3></div></header><div class="price-model-rows">${rows.map(item => { const unit = item.unit === 'request' ? '次' : '秒'; return `<div class="price-model-row"><b>${esc(item.quality)}</b><strong>¥${Number(item.yuan).toFixed(2)} / ${unit}<small>${creditText(item.credits)} 积分 / ${unit}</small></strong></div>`; }).join('')}</div></section>`;
-  }).join('') : '<div class="price-catalog-empty">暂时没有可用的模型价格。</div>';
+    return { modelId, rows, kind: videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
+  });
+  const sections = [{ kind:'video', title:'视频模型', hint:'按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
+  body.innerHTML = sections.map(section => {
+    const cards = groups.filter(group => group.kind === section.kind);
+    if (!cards.length) return '';
+    return `<section class="price-section"><header class="price-section-head"><h4>${section.title}</h4><span>${cards.length} 个 · ${section.hint}</span></header><div class="price-section-grid">${cards.map(card => modelPriceCard(card.modelId, card.rows, card.kind)).join('')}</div></section>`;
+  }).join('');
 }
 
 const modelPriceAutoOpenKey = 'gugu:model-price-auto-open-date';
@@ -2627,6 +2885,26 @@ async function openModelPriceDialog({ auto = false } = {}) {
   try { const config = await api('/api/config'); state.config = { ...state.config, ...config }; renderModelPrices(config.modelPrices || []); }
   catch { if (!(state.config?.modelPrices || []).length) $('#modelPriceBody').innerHTML = '<div class="price-catalog-empty">价格获取失败，请稍后重试。</div>'; }
 }
+// Tier chips swap the headline price in place; the dialog body is a stable
+// element so one delegated listener survives every re-render.
+$('#modelPriceBody')?.addEventListener('click', event => {
+  const tier = event.target.closest('.price-tier[data-amount]');
+  const card = tier?.closest('.price-model-card');
+  if (!card || tier.classList.contains('active')) return;
+  for (const button of card.querySelectorAll('.price-tier')) {
+    const selected = button === tier;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  }
+  const amount = card.querySelector('.price-model-amount');
+  const unit = card.querySelector('.price-model-unit');
+  const credits = card.querySelector('.price-model-credits');
+  if (amount) amount.textContent = tier.dataset.amount || '';
+  if (unit) unit.textContent = `/ ${tier.dataset.unit || '秒'}`;
+  if (credits) credits.textContent = tier.dataset.credits || '';
+  const figure = card.querySelector('.price-model-figure');
+  if (figure) { figure.classList.remove('price-figure-flash'); void figure.offsetWidth; figure.classList.add('price-figure-flash'); }
+});
 $('#modelPriceButton').onclick = () => { void openModelPriceDialog(); };
 $('#closeModelPrice').onclick = () => $('#modelPriceDialog').close();
 $('#modelPriceDialog').addEventListener('click', event => { if (event.target === event.currentTarget) event.currentTarget.close(); });

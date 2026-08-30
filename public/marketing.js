@@ -1,27 +1,30 @@
 (() => {
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
-  const header = document.querySelector('#site-header');
-  const setHeaderState = () => header?.classList.toggle('is-scrolled', window.scrollY > 16);
-  setHeaderState();
-  window.addEventListener('scroll', setHeaderState, { passive: true });
+  const isHomePage = document.body.dataset.page === 'home';
+  if (!isHomePage) {
+    const header = document.querySelector('#site-header');
+    const setHeaderState = () => header?.classList.toggle('is-scrolled', window.scrollY > 16);
+    setHeaderState();
+    window.addEventListener('scroll', setHeaderState, { passive: true });
 
-  const page = document.body.dataset.page;
-  document.querySelectorAll('[data-page-link]').forEach(link => {
-    link.classList.toggle('is-active', link.dataset.pageLink === page);
-  });
+    const page = document.body.dataset.page;
+    document.querySelectorAll('[data-page-link]').forEach(link => {
+      link.classList.toggle('is-active', link.dataset.pageLink === page);
+    });
 
-  const reveals = [...document.querySelectorAll('.reveal')];
-  if ('IntersectionObserver' in window && !reducedMotion) {
-    const observer = new IntersectionObserver((entries, activeObserver) => {
-      entries.forEach(entry => {
-        if (!entry.isIntersecting) return;
-        entry.target.classList.add('in-view');
-        activeObserver.unobserve(entry.target);
-      });
-    }, { threshold: .12, rootMargin: '0px 0px -30px' });
-    reveals.forEach(node => observer.observe(node));
-  } else {
-    reveals.forEach(node => node.classList.add('in-view'));
+    const reveals = [...document.querySelectorAll('.reveal')];
+    if ('IntersectionObserver' in window && !reducedMotion) {
+      const observer = new IntersectionObserver((entries, activeObserver) => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('in-view');
+          activeObserver.unobserve(entry.target);
+        });
+      }, { threshold: .12, rootMargin: '0px 0px -30px' });
+      reveals.forEach(node => observer.observe(node));
+    } else {
+      reveals.forEach(node => node.classList.add('in-view'));
+    }
   }
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
@@ -43,13 +46,202 @@
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 7v5l3.5 2"/></svg>';
   };
 
+  const readJson = async response => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw Object.assign(new Error(payload.error || '请求暂时无法完成'), { status:response.status });
+    return payload;
+  };
+  const loginDestination = credits => `/login?next=${encodeURIComponent(credits ? `/pricing?purchase=${credits}` : '/pricing')}`;
   const pricePage = document.querySelector('[data-price-page]');
-  if (!pricePage) return;
+  const siteAccountMenu = document.querySelector('#siteAccountMenu');
+  const siteAccountDropdown = document.querySelector('#siteAccountDropdown');
+  const siteAccountSummary = document.querySelector('#siteAccountSummary');
+  const siteLogoutButton = document.querySelector('#siteLogoutButton');
+  const siteLoginLink = document.querySelector('#siteLoginLink');
+  const siteLoginText = document.querySelector('#siteLoginText');
+  const renderSiteAccount = user => {
+    const signedIn = Boolean(user);
+    const identity = user?.nickname || user?.displayName || user?.username || '账号';
+    const identityText = signedIn ? `${identity} · ${formatNumber(user.credits, 0)} 积分` : '';
+    siteAccountMenu?.classList.toggle('is-signed-in', signedIn);
+    if (siteLoginText) siteLoginText.textContent = signedIn ? identity : '登录';
+    if (siteLoginLink) {
+      siteLoginLink.href = signedIn ? '#' : loginDestination();
+      siteLoginLink.setAttribute('aria-label', signedIn ? `当前账号：${identityText}` : '登录');
+      siteLoginLink.setAttribute('aria-expanded', 'false');
+    }
+    if (siteAccountSummary) siteAccountSummary.textContent = signedIn ? identityText : '';
+    siteAccountDropdown?.setAttribute('aria-hidden', String(!signedIn));
+  };
+  const loadSiteAccount = async () => {
+    try {
+      const response = await fetch('/api/auth/me', { cache:'no-store', headers:{ Accept:'application/json' } });
+      if (response.status === 401) {
+        renderSiteAccount(null);
+        return null;
+      }
+      const payload = await readJson(response);
+      renderSiteAccount(payload.user);
+      return payload.user || null;
+    } catch {
+      renderSiteAccount(null);
+      return null;
+    }
+  };
+  const setAccountMenuOpen = open => siteLoginLink?.setAttribute('aria-expanded', String(Boolean(open)));
+  siteAccountMenu?.addEventListener('pointerenter', () => setAccountMenuOpen(true));
+  siteAccountMenu?.addEventListener('pointerleave', () => setAccountMenuOpen(false));
+  siteAccountMenu?.addEventListener('focusin', () => setAccountMenuOpen(true));
+  siteAccountMenu?.addEventListener('focusout', event => {
+    if (!siteAccountMenu.contains(event.relatedTarget)) setAccountMenuOpen(false);
+  });
+  siteLoginLink?.addEventListener('click', event => {
+    if (siteAccountMenu?.classList.contains('is-signed-in')) event.preventDefault();
+  });
+  siteLogoutButton?.addEventListener('click', async () => {
+    siteLogoutButton.disabled = true;
+    try {
+      const response = await fetch('/api/auth/logout', { method:'POST', headers:{ Accept:'application/json' } });
+      await readJson(response);
+      window.location.assign('/');
+    } catch (error) {
+      if (siteAccountSummary) siteAccountSummary.textContent = error.message || '退出登录失败，请稍后重试';
+    } finally {
+      siteLogoutButton.disabled = false;
+    }
+  });
+  if (!pricePage) {
+    void loadSiteAccount();
+    return;
+  }
   const catalog = document.querySelector('#priceCatalog');
   const status = document.querySelector('#priceStatus');
   const updated = document.querySelector('#priceUpdated');
   const refresh = document.querySelector('#priceRefresh');
+  const purchaseAccount = document.querySelector('#purchaseAccount');
+  const purchaseAccountText = document.querySelector('#purchaseAccountText');
+  const purchaseLoginLink = document.querySelector('#purchaseLoginLink');
+  const paymentTracker = document.querySelector('#paymentTracker');
+  const paymentTrackerTitle = document.querySelector('#paymentTrackerTitle');
+  const paymentTrackerMessage = document.querySelector('#paymentTrackerMessage');
+  const paymentRefresh = document.querySelector('#paymentRefresh');
+  const purchaseButtons = [...document.querySelectorAll('[data-buy-credits]')];
+  const orderFromUrl = new URLSearchParams(window.location.search).get('order') || '';
+  let pendingOrderNo = /^[A-Za-z0-9_-]+$/.test(orderFromUrl) ? orderFromUrl : sessionStorage.getItem('gugu_alipay_order') || '';
+  let purchaseUser = null;
+  let purchaseSessionReady = false;
+  let paymentPollTimer = 0;
   let loading = false;
+
+  const showPurchaseAccount = user => {
+    purchaseUser = user || null;
+    purchaseSessionReady = true;
+    const signedIn = Boolean(user);
+    const identityText = user ? `${user.nickname || user.displayName || user.username || '已登录'} · ${formatNumber(user.credits, 0)} 积分` : '购买前需要登录';
+    purchaseAccount?.classList.toggle('is-signed-in', signedIn);
+    if (purchaseAccountText) purchaseAccountText.textContent = identityText;
+    if (purchaseLoginLink) purchaseLoginLink.textContent = signedIn ? '已登录' : '登录后购买';
+    renderSiteAccount(user);
+  };
+  const loadPurchaseAccount = async () => {
+    const user = await loadSiteAccount();
+    showPurchaseAccount(user);
+    return user;
+  };
+  const setPaymentTracker = (title, message, tone = '') => {
+    if (!paymentTracker) return;
+    paymentTracker.hidden = false;
+    paymentTracker.classList.toggle('is-paid', tone === 'paid');
+    paymentTrackerTitle.textContent = title;
+    paymentTrackerMessage.textContent = message;
+    if (paymentRefresh) paymentRefresh.hidden = tone === 'paid';
+  };
+  const stopPaymentPolling = () => { window.clearTimeout(paymentPollTimer); paymentPollTimer = 0; };
+  const submitPaymentForm = paymentHtml => {
+    const container = document.createElement('div');
+    container.hidden = true;
+    container.innerHTML = String(paymentHtml || '');
+    const form = container.querySelector('form');
+    if (!form) throw new Error('支付宝支付表单无效');
+    form.target = '_self';
+    document.body.appendChild(container);
+    form.submit();
+  };
+  const schedulePaymentPolling = () => {
+    stopPaymentPolling();
+    if (!pendingOrderNo) return;
+    paymentPollTimer = window.setTimeout(() => { void refreshPayment({ polling:true }); }, 3000);
+  };
+  const refreshPayment = async ({ polling = false } = {}) => {
+    if (!pendingOrderNo) return;
+    paymentRefresh.disabled = true;
+    if (!polling) setPaymentTracker('正在确认支付结果', '正在向支付宝查询这笔订单，请稍候。');
+    try {
+      const response = await fetch(`/api/payments/alipay/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', headers:{ Accept:'application/json', 'Content-Type':'application/json' }, body:'{}' });
+      if (response.status === 401) {
+        window.location.assign(`/login?next=${encodeURIComponent(`/pricing?order=${pendingOrderNo}`)}`);
+        return;
+      }
+      const result = await readJson(response);
+      if (result.order?.status === 'PAID') {
+        stopPaymentPolling();
+        sessionStorage.removeItem('gugu_alipay_order');
+        pendingOrderNo = '';
+        setPaymentTracker('积分已经到账', `${formatNumber(result.order.credits, 0)} 积分已加入你的账户。`, 'paid');
+        await loadPurchaseAccount();
+      } else if (result.order?.status === 'CLOSED') {
+        stopPaymentPolling();
+        setPaymentTracker('订单已关闭', '这笔订单没有完成付款，可以重新选择积分包。');
+      } else {
+        setPaymentTracker('等待扫码付款', '请使用支付宝扫描二维码，支付后积分会自动到账。');
+        schedulePaymentPolling();
+      }
+    } catch (error) {
+      setPaymentTracker('暂时无法确认订单', error.message || '请稍后再试。');
+    } finally {
+      paymentRefresh.disabled = false;
+    }
+  };
+  const purchaseCredits = async (credits, button) => {
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/payments/alipay/orders', { method:'POST', headers:{ Accept:'application/json', 'Content-Type':'application/json' }, body:JSON.stringify({ credits }) });
+      if (response.status === 401) {
+        window.location.assign(loginDestination(credits));
+        return;
+      }
+      const result = await readJson(response);
+      pendingOrderNo = result.order.outTradeNo;
+      sessionStorage.setItem('gugu_alipay_order', pendingOrderNo);
+      setPaymentTracker('正在进入支付宝收银台', `将在当前页面展示 ¥${result.order.totalAmount} 的支付宝扫码入口。`);
+      submitPaymentForm(result.paymentHtml);
+    } catch (error) {
+      setPaymentTracker('支付订单创建失败', error.message || '请稍后再试。');
+    } finally {
+      button.disabled = false;
+    }
+  };
+  purchaseButtons.forEach(button => button.addEventListener('click', () => {
+    const credits = Number(button.dataset.buyCredits);
+    if (purchaseSessionReady && !purchaseUser) {
+      window.location.assign(loginDestination(credits));
+      return;
+    }
+    void purchaseCredits(credits, button);
+  }));
+  paymentRefresh?.addEventListener('click', () => { void refreshPayment(); });
+
+  const requestedCredits = Number(new URLSearchParams(window.location.search).get('purchase'));
+  const requestedCard = document.querySelector(`[data-credit-package="${requestedCredits}"]`);
+  if (requestedCard) {
+    requestedCard.classList.add('is-requested');
+    requestAnimationFrame(() => requestedCard.scrollIntoView({ behavior:reducedMotion ? 'auto' : 'smooth', block:'center' }));
+  }
+  const purchaseSessionPromise = loadPurchaseAccount();
+  if (pendingOrderNo) {
+    setPaymentTracker('发现一笔待确认订单', '完成付款后，可以在这里刷新支付状态。');
+    if (orderFromUrl) void purchaseSessionPromise.then(() => refreshPayment());
+  }
 
   const setStatus = (message, state = '') => {
     if (!status) return;
@@ -61,9 +253,10 @@
   const renderCard = (model, rows, description = '') => {
     const rowHtml = rows.map(item => {
       const unit = unitText(item.unit);
-      const duration = Number(item.duration);
-      const durationText = Number.isFinite(duration) ? `${formatNumber(duration, 0)} 秒视频` : `按${unit}计费`;
-      const total = Number.isFinite(Number(item.totalYuan)) ? ` · ${formatNumber(item.totalYuan)} 元 / ${formatNumber(duration, 0)} 秒` : '';
+      const hasDuration = item.duration !== null && item.duration !== undefined && Number.isFinite(Number(item.duration));
+      const duration = hasDuration ? Number(item.duration) : null;
+      const durationText = hasDuration ? `${formatNumber(duration, 0)} 秒视频` : `按${unit}计费`;
+      const total = hasDuration && Number.isFinite(Number(item.totalYuan)) ? ` · ${formatNumber(item.totalYuan)} 元 / ${formatNumber(duration, 0)} 秒` : '';
       return `<div class="price-row"><div class="price-row-label"><b>${escapeHtml(item.quality || '标准')}</b><small>${durationText}${total}</small></div><div class="price-row-value"><strong>¥${formatNumber(item.yuan)}<span>/ ${unit}</span></strong><small>${formatNumber(item.credits, 2)} 积分 / ${unit}</small></div></div>`;
     }).join('');
     const modelLabel = model?.label || rows[0]?.label || rows[0]?.modelId || '未命名模型';
