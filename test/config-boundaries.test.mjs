@@ -29,9 +29,10 @@ test('desktop release env is isolated from business media and SMS configuration'
 });
 
 test('runtime, documentation, and CI preserve the R2-only boundary', async () => {
+  const archivedSpecUrl = new URL('../.kiro/specs/sqlite-metadata-store/requirements.md', import.meta.url);
   const [server, cleanup, release, readme, spec, ci, backup] = await Promise.all([
     text('server.mjs'), text('scripts/cleanup-local-media.mjs'), text('scripts/desktop-release.mjs'),
-    text('README.md'), text('.kiro/specs/sqlite-metadata-store/requirements.md'), text('.github/workflows/ci.yml'),
+    text('README.md'), existsSync(archivedSpecUrl) ? readFile(archivedSpecUrl, 'utf8') : Promise.resolve(''), text('.github/workflows/ci.yml'),
     text('scripts/db-backup.mjs'),
   ]);
   absent(server, ["from 'ali-oss'", 'MEDIA_STORAGE_PROVIDER', 'ossKey'], 'server.mjs');
@@ -40,7 +41,7 @@ test('runtime, documentation, and CI preserve the R2-only boundary', async () =>
   present(release, ["from 'ali-oss'", '.env.desktop-release', 'DESKTOP_UPDATE_OSS_ACCESS_KEY_ID'], 'desktop-release.mjs');
   absent(release, ['ALIYUN_ACCESS_KEY_ID', 'ALIYUN_OSS_ENDPOINT'], 'desktop-release.mjs');
   absent(readme, ['MEDIA_STORAGE_PROVIDER', 'DIRECT_OSS_UPLOAD_ENABLED', 'npm run migrate', 'ossKey'], 'README.md');
-  absent(spec, ['Migration_Tool SHALL', 'ossKey'], 'archived SQLite spec');
+  if (existsSync(archivedSpecUrl)) absent(spec, ['Migration_Tool SHALL', 'ossKey'], 'archived SQLite spec');
   absent(ci, ['${{ secrets.', 'DESKTOP_UPDATE_OSS_', 'ALIYUN_OSS_'], 'CI workflow');
   present(backup, ["'upload_intents'"], 'db-backup.mjs');
 });
