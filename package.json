@@ -1,7 +1,7 @@
 {
   "name": "model-studio",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "GuGu AI 创作工作台与桌面客户端",
   "author": "GuGu AI",
   "guguApiBase": "https://guguai.xyz",
