@@ -279,11 +279,11 @@ const generationFailureCatalog = Object.freeze({
 function generationFailureCode(task) {
   if (task.creditStatus === 'refund_failed') return 'REFUND_PENDING';
   const raw = String(task.error || '').toLowerCase();
-  if ((task.providerTaskId && task.sourceUrl) || /成品下载|归档|文件存储|空文件/.test(raw)) return 'ARCHIVE_FAILED';
+  if (task.sourceUrl && (task.providerTaskId || task.archivePending)) return 'ARCHIVE_FAILED';
   if (/服务重启|任务.*中断|interrupted|cancelled|canceled/.test(raw)) return 'INTERRUPTED';
   if (/模型无响应|未获得上游任务\s*id|未返回上游任务编号/.test(raw)) return 'MODEL_UNRESPONSIVE';
   if (/content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情|rejected/.test(raw)) return 'CONTENT_REJECTED';
-  if (/unmarshal.*images|image.*\[\]string|参考图|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
+  if (/unmarshal.*images|image.*\[\]string|参考图|参考素材.*(本地|同步|读取|云端|源地址)|文件本地缓存缺失|没有可用的云端归档|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
   if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
   if (/timeout|timed out|超时|等待超时/.test(raw)) return 'TIMEOUT';
   if (/account balance|insufficient balance|insufficient funds|余额不足|账户余额|余额不够/.test(raw)) return 'UPSTREAM_BILLING';
@@ -1097,6 +1097,7 @@ function publicAsset(asset) {
   const url = `/api/files/${encodeURIComponent(asset.id)}/content`;
   return {
     ...value,
+    referenceSourceAvailable: Boolean(asset.sourceUrl),
     url,
     directUrl: `/api/files/${encodeURIComponent(asset.id)}/direct`,
     ...(asset.kind === 'image' ? { previewUrl: `/api/files/${encodeURIComponent(asset.id)}/preview` } : {}),
@@ -1417,17 +1418,25 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
   if (await fs.access(permanentFile).then(() => true).catch(() => false)) return permanentFile;
   const provider = storageProviderForAsset(asset);
-  if (!storageConfiguredFor(provider) || !asset.ossKey) throw Object.assign(new Error('文件本地缓存缺失，且没有可用的云端归档'), { statusCode: 503 });
-
   const localFile = path.join(targetDir, asset.storageName);
   const restoreKey = `${safeId(userId)}:${asset.id}:${targetDir}`;
   if (assetRestores.has(restoreKey)) return assetRestores.get(restoreKey);
   const restore = (async () => {
     await fs.mkdir(targetDir, { recursive: true, mode: 0o700 });
     if (await fs.access(localFile).then(() => true).catch(() => false)) return localFile;
-    const url = await signedOssUrl(asset.ossKey, ossAssetUrlExpiresSeconds, {}, provider);
-    await downloadToFile(url, localFile, 4);
-    return localFile;
+    if (storageConfiguredFor(provider) && asset.ossKey) {
+      const url = await signedOssUrl(asset.ossKey, ossAssetUrlExpiresSeconds, {}, provider);
+      await downloadToFile(url, localFile, 4);
+      return localFile;
+    }
+    if (asset.sourceUrl) {
+      const sourceUrl = new URL(asset.sourceUrl);
+      if (!['http:', 'https:'].includes(sourceUrl.protocol)) throw new Error('参考素材源地址不可用');
+      const sourceTask = asset.sourceGenerationId ? findGeneration(userId, asset.sourceGenerationId) : null;
+      await downloadToFile(sourceUrl.toString(), localFile, 4, { headers:generationSourceHeaders(sourceTask, sourceUrl.toString()) });
+      return localFile;
+    }
+    throw Object.assign(new Error('参考素材仅存在于桌面本地，尚未同步到云端'), { statusCode:409, code:'REFERENCE_NOT_READY' });
   })().finally(() => assetRestores.delete(restoreKey));
   assetRestores.set(restoreKey, restore);
   return restore;
@@ -1492,7 +1501,7 @@ async function resolveRefs(userId, ids, task = {}) {
     return refs;
   });
 }
-async function validateReferenceAssets(userId, value, limits = null) {
+async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true } = {}) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
   const ids = [...new Set((value || []).map(safeId).filter(Boolean))];
   const referenceLimits = limits || { image: 7, video: 0, audio: 0, total: 7 };
@@ -1505,6 +1514,7 @@ async function validateReferenceAssets(userId, value, limits = null) {
     if (counts[asset.kind] > Number(referenceLimits[asset.kind] || 0)) throw Object.assign(new Error(`参考${asset.kind === 'image' ? '图片' : asset.kind === 'video' ? '视频' : '音频'}最多支持 ${referenceLimits[asset.kind]} 个`), { statusCode: 400 });
     if (asset.kind === 'image' && Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 20 MB`), { statusCode: 400 });
     if (asset.kind !== 'image' && Number(asset.size) > maxUploadBytes) throw Object.assign(new Error(`参考素材“${asset.name}”超过 25 MB`), { statusCode: 400 });
+    if (requireReadable && !await referenceAssetHasReadableSource(userId, asset)) throw Object.assign(new Error(`参考素材“${asset.name}”尚未同步到云端，请重新选择或上传后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
   }
   return ids;
 }
@@ -1515,6 +1525,15 @@ function referenceAssetCounts(userId, ids) {
     if (asset && Object.hasOwn(counts, asset.kind)) counts[asset.kind]++;
   }
   return counts;
+}
+async function referenceAssetHasReadableSource(userId, asset) {
+  if (!asset?.storageName) return false;
+  const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
+  if (await fs.access(permanentFile).then(() => true).catch(() => false)) return true;
+  if (asset.ossKey && storageConfiguredFor(storageProviderForAsset(asset))) return true;
+  if (!asset.sourceUrl) return false;
+  try { return ['http:', 'https:'].includes(new URL(asset.sourceUrl).protocol); }
+  catch { return false; }
 }
 function generationSourceHeaders(task, resultUrl) {
   const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''));
@@ -2674,7 +2693,7 @@ const server = http.createServer(async (req, res) => {
       const input = await bodyJson(req);
       const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
       const request = validateVideoRequest(input, requestedReferenceCount);
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits);
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false });
       const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: referenceAssetCounts(user.id, referenceAssetIds) }) : null;
       if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前选项没有兼容且可用的调用线路' });
       if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:`${route.id}:${route.version}` });
@@ -2822,7 +2841,7 @@ const server = http.createServer(async (req, res) => {
       const suppliedHash = input.sha256 === undefined || input.sha256 === null || input.sha256 === '' ? '' : String(input.sha256).trim().toLowerCase();
       if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' });
       if (suppliedHash) {
-        const existingAsset = findAssetBySha256(user.id, suppliedHash, size);
+        const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true });
         if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) {
           return sendJson(res, 200, { mode: 'reuse', asset: publicAsset(existingAsset), sha256: suppliedHash });
         }
@@ -2936,7 +2955,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (url.pathname === '/api/files/upload' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 20 MB' : '视频或音频不能超过 25 MB' }); const suppliedHash = String(req.headers['x-file-sha256'] || '').trim().toLowerCase(); if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const upload = await streamUpload(req, localFile, uploadLimit, createHash('sha256')); const size = upload.size; if (!size) return sendJson(res, 400, { error: '文件为空' }); if (suppliedHash && suppliedHash === upload.sha256) { const existing = findAssetBySha256(user.id, suppliedHash, size); if (existing && existing.mimeType === mimeType && existing.kind === kind) { await fs.unlink(localFile).catch(() => {}); return sendJson(res, 200, { ...publicAsset(existing), mode: 'reuse', sha256: suppliedHash }); } } const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, sha256: upload.sha256, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
+      const user = await requireUser(req, res); if (!user) return; if (!ossConfigured) return sendJson(res, 503, { error: '文件存储服务尚未配置' }); const mimeType = String(req.headers['content-type'] || '').split(';')[0]; if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); const isImage = imageTypes.has(mimeType); const kind = uploadKind(mimeType); const uploadLimit = isImage ? maxReferenceImageBytes : maxUploadBytes; const declaredSize = Number(req.headers['content-length'] || 0); if (declaredSize > uploadLimit) return sendJson(res, 413, { error: isImage ? '单张图片不能超过 20 MB' : '视频或音频不能超过 25 MB' }); const suppliedHash = String(req.headers['x-file-sha256'] || '').trim().toLowerCase(); if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' }); const rawName = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).replace(/[\r\n]/g, '').slice(0, 160); const extension = path.extname(rawName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType]); const id = randomUUID(); const storageName = `${id}${extension}`; await ensureUserDirs(user.id); const localFile = path.join(assetFilesDir(user.id), storageName); const upload = await streamUpload(req, localFile, uploadLimit, createHash('sha256')); const size = upload.size; if (!size) return sendJson(res, 400, { error: '文件为空' }); if (suppliedHash && suppliedHash === upload.sha256) { const existing = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true }); if (existing && existing.mimeType === mimeType && existing.kind === kind) { await fs.unlink(localFile).catch(() => {}); return sendJson(res, 200, { ...publicAsset(existing), mode: 'reuse', sha256: suppliedHash }); } } const width = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-width'] || 0)))); const height = Math.max(0, Math.min(100000, Math.round(Number(req.headers['x-image-height'] || 0)))); const asset = { id, ownerId: user.id, name: rawName || storageName, kind, mimeType, size, sha256: upload.sha256, ...(isImage && width && height ? { width, height } : {}), storageName, source: 'upload', sourceGenerationId: '', sourceUrl: '', createdAt: now(), updatedAt: now() }; try { await uploadAssetToOss(user.id, asset); } catch (error) { await fs.unlink(localFile).catch(() => {}); throw Object.assign(new Error(`文件上传失败：${error.message}`), { statusCode: 502 }); } return sendJson(res, 201, publicAsset(asset));
     }
     const assetPreviewMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/preview$/);
     if (assetPreviewMatch && req.method === 'GET') {

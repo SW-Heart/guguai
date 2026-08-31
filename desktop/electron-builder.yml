@@ -8,6 +8,9 @@ directories:
 files:
   - desktop/**
   - package.json
+extraResources:
+  - from: desktop/assets/tray.ico
+    to: tray.ico
 asar: true
 mac:
   category: public.app-category.video

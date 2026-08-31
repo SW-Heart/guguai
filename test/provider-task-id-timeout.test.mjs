@@ -66,6 +66,14 @@ test('model-unresponsive failures expose the dedicated public failure message', 
   assert.match(value.error, /预扣积分已退回/);
 });
 
+test('a missing reference archive is not misreported as a completed-result archive', () => {
+  const task = {
+    status:'failed', providerTaskId:'', sourceUrl:'', archivePending:false,
+    error:'文件本地缓存缺失，且没有可用的云端归档', creditStatus:'refunded',
+  };
+  assert.equal(__test.generationFailureCode(task), 'INVALID_REFERENCE');
+});
+
 test('public assets expose authenticated delivery endpoints without leaking upstream URLs', () => {
   const value = __test.publicAsset({
     id: 'generation-1', ownerId: 'user-1', storageName: 'generation-1.mp4',
@@ -78,4 +86,5 @@ test('public assets expose authenticated delivery endpoints without leaking upst
   assert.equal(value.directUrl, '/api/files/generation-1/direct');
   assert.equal(value.sourceUrl, undefined);
   assert.equal(value.sourceRequiresAuth, undefined);
+  assert.equal(value.referenceSourceAvailable, true);
 });

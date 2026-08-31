@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,nofollow">
-  <meta name="theme-color" content="#0b1017">
+  <meta name="theme-color" content="#070b11">
+  <meta name="color-scheme" content="dark">
   <title>GuGu 管理后台</title>
-  <link rel="stylesheet" href="/guguadmin.css">
-  <link rel="stylesheet" href="/guguadmin-routes.css?v=3">
+  <link rel="stylesheet" href="/guguadmin.css?v=7">
+  <link rel="stylesheet" href="/guguadmin-routes.css?v=4">
 </head>
 <body>
   <main id="adminLogin" class="login-shell">
@@ -28,18 +29,25 @@
 
   <main id="adminApp" class="app-shell hidden">
     <header class="topbar">
-      <div class="brand-lockup"><div class="brand-mark" aria-hidden="true">G</div><div><span class="eyebrow">GUGU AI / CONTROL ROOM</span><h1>运营控制台</h1></div></div>
-      <div class="topbar-actions"><span id="sessionStatus" class="session-status"><span class="status-dot"></span>在线</span><span id="adminName" class="admin-name"></span><button id="logoutButton" class="ghost" type="button">退出登录</button></div>
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">G</div>
+        <div><span class="eyebrow">GUGU AI / CONTROL ROOM</span><h1>运营控制台</h1></div>
+      </div>
+      <div class="topbar-actions">
+        <span id="sessionStatus" class="session-status"><span class="status-dot"></span>在线</span>
+        <span id="adminName" class="admin-name"></span>
+        <button id="logoutButton" class="ghost" type="button">退出登录</button>
+      </div>
     </header>
     <div class="layout">
       <nav class="sidebar" aria-label="管理后台导航">
         <div class="sidebar-label">工作区</div>
-        <button class="nav active" data-view="overview" aria-current="page" aria-controls="view-overview"><span class="nav-icon">⌂</span>总览</button>
-        <button class="nav" data-view="users" aria-controls="view-users"><span class="nav-icon">◉</span>用户管理</button>
-        <button class="nav" data-view="models" aria-controls="view-models"><span class="nav-icon">◇</span>模型与价格</button>
-        <button class="nav" data-view="invites" aria-controls="view-invites"><span class="nav-icon">⌁</span>邀请码</button>
-        <button class="nav" data-view="announcements" aria-controls="view-announcements"><span class="nav-icon">▱</span>消息通知</button>
-        <button class="nav" data-view="logs" aria-controls="view-logs"><span class="nav-icon">≡</span>日志中心</button>
+        <button class="nav active" data-view="overview" aria-current="page" aria-controls="view-overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M9 20v-6h6v6"/></svg></span>总览</button>
+        <button class="nav" data-view="users" aria-controls="view-users"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M15 5.5a3 3 0 0 1 0 5.8M16 14.5a5 5 0 0 1 4.5 4.5"/></svg></span>用户管理</button>
+        <button class="nav" data-view="models" aria-controls="view-models"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z"/><path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12.1V21"/></svg></span>模型与价格</button>
+        <button class="nav" data-view="invites" aria-controls="view-invites"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="8.5"/></svg></span>邀请码</button>
+        <button class="nav" data-view="announcements" aria-controls="view-announcements"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h3l9 5V6l-9 5H4a1 1 0 0 0-1 1v0a1 1 0 0 0 1 1Z"/><path d="M7 13v5M19 9.5a4 4 0 0 1 0 5"/></svg></span>消息通知</button>
+        <button class="nav" data-view="logs" aria-controls="view-logs"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14M5 12h14M5 19h9"/><circle cx="3.5" cy="5" r=".6" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r=".6" fill="currentColor" stroke="none"/><circle cx="3.5" cy="19" r=".6" fill="currentColor" stroke="none"/></svg></span>日志中心</button>
         <div class="sidebar-footer"><span class="status-dot"></span><span>系统运行中</span></div>
       </nav>
       <section class="content" aria-live="polite">

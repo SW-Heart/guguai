@@ -90,6 +90,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   let projectAssetQuery = '';
   let projectAssetKindFilter = 'all';
   let projectAssetTargetShotId = '';
+  let projectAssetSearchTimer = 0;
+  let projectAssetMediaObserver = null;
   let professionalPreviewShotId = '';
   let mentionPicker = { shotId:'', editor:null, range:null, query:'' };
   let mentionDismissBound = false;
@@ -165,6 +167,40 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       loadVideo(entry.target);
     }), { rootMargin:'320px 0px' });
     videos.forEach(video => workbenchVideoObserver.observe(video));
+  };
+  const resetProjectAssetMediaObserver = () => {
+    projectAssetMediaObserver?.disconnect();
+    projectAssetMediaObserver = null;
+  };
+  const projectAssetImageMarkup = (file, alt = '') => {
+    const preview = assetPreviewUrl(file);
+    if (!preview) return assetImageMarkup(file, alt);
+    const original = String(file?.remoteUrl || file?.url || '');
+    const fallback = original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
+    return `<img class="project-asset-thumb" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" data-project-asset-src="${esc(preview)}" alt="${esc(alt)}"${fallback} loading="lazy" decoding="async">`;
+  };
+  const projectAssetVideoMarkup = file => String(file?.url || '').startsWith('gugu-media://')
+    ? `<video class="project-asset-thumb" data-project-asset-src="${esc(file.url)}" preload="none" muted playsinline></video><span class="wb-media-play">▶</span>`
+    : workbenchVideoMarkup(file);
+  const hydrateProjectAssetMedia = scope => {
+    const grid = scope.querySelector('.project-asset-dialog-grid');
+    const media = [...scope.querySelectorAll('[data-project-asset-src]')];
+    if (!grid || !media.length) return;
+    const loadMedia = element => {
+      const src = element.dataset.projectAssetSrc;
+      if (!src) return;
+      delete element.dataset.projectAssetSrc;
+      if (element.tagName === 'VIDEO') element.preload = 'metadata';
+      element.src = src;
+    };
+    if (!('IntersectionObserver' in window)) { media.forEach(loadMedia); return; }
+    resetProjectAssetMediaObserver();
+    projectAssetMediaObserver = new IntersectionObserver(entries => entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      projectAssetMediaObserver?.unobserve(entry.target);
+      loadMedia(entry.target);
+    }), { root: grid, rootMargin: '160px 0px' });
+    media.forEach(element => projectAssetMediaObserver.observe(element));
   };
   const resetVirtualShotWindow = () => {
     if (virtualScrollFrame) cancelAnimationFrame(virtualScrollFrame);
@@ -474,10 +510,10 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     return 'other';
   }
 
-  function projectAssetMedia(file){
+  function projectAssetMedia(file,{lazy=false}={}){
     if(assetSyncing(file))return '<span class="wb-asset-syncing">素材同步中…</span>';
-    if(file.kind==='image')return assetImageMarkup(file, file.name);
-    if(file.kind==='video')return workbenchVideoMarkup(file);
+    if(file.kind==='image')return lazy?projectAssetImageMarkup(file, file.name):assetImageMarkup(file, file.name);
+    if(file.kind==='video')return lazy?projectAssetVideoMarkup(file):workbenchVideoMarkup(file);
     return '<span class="wb-audio-mark">♫</span>';
   }
 
@@ -922,16 +958,57 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       render(true,{focus:false});
     }
   }
-
-
-  function openProjectAssetDialog(category='other',shotId=''){
-    projectAssetCategory=category;projectAssetTargetShotId=shotId;projectAssetSelection=[];projectAssetQuery='';projectAssetKindFilter='all';let dialog=document.querySelector('#projectAssetDialog');if(!dialog){dialog=document.createElement('dialog');dialog.id='projectAssetDialog';dialog.className='project-asset-dialog';document.body.append(dialog);}paintProjectAssetDialog();if(!dialog.open)dialog.showModal();
+  function resetProjectAssetDialogLifecycle(){
+    clearTimeout(projectAssetSearchTimer);
+    projectAssetSearchTimer=0;
+    resetProjectAssetMediaObserver();
+    projectAssetTargetShotId='';
   }
-  function paintProjectAssetDialog(){
-    const dialog=document.querySelector('#projectAssetDialog');if(!dialog)return;const query=projectAssetQuery.trim().toLocaleLowerCase('zh-CN');const assetKinds=['image','video','audio'];const kindLabels={all:'全部',image:'图片',video:'视频',audio:'音频'};const kindCounts=Object.fromEntries(assetKinds.map(kind=>[kind,state.files.filter(file=>file.kind===kind&&!assetSyncing(file)).length]));const files=state.files.filter(file=>assetKinds.includes(file.kind)&&!assetSyncing(file)&&(projectAssetKindFilter==='all'||file.kind===projectAssetKindFilter)&&(!query||String(file.name).toLocaleLowerCase('zh-CN').includes(query)));const chosen=new Set(projectAssetSelection);const categoryLabel={characters:'人物',locations:'场景',props:'物品',other:'其他'}[projectAssetCategory]||'其他';
-    dialog.querySelectorAll('[data-wb-video-src]').forEach(video=>workbenchVideoObserver?.unobserve(video));dialog.innerHTML=`<div class="dialog-head"><div><h2>添加${categoryLabel}资产</h2><p>上传本地素材，或从文件库选择图片、视频、音频。</p></div><button type="button" data-project-asset-close aria-label="关闭">×</button></div><div class="project-asset-dialog-toolbar"><label><span>文件库</span><input id="projectAssetSearch" type="search" value="${esc(projectAssetQuery)}" placeholder="搜索文件名"></label><button type="button" class="secondary-button" data-project-asset-upload>↑ 上传素材</button><span>已选 ${projectAssetSelection.length} 个</span><div class="project-asset-kind-filter" role="tablist" aria-label="按素材类型筛选">${[['all','全部'],...assetKinds.map(kind=>[kind,kindLabels[kind]])].map(([kind,label])=>`<button type="button" role="tab" class="${projectAssetKindFilter===kind?'active':''}" data-project-asset-kind-filter="${kind}" aria-selected="${projectAssetKindFilter===kind}"><span>${label}</span><small>${kind==='all'?assetKinds.reduce((sum,item)=>sum+kindCounts[item],0):kindCounts[kind]}</small></button>`).join('')}</div></div><div class="project-asset-dialog-grid">${files.map(file=>`<button type="button" class="${chosen.has(file.id)?'selected':''}" data-project-asset-option="${file.id}">${projectAssetMedia(file)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('')||`<p>${query||projectAssetKindFilter!=='all'?'没有匹配的素材。':'文件库中还没有可用素材。'}</p>`}</div><footer><button type="button" class="secondary-button" data-project-asset-close>取消</button><button type="button" class="gradient-button" data-project-asset-confirm>加入项目</button></footer>`;hydrateWorkbenchVideos(dialog);
-    dialog.querySelectorAll('[data-project-asset-kind-filter]').forEach(button=>button.onclick=()=>{projectAssetKindFilter=button.dataset.projectAssetKindFilter;paintProjectAssetDialog();});dialog.querySelectorAll('[data-project-asset-close]').forEach(button=>button.onclick=()=>{projectAssetTargetShotId='';dialog.close();});dialog.querySelector('#projectAssetSearch')?.addEventListener('input',event=>{projectAssetQuery=event.target.value;paintProjectAssetDialog();});dialog.querySelectorAll('[data-project-asset-option]').forEach(button=>button.onclick=()=>{const id=button.dataset.projectAssetOption;projectAssetSelection=projectAssetSelection.includes(id)?projectAssetSelection.filter(value=>value!==id):[...projectAssetSelection,id];paintProjectAssetDialog();});dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async()=>{try{const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});if(file){projectAssetSelection=[...new Set([...projectAssetSelection,file.id])];projectAssetCategories.set(file.id,projectAssetCategory);state.files=[file,...state.files.filter(item=>item.id!==file.id)];paintProjectAssetDialog();}}catch(error){toast(error.message);}});dialog.querySelector('[data-project-asset-confirm]')?.addEventListener('click',()=>{const selected=[...projectAssetSelection];const targetShot=projectAssetTargetShotId?project.shots.find(item=>item.id===projectAssetTargetShotId):null;selected.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));projectAssetIds=[...new Set([...projectAssetIds,...selected])];project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);if(targetShot){selected.forEach(id=>addReferenceAssetToShot(targetShot,id));ensureProfessionalVideoSettings(targetShot);invalidateProfessionalShot(targetShot,'参考素材已加入本镜');queueProfessionalSave();professionalPreviewShotId=targetShot.id;}projectAssetTargetShotId='';queueSave('projectAssetIds','projectAssetCategories');dialog.close();render(true,{focus:false});toast(targetShot?`已添加 ${selected.length} 个分镜参考`:`已添加 ${selected.length} 个项目资产`);});
-    dialog.querySelectorAll('[data-project-asset-close]').forEach(button=>button.onclick=()=>{projectAssetTargetShotId='';dialog.close();});dialog.querySelector('#projectAssetSearch')?.addEventListener('input',event=>{projectAssetQuery=event.target.value;paintProjectAssetDialog();});dialog.querySelectorAll('[data-project-asset-option]').forEach(button=>button.onclick=()=>{const id=button.dataset.projectAssetOption;projectAssetSelection=projectAssetSelection.includes(id)?projectAssetSelection.filter(value=>value!==id):[...projectAssetSelection,id];paintProjectAssetDialog();});dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async()=>{try{const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});if(file){projectAssetSelection=[...new Set([...projectAssetSelection,file.id])];projectAssetCategories.set(file.id,projectAssetCategory);state.files=[file,...state.files.filter(item=>item.id!==file.id)];paintProjectAssetDialog();}}catch(error){toast(error.message);}});dialog.querySelector('[data-project-asset-confirm]')?.addEventListener('click',()=>{const selected=[...projectAssetSelection];const targetShot=projectAssetTargetShotId?project.shots.find(item=>item.id===projectAssetTargetShotId):null;selected.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));projectAssetIds=[...new Set([...projectAssetIds,...selected])];project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);if(targetShot){selected.forEach(id=>addReferenceAssetToShot(targetShot,id));ensureProfessionalVideoSettings(targetShot);invalidateProfessionalShot(targetShot,'参考素材已加入本镜');queueProfessionalSave();professionalPreviewShotId=targetShot.id;}projectAssetTargetShotId='';queueSave('projectAssetIds','projectAssetCategories');dialog.close();render(true,{focus:false});toast(targetShot?`已添加 ${selected.length} 个分镜参考`:`已添加 ${selected.length} 个项目资产`);});
+  function closeProjectAssetDialog(){
+    const dialog=document.querySelector('dialog#projectAssetDialog');
+    if(dialog?.open)dialog.close();
+    else resetProjectAssetDialogLifecycle();
+  }
+  function ensureProjectAssetDialog(){
+    const dialogs=[...document.querySelectorAll('dialog#projectAssetDialog')];
+    let dialog=dialogs.find(item=>item.open)||dialogs[0];
+    dialogs.filter(item=>item!==dialog).forEach(item=>item.remove());
+    if(!dialog){dialog=document.createElement('dialog');dialog.id='projectAssetDialog';document.body.append(dialog);}
+    dialog.classList.add('project-asset-dialog');
+    dialog.setAttribute('aria-labelledby','projectAssetDialogTitle');
+    if(dialog.dataset.projectAssetLifecycleBound!=='true'){
+      dialog.dataset.projectAssetLifecycleBound='true';
+      dialog.addEventListener('close',resetProjectAssetDialogLifecycle);
+    }
+    return dialog;
+  }
+  function openProjectAssetDialog(category='other',shotId=''){
+    clearTimeout(projectAssetSearchTimer);projectAssetSearchTimer=0;projectAssetCategory=category;projectAssetTargetShotId=shotId;projectAssetSelection=[];projectAssetQuery='';projectAssetKindFilter='all';const dialog=ensureProjectAssetDialog();paintProjectAssetDialog();if(!dialog.open)dialog.showModal();
+  }
+  function paintProjectAssetDialog({restoreSearchFocus=false}={}){
+    const dialog=document.querySelector('#projectAssetDialog');if(!dialog)return;
+    const query=projectAssetQuery.trim().toLocaleLowerCase('zh-CN');
+    const assetKinds=['image','video','audio'];
+    const kindLabels={all:'全部',image:'图片',video:'视频',audio:'音频'};
+    const availableFiles=state.files.filter(file=>assetKinds.includes(file.kind)&&!assetSyncing(file));
+    const kindCounts=availableFiles.reduce((counts,file)=>{counts[file.kind]=(counts[file.kind]||0)+1;return counts;},{image:0,video:0,audio:0});
+    const files=availableFiles.filter(file=>(projectAssetKindFilter==='all'||file.kind===projectAssetKindFilter)&&(!query||String(file.name).toLocaleLowerCase('zh-CN').includes(query)));
+    const chosen=new Set(projectAssetSelection);
+    const categoryLabel={characters:'人物',locations:'场景',props:'物品',other:'其他'}[projectAssetCategory]||'其他';
+    const totalCount=assetKinds.reduce((sum,kind)=>sum+kindCounts[kind],0);
+    const iconUpload='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>';
+    const iconClose='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+    const iconSearch='<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>';
+    resetProjectAssetMediaObserver();
+    dialog.innerHTML=`<div class="dialog-head"><div><h2 id="projectAssetDialogTitle">添加${categoryLabel}资产</h2><p>上传本地素材，或从文件库选择图片、视频、音频。</p></div><button type="button" class="project-asset-close" data-project-asset-close aria-label="关闭">${iconClose}</button></div><div class="project-asset-dialog-toolbar"><label class="project-asset-search">${iconSearch}<input id="projectAssetSearch" type="search" value="${esc(projectAssetQuery)}" placeholder="搜索文件名" aria-label="搜索文件名"></label><button type="button" class="secondary-button project-asset-upload" data-project-asset-upload>${iconUpload}<span>上传素材</span></button><div class="project-asset-kind-filter" role="tablist" aria-label="按素材类型筛选">${[['all','全部'],...assetKinds.map(kind=>[kind,kindLabels[kind]])].map(([kind,label])=>`<button type="button" role="tab" class="${projectAssetKindFilter===kind?'active':''}" data-project-asset-kind-filter="${kind}" aria-selected="${projectAssetKindFilter===kind}"><span>${label}</span><small>${kind==='all'?totalCount:kindCounts[kind]}</small></button>`).join('')}</div></div><div class="project-asset-dialog-grid">${files.map(file=>`<button type="button" class="${chosen.has(file.id)?'selected':''}" data-project-asset-option="${esc(file.id)}" aria-pressed="${chosen.has(file.id)}" aria-label="${esc(file.name)}">${projectAssetMedia(file,{lazy:true})}<span>${esc(file.name)}</span><i aria-hidden="true">✓</i></button>`).join('')||`<p>${query||projectAssetKindFilter!=='all'?'没有匹配的素材。':'文件库中还没有可用素材。'}</p>`}</div><footer><button type="button" class="secondary-button" data-project-asset-close>取消</button><button type="button" class="gradient-button" data-project-asset-confirm ${chosen.size?'':'disabled'}>加入项目</button></footer>`;
+    hydrateProjectAssetMedia(dialog);
+    dialog.querySelectorAll('[data-project-asset-kind-filter]').forEach(button=>button.onclick=()=>{projectAssetKindFilter=button.dataset.projectAssetKindFilter;paintProjectAssetDialog();});
+    dialog.querySelectorAll('[data-project-asset-close]').forEach(button=>button.onclick=closeProjectAssetDialog);
+    dialog.querySelector('#projectAssetSearch')?.addEventListener('input',event=>{projectAssetQuery=event.target.value;clearTimeout(projectAssetSearchTimer);projectAssetSearchTimer=window.setTimeout(()=>{projectAssetSearchTimer=0;if(dialog.open)paintProjectAssetDialog({restoreSearchFocus:true});},120);});
+    dialog.querySelectorAll('[data-project-asset-option]').forEach(button=>button.onclick=()=>{const id=button.dataset.projectAssetOption;const selected=projectAssetSelection.includes(id);projectAssetSelection=selected?projectAssetSelection.filter(value=>value!==id):[...projectAssetSelection,id];button.classList.toggle('selected',!selected);button.setAttribute('aria-pressed',String(!selected));const confirm=dialog.querySelector('[data-project-asset-confirm]');if(confirm)confirm.disabled=projectAssetSelection.length===0;});
+    dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async()=>{try{const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});if(file){projectAssetSelection=[...new Set([...projectAssetSelection,file.id])];projectAssetCategories.set(file.id,projectAssetCategory);state.files=[file,...state.files.filter(item=>item.id!==file.id)];paintProjectAssetDialog();}}catch(error){toast(error.message);}});
+    dialog.querySelector('[data-project-asset-confirm]')?.addEventListener('click',()=>{const selected=[...projectAssetSelection];const targetShot=projectAssetTargetShotId?project.shots.find(item=>item.id===projectAssetTargetShotId):null;selected.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));projectAssetIds=[...new Set([...projectAssetIds,...selected])];project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);if(targetShot){selected.forEach(id=>addReferenceAssetToShot(targetShot,id));ensureProfessionalVideoSettings(targetShot);invalidateProfessionalShot(targetShot,'参考素材已加入本镜');queueProfessionalSave();professionalPreviewShotId=targetShot.id;}projectAssetTargetShotId='';queueSave('projectAssetIds','projectAssetCategories');closeProjectAssetDialog();render(true,{focus:false});toast(targetShot?`已添加 ${selected.length} 个分镜参考`:`已添加 ${selected.length} 个项目资产`);});
+    if(restoreSearchFocus)requestAnimationFrame(()=>{if(!dialog.open)return;const search=dialog.querySelector('#projectAssetSearch');search?.focus({preventScroll:true});search?.setSelectionRange(projectAssetQuery.length,projectAssetQuery.length);});
   }
 
   function professionalPendingCards(shot,{kind='',frameField=''}={}){

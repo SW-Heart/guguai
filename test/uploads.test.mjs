@@ -82,9 +82,19 @@ test('same-user content hash lookup reuses an existing asset without crossing us
   insertUser({ id: userId, username: `hash_${userId.slice(0, 8)}`, passwordHash: 'test', role: 'user', status: 'active', creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   insertUser({ id: otherUserId, username: `hash_${otherUserId.slice(0, 8)}`, passwordHash: 'test', role: 'user', status: 'active', creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   const sha256 = 'a'.repeat(64);
-  const asset = { id: randomUUID(), ownerId: userId, name: 'same.png', kind: 'image', mimeType: 'image/png', size: 42, sha256, storageName: 'same.png', createdAt, updatedAt: createdAt };
+  const asset = { id: randomUUID(), ownerId: userId, name: 'same.png', kind: 'image', mimeType: 'image/png', size: 42, sha256, storageName: 'same.png', ossKey:'model-studio/assets/same.png', createdAt, updatedAt: createdAt };
   saveAssetRecord(userId, asset);
   assert.equal(findAssetBySha256(userId, sha256, 42).id, asset.id);
   assert.equal(findAssetBySha256(otherUserId, sha256, 42), null);
   assert.equal(findAssetBySha256(userId, sha256, 43), null);
+});
+
+test('remote hash reuse ignores desktop-only records without an object key', () => {
+  const userId = randomUUID();
+  const createdAt = new Date().toISOString();
+  insertUser({ id:userId, username:`local_${userId.slice(0,8)}`, passwordHash:'test', role:'user', status:'active', creditBalanceMicro:0, creditHeldMicro:0, createdAt, updatedAt:createdAt });
+  const asset = { id:randomUUID(), ownerId:userId, name:'generated.png', kind:'image', mimeType:'image/png', size:42, sha256:'b'.repeat(64), storageName:'generated.png', remoteStatus:'local_only', createdAt, updatedAt:createdAt };
+  saveAssetRecord(userId, asset);
+  assert.equal(findAssetBySha256(userId, asset.sha256, asset.size)?.id, asset.id);
+  assert.equal(findAssetBySha256(userId, asset.sha256, asset.size, { requireRemote:true }), null);
 });

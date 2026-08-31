@@ -2700,3 +2700,324 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
     flex: 0 0 auto;
   }
 }
+
+/* Project asset picker: one compact control row, predictable card heights, and
+   a scrollable library that grows only as much as its contents require. */
+.project-asset-dialog {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 32px));
+  flex-direction: column;
+  overflow: hidden;
+  border-color: rgba(99,102,241,.18);
+  border-radius: 16px;
+  background: rgba(255,255,255,.96);
+  box-shadow: 0 26px 90px rgba(34,38,62,.2), inset 0 1px rgba(255,255,255,.9);
+}
+
+/* A closed native dialog must leave both the top layer and page layout.
+   Keeping display:flex on the base selector makes close() remove only the
+   backdrop while the dialog itself remains visible in the document. */
+.project-asset-dialog[open] {
+  display: flex;
+}
+
+.project-asset-dialog:not([open]) {
+  display: none;
+}
+
+.project-asset-dialog .dialog-head {
+  flex: 0 0 auto;
+  padding: 21px 24px 18px;
+  align-items: flex-start;
+}
+
+.project-asset-dialog .dialog-head h2 {
+  font-size: 20px;
+  letter-spacing: -.035em;
+}
+
+.project-asset-dialog .dialog-head p {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.project-asset-dialog .dialog-head > button.project-asset-close {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  font-size: 0;
+}
+
+.project-asset-dialog .project-asset-close svg {
+  width: 18px;
+  height: 18px;
+}
+
+.project-asset-dialog-toolbar {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 14px 24px 15px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  background: #fbfbfd;
+}
+
+.project-asset-search {
+  min-width: 180px;
+  flex: 1 1 250px;
+  height: 42px;
+  padding: 0 12px;
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  color: var(--faint);
+  background: #fff;
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+.project-asset-search:focus-within {
+  border-color: var(--brand-line);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.1);
+}
+
+.project-asset-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.project-asset-search input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 11px;
+}
+
+.project-asset-upload {
+  min-height: 42px;
+  flex: 0 0 auto;
+  padding-inline: 14px;
+  border-radius: 9px;
+  white-space: nowrap;
+}
+
+.project-asset-upload svg {
+  width: 16px;
+  height: 16px;
+}
+
+.project-asset-kind-filter {
+  min-width: 0;
+  flex: 0 1 auto;
+  padding: 0;
+  gap: 5px;
+  scrollbar-width: none;
+}
+
+.project-asset-kind-filter::-webkit-scrollbar { display: none; }
+
+.project-asset-kind-filter button {
+  min-width: 68px;
+  height: 42px;
+  padding: 5px 11px;
+  flex: 0 0 auto;
+  border-color: transparent;
+  border-radius: 9px;
+  background: #f1f2f6;
+  font-size: 10px;
+}
+
+.project-asset-kind-filter button span,
+.project-asset-kind-filter button small {
+  line-height: 1;
+}
+
+.project-asset-kind-filter button small {
+  font-size: 9px;
+}
+
+.project-asset-dialog-grid {
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: min(52dvh, 480px);
+  padding: 16px 24px 20px;
+  grid-auto-rows: 148px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
+  background: #fff;
+  scrollbar-gutter: stable;
+}
+
+.project-asset-dialog-grid > button {
+  height: 148px;
+  min-height: 148px;
+  display: flex;
+  flex-direction: column;
+  content-visibility: auto;
+  contain-intrinsic-size: 148px;
+  border: 1px solid #e1e3ea;
+  border-radius: 10px;
+  background: #f6f7f9;
+  transition: border-color var(--ease), box-shadow var(--ease), transform var(--ease);
+}
+
+.project-asset-dialog-grid > button:hover,
+.project-asset-dialog-grid > button:focus-visible {
+  border-color: var(--brand-line);
+  outline: 0;
+  box-shadow: 0 5px 16px rgba(99,102,241,.12);
+  transform: translateY(-1px);
+}
+
+.project-asset-dialog-grid > button.selected {
+  border: 2px solid var(--brand);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.1);
+}
+
+.project-asset-dialog-grid > button > img,
+.project-asset-dialog-grid > button > video,
+.project-asset-dialog-grid > button > .wb-video-placeholder,
+.project-asset-dialog-grid > button > .wb-audio-mark {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  object-fit: cover;
+}
+
+.project-asset-dialog-grid > button > .wb-video-placeholder,
+.project-asset-dialog-grid > button > .wb-audio-mark {
+  display: grid;
+  place-items: center;
+}
+
+.project-asset-dialog-grid > button > span:last-of-type {
+  height: 34px;
+  min-height: 34px;
+  flex: 0 0 34px;
+  padding: 8px 9px;
+  color: var(--ink-soft);
+  background: #fff;
+  font-size: 10px;
+  line-height: 18px;
+}
+
+.project-asset-dialog-grid > button > i {
+  right: 8px;
+  top: 8px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.project-asset-dialog-grid > button > img.project-asset-thumb {
+  background: linear-gradient(135deg, #f0f1f5, #e7e9ee);
+}
+
+.project-asset-dialog-grid > button > video.project-asset-thumb {
+  background: #202126;
+}
+
+.project-asset-dialog-grid > p {
+  min-height: 132px;
+  padding: 38px 16px;
+  color: var(--muted);
+}
+
+.project-asset-dialog > footer {
+  flex: 0 0 auto;
+  min-height: 68px;
+  padding: 13px 24px 15px;
+  align-items: center;
+  background: #fbfbfd;
+}
+
+.project-asset-dialog > footer button {
+  min-height: 40px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+@media (max-width: 920px) {
+  .project-asset-dialog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .project-asset-dialog-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .project-asset-search {
+    flex-basis: min(100%, 360px);
+  }
+
+  .project-asset-kind-filter {
+    width: 100%;
+    flex-basis: 100%;
+    order: 3;
+  }
+
+  .project-asset-dialog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .project-asset-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 14px;
+  }
+
+  .project-asset-dialog .dialog-head,
+  .project-asset-dialog-toolbar,
+  .project-asset-dialog > footer {
+    padding-inline: 16px;
+  }
+
+  .project-asset-dialog .dialog-head {
+    padding-top: 17px;
+    padding-bottom: 14px;
+  }
+
+  .project-asset-dialog-toolbar {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  .project-asset-search {
+    flex: 1 1 calc(100% - 116px);
+  }
+
+  .project-asset-upload {
+    padding-inline: 12px;
+  }
+
+  .project-asset-upload span { display: none; }
+
+  .project-asset-dialog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-asset-search,
+  .project-asset-dialog-grid > button { transition: none; }
+  .project-asset-dialog-grid > button:hover,
+  .project-asset-dialog-grid > button:focus-visible { transform: none; }
+}

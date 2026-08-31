@@ -243,13 +243,30 @@ async function cloudRequest(pathname, options = {}) {
   return net.fetch(url, { ...options, headers: { ...(await cloudCookies(url)), 'X-GuGu-Desktop': '1', ...(options.headers || {}) } });
 }
 
-async function syncLocalAsset({ assetId }) {
+async function syncLocalAsset({ assetId, uploadForReference = false }) {
   const asset = libraryAsset(String(assetId || ''));
   if (!asset) throw new Error('本地素材不存在');
-  if (asset.cloudAssetId) { asset.localStatus = 'saved'; return { ...asset, url: localMediaUrl(asset.id), reused: true }; }
   const source = path.resolve(workspace, asset.relativePath);
   if (!isInside(workspace, source)) throw new Error('本地素材路径不受信任');
   const payload = JSON.stringify({ name: asset.name, mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 });
+  if (asset.cloudAssetId && !uploadForReference) {
+    const verifyResponse = await cloudRequest(`/api/files/${encodeURIComponent(asset.cloudAssetId)}/local-ready`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 }),
+    });
+    if (verifyResponse.ok) {
+      const cloudAsset = await verifyResponse.json();
+      asset.remoteStatus = 'ready';
+      asset.localStatus = 'saved';
+      await persistLibrary();
+      return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: true };
+    }
+    if (verifyResponse.status !== 404) throw new Error(`云端素材校验失败（${verifyResponse.status}）`);
+    asset.cloudAssetId = '';
+    asset.remoteStatus = 'pending';
+    await persistLibrary();
+  }
   let initResponse = await cloudRequest('/api/files/uploads/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
   if (initResponse.status === 503) {
     const bytes = await fs.readFile(source);
@@ -260,19 +277,23 @@ async function syncLocalAsset({ assetId }) {
     });
     if (!fallbackResponse.ok) throw new Error(`素材上传失败（${fallbackResponse.status}）`);
     const fallbackAsset = await fallbackResponse.json();
-    asset.cloudAssetId = fallbackAsset.id;
-    asset.remoteStatus = 'ready';
-    asset.localStatus = 'saved';
-    await persistLibrary();
+    if (!uploadForReference) {
+      asset.cloudAssetId = fallbackAsset.id;
+      asset.remoteStatus = 'ready';
+      asset.localStatus = 'saved';
+      await persistLibrary();
+    }
     return { ...asset, cloudAsset: fallbackAsset, url: localMediaUrl(asset.id), reused: false };
   }
   if (!initResponse.ok) throw new Error(`上传初始化失败（${initResponse.status}）`);
   const intent = await initResponse.json();
   if (intent.mode === 'reuse' && intent.asset) {
-    asset.cloudAssetId = intent.asset.id;
-    asset.remoteStatus = 'ready';
-    asset.localStatus = 'saved';
-    await persistLibrary();
+    if (!uploadForReference) {
+      asset.cloudAssetId = intent.asset.id;
+      asset.remoteStatus = 'ready';
+      asset.localStatus = 'saved';
+      await persistLibrary();
+    }
     return { ...asset, cloudAsset: intent.asset, url: localMediaUrl(asset.id), reused: true };
   }
   const bytes = await fs.readFile(source);
@@ -292,10 +313,12 @@ async function syncLocalAsset({ assetId }) {
   const completeResponse = await cloudRequest(`/api/files/uploads/${encodeURIComponent(intent.uploadId)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   if (!completeResponse.ok) throw new Error(`上传校验失败（${completeResponse.status}）`);
   const cloudAsset = await completeResponse.json();
-  asset.cloudAssetId = cloudAsset.id || intent.assetId;
-  asset.remoteStatus = 'ready';
-  asset.localStatus = 'saved';
-  await persistLibrary();
+  if (!uploadForReference) {
+    asset.cloudAssetId = cloudAsset.id || intent.assetId;
+    asset.remoteStatus = 'ready';
+    asset.localStatus = 'saved';
+    await persistLibrary();
+  }
   return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: false };
 }
 
@@ -685,6 +708,17 @@ function setWindowsModalState(active) {
 }
 
 function createTrayIcon() {
+  if (process.platform === 'win32') {
+    // Windows' notification area is not a reliable SVG renderer. Use the
+    // packaged multi-size ICO so the shell can choose the correct DPI image.
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'tray.ico')
+      : path.join(here, 'assets', 'tray.ico');
+    const image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) throw new Error(`Windows 托盘图标加载失败：${iconPath}`);
+    return image;
+  }
+
   const isMac = process.platform === 'darwin';
   const svg = isMac
     ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#000" d="M11 16.5h28v9H11z" transform="rotate(-38 25 21)"/><path fill="#000" d="M25 38.5h28v9H25z" transform="rotate(-38 39 43)"/></svg>'

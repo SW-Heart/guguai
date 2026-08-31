@@ -1,6 +1,7 @@
 import { createDramaStudio } from './drama-studio.js?v=56';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -40,7 +41,7 @@ const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
 const taskSignatureFields = ['id','type','status','progress','assetId','updatedAt','error','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt'];
-const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','updatedAt','sourceGenerationId','createdAt'];
+const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','referenceSourceAvailable','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
 let tasksRequest = null;
@@ -2024,15 +2025,15 @@ function uploadJobCard(job, variant='file') {
 }
 function renderUploadJobCards(container, jobs, variant='file') { container.querySelectorAll('[data-upload-id]').forEach(node => node.remove()); if (jobs.length) container.prepend(...jobs.map(job => elementFromHtml(uploadJobCard(job, variant)))); }
 function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) { renderReferenceDialog(); resetReferenceDialogScroll(); } renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
-function createUploadJob(file, context, { previewUrl='', mimeType=normalizedUploadMime(file), deferUpload=false, localAssetId='' } = {}) {
+function createUploadJob(file, context, { previewUrl='', mimeType=normalizedUploadMime(file), deferUpload=false, localAssetId='', removeLocalOnDiscard=false } = {}) {
   const objectUrl = previewUrl || (file ? URL.createObjectURL(file) : '');
-  const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:objectUrl, revokePreview:Boolean(objectUrl && !previewUrl), file:localAssetId ? null : file, localAssetId, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已加入，创作时上传' : '准备上传', error:'', selected:false, assetId:'' };
+  const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:objectUrl, revokePreview:Boolean(objectUrl && !previewUrl), file:localAssetId ? null : file, localAssetId, removeLocalOnDiscard, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已加入，创作时上传' : '准备上传', error:'', selected:false, assetId:'' };
   state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
 }
 function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
 function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; state.files=[asset,...state.files.filter(item=>item.id!==asset.id)]; const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
 function failUploadJob(job, error) { if (!job) return; job.status='failed'; job.progress=0; job.error=error?.message || '上传失败'; job.label=job.error; notifyUploadSurfaceChanged(); }
-function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); if (job.localAssetId && !job.assetId && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error)); notifyUploadSurfaceChanged(); }
+function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); if (shouldRemoveUploadJobLocalAsset(job) && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error)); notifyUploadSurfaceChanged(); }
 function autoSelectUploadedReference(asset, kind, job) {
   if (!asset || job?.context !== 'reference') return false;
   const referenceTarget=job.referenceTarget || state.referenceTarget; const isFrame=referenceTarget==='video-frame'; const isVideo=referenceTarget==='video';
@@ -2142,9 +2143,9 @@ async function desktopImportToContext(context) {
   let synced = 0;
   let selected = 0;
   for (const item of imported) {
-    if (item.error) { if (item.id) void bridge.media.removeLocal(item.id).catch(()=>{}); toast(`${item.filePath || '文件'} 导入失败：${item.error}`); continue; }
+    if (item.error) { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(()=>{}); toast(`${item.filePath || '文件'} 导入失败：${item.error}`); continue; }
     const kind = desktopMediaKind(item);
-    const discardImported = () => { if (item.id) void bridge.media.removeLocal(item.id).catch(error => console.warn('[desktop] 清理非法导入失败', error)); };
+    const discardImported = () => { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(error => console.warn('[desktop] 清理非法导入失败', error)); };
     const sizeLimit = kind === 'image' ? 20 * 1024 * 1024 : 25 * 1024 * 1024;
     if (item.size > sizeLimit) {
       discardImported();
@@ -2165,7 +2166,7 @@ async function desktopImportToContext(context) {
     let job=null;
     try {
       const previewUrl=await bridge.media.url(item.id).catch(()=> '');
-      job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id });
+      job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id, removeLocalOnDiscard:!item.reused });
       if (inDialog) {
         if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到当前模型限制');
         job.selected=true; job.label='已加入，创作时同步'; projectPendingReferenceToCreation(job); selected+=1;
@@ -2173,7 +2174,7 @@ async function desktopImportToContext(context) {
       }
       updateUploadJob(job, 8, '正在同步到云端');
       const result = await bridge.media.syncLocal({ assetId: item.id });
-      const cloudAsset = result.cloudAsset || result.asset;
+      const cloudAsset = cloudAssetFromDesktopSync(result);
       if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
       const file = { ...cloudAsset, url: result.url, remoteUrl: cloudAsset.url, localStatus: 'saved', localPath: result.relativePath, sha256: item.sha256 || cloudAsset.sha256 };
       finishUploadJob(job, file, true);
@@ -2665,7 +2666,7 @@ async function uploadPendingReferenceJob(job) {
   if (job.localAssetId && window.guguDesktop?.media?.syncLocal) {
     updateUploadJob(job, 8, '正在同步到云端');
     const result=await window.guguDesktop.media.syncLocal({ assetId:job.localAssetId });
-    const cloudAsset=result.cloudAsset || result.asset;
+    const cloudAsset=cloudAssetFromDesktopSync(result);
     if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
     const file={ ...cloudAsset, url:result.url, remoteUrl:cloudAsset.url, localStatus:'saved', localPath:result.relativePath, sha256:cloudAsset.sha256 };
     finishUploadJob(job, file, false);
@@ -2680,7 +2681,19 @@ async function resolveReferenceAssetIds(ids) {
   const resolved=[];
   for (const id of [...new Set(Array.isArray(ids) ? ids : [])]) {
     const file=state.files.find(item => item.id === id && !item.localOnly);
-    if (file) { resolved.push(file.id); continue; }
+    if (isRemoteReferenceReady(file)) { resolved.push(file.id); continue; }
+    if (file?.remoteStatus === 'local_only') {
+      const localAssetId=file.localId || '';
+      if (!localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error('参考素材仅保存在原桌面设备，请重新上传后再创作');
+      const result=await window.guguDesktop.media.syncLocal({ assetId:localAssetId, uploadForReference:true });
+      const cloudAsset=cloudAssetFromDesktopSync(result);
+      if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材同步到云端失败，请重新上传后再试');
+      const syncedFile={ ...cloudAsset, url:result.url || file.url, remoteUrl:cloudAsset.url, localStatus:'saved', localPath:result.relativePath || file.localPath, sha256:cloudAsset.sha256 || file.sha256 };
+      state.files=[syncedFile,...state.files.filter(item=>item.id!==syncedFile.id)];
+      replacePendingReferenceId(id, syncedFile.id);
+      resolved.push(syncedFile.id);
+      continue;
+    }
     const job=pendingReferenceJob(id);
     if (!job) throw new Error('参考素材不存在，请重新选择');
     const asset=await uploadPendingReferenceJob(job);
