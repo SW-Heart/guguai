@@ -1,5 +1,6 @@
 .env
 data/
+data.quarantine-*/
 node_modules/
 .kiro/
 docs/
@@ -7,3 +8,4 @@ docs/
 *.log
 release/
 /.alipay-sandbox.json
+.env.desktop-release

@@ -8,7 +8,7 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 
 - **个人创作空间**：手机号短信登录、密码登录、账号昵称与密码设置、积分流水、用户数据隔离。
 - **管理后台**：仅管理员可登录 `/guguadmin`，管理用户、模型、全局价格、积分和运行日志。
-- **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；云端对象存储（OSS/R2）只作为备份与跨设备同步来源。
+- **文件库**：本地优先保存、搜索、筛选、预览、下载、重命名与删除图片、视频和音频素材；私有 R2 只作为备份与跨设备同步来源。
 - **图片生成**：支持提示词、比例、质量和最多 7 张参考图；成品自动进入文件库。
 - **视频生成**：支持文生视频、参考图视频、首尾帧视频；按时长和模式自动选择视频服务。
 - **短剧创作**：提供「智能导演」和「专业编辑」两种工作模式，支持资源定稿、分镜、镜头视频、尾帧衔接与一键成片。
@@ -21,7 +21,7 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 
 - **Node.js 22.13.0 或更高版本**：项目使用无需实验开关的内置 `node:sqlite`。
 - **ffmpeg**：用于提取镜头尾帧和合成最终 MP4。
-- 可用的 Duomi、TTAPI、LLM 与阿里云 OSS 服务凭据，按实际启用的功能配置。
+- 可用的 Duomi、TTAPI、LLM、Cloudflare R2 与阿里云短信服务凭据，按实际启用的功能配置。
 
 确认工具可用：
 
@@ -67,10 +67,10 @@ cp .env.example .env
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
-| 短信登录 | `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；`SMS_ACCESS_KEY_*` 可单独配置短信专用 RAM 凭据 |
-| 文件存储 | `MEDIA_STORAGE_PROVIDER`、`ALIYUN_*`、`R2_*`、`R2_REFERENCE_*` | 用户素材、生成结果和成片使用主存储；模型参考图片使用独立临时 R2 Bucket，桌面安装包发布仍固定使用 OSS |
+| 短信登录 | `SMS_ACCESS_KEY_ID`、`SMS_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；短信凭据与媒体存储凭据相互隔离 |
+| 文件存储 | `R2_*`、`R2_REFERENCE_*`、`MEDIA_OBJECT_PREFIX` | 用户素材、生成结果和成片固定使用私有 R2；模型参考图片使用独立临时 R2 Bucket |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
-| 浏览器直传 | `DIRECT_OSS_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`/`ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 开启浏览器直传；R2 使用预签名 PUT，OSS 使用 POST Policy，默认关闭 |
+| 浏览器直传 | `DIRECT_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`、`R2_ASSET_URL_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 使用 R2 预签名 PUT；上传完成后服务端执行对象大小、MIME 和文件头校验，默认开启 |
 
 最小示例（请替换为真实值）：
 
@@ -124,9 +124,8 @@ LLM_INPUT_PRICE_YUAN_PER_MILLION=3
 LLM_OUTPUT_PRICE_YUAN_PER_MILLION=6
 YUAN_PER_CREDIT=0.1
 
-ALIYUN_ACCESS_KEY_ID=your_access_key_id
-ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
-# 短信登录：默认复用上面的阿里云 AK/SK，也可以改为 SMS_ACCESS_KEY_ID/SMS_ACCESS_KEY_SECRET
+SMS_ACCESS_KEY_ID=your_sms_access_key_id
+SMS_ACCESS_KEY_SECRET=your_sms_access_key_secret
 SMS_ENDPOINT=dypnsapi.aliyuncs.com
 SMS_SIGN_NAME=速通互联验证码
 SMS_TEMPLATE_CODE=100001
@@ -134,16 +133,12 @@ SMS_SCHEME_NAME=AIGC
 SMS_VALID_TIME_SECONDS=300
 SMS_INTERVAL_SECONDS=60
 SMS_CODE_LENGTH=6
-ALIYUN_OSS_ENDPOINT=your_oss_endpoint
-ALIYUN_OSS_BUCKET=your_bucket
-ALIYUN_OSS_PREFIX=model-studio
-MEDIA_STORAGE_PROVIDER=oss
-MEDIA_STORAGE_PREFIX=
 R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 R2_ENDPOINT=https://your-account-id.r2.cloudflarestorage.com
 R2_BUCKET=your_private_media_bucket
 R2_REGION=auto
+MEDIA_OBJECT_PREFIX=model-studio
 # 模型参考图专用公共 R2 Bucket；凭据留空时复用上面的 R2_*，但 Bucket 必须单独填写
 R2_REFERENCE_ACCESS_KEY_ID=
 R2_REFERENCE_SECRET_ACCESS_KEY=
@@ -153,24 +148,27 @@ R2_REFERENCE_REGION=auto
 R2_REFERENCE_PUBLIC_BASE_URL=https://r2-ref.example.com
 R2_REFERENCE_IMAGE_PREFIX=model-studio/temporary/reference-images
 R2_REFERENCE_IMAGE_TTL_MINUTES=60
-R2_REFERENCE_IMAGE_SWEEP_INTERVAL_MINUTES=10
-DIRECT_OSS_UPLOAD_ENABLED=false
-ALIYUN_OSS_UPLOAD_EXPIRES_SECONDS=300
-ALIYUN_OSS_ASSET_URL_EXPIRES_SECONDS=900
+# 请在 R2 为上述前缀配置生命周期过期规则；应用不会周期性扫描整个 Bucket
+DIRECT_UPLOAD_ENABLED=true
+R2_UPLOAD_EXPIRES_SECONDS=300
+R2_ASSET_URL_EXPIRES_SECONDS=900
+# 视频/音频异步模型稍后拉取输入，签名地址默认保留 2 小时
+R2_MODEL_INPUT_URL_EXPIRES_SECONDS=7200
 UPLOAD_INTENT_EXPIRES_SECONDS=600
 UPLOAD_MAX_PENDING_PER_USER=3
 UPLOAD_INIT_LIMIT_PER_MINUTE=10
+UPLOAD_VERIFY_STALE_MINUTES=10
+UPLOAD_SWEEP_INTERVAL_MINUTES=10
 MEDIA_TMP_DIR=/var/lib/gugu-ai/tmp
-MEDIA_JOB_CONCURRENCY=2
 ```
 
 说明：
 
-- `MEDIA_STORAGE_PROVIDER=oss` 时需要完整配置 OSS 四项；设置为 `r2` 时需要完整配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`。桌面发布脚本始终读取 OSS 配置。
-- 资产记录会保存所属存储后端；没有该字段的历史记录按 OSS 处理，因此切换到 R2 后客户端仍可同步此前网页端上传的 OSS 素材。
+- 业务媒体固定使用私有 R2，需要完整配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`；服务端不再读取业务 OSS 配置。
+- 新版本使用全新的 SQLite 基线，正式部署从空 `DATA_DIR` 开始，不迁移旧用户、旧任务或旧业务素材。已有旧数据库会被拒绝启动。
 - `R2_REFERENCE_BUCKET` 是模型参考图专用 Bucket，必须和 `R2_BUCKET` 分开；参考图凭据和连接参数可留空以复用主 R2 配置。
 - `R2_REFERENCE_PUBLIC_BASE_URL` 必须指向绑定到 `R2_REFERENCE_BUCKET` 的公共自定义域名，不能填 R2 S3 API Endpoint，也不能填 Bucket 名称；所有视频模型带参考图片时都必须配置，保证供应商拿到统一的无签名 R2 URL。
-- 图生图和图生视频不会把素材原有的 OSS 地址直接提交给模型。服务端会先把参考图片复制到 `R2_REFERENCE_BUCKET` 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用公共地址或 60 分钟签名地址提交，默认 60 分钟后自动删除；因此带参考图片的生成需要配置参考图专用 R2。
+- 图生图和图生视频不会把私有主桶地址直接提交给模型。服务端会先把参考图片复制到 `R2_REFERENCE_BUCKET` 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用公共地址或短期签名地址提交，默认 60 分钟后自动删除；因此带参考图片的生成需要配置参考图专用 R2。
 - 智能导演需要完整的 `DIRECTOR_AGENT_*` 三项。项目也兼容旧命名 `LLM_API_BASE`、`LLM_API_KEY`、`LLM_MODEL`。
 - `LLM_API_PROTOCOL` 可设为 `openai-compatible`（默认）或 `anthropic`。
 - 开发环境不设置 `DATA_DIR` 时默认使用项目下的 `data/`；生产环境应显式设置项目目录外的持久化绝对路径。
@@ -215,12 +213,12 @@ PORT=4317
 DATA_DIR=./data
 TRUST_PROXY=
 DESKTOP_APP_ONLY=true
-# 官网下载按钮（本地开发可留空；生产环境使用 OSS 稳定别名并配置一次）
+# 官网下载按钮（留空时使用 GuGu AI 桌面安装包稳定别名，也可按部署需要覆盖）
 PUBLIC_MAC_DOWNLOAD_URL=
 PUBLIC_WINDOWS_DOWNLOAD_URL=
-PUBLIC_LINUX_DOWNLOAD_URL=
 
-# 下面三项仅用于桌面发布，本地 desktop:dev 不需要填写
+# 下面三项仅用于桌面客户端构建/发布；本地 desktop:dev 不需要填写。
+# OSS 发布凭据请放在独立的 .env.desktop-release 文件，不要放入服务端 .env。
 DESKTOP_UPDATE_OSS_PREFIX=
 DESKTOP_UPDATE_PUBLIC_URL=
 DESKTOP_API_BASE=
@@ -283,26 +281,28 @@ GuGu AI Projects/
 ├── projects/                # 短剧项目文件
 ├── exports/                 # 导出成片
 └── .gugu/
-    ├── library-index.json   # 本地索引、SHA-256、云端关联 ID
+    ├── library.db           # 本地 SQLite 索引、SHA-256、云端关联 ID
+    ├── library-index.json   # 旧版本索引，仅首次启动时迁移
     ├── transfers/           # 下载/上传临时文件
     ├── cache/
     └── logs/
 ```
 
-### 本地优先与云端对象存储备份
+### 本地优先与 R2 备份
 
 - 从客户端导入的图片、视频、音频会先复制到 `library/` 并计算 SHA-256；相同内容再次导入会直接复用本地文件。
-- 导入完成后再向服务端发起云端直传或兼容上传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
+- 导入完成后再向服务端发起 R2 预签名 PUT 直传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
 - AI 生成完成后，客户端优先通过受保护的交付地址直接从上游结果链接把成品落到本地 `library/`；上游需要鉴权时由服务端代为转发，避免把密钥交给客户端。文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
-- 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传云端；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到所选对象存储，作为临时兜底和跨设备来源。
-- 客户端启动时先读取本地索引；首次成功联网会用串行队列把尚未落地的历史云端素材回填到本地，之后文件库、任务卡片和预览只使用本地副本（仅新生成或本地副本缺失的素材会再次进入同步队列）。网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。
-- 云端对象存储是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
+- 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传 R2；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到 R2，作为临时兜底和跨设备来源。
+- 客户端启动时先读取本地 SQLite 索引；首次成功联网只接收有限的待交付成品，之后通过服务端签名游标按增量同步变更，并以每台设备的 `deviceId` 记录本地回执。文件库使用 keyset 分页，任务卡片按 `assetId` 精确补取，不会为了打开页面扫描全部素材。网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。
+- R2 是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
+- 临时参考图在请求完成后按对象键精确清理；为覆盖服务重启场景，必须在 `R2_REFERENCE_IMAGE_PREFIX` 对应前缀配置 R2 生命周期过期规则。应用不会按周期 `ListObjects` 扫描整个参考图 Bucket。
 
 删除云端文件时，客户端会同时删除对应的本地副本；需要保留素材时请先在工作区或其他备份介质中复制一份。
 
 ### 自动更新与标准 CI
 
-生产或内测分发时，为客户端提供一个静态 Generic Update Feed。仓库的 GitHub Actions 负责质量检查和构建安装包，但不会上传 OSS：
+生产或内测分发时，为客户端提供一个静态 Generic Update Feed。仓库的 GitHub Actions 负责质量检查和构建安装包，但不会上传桌面发布 OSS：
 
 - Pull Request 和 `main` 分支提交：运行语法检查和全部测试。
 - `v*` tag 或手动触发：在 Linux 通过质量检查后，并行构建 Windows x64 与 macOS arm64，分别上传到 GitHub Actions Artifact。
@@ -359,7 +359,7 @@ Windows 包固定由 `.github/workflows/ci.yml` 的 `windows-latest` job 构建�
 
 更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest*.yml` 或官网稳定下载别名。
 
-OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`。它会先上传当前版本的安装包、feed 和 blockmap，最后同步 `latest-mac.dmg`、`latest-windows.exe` 两个官网稳定别名；不会构建新包、不会删除旧版本，且不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程完成版本修改、校验、远端写入确认、CI 构建和 Artifact 验收。
+OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env.desktop-release` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`。它会先上传当前版本的安装包、feed 和 blockmap，最后同步 `latest-mac.dmg`、`latest-windows.exe` 两个官网稳定别名；不会构建新包、不会删除旧版本，且不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程完成版本修改、校验、远端写入确认、CI 构建和 Artifact 验收。
 
 未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包。用户确认“退出并安装”后，会启动独立安装引导进程，GuGu AI 完全退出后才挂载并打开 DMG，避免 Finder 因旧版本仍在运行而无法覆盖。随后用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
 
@@ -618,36 +618,30 @@ npm run desktop:dev
 # 构建桌面安装包
 npm run desktop:dist
 
-# 构建并预览桌面发布文件；追加 -- --publish 才会上传 OSS
+# 构建并预览桌面发布文件；追加 -- --publish 才会上传桌面安装包 OSS
 npm run desktop:release
 ```
 
-## 数据迁移、备份与恢复
+## 全新数据库、备份与恢复
 
-### 从旧 JSON 数据迁移
+### 全新数据库基线
 
-如果 `data/users.json` 中仍有旧数据，且数据库没有迁移完成标记，服务会拒绝启动，避免误用空数据库。请按顺序执行：
+本版本从全新的 SQLite 基线启动，不支持旧 SQLite schema、旧 JSON 数据或旧业务素材迁移。检测到旧数据库时服务会拒绝启动，避免把旧数据误当作新数据使用。
+
+正式切换前请停止服务，使用旧版本工具或原始 SQLite 只读方式备份旧 `DATA_DIR`，再将旧目录改名为带时间戳的 quarantine 目录。不要直接覆盖或删除旧目录。随后创建权限为 `0700` 的新空目录，设置新的 `DATA_DIR`，启动服务并创建首个管理员：
 
 ```bash
-# 只生成迁移报告，不写入数据库
-npm run migrate -- --dry-run
-
-# 确认无误后，在单个事务内执行迁移
-npm run migrate
-
-# 可选：迁移后逐字段校验 JSON 与 SQLite
-npm run migrate -- --verify
+install -d -m 700 /var/lib/gugu-ai-new
+DATA_DIR=/var/lib/gugu-ai-new npm run create-admin
 ```
 
-迁移不会删除旧 JSON 文件或本地媒体文件。每次迁移会生成报告，并在已有数据库时先创建数据库备份。
-
-`npm run create-admin` 用于当前 SQLite 数据库中的管理员初始化或管理员提升，不会创建普通用户。执行前请确认 `.env` 中的 `DATA_DIR` 指向目标数据库；初始化后可访问 `/guguadmin` 验证登录。旧 JSON 数据迁移仍应先执行 `npm run migrate -- --dry-run`，确认报告无误后再执行 `npm run migrate`。
+`npm run create-admin` 只用于新 SQLite 数据库中的管理员初始化或管理员提升，不会导入旧账号。新库启动后应执行 `npm run db:check`，并确认 `users`、`assets`、`generations` 和 `upload_intents` 均从零开始。
 
 ### 备份与恢复
 
-元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到 `MEDIA_STORAGE_PROVIDER` 选择的对象存储，生成结果归档使用任务临时目录中转；历史媒体仍可能存在用户 files 目录，可先用 `npm run media:audit` dry-run 审计，确认对应云端对象后再使用 `-- --delete` 分批清理。SQLite 热备份不包含云端对象，生产环境还必须为所选对象存储配置版本控制、生命周期保护或独立备份策略。
+元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到私有 R2，生成结果归档使用任务临时目录中转。SQLite 热备份不包含 R2 对象，生产环境还必须为 R2 配置生命周期、版本控制或独立备份策略。
 
-桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和云端对象关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library-index.json` 与 `library/` 必须一起备份，不能只备份索引文件。
+桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和云端对象关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library.db`、`.gugu/library-index.json`（旧版本迁移源）与 `library/` 必须一起备份，不能只备份索引文件。
 
 备份请使用：
 
@@ -655,7 +649,7 @@ npm run migrate -- --verify
 npm run db:backup
 ```
 
-不要只复制 `studio.db`，因为最近提交的数据可能仍在 `studio.db-wal` 中。
+不要只复制 `studio.db`，因为最近提交的数据可能仍在 `studio.db-wal` 中。若需要清理旧本地媒体，必须先确认对应 R2 对象的大小和校验信息，再使用 `npm run media:audit -- --delete` 分批执行；本版本不会自动清理旧数据目录。
 
 恢复步骤：
 
@@ -668,7 +662,7 @@ npm run db:backup
 
 ### 上传或生成结果归档失败
 
-检查 `MEDIA_STORAGE_PROVIDER` 对应的凭据：`oss` 使用 `ALIYUN_ACCESS_KEY_ID`、`ALIYUN_ACCESS_KEY_SECRET`、`ALIYUN_OSS_ENDPOINT`、`ALIYUN_OSS_BUCKET`；`r2` 使用 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`。同时确认 Bucket、Endpoint 与访问权限匹配。
+检查 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`，同时确认 Bucket、Endpoint 与访问权限匹配；浏览器直传还需要在 R2 Bucket 配置生产 Web Origin、`PUT`、`Content-Type` 和 `ETag` CORS 权限。
 
 ### Seedance 2.0 参考图返回 403
 
@@ -697,7 +691,7 @@ npm run db:backup
 ## 数据与安全边界
 
 - 服务使用 SQLite 保存用户、项目、任务、文件元数据、会话和积分流水；账号、任务、素材和项目均按用户隔离。
-- 上传素材、生成结果、尾帧和成片会归档到所选对象存储（OSS/R2），服务本地保留缓存；桌面安装包和自动更新文件仍固定发布到 OSS。
+- 上传素材、生成结果、尾帧和成片固定归档到私有 R2，服务本地保留缓存；桌面安装包、更新清单和 blockmap 仍单独发布到 OSS。
 - 密码使用带随机盐的 `scrypt` 哈希保存；会话 Cookie 为 `HttpOnly`、`SameSite=Lax`。
 - 写操作会校验同源请求；登录失败过多会被临时限流。
 - 当前设计适合单机单进程运行。不要让多个服务进程同时使用同一个 SQLite 数据目录。

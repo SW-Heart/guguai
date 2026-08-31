@@ -1,16 +1,24 @@
 export function cloudAssetFromDesktopSync(result) {
-  if (result?.cloudAsset?.id) return result.cloudAsset;
-  if (result?.asset?.id) return result.asset;
-  if (!result?.cloudAssetId) return null;
-  return {
-    ...result,
-    id: result.cloudAssetId,
-    url: result.remoteUrl || '',
-  };
+  return result?.cloudAsset?.id ? result.cloudAsset : null;
 }
 
 export function isRemoteReferenceReady(file) {
-  return Boolean(file && !file.localOnly && (file.remoteStatus !== 'local_only' || file.referenceSourceAvailable));
+  return Boolean(file && !file.localOnly && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
+}
+
+export function needsReferenceUpload(file) {
+  return Boolean(file && !isRemoteReferenceReady(file) && (file.localOnly || file.localId || file.remoteStatus === 'local_only'));
+}
+
+export function isAwaitingDesktopDelivery(file) {
+  return Boolean(
+    (file?.deliveryStatus === 'awaiting_local' && file?.remoteStatus === 'pending')
+    || (file?.deliveryStatus === 'remote_backed_up' && file?.remoteStatus === 'ready')
+  );
+}
+
+export function shouldHydrateDesktopAsset(file) {
+  return Boolean(file?.id && isAwaitingDesktopDelivery(file) && !file.localOnly && file.localStatus !== 'saved');
 }
 
 export function canRemoveImportedLocalAsset(item) {

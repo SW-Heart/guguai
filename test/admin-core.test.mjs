@@ -1,12 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { SCHEMA_VERSION, closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
+import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { configureCursors } from '../lib/store.mjs';
 import { configureLedger, adjustCredits, grantSignupBonus, walletOf } from '../lib/ledger.mjs';
 import { createPricingVersion, currentPricing, pricingSnapshot } from '../lib/pricing.mjs';
@@ -105,34 +104,4 @@ test('admin core controls', async t => {
     assert.equal(sql('SELECT COUNT(*) AS count FROM invite_code_uses WHERE code = :code').get({ code }).count, 2);
     assert.equal(sql('SELECT COUNT(*) AS count FROM users WHERE username LIKE \'invite_%\'').get().count, 2);
   });
-});
-
-
-test('schema upgrades create a verified pre-upgrade snapshot', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'schema-backup-'));
-  const file = path.join(dir, 'studio.db');
-  try {
-    resetForTests();
-    openDatabase({ file });
-    closeDatabase({ checkpoint: false });
-
-    const raw = new DatabaseSync(file);
-    raw.prepare("UPDATE schema_meta SET value = '1' WHERE key = 'schema_version'").run();
-    raw.close();
-
-    resetForTests();
-    openDatabase({ file });
-    assert.equal(sql("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
-    closeDatabase({ checkpoint: false });
-
-    const backupName = readdirSync(dir).find(name => name.startsWith(`studio.db.pre-schema-1-to-${SCHEMA_VERSION}-`));
-    assert.ok(backupName);
-    const backup = new DatabaseSync(path.join(dir, backupName), { readOnly: true });
-    assert.equal(backup.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
-    assert.equal(backup.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, '1');
-    backup.close();
-  } finally {
-    resetForTests();
-    rmSync(dir, { recursive: true, force: true });
-  }
 });

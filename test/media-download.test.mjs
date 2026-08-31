@@ -18,6 +18,7 @@ test('desktop media downloads let Electron follow signed-storage redirects', asy
   assert.deepEqual(calls, [{
     url: 'https://studio.example.com/api/files/asset-1/direct',
     options: {
+      cache: 'no-store',
       credentials: 'include',
       redirect: 'follow',
       headers: { 'X-GuGu-Desktop': '1' },

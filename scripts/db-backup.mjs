@@ -10,7 +10,7 @@
  * silently loses it.
  *
  * Keeps the newest RETENTION backups and deletes older ones. Nothing else in
- * DATA_DIR is touched, including the legacy JSON files.
+ * DATA_DIR is touched.
  */
 import { chmodSync, existsSync, readdirSync, statSync, unlinkSync, createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,7 +21,7 @@ import { openDatabase, closeDatabase, resolveDataDir, resolveDbFile } from '../l
 const RETENTION = 7;
 const TABLES = [
   'users', 'sessions', 'invite_uses', 'invite_codes', 'invite_code_uses', 'credit_entries',
-  'billing_holds', 'llm_usage', 'generations', 'assets', 'drama_projects',
+  'billing_holds', 'llm_usage', 'generations', 'assets', 'asset_changes', 'asset_deliveries', 'upload_intents', 'drama_projects',
   'pricing_versions', 'model_controls', 'audit_events', 'system_events',
 ];
 

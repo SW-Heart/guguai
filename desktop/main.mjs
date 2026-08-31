@@ -9,6 +9,18 @@ import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
+import {
+  closeLocalLibrary,
+  countLocalAssets,
+  deleteLocalAsset,
+  findLocalAssetByCloudId,
+  findLocalAssetByDigest,
+  getLocalAsset,
+  listLocalAssets as queryLocalAssets,
+  listLocalAssetsByCloudIds,
+  openLocalLibrary,
+  upsertLocalAsset,
+} from './local-library.mjs';
 import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -16,7 +28,6 @@ const rendererDir = path.join(here, 'renderer');
 const productName = 'GuGu AI';
 const defaultApiBase = 'http://127.0.0.1:4317';
 const settingsFileName = 'desktop-settings.json';
-const localIndexName = 'library-index.json';
 const { autoUpdater } = updater;
 
 protocol.registerSchemesAsPrivileged([
@@ -30,7 +41,6 @@ let tray;
 let isQuitting = false;
 let settings;
 let workspace;
-let libraryIndex;
 let trustedOrigin;
 let packageMetadata = {};
 let updateConfigured = false;
@@ -44,6 +54,7 @@ let downloadedUpdateVersion = '';
 let updateInstallStarted = false;
 let currentUpdateStatus = { status: 'idle' };
 let windowFullscreenTransition = false;
+const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
 
 const windowsTitleBarOverlayHeight = 56;
@@ -120,9 +131,13 @@ async function persistSettings() {
   await writeJson(path.join(app.getPath('userData'), settingsFileName), settings);
 }
 
-async function persistLibrary() {
-  if (!workspace) return;
-  await writeJson(path.join(workspace, '.gugu', localIndexName), libraryIndex);
+function syncOriginKey() {
+  try { return new URL(configuredApiBase()).origin; } catch { return ''; }
+}
+
+function syncCursor() {
+  const origin = syncOriginKey();
+  return origin ? String(settings?.assetSyncCursors?.[origin] || '') : '';
 }
 
 async function ensureWorkspace(root) {
@@ -135,9 +150,9 @@ async function ensureWorkspace(root) {
 }
 
 async function setWorkspace(root, { persist = true } = {}) {
+  closeLocalLibrary();
   workspace = await ensureWorkspace(root);
-  libraryIndex = await readJson(path.join(workspace, '.gugu', localIndexName), { version: 1, assets: [] });
-  if (!Array.isArray(libraryIndex.assets)) libraryIndex.assets = [];
+  openLocalLibrary(workspace);
   if (persist) {
     settings.workspacePath = workspace;
     await persistSettings();
@@ -146,7 +161,7 @@ async function setWorkspace(root, { persist = true } = {}) {
 }
 
 function libraryAsset(assetId) {
-  return libraryIndex?.assets.find(item => item.id === assetId) || null;
+  return getLocalAsset(String(assetId || ''));
 }
 
 async function hashFile(filePath) {
@@ -175,7 +190,7 @@ async function importFile(filePath) {
   const stat = await fs.stat(filePath);
   if (!stat.isFile()) throw new Error('选择的路径不是文件');
   const digest = await hashFile(filePath);
-  const existing = libraryIndex.assets.find(item => item.sha256 === digest.sha256 && item.size === digest.size);
+  const existing = findLocalAssetByDigest(digest.sha256, digest.size);
   if (existing) return { ...existing, reused: true };
 
   const originalName = safeName(path.basename(filePath));
@@ -198,8 +213,7 @@ async function importFile(filePath) {
     sourcePath: filePath,
     remoteStatus: 'pending',
   };
-  libraryIndex.assets.unshift(asset);
-  await persistLibrary();
+  upsertLocalAsset(asset);
   return { ...asset, reused: false };
 }
 
@@ -243,6 +257,27 @@ async function cloudRequest(pathname, options = {}) {
   return net.fetch(url, { ...options, headers: { ...(await cloudCookies(url)), 'X-GuGu-Desktop': '1', ...(options.headers || {}) } });
 }
 
+async function completeCloudUpload(uploadId) {
+  let response = await cloudRequest(`/api/files/uploads/${encodeURIComponent(uploadId)}/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!response.ok) throw new Error(`上传校验失败（${response.status}）`);
+  let result = await response.json();
+  if (response.status !== 202 && result.status !== 'verifying') return result;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, Math.min(1500, 300 * (attempt + 1))));
+    response = await cloudRequest(`/api/files/uploads/${encodeURIComponent(uploadId)}`);
+    if (!response.ok) throw new Error(`上传状态查询失败（${response.status}）`);
+    result = await response.json();
+    if (result.status === 'completed' && result.asset) return result.asset;
+    if (result.status === 'failed') throw new Error('文件验证失败，请重新选择文件');
+    if (result.status === 'expired') throw new Error('上传凭证已过期，请重新选择文件');
+  }
+  throw new Error('文件仍在验证中，请稍后重试');
+}
+
 async function syncLocalAsset({ assetId, uploadForReference = false }) {
   const asset = libraryAsset(String(assetId || ''));
   if (!asset) throw new Error('本地素材不存在');
@@ -253,38 +288,21 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     const verifyResponse = await cloudRequest(`/api/files/${encodeURIComponent(asset.cloudAssetId)}/local-ready`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 }),
+      body: JSON.stringify({ mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256, deviceId: settings.deviceId }),
     });
     if (verifyResponse.ok) {
       const cloudAsset = await verifyResponse.json();
       asset.remoteStatus = 'ready';
       asset.localStatus = 'saved';
-      await persistLibrary();
+      upsertLocalAsset(asset);
       return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: true };
     }
     if (verifyResponse.status !== 404) throw new Error(`云端素材校验失败（${verifyResponse.status}）`);
     asset.cloudAssetId = '';
     asset.remoteStatus = 'pending';
-    await persistLibrary();
+    upsertLocalAsset(asset);
   }
-  let initResponse = await cloudRequest('/api/files/uploads/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
-  if (initResponse.status === 503) {
-    const bytes = await fs.readFile(source);
-    const fallbackResponse = await cloudRequest('/api/files/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': asset.mimeType, 'X-File-Name': encodeURIComponent(asset.name), 'X-File-SHA256': asset.sha256 },
-      body: bytes,
-    });
-    if (!fallbackResponse.ok) throw new Error(`素材上传失败（${fallbackResponse.status}）`);
-    const fallbackAsset = await fallbackResponse.json();
-    if (!uploadForReference) {
-      asset.cloudAssetId = fallbackAsset.id;
-      asset.remoteStatus = 'ready';
-      asset.localStatus = 'saved';
-      await persistLibrary();
-    }
-    return { ...asset, cloudAsset: fallbackAsset, url: localMediaUrl(asset.id), reused: false };
-  }
+  const initResponse = await cloudRequest('/api/files/uploads/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
   if (!initResponse.ok) throw new Error(`上传初始化失败（${initResponse.status}）`);
   const intent = await initResponse.json();
   if (intent.mode === 'reuse' && intent.asset) {
@@ -292,46 +310,41 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
       asset.cloudAssetId = intent.asset.id;
       asset.remoteStatus = 'ready';
       asset.localStatus = 'saved';
-      await persistLibrary();
+      upsertLocalAsset(asset);
     }
     return { ...asset, cloudAsset: intent.asset, url: localMediaUrl(asset.id), reused: true };
   }
-  const bytes = await fs.readFile(source);
-  const method = String(intent.method || 'POST').toUpperCase();
-  let uploadBody = new Blob([bytes], { type: asset.mimeType });
-  const uploadHeaders = {};
-  if (method === 'POST') {
-    const form = new FormData();
-    for (const [key, value] of Object.entries(intent.fields || {})) form.append(key, value);
-    form.append('file', uploadBody, asset.name);
-    uploadBody = form;
-  } else {
-    Object.assign(uploadHeaders, intent.headers || {});
+  if (String(intent.method || '').toUpperCase() !== 'PUT' || !intent.uploadUrl || !intent.uploadId) {
+    throw new Error('上传协议无效，仅支持 PUT');
   }
-  const storageResponse = await net.fetch(intent.uploadUrl, { method, headers: uploadHeaders, body: uploadBody });
+  const bytes = await fs.readFile(source);
+  const storageResponse = await net.fetch(intent.uploadUrl, {
+    method: 'PUT',
+    headers: intent.headers || {},
+    body: new Blob([bytes], { type: asset.mimeType }),
+  });
   if (!storageResponse.ok) throw new Error(`云端上传失败（${storageResponse.status}）`);
-  const completeResponse = await cloudRequest(`/api/files/uploads/${encodeURIComponent(intent.uploadId)}/complete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-  if (!completeResponse.ok) throw new Error(`上传校验失败（${completeResponse.status}）`);
-  const cloudAsset = await completeResponse.json();
+  const cloudAsset = await completeCloudUpload(intent.uploadId);
+  if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
   if (!uploadForReference) {
-    asset.cloudAssetId = cloudAsset.id || intent.assetId;
+    asset.cloudAssetId = cloudAsset.id;
     asset.remoteStatus = 'ready';
     asset.localStatus = 'saved';
-    await persistLibrary();
+    upsertLocalAsset(asset);
   }
   return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: false };
 }
 
-async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
+async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType }) {
   if (!workspace) throw new Error('工作区尚未初始化');
   const cloudAssetId = String(assetId || '').trim();
   if (!cloudAssetId) throw new Error('缺少云端素材 ID');
-  const existing = libraryIndex.assets.find(item => item.cloudAssetId === cloudAssetId);
+  const existing = findLocalAssetByCloudId(cloudAssetId);
   if (existing) {
     const existingPath = path.resolve(workspace, existing.relativePath);
     if (isInside(workspace, existingPath) && await fs.access(existingPath).then(() => true).catch(() => false)) {
       existing.localStatus = 'saved';
-      await persistLibrary();
+      upsertLocalAsset(existing);
       return { ...existing, url: localMediaUrl(existing.id), reused: true };
     }
   }
@@ -370,14 +383,22 @@ async function downloadRemoteAsset({ assetId, url, name, kind, mimeType }) {
       remoteStatus: 'ready',
       localStatus: 'saved',
     };
-    if (existing) Object.assign(existing, asset);
-    else libraryIndex.assets.unshift(asset);
-    await persistLibrary();
+    upsertLocalAsset(asset);
     return { ...asset, url: localMediaUrl(asset.id), reused: false };
   } catch (error) {
     await fs.unlink(temporary).catch(() => {});
     throw error;
   }
+}
+
+async function downloadRemoteAsset(payload = {}) {
+  const cloudAssetId = String(payload.assetId || '').trim();
+  if (!cloudAssetId) return downloadRemoteAssetInternal(payload);
+  const inFlight = remoteDownloadLocks.get(cloudAssetId);
+  if (inFlight) return inFlight;
+  const task = downloadRemoteAssetInternal(payload).finally(() => remoteDownloadLocks.delete(cloudAssetId));
+  remoteDownloadLocks.set(cloudAssetId, task);
+  return task;
 }
 
 async function renameLocalAsset({ assetId, name }) {
@@ -386,18 +407,17 @@ async function renameLocalAsset({ assetId, name }) {
   const nextName = safeName(name, asset.name);
   if (!nextName) throw new Error('文件名不能为空');
   asset.name = nextName;
-  await persistLibrary();
+  upsertLocalAsset(asset);
   return { ...asset, url: localMediaUrl(asset.id) };
 }
 
 async function removeLocalAsset(assetId) {
-  const index = libraryIndex.assets.findIndex(item => item.id === String(assetId || ''));
-  if (index < 0) throw new Error('本地素材不存在');
-  const [asset] = libraryIndex.assets.splice(index, 1);
+  const asset = libraryAsset(String(assetId || ''));
+  if (!asset) throw new Error('本地素材不存在');
   const target = path.resolve(workspace, asset.relativePath);
   if (!isInside(workspace, target)) throw new Error('本地素材路径不受信任');
   await fs.unlink(target).catch(() => {});
-  await persistLibrary();
+  deleteLocalAsset(asset.id);
   return true;
 }
 
@@ -442,9 +462,8 @@ function parseLocalMediaRange(value, size) {
   return { start, end };
 }
 
-async function listLocalAssets() {
-  if (!workspace || !Array.isArray(libraryIndex?.assets)) return [];
-  const assets = await Promise.all(libraryIndex.assets.map(async item => {
+async function materializeLocalAssets(items) {
+  const assets = await Promise.all(items.map(async item => {
     const relativePath = String(item?.relativePath || '');
     if (!relativePath) return null;
     const target = path.resolve(workspace, relativePath);
@@ -454,6 +473,14 @@ async function listLocalAssets() {
     return { ...item, localStatus: 'saved', url: localMediaUrl(item.id) };
   }));
   return assets.filter(Boolean);
+}
+
+async function listLocalAssets(options = {}) {
+  if (!workspace) return { items: [], nextCursor: '' };
+  const page = Array.isArray(options.cloudAssetIds)
+    ? { items: listLocalAssetsByCloudIds(options.cloudAssetIds), nextCursor: '' }
+    : queryLocalAssets(options);
+  return { items: await materializeLocalAssets(page.items), nextCursor: page.nextCursor };
 }
 
 async function serveLocalMedia(request) {
@@ -875,8 +902,22 @@ function registerIpc() {
     nativeWindowControls: process.platform === 'win32',
     apiBase: configuredApiBase(),
     workspacePath: workspace,
+    deviceId: settings.deviceId,
+    assetSyncCursor: syncCursor(),
     updateUrl: updateFeedUrl(),
   }));
+  ipcMain.handle('desktop:get-sync-state', () => ({ deviceId: settings.deviceId, cursor: syncCursor() }));
+  ipcMain.handle('desktop:set-sync-cursor', async (_event, value) => {
+    const cursor = String(value || '');
+    if (cursor.length > 1024) throw new Error('素材同步游标无效');
+    const origin = syncOriginKey();
+    if (origin) {
+      settings.assetSyncCursors ||= {};
+      settings.assetSyncCursors[origin] = cursor;
+      await persistSettings();
+    }
+    return { deviceId: settings.deviceId, cursor };
+  });
   ipcMain.handle('desktop:set-api-base', async (_event, value) => {
     const raw = String(value || '').trim();
     let parsed;
@@ -949,7 +990,7 @@ function registerIpc() {
     if (!paymentWindow || paymentWindow.isDestroyed() || event.sender !== paymentWindow.webContents) return false;
     return closePaymentWindow();
   });
-  ipcMain.handle('workspace:get', () => ({ path: workspace, assetCount: libraryIndex.assets.length }));
+  ipcMain.handle('workspace:get', () => ({ path: workspace, assetCount: countLocalAssets() }));
   ipcMain.handle('workspace:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 GuGu AI 工作区', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
@@ -962,7 +1003,8 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('media:choose-and-import', chooseAndImportFiles);
-  ipcMain.handle('media:list-local', () => listLocalAssets());
+  ipcMain.handle('media:list-local', (_event, options) => listLocalAssets(options || {}));
+  ipcMain.handle('media:list-local-by-cloud-ids', async (_event, ids) => (await listLocalAssets({ cloudAssetIds: ids })).items);
   ipcMain.handle('media:download-remote', (_event, payload) => downloadRemoteAsset(payload || {}));
   ipcMain.handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
   ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
@@ -1042,6 +1084,8 @@ async function createWindow() {
 async function bootstrap() {
   packageMetadata = await readJson(path.join(app.getAppPath(), 'package.json'), {});
   settings = await readJson(path.join(app.getPath('userData'), settingsFileName), {});
+  settings.deviceId ||= randomUUID();
+  settings.assetSyncCursors ||= {};
   // Production builds receive their online API endpoint through package metadata.
   // Keep the localhost fallback only for an unpackaged development run.
   if (!settings.apiBase && !app.isPackaged && process.env.GUGU_API_BASE) settings.apiBase = process.env.GUGU_API_BASE;
@@ -1065,6 +1109,7 @@ app.whenReady().then(bootstrap).catch(async error => {
 
 app.on('before-quit', () => { isQuitting = true; });
 app.on('will-quit', () => {
+  closeLocalLibrary();
   tray?.destroy();
   tray = null;
 });

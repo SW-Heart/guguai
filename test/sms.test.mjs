@@ -60,3 +60,15 @@ test('SMS API errors do not leak upstream text and preserve throttling status', 
     error => error.statusCode === 429 && error.publicMessage === '请求过于频繁，请稍后再试',
   );
 });
+
+test('SMS settings ignore generic Alibaba Cloud and Aliyun credentials', () => {
+  const config = smsConfigFromEnv({
+    ALIBABA_CLOUD_ACCESS_KEY_ID: 'generic-id',
+    ALIBABA_CLOUD_ACCESS_KEY_SECRET: 'generic-secret',
+    ALIYUN_ACCESS_KEY_ID: 'legacy-id',
+    ALIYUN_ACCESS_KEY_SECRET: 'legacy-secret',
+  });
+  assert.equal(config.configured, false);
+  assert.equal(config.accessKeyId, '');
+  assert.equal(config.accessKeySecret, '');
+});

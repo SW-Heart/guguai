@@ -1,7 +1,7 @@
 {
   "name": "model-studio",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "GuGu AI 创作工作台与桌面客户端",
   "author": "GuGu AI",
   "guguApiBase": "https://guguai.xyz",
@@ -11,7 +11,6 @@
   "scripts": {
     "start": "node --env-file=.env server.mjs",
     "create-admin": "node --env-file=.env scripts/create-admin.mjs",
-    "migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:check": "node --env-file=.env scripts/db-check.mjs",
     "db:backup": "node --env-file=.env scripts/db-backup.mjs",
     "media:audit": "node --env-file=.env scripts/cleanup-local-media.mjs",
@@ -21,7 +20,7 @@
     "desktop:pack": "electron-builder --config desktop/electron-builder.yml",
     "desktop:dist": "electron-builder --config desktop/electron-builder.yml --publish never",
     "desktop:release": "node scripts/desktop-release.mjs",
-    "check": "node --check server.mjs && node --check lib/admin-api.mjs && node --check lib/alipay-payments.mjs && node --check lib/auth.mjs && node --check lib/sms.mjs && node --check scripts/create-admin.mjs && node --check scripts/cleanup-local-media.mjs && node --check scripts/desktop-dev.mjs && node --check scripts/desktop-release.mjs && node --check desktop/main.mjs && node --check desktop/manual-update.mjs && node --check desktop/preload.cjs && node --check desktop/payment-shell-preload.cjs && node --check public/app.js && node --check public/marketing.js && node --check public/guguadmin.js && node --check public/drama-studio.js",
+    "check": "node --check server.mjs && node --check lib/admin-api.mjs && node --check lib/alipay-payments.mjs && node --check lib/auth.mjs && node --check lib/sms.mjs && node --check scripts/create-admin.mjs && node --check scripts/cleanup-local-media.mjs && node --check scripts/desktop-dev.mjs && node --check scripts/desktop-release.mjs && node --check desktop/main.mjs && node --check desktop/local-library.mjs && node --check desktop/manual-update.mjs && node --check desktop/preload.cjs && node --check desktop/payment-shell-preload.cjs && node --check public/app.js && node --check public/marketing.js && node --check public/guguadmin.js && node --check public/drama-studio.js",
     "test": "NODE_ENV=test node --test test/*.test.mjs && NODE_ENV=test node --test test/smoke-http.mjs",
     "test:admin": "NODE_ENV=test node --test test/admin-*.test.mjs"
   },
@@ -31,11 +30,11 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1120.0",
     "@aws-sdk/s3-request-presigner": "^3.1120.0",
-    "ali-oss": "^6.23.0",
     "alipay-sdk": "^4.14.0",
     "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "ali-oss": "6.23.0",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3"
   }

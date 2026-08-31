@@ -91,6 +91,20 @@ try {
   r = await call('GET', '/payments/alipay/return/');
   check('支付宝同步回跳页面兼容尾斜杠', () => { assert.equal(r.status, 200); assert.match(r.body, /支付结果待确认/); });
 
+  console.log('\n客户端下载：');
+  r = await call('GET', '/downloads/mac');
+  check('macOS 下载入口直接跳转到安装包', () => {
+    assert.equal(r.status, 302);
+    assert.equal(r.headers.get('location'), 'https://guguai.oss-cn-hangzhou.aliyuncs.com/oline/desktop-updates/latest-mac.dmg');
+  });
+  r = await call('GET', '/downloads/windows');
+  check('Windows 下载入口直接跳转到安装包', () => {
+    assert.equal(r.status, 302);
+    assert.equal(r.headers.get('location'), 'https://guguai.oss-cn-hangzhou.aliyuncs.com/oline/desktop-updates/latest-windows.exe');
+  });
+  r = await call('GET', '/downloads/linux');
+  check('Linux 下载入口不再提供', () => assert.equal(r.status, 404));
+
   console.log('\n认证：');
   r = await call('GET', '/api/public/credit-packages');
   check('积分商品公开可读且价格固定', () => {

@@ -84,6 +84,7 @@ test('public assets expose authenticated delivery endpoints without leaking upst
 
   assert.equal(value.url, '/api/files/generation-1/content');
   assert.equal(value.directUrl, '/api/files/generation-1/direct');
+  assert.equal(value.sourceGenerationId, 'generation-task-1');
   assert.equal(value.sourceUrl, undefined);
   assert.equal(value.sourceRequiresAuth, undefined);
   assert.equal(value.referenceSourceAvailable, true);

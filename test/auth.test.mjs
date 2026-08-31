@@ -110,8 +110,8 @@ test('nested provider errors are rendered as readable messages', () => {
   assert.equal(__test.errorMessage({ detail: [{ msg: '图片过大' }] }), '图片过大');
 });
 
-test('OSS object keys are scoped per user and prefix', () => {
-  assert.match(__test.ossObjectKey('user-1', 'asset.png'), /user-1\/asset\.png$/);
+test('media object keys are scoped per user and prefix', () => {
+  assert.match(__test.assetObjectKey('user-1', 'asset.png'), /user-1\/asset\.png$/);
 });
 
 test('generation option enums match provider contracts', () => {

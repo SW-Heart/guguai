@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-try { process.loadEnvFile(path.join(root, '.env')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+try { process.loadEnvFile(path.join(root, '.env.desktop-release')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 const releaseDir = path.join(root, 'release');
 const packagePath = path.join(root, 'package.json');
 const originalPackageJson = await fs.readFile(packagePath, 'utf8');
@@ -17,7 +17,7 @@ const skipBuild = args.includes('--skip-build');
 const builderTargets = args.filter(value => ['--mac', '--win', '--linux', '--all', '--x64', '--arm64', '--ia32', '--universal'].includes(value));
 const valueArg = name => args.find(value => value.startsWith(`${name}=`))?.slice(name.length + 1) || '';
 const version = packageJson.version;
-const updatePrefix = String(valueArg('--prefix') || process.env.DESKTOP_UPDATE_OSS_PREFIX || `${process.env.ALIYUN_OSS_PREFIX || 'model-studio'}/desktop-updates`).replace(/^\/+|\/+$/g, '');
+const updatePrefix = String(valueArg('--prefix') || process.env.DESKTOP_UPDATE_OSS_PREFIX || 'model-studio/desktop-updates').replace(/^\/+|\/+$/g, '');
 const publicUrl = String(valueArg('--base-url') || process.env.DESKTOP_UPDATE_PUBLIC_URL || process.env.GUGU_UPDATE_URL || '').trim().replace(/\/$/, '');
 const apiBase = String(valueArg('--api-base') || process.env.DESKTOP_API_BASE || process.env.GUGU_API_BASE || packageJson.guguApiBase || '').trim().replace(/\/$/, '');
 const mimeTypes = {
@@ -46,7 +46,7 @@ function usage() {
   latest-windows.exe、latest-mac.dmg（仅这两个别名会被覆盖）
 
 可选参数：
-  --prefix=...    OSS 更新目录，默认 <ALIYUN_OSS_PREFIX>/desktop-updates
+  --prefix=...    OSS 更新目录，默认 model-studio/desktop-updates
   --base-url=...  用户端 GUGU_UPDATE_URL 对应的公开地址
   --api-base=...   用户端线上创作服务 API 地址（生产包必填）
   --mac/--win/--linux  指定构建平台，可组合使用
@@ -143,21 +143,21 @@ if (!publish) {
   process.exit(0);
 }
 
-const required = ['ALIYUN_ACCESS_KEY_ID', 'ALIYUN_ACCESS_KEY_SECRET', 'ALIYUN_OSS_ENDPOINT', 'ALIYUN_OSS_BUCKET'];
+const required = ['DESKTOP_UPDATE_OSS_ACCESS_KEY_ID', 'DESKTOP_UPDATE_OSS_ACCESS_KEY_SECRET', 'DESKTOP_UPDATE_OSS_ENDPOINT', 'DESKTOP_UPDATE_OSS_BUCKET'];
 const missing = required.filter(name => !process.env[name]);
-if (missing.length) throw new Error(`缺少 OSS 配置：${missing.join(', ')}`);
+if (missing.length) throw new Error(`缺少桌面更新 OSS 配置：${missing.join(', ')}`);
 if (!publicUrl) throw new Error('发布时必须提供 DESKTOP_UPDATE_PUBLIC_URL 或 GUGU_UPDATE_URL');
 if (!apiBase) throw new Error('发布时必须提供 DESKTOP_API_BASE 或 GUGU_API_BASE');
 if (stableAliases.length !== 2) {
   throw new Error('发布清单必须同时包含当前版本的 macOS arm64 DMG 与 Windows x64 EXE，才能同步官网稳定下载别名');
 }
 
-const ossTimeout = Number(process.env.ALIYUN_OSS_TIMEOUT_MS || 600000);
+const ossTimeout = Number(process.env.DESKTOP_UPDATE_OSS_TIMEOUT_MS || 600000);
 const client = new OSS({
-  accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
-  accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET,
-  endpoint: process.env.ALIYUN_OSS_ENDPOINT,
-  bucket: process.env.ALIYUN_OSS_BUCKET,
+  accessKeyId: process.env.DESKTOP_UPDATE_OSS_ACCESS_KEY_ID,
+  accessKeySecret: process.env.DESKTOP_UPDATE_OSS_ACCESS_KEY_SECRET,
+  endpoint: process.env.DESKTOP_UPDATE_OSS_ENDPOINT,
+  bucket: process.env.DESKTOP_UPDATE_OSS_BUCKET,
   secure: true,
   timeout: Number.isFinite(ossTimeout) && ossTimeout > 0 ? ossTimeout : 600000,
 });

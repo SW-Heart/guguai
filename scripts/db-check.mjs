@@ -10,7 +10,7 @@
  * plus per-entry balance_after_micro prefix sums, orphan rows and SQLite's own
  * integrity_check. Exits non-zero on any failure and never writes.
  */
-import { openDatabase, closeDatabase, sql, readSchemaVersion, migrationCompleted, resolveDbFile } from '../lib/db.mjs';
+import { openDatabase, closeDatabase, sql, readSchemaVersion, resolveDbFile } from '../lib/db.mjs';
 import { CREDIT_MICRO_FACTOR } from '../lib/billing.mjs';
 
 const asCredits = micro => (micro / CREDIT_MICRO_FACTOR).toFixed(6).replace(/\.?0+$/, '');
@@ -20,8 +20,7 @@ function main() {
   const failures = [];
 
   console.log(`数据库: ${resolveDbFile()}`);
-  console.log(`schema 版本: ${readSchemaVersion()}`);
-  console.log(`迁移完成标记: ${migrationCompleted() ? '有' : '无'}\n`);
+  console.log(`schema 版本: ${readSchemaVersion()}\n`);
 
   const integrity = sql('PRAGMA integrity_check').get().integrity_check;
   if (integrity !== 'ok') failures.push(`integrity_check: ${integrity}`);
@@ -73,13 +72,11 @@ function main() {
 
   console.log(`\nbalance_after_micro 前缀和校验: ${prefixBad.length === 0 ? 'ok' : `${prefixBad.length} 条不一致`}`);
   if (prefixBad.length) {
-    // Legacy rows migrated from JSON may carry stale snapshots; report but do
-    // not fail the run on them, the authoritative invariant is the total.
+    failures.push(`balance_after_micro 前缀和不一致 ${prefixBad.length} 条`);
     for (const row of prefixBad.slice(0, 10)) {
       console.log(`  ${row.user_id} ${row.id}: 记录 ${row.balance_after_micro} 前缀和 ${row.prefix}`);
     }
     if (prefixBad.length > 10) console.log(`  ...另有 ${prefixBad.length - 10} 条`);
-    console.log('  提示: 迁移自 JSON 的历史流水可能带有旧快照，不计入失败判定。');
   }
 
   const inviteMismatches = sql(`
@@ -120,6 +117,9 @@ function main() {
       (SELECT COUNT(*) FROM generations) AS generations,
       (SELECT COUNT(*) FROM generations WHERE status IN ('queued','running')) AS pendingGenerations,
       (SELECT COUNT(*) FROM assets) AS assets,
+      (SELECT COUNT(*) FROM asset_changes) AS assetChanges,
+      (SELECT COUNT(*) FROM asset_deliveries) AS assetDeliveries,
+      (SELECT COUNT(*) FROM upload_intents) AS uploadIntents,
       (SELECT COUNT(*) FROM drama_projects) AS dramaProjects,
       (SELECT COUNT(*) FROM invite_codes) AS inviteCodes,
       (SELECT COUNT(*) FROM invite_code_uses) AS inviteCodeUses,

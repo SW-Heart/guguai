@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateVirtualShotRange, normalizeShotVideoParameters, shotPreviewRenderSignature } from '../public/drama-studio.js';
+import { calculateVirtualShotRange, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewRenderSignature, videoTaskProgress } from '../public/drama-studio.js';
+
+test('renamed drama projects update the library immediately and move to the top', () => {
+  const previous = [
+    { id: 'old', title: '旧项目', updatedAt: '2' },
+    { id: 'current', title: '旧名称', updatedAt: '1' },
+  ];
+  const next = mergeDramaProjectList(previous, { id: 'current', title: '新名称', updatedAt: '3' });
+  assert.deepEqual(next.map(project => [project.id, project.title]), [['current', '新名称'], ['old', '旧项目']]);
+});
 
 test('switching video model replaces only parameters unsupported by the selected model', () => {
   const shot = {
@@ -53,10 +62,22 @@ test('shot preview signatures react only to tasks and files used by that shot', 
   const files = [{ id:'file-2', url:'/video-2.mp4' }];
   const initial = shotPreviewRenderSignature(shot, tasks, files);
 
-  assert.equal(shotPreviewRenderSignature(shot, tasks.map(item => item.id === 'task-1' ? { ...item, progress:80 } : item), files), initial);
+  assert.notEqual(shotPreviewRenderSignature(shot, tasks.map(item => item.id === 'task-1' ? { ...item, progress:80 } : item), files), initial);
   assert.equal(shotPreviewRenderSignature(shot, tasks.map(item => item.id === 'unrelated' ? { ...item, status:'completed' } : item), files), initial);
   assert.notEqual(shotPreviewRenderSignature(shot, tasks.map(item => item.id === 'task-1' ? { ...item, status:'completed' } : item), files), initial);
   assert.notEqual(shotPreviewRenderSignature(shot, tasks, [{ id:'file-2', url:'/video-2-new.mp4' }]), initial);
+  const failed = tasks.map(item => item.id === 'task-1' ? { ...item, status:'failed', error:'参考图片不符合生成要求。请检查图片格式。', failure:{ code:'INVALID_REFERENCE' } } : item);
+  assert.notEqual(shotPreviewRenderSignature(shot, failed, files), initial);
+  assert.notEqual(shotPreviewRenderSignature(shot, failed.map(item => item.id === 'task-1' ? { ...item, error:'内容未通过生成检查。请调整描述。', failure:{ code:'CONTENT_REJECTED' } } : item), files), shotPreviewRenderSignature(shot, failed, files));
+});
+
+test('video task progress only renders valid, queryable percentages', () => {
+  assert.equal(videoTaskProgress({ progress: 0 }), 0);
+  assert.equal(videoTaskProgress({ progress: 42.6 }), 43);
+  assert.equal(videoTaskProgress({ progress: 100 }), 100);
+  assert.equal(videoTaskProgress({ progress: null }), null);
+  assert.equal(videoTaskProgress({ progress: 'unknown' }), null);
+  assert.equal(videoTaskProgress({ progress: 101 }), null);
 });
 
 test('virtual shot range keeps an overscanned window across variable card heights', () => {

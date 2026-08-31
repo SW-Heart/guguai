@@ -10,7 +10,7 @@ import {
   configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject,
   saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
   parseLimit, decodeCursor, encodeCursor, InvalidCursorError,
-  findGeneration, listPendingGenerations, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
+  findGeneration, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
 } from '../lib/store.mjs';
 
 let workDir;
@@ -170,6 +170,55 @@ test('store pagination', async t => {
     assert.equal(images.total, 13);
     const paged = drain(opts => listAssets(userId, { kind: 'image', ...opts }), 4);
     assert.deepEqual(paged.map(i => i.id), images.items.map(i => i.id));
+  });
+
+  await t.test('asset search is server-side and remains keyset-paginatable', () => {
+    const userId = makeUser();
+    for (let i = 0; i < 9; i += 1) {
+      const name = i % 2 ? `other-${i}` : `brand-${i}`;
+      const createdAt = new Date(Date.UTC(2026, 0, 4, 0, i)).toISOString();
+      saveAssetRecord(userId, { id: `search-${i}`, kind: 'image', name, createdAt, updatedAt: createdAt });
+    }
+    const first = listAssets(userId, { search: 'brand', limit: 2 });
+    assert.equal(first.total, 5);
+    assert.equal(first.items.length, 2);
+    assert.ok(first.nextCursor);
+    const paged = drain(opts => listAssets(userId, { search: 'brand', ...opts }), 2);
+    assert.deepEqual(paged.map(item => item.id), ['search-8', 'search-6', 'search-4', 'search-2', 'search-0']);
+    assert.equal(listAssets(userId, { search: 'brand', limit: 2, includeTotal: false }).total, null);
+  });
+
+  await t.test('asset sync starts at a checkpoint and tracks device delivery independently', () => {
+    const userId = makeUser();
+    const deviceA = 'device-a-123456';
+    const deviceB = 'device-b-123456';
+    const createdAt = '2026-01-01T00:00:00.000Z';
+    for (let i = 0; i < 8; i += 1) {
+      saveAssetRecord(userId, {
+        id: `delivery-${i}`, kind: 'video', name: `v${i}`, objectKey: `assets/${i}.mp4`,
+        sourceGenerationId: `generation-${i}`, deliveryStatus: 'remote_backed_up',
+        createdAt, updatedAt: createdAt,
+      });
+    }
+    const first = listAssetChanges(userId, { limit: 3 });
+    assert.deepEqual(first.items, [], '新设备不应回放全部历史变更');
+    assert.ok(first.nextCursor);
+    assert.equal(listPendingAssetDeliveries(userId, deviceA, { limit: 3 }).length, 3);
+    assert.equal(listPendingAssetDeliveries(userId, deviceB, { limit: 3 }).length, 3);
+
+    const firstDelivery = listPendingAssetDeliveries(userId, deviceA, { limit: 1 })[0];
+    markAssetDeliveryPending(userId, deviceA, firstDelivery.id);
+    markAssetDeliveryReady(userId, deviceA, firstDelivery.id);
+    assert.equal(listPendingAssetDeliveries(userId, deviceA, { limit: 20 }).some(item => item.id === firstDelivery.id), false);
+    assert.equal(listPendingAssetDeliveries(userId, deviceB, { limit: 20 }).some(item => item.id === firstDelivery.id), true);
+
+    const nextAsset = { id: 'delivery-new', kind: 'image', name: 'new', objectKey: 'assets/new.png', sourceGenerationId: 'generation-new', deliveryStatus: 'remote_backed_up', createdAt, updatedAt: createdAt };
+    saveAssetRecord(userId, nextAsset);
+    const delta = listAssetChanges(userId, { cursor: first.nextCursor, limit: 20 });
+    assert.ok(delta.items.some(change => change.assetId === nextAsset.id && change.action === 'upsert'));
+    assert.equal(deleteAsset(userId, nextAsset.id), true);
+    const tombstone = listAssetChanges(userId, { cursor: delta.nextCursor, limit: 20 }).items.find(change => change.assetId === nextAsset.id && change.action === 'delete');
+    assert.ok(tombstone, '删除应产生增量 tombstone');
   });
 
   await t.test('drama projects sort by updated_at and latest reads one row', () => {

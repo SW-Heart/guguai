@@ -62,8 +62,9 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const taskId = 'delivery-task';
   const authenticatedAssetId = 'authenticated-delivery-asset';
   const authenticatedTaskId = 'authenticated-delivery-task';
-  const legacyLocalAssetId = 'legacy-local-delivery-asset';
-  const legacyLocalPayload = Buffer.from('legacy-local-video-payload');
+  const remoteBackedAssetId = 'remote-backed-delivery-asset';
+  const localAssetId = 'local-delivery-asset';
+  const localPayload = Buffer.from('local-video-payload');
   const createdAt = new Date().toISOString();
   const sourceUrl = `${upstreamBase}/result.mp4`;
   const authenticatedSourceUrl = `${upstreamBase}/v1/videos/auth-task/content`;
@@ -78,17 +79,22 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
     sourceRequiresAuth: false, deliveryStatus: 'awaiting_local', remoteStatus: 'pending', createdAt, updatedAt: createdAt,
   });
   saveAssetRecord(userId, {
-    id: legacyLocalAssetId, ownerId: userId, name: '旧网页视频.mp4', kind: 'video', mimeType: 'video/mp4', size: legacyLocalPayload.length,
-    storageName: `${legacyLocalAssetId}.mp4`, source: 'generation', sourceGenerationId: '', sourceUrl: '',
-    ossKey: `legacy/${legacyLocalAssetId}.mp4`, remoteStatus: 'ready', createdAt, updatedAt: createdAt,
+    id: localAssetId, ownerId: userId, name: '本地视频.mp4', kind: 'video', mimeType: 'video/mp4', size: localPayload.length,
+    storageName: `${localAssetId}.mp4`, source: 'generation', sourceGenerationId: '', sourceUrl: '',
+    remoteStatus: 'local_only', createdAt, updatedAt: createdAt,
   });
-  const legacyLocalDir = path.join(dataDir, 'users', userId, 'files');
-  mkdirSync(legacyLocalDir, { recursive: true });
-  writeFileSync(path.join(legacyLocalDir, `${legacyLocalAssetId}.mp4`), legacyLocalPayload);
+  const localDir = path.join(dataDir, 'users', userId, 'files');
+  mkdirSync(localDir, { recursive: true });
+  writeFileSync(path.join(localDir, `${localAssetId}.mp4`), localPayload);
   saveAssetRecord(userId, {
     id: authenticatedAssetId, ownerId: userId, name: '鉴权生成视频.mp4', kind: 'video', mimeType: 'video/mp4', size: 0,
     storageName: `${authenticatedAssetId}.mp4`, source: 'generation', sourceGenerationId: authenticatedTaskId, sourceUrl: authenticatedSourceUrl,
     sourceRequiresAuth: true, deliveryStatus: 'awaiting_local', remoteStatus: 'pending', createdAt, updatedAt: createdAt,
+  });
+  saveAssetRecord(userId, {
+    id: remoteBackedAssetId, ownerId: userId, name: '已归档视频.mp4', kind: 'video', mimeType: 'video/mp4', size: upstreamPayload.length,
+    storageName: `${remoteBackedAssetId}.mp4`, objectKey: `assets/${remoteBackedAssetId}.mp4`, source: 'generation', sourceGenerationId: 'remote-backed-task',
+    sourceUrl: '', sourceRequiresAuth: false, deliveryStatus: 'remote_backed_up', remoteStatus: 'ready', createdAt, updatedAt: createdAt,
   });
   saveGenerationRecord(userId, {
     id: taskId, ownerId: userId, type: 'video', status: 'completed', provider: 'duomi', providerTaskId: 'upstream-task',
@@ -124,18 +130,29 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const files = await list.json();
   const plainFile = files.find(file => file.id === assetId);
   const authenticatedFile = files.find(file => file.id === authenticatedAssetId);
-  const legacyLocalFile = files.find(file => file.id === legacyLocalAssetId);
+  const localFile = files.find(file => file.id === localAssetId);
   assert.equal(plainFile.directUrl, `/api/files/${assetId}/direct`);
   assert.equal(plainFile.sourceUrl, undefined);
   assert.equal(authenticatedFile.directUrl, `/api/files/${authenticatedAssetId}/direct`);
   assert.equal(authenticatedFile.sourceUrl, undefined);
 
-  const legacyDirect = await fetch(`${base}${legacyLocalFile.directUrl}`, { headers, redirect: 'manual' });
-  assert.equal(legacyDirect.status, 302);
-  assert.equal(legacyDirect.headers.get('location'), `/api/files/${legacyLocalAssetId}/content`);
-  const legacyDownloaded = await fetch(`${base}${legacyLocalFile.directUrl}`, { headers });
-  assert.equal(legacyDownloaded.status, 200);
-  assert.deepEqual(Buffer.from(await legacyDownloaded.arrayBuffer()), legacyLocalPayload);
+  const firstSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&limit=20`, { headers });
+  assert.equal(firstSync.status, 200);
+  const firstSyncData = await firstSync.json();
+  assert.deepEqual(firstSyncData.changes, [], '首个设备游标从当前检查点开始');
+  assert.ok(firstSyncData.deliveries.some(file => file.id === remoteBackedAssetId));
+  assert.ok(firstSyncData.nextCursor);
+
+  const single = await fetch(`${base}/api/files/${assetId}`, { headers });
+  assert.equal(single.status, 200);
+  assert.equal((await single.json()).id, assetId);
+
+  const localDirect = await fetch(`${base}${localFile.directUrl}`, { headers, redirect: 'manual' });
+  assert.equal(localDirect.status, 302);
+  assert.equal(localDirect.headers.get('location'), `/api/files/${localAssetId}/content`);
+  const localDownloaded = await fetch(`${base}${localFile.directUrl}`, { headers });
+  assert.equal(localDownloaded.status, 200);
+  assert.deepEqual(Buffer.from(await localDownloaded.arrayBuffer()), localPayload);
 
   const direct = await fetch(`${base}${plainFile.directUrl}`, { headers, redirect: 'manual' });
   assert.equal(direct.status, 302);
@@ -149,7 +166,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const digest = createHash('sha256').update(upstreamPayload).digest('hex');
   const acknowledged = await fetch(`${base}/api/files/${assetId}/local-ready`, {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ size: upstreamPayload.length, sha256: digest, mimeType: 'video/mp4' }),
+    body: JSON.stringify({ size: upstreamPayload.length, sha256: digest, mimeType: 'video/mp4', deviceId: 'device-a-123456' }),
   });
   assert.equal(acknowledged.status, 200);
   const acknowledgedAsset = await acknowledged.json();
@@ -159,4 +176,19 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const generation = (await generations.json()).find(item => item.id === taskId);
   assert.equal(generation.status, 'completed');
   assert.equal(generation.progressStage, 'completed');
+
+  const secondSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(firstSyncData.nextCursor)}&limit=20`, { headers });
+  assert.equal(secondSync.status, 200);
+  const secondSyncData = await secondSync.json();
+  assert.ok(secondSyncData.changes.some(change => change.assetId === assetId));
+  assert.equal(secondSyncData.deliveries.some(file => file.id === remoteBackedAssetId), true);
+
+  const acknowledgedRemote = await fetch(`${base}/api/files/${remoteBackedAssetId}/local-ready`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ size: upstreamPayload.length, sha256: digest, mimeType: 'video/mp4', deviceId: 'device-a-123456' }),
+  });
+  assert.equal(acknowledgedRemote.status, 200);
+  const thirdSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(secondSyncData.nextCursor)}&limit=20`, { headers });
+  assert.equal(thirdSync.status, 200);
+  assert.equal((await thirdSync.json()).deliveries.some(file => file.id === remoteBackedAssetId), false, '同一设备确认后不应重复投递');
 });

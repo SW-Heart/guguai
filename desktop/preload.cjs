@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
       return () => ipcRenderer.removeListener('desktop:update-status', listener);
     },
   }),
+  sync: Object.freeze({
+    getState: () => invoke('desktop:get-sync-state'),
+    setCursor: cursor => invoke('desktop:set-sync-cursor', cursor),
+  }),
   payments: Object.freeze({
     open: paymentHtml => invoke('payments:open-alipay', paymentHtml),
     complete: () => invoke('payments:complete-alipay'),
@@ -42,7 +46,8 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   }),
   media: Object.freeze({
     chooseAndImport: () => invoke('media:choose-and-import'),
-    listLocal: () => invoke('media:list-local'),
+    listLocal: options => invoke('media:list-local', options || {}),
+    listLocalByCloudIds: cloudAssetIds => invoke('media:list-local-by-cloud-ids', cloudAssetIds || []),
     downloadRemote: payload => invoke('media:download-remote', payload),
     syncLocal: payload => invoke('media:sync-local', payload),
     renameLocal: payload => invoke('media:rename-local', payload),
