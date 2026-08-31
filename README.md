@@ -318,50 +318,48 @@ GitHub 仓库需要先配置两个 Repository variables（不是 Secrets）：
 
 两个地址必须是 HTTPS，且 `DESKTOP_UPDATE_PUBLIC_URL` 必须对应 OSS/CDN 的公开目录。OSS AccessKey 不要配置到 GitHub Actions，也不要提交到仓库。
 
-手动构建并预览仍可使用本地脚本：
+默认使用 GitHub Actions 同时构建两个平台。本地脚本只用于 macOS 安装包验收或 CI 诊断：
 
 ```bash
-# 本地预览：构建安装包，并列出发布清单（不会上传）
+# 本地 macOS 预览：构建安装包，并列出发布清单（不会上传）
 DESKTOP_API_BASE=https://api.example.com \
   DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai \
-  npm run desktop:release
+  npm run desktop:release -- --mac --arm64
 ```
 
 CI 构建使用 `macos-14` Apple Silicon runner 生成 macOS arm64 包，使用 Windows runner 生成 Windows x64 包。macOS 当前默认关闭签名发现，因此没有 Apple Developer ID 证书时会生成未签名包；用于公开分发前应补充签名和公证配置。
 
 当 `DESKTOP_API_BASE` 或 `DESKTOP_UPDATE_PUBLIC_URL` 已配置时，脚本会在构建过程中把线上 API 地址和更新地址临时写入安装包元数据，构建结束后恢复源码。因此用户从 Finder 双击安装包即可连接线上服务并自动检查更新，不需要在用户电脑上设置环境变量。
 
-按平台分别构建：
+CI 与本地诊断命令：
 
 ```bash
-# macOS Apple Silicon：在 macOS arm64 上执行，生成 DMG、ZIP 和对应 blockmap/feed
+# 默认流程：版本提交推送后，手动触发 CI，同时构建 Windows x64 和 macOS arm64
+gh workflow run ci.yml --ref main
+
+# 仅在本地验包或诊断时构建 macOS Apple Silicon
 DESKTOP_API_BASE=https://guguai.xyz \
   DESKTOP_UPDATE_PUBLIC_URL=https://你的更新公开地址 \
   npm run desktop:release -- --mac --arm64
-
-# Windows：建议在 Windows 构建机上执行，生成 NSIS 安装包
-# PowerShell
-$env:DESKTOP_API_BASE = "https://guguai.xyz"
-$env:DESKTOP_UPDATE_PUBLIC_URL = "https://你的更新公开地址"
-npm run desktop:release -- --win
 ```
 
-当前 macOS 主机未安装 Wine，不能直接在这台 Mac 上可靠生成 Windows NSIS 安装包；Windows 包请在 Windows 构建机或 CI 上执行。`--mac`、`--win`、`--linux` 参数会传递给 electron-builder，也可以使用 `--x64` 或 `--arm64` 指定架构。
+Windows 包固定由 `.github/workflows/ci.yml` 的 `windows-latest` job 构建，不在 macOS 本地配置 Wine 或执行 `--win`。CI 同时使用 `macos-14` 生成 macOS arm64 包。
 
 使用 GitHub Actions 发布构建包只需要：
 
 1. 修改 `package.json` 的 `version`，例如从 `0.1.0` 改为 `0.1.1`。
-2. 提交并推送版本变更，然后创建并推送匹配的 tag，例如 `git tag v0.1.1 && git push origin v0.1.1`。
-3. 在 Actions 中等待 `quality`、Windows x64 和 macOS arm64 三个 job 成功。
-4. 下载两个 Artifact，分别测试 Windows 安装包和 macOS arm64 DMG/ZIP。
-5. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap、官网稳定别名和目标目录，并在上传前要求明确确认。
-6. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会弹出版本提示并默认开始下载，下载完成后再次提示“重启更新”；确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
+2. 运行 `npm run check` 和 `npm test`，只提交并推送本次版本相关改动。
+3. 执行 `gh workflow run ci.yml --ref main`。推送 `main` 本身只运行质量检查，不会自动启动桌面打包 job；只有明确需要 tag 发布时，才创建与 `package.json.version` 匹配的 `v*` tag。
+4. 在 Actions 中等待 `quality`、Windows x64 和 macOS arm64 三个 job 成功。
+5. 下载两个 Artifact，分别测试 Windows 安装包和 macOS arm64 DMG/ZIP。
+6. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap、官网稳定别名和目标目录，并在上传前要求明确确认。
+7. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会弹出版本提示并默认开始下载，下载完成后再次提示“重启更新”；确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 
 更新采用 electron-updater 的 Generic feed。electron-builder 会为 zip/安装包生成 `.blockmap`；客户端有旧版本缓存时会通过 HTTP Range 请求只下载差异块，差分失败才回退为完整包。首次安装、跨架构或缓存不可用时仍需要完整下载。OSS/CDN 必须支持 HTTPS、Range 和正确的 `Content-Length`，并且不能长期缓存 `latest*.yml` 或官网稳定下载别名。
 
-OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`。它会先上传当前版本的安装包、feed 和 blockmap，最后同步 `latest-mac.dmg`、`latest-windows.exe` 两个官网稳定别名；不会构建新包、不会删除旧版本，且不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程递增版本、校验并生成发布清单。
+OSS 上传仍然是人工步骤，不属于 GitHub Actions。`$gugu-desktop-oss-publish` Skill 会读取本地 `.env` 或当前 shell 中的 OSS 配置，执行 `npm run desktop:release -- --publish --skip-build`。它会先上传当前版本的安装包、feed 和 blockmap，最后同步 `latest-mac.dmg`、`latest-windows.exe` 两个官网稳定别名；不会构建新包、不会删除旧版本，且不会把 OSS 密钥写入仓库或 CI。当前 Codex 环境同时提供 `gugu-desktop-release` skill；下次说明“更新版本”即可按本项目流程完成版本修改、校验、远端写入确认、CI 构建和 Artifact 验收。
 
 未签名 macOS 客户端不使用 ShipIt 替换应用。客户端仅借助 Generic feed 检查版本，并从同源 HTTPS 地址下载 DMG；下载完成后会按 `latest-mac.yml` 中的文件大小和 SHA-512 校验安装包。用户确认“退出并安装”后，会启动独立安装引导进程，GuGu AI 完全退出后才挂载并打开 DMG，避免 Finder 因旧版本仍在运行而无法覆盖。随后用户在 Finder 中将新版本拖入「应用程序」并选择覆盖即可。
 
