@@ -112,7 +112,7 @@ test('historical schema v1 is rejected without modifying its file', async () => 
     const dbModule = await isolatedDbModule();
     assert.throws(
       () => dbModule.openDatabase({ file }),
-      /schema_version=1 不是 R2-only 全新基线.*不支持迁移.*空 DATA_DIR/,
+      /schema_version=1 不是 R2-only 全新基线.*拒绝启动/,
     );
     assert.throws(() => dbModule.database(), /数据库尚未打开/);
     assert.deepEqual(readFileSync(file), bytesBefore);
@@ -122,7 +122,7 @@ test('historical schema v1 is rejected without modifying its file', async () => 
   }
 });
 
-test('legacy schema is rejected without modifying its file', async () => {
+test('malformed legacy v12 schema is rejected without modifying its file', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'legacy-schema-'));
   const file = path.join(dir, 'studio.db');
   try {
@@ -140,7 +140,7 @@ test('legacy schema is rejected without modifying its file', async () => {
     const dbModule = await isolatedDbModule();
     assert.throws(
       () => dbModule.openDatabase({ file }),
-      /旧 schema_version=12.*不支持迁移.*空 DATA_DIR/,
+      /旧 schema_version=12.*表结构不完整.*拒绝迁移/,
     );
     assert.throws(() => dbModule.database(), /数据库尚未打开/);
     assert.deepEqual(readFileSync(file), bytesBefore);
@@ -150,6 +150,107 @@ test('legacy schema is rejected without modifying its file', async () => {
     assert.equal(probe.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get().value, '12');
     assert.equal(probe.prepare('SELECT value FROM legacy_payload').get().value, 'keep-me');
     probe.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+async function createLegacyV12Fixture(file, { storageProvider = 'r2' } = {}) {
+  const creator = await isolatedDbModule();
+  const handle = creator.openDatabase({ file });
+  const createdAt = '2026-08-31T00:00:00.000Z';
+  const userId = 'legacy-user';
+  const assetId = 'legacy-asset';
+  handle.prepare(`
+    INSERT INTO users(id, username, password_hash, created_at, updated_at, doc_json)
+    VALUES(:id, 'legacy', 'hash', :createdAt, :createdAt, :docJson)
+  `).run({ id: userId, createdAt, docJson: JSON.stringify({ id: userId, username: 'legacy' }) });
+  handle.prepare(`
+    INSERT INTO assets(id, user_id, kind, name, object_key, created_at, updated_at, doc_json)
+    VALUES(:id, :userId, 'image', 'legacy.png', :key, :createdAt, :createdAt, :docJson)
+  `).run({
+    id: assetId,
+    userId,
+    key: `model-studio/assets/${userId}/${assetId}.png`,
+    createdAt,
+    docJson: JSON.stringify({
+      id: assetId,
+      ownerId: userId,
+      name: 'legacy.png',
+      kind: 'image',
+      ossKey: `model-studio/assets/${userId}/${assetId}.png`,
+      ossUploadedAt: createdAt,
+      storageProvider,
+      createdAt,
+      updatedAt: createdAt,
+    }),
+  });
+  creator.closeDatabase();
+
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`
+    DROP TABLE asset_changes;
+    DROP TABLE asset_deliveries;
+    ALTER TABLE assets RENAME COLUMN object_key TO oss_key;
+    ALTER TABLE upload_intents RENAME COLUMN temporary_object_key TO temporary_oss_key;
+    ALTER TABLE upload_intents RENAME COLUMN final_object_key TO final_oss_key;
+    UPDATE schema_meta SET value = '12' WHERE key = 'schema_version';
+    DELETE FROM schema_meta WHERE key IN ('schema_baseline', 'schema_migrated_from');
+  `);
+  legacy.close();
+  return { userId, assetId };
+}
+
+test('legacy v12 R2 data migrates transactionally and creates a verified backup', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'legacy-v12-r2-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    const { assetId } = await createLegacyV12Fixture(file);
+    const dbModule = await isolatedDbModule();
+    const handle = dbModule.openDatabase({ file });
+    try {
+      assert.equal(dbModule.readSchemaVersion(), 1);
+      assert.equal(dbModule.readMeta('schema_baseline'), 'r2-only-v1');
+      assert.equal(dbModule.readMeta('schema_migrated_from'), 'legacy-v12');
+      const columns = handle.prepare('PRAGMA table_info(assets)').all().map(column => column.name);
+      assert.ok(columns.includes('object_key'));
+      assert.ok(!columns.includes('oss_key'));
+      const asset = JSON.parse(handle.prepare('SELECT doc_json FROM assets WHERE id = :id').get({ id: assetId }).doc_json);
+      assert.equal(asset.objectKey, `model-studio/assets/legacy-user/${assetId}.png`);
+      assert.equal(asset.objectUploadedAt, '2026-08-31T00:00:00.000Z');
+      assert.equal('ossKey' in asset, false);
+      assert.equal('storageProvider' in asset, false);
+      assert.equal(handle.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+      assert.equal(handle.prepare('PRAGMA foreign_key_check').all().length, 0);
+      assert.ok(handle.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_changes'").get());
+    } finally {
+      dbModule.closeDatabase();
+    }
+    const backups = readdirSync(dir).filter(name => name.includes('.pre-schema-12-to-r2-v1-'));
+    assert.equal(backups.length, 1);
+    const backup = new DatabaseSync(path.join(dir, backups[0]), { readOnly: true });
+    assert.equal(backup.prepare("SELECT value FROM schema_meta WHERE key='schema_version'").get().value, '12');
+    assert.ok(backup.prepare('PRAGMA table_info(assets)').all().some(column => column.name === 'oss_key'));
+    backup.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('legacy v12 OSS-backed assets are rejected before any database write', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'legacy-v12-oss-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    await createLegacyV12Fixture(file, { storageProvider: 'oss' });
+    const bytesBefore = readFileSync(file);
+    const filesBefore = readdirSync(dir).sort();
+    const dbModule = await isolatedDbModule();
+    assert.throws(() => dbModule.openDatabase({ file }), /仍有 1 个素材位于 OSS.*复制到 R2/);
+    assert.deepEqual(readFileSync(file), bytesBefore);
+    assert.deepEqual(
+      readdirSync(dir).filter(name => !name.endsWith('-wal') && !name.endsWith('-shm')).sort(),
+      filesBefore,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

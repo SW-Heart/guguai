@@ -165,7 +165,7 @@ MEDIA_TMP_DIR=/var/lib/gugu-ai/tmp
 说明：
 
 - 业务媒体固定使用私有 R2，需要完整配置 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`、`R2_ENDPOINT`、`R2_BUCKET`；服务端不再读取业务 OSS 配置。
-- 新版本使用全新的 SQLite 基线，正式部署从空 `DATA_DIR` 开始，不迁移旧用户、旧任务或旧业务素材。已有旧数据库会被拒绝启动。
+- 全新部署使用 R2-only SQLite v1 基线；旧版 schema v12 在所有远端素材已位于 R2 时可原地迁移，其他旧 schema 会被拒绝。
 - `R2_REFERENCE_BUCKET` 是模型参考图专用 Bucket，必须和 `R2_BUCKET` 分开；参考图凭据和连接参数可留空以复用主 R2 配置。
 - `R2_REFERENCE_PUBLIC_BASE_URL` 必须指向绑定到 `R2_REFERENCE_BUCKET` 的公共自定义域名，不能填 R2 S3 API Endpoint，也不能填 Bucket 名称；所有视频模型带参考图片时都必须配置，保证供应商拿到统一的无签名 R2 URL。
 - 图生图和图生视频不会把私有主桶地址直接提交给模型。服务端会先把参考图片复制到 `R2_REFERENCE_BUCKET` 的 `R2_REFERENCE_IMAGE_PREFIX` 临时目录，使用公共地址或短期签名地址提交，默认 60 分钟后自动删除；因此带参考图片的生成需要配置参考图专用 R2。
@@ -622,20 +622,59 @@ npm run desktop:dist
 npm run desktop:release
 ```
 
-## 全新数据库、备份与恢复
+## 数据库迁移、备份与恢复
 
-### 全新数据库基线
+### schema v12 升级到 R2-only v1
 
-本版本从全新的 SQLite 基线启动，不支持旧 SQLite schema、旧 JSON 数据或旧业务素材迁移。检测到旧数据库时服务会拒绝启动，避免把旧数据误当作新数据使用。
+0.4.0 支持从 0.3.1 的 schema v12 原地迁移，并保留用户、会话、积分、生成记录、素材、短剧项目、管理配置和支付记录。迁移会完成以下操作：
 
-正式切换前请停止服务，使用旧版本工具或原始 SQLite 只读方式备份旧 `DATA_DIR`，再将旧目录改名为带时间戳的 quarantine 目录。不要直接覆盖或删除旧目录。随后创建权限为 `0700` 的新空目录，设置新的 `DATA_DIR`，启动服务并创建首个管理员：
+- `assets.oss_key` 改名为 `object_key`，素材 JSON 中对应的旧 OSS key/上传时间字段同步改为通用 object key/上传时间字段。
+- `upload_intents` 的两个 OSS 命名字段及 JSON 字段改为通用 object key。
+- 创建 `asset_changes`、`asset_deliveries` 和 0.4.0 新增索引，写入 `schema_baseline=r2-only-v1` 与 `schema_migrated_from=legacy-v12`。
+- 所有结构及元数据变更在一个事务中提交；失败会整体回滚。
+- 写入前使用 `VACUUM INTO` 生成 `studio.db.pre-schema-12-to-r2-v1-<时间>`，校验通过后才开始迁移。
+
+先停止服务并使用现有 0.3.1 代码执行备份。不要用普通文件复制代替 SQLite 热备：
 
 ```bash
-install -d -m 700 /var/lib/gugu-ai-new
-DATA_DIR=/var/lib/gugu-ai-new npm run create-admin
+sudo systemctl stop gugu-ai
+cd /opt/gugu-ai
+npm run db:backup
 ```
 
-`npm run create-admin` 只用于新 SQLite 数据库中的管理员初始化或管理员提升，不会导入旧账号。新库启动后应执行 `npm run db:check`，并确认 `users`、`assets`、`generations` 和 `upload_intents` 均从零开始。
+迁移器不会猜测对象实际存储位置。先按旧库记录统计远端素材提供商：
+
+```bash
+sqlite3 -readonly /var/lib/gugu-ai/studio.db \
+  "SELECT lower(coalesce(json_extract(doc_json,'$.storageProvider'),'oss')) provider, count(*) FROM assets WHERE coalesce(oss_key,'')<>'' GROUP BY 1;"
+```
+
+如果结果只有 `r2`，可直接部署 0.4.0 并启动。若存在 `oss`，必须先把这些 `oss_key` 对应对象复制到 `.env` 指定的 `R2_BUCKET`，对象 key 保持不变；使用对象清单逐项核对源/目标的大小和校验值后，才可在停机数据库中把已核验记录标记为 R2：
+
+```sql
+BEGIN IMMEDIATE;
+UPDATE assets
+SET doc_json = json_set(doc_json, '$.storageProvider', 'r2')
+WHERE coalesce(oss_key, '') <> ''
+  AND lower(coalesce(json_extract(doc_json, '$.storageProvider'), 'oss')) = 'oss';
+COMMIT;
+```
+
+不要在对象复制或核验完成前执行这段 SQL。否则 0.4.0 会把原 OSS key 当成 R2 key，素材下载将失败。数据库迁移不删除 OSS/R2 对象，也不会迁移二进制文件。
+
+启动新代码后执行：
+
+```bash
+sudo systemctl start gugu-ai
+journalctl -u gugu-ai -n 100 --no-pager
+npm run db:check
+curl --fail http://127.0.0.1:4317/healthz
+curl --fail http://127.0.0.1:4317/readyz
+```
+
+确认日志出现迁移前备份路径，且 `db:check` 中完整性、外键、余额、冻结金额均通过；同时核对迁移前后的 `users`、`assets`、`generations`、`credit_entries` 行数，并抽查 R2 素材下载。其他 schema 版本、结构不完整的 v12、无效 JSON 或仍标记为 OSS 的远端素材会在数据库写入前被拒绝。
+
+全新安装仍可使用空 `DATA_DIR` 创建 R2-only v1；`npm run create-admin` 只用于新库管理员初始化或现有管理员提升。
 
 ### 备份与恢复
 
