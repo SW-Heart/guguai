@@ -103,22 +103,30 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .brand-gem::after { width: 12px; height: 4px; right: 5px; bottom: 7px; transform: rotate(-38deg); }
 
 /* Application boot */
-.app-boot { position: fixed; z-index: 50; inset: 0; width: 100%; min-height: 100dvh; display: grid; place-items: center; overflow: hidden; padding: 24px; background: radial-gradient(circle at 50% 42%, #ffffff 0, var(--canvas) 52%, #f0f0f3 100%); }
-.app-boot::before { content: ""; position: absolute; width: min(62vw, 720px); aspect-ratio: 1; border: 1px solid rgba(99,102,241,.06); border-radius: 50%; box-shadow: 0 0 0 42px rgba(99,102,241,.018), 0 0 0 84px rgba(99,102,241,.012); }
-.boot-center { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: min(360px, 100%); text-align: center; }
-.boot-logo { position: relative; width: 96px; height: 96px; display: grid; place-items: center; }
-.boot-logo::before, .boot-logo::after { content: ""; position: absolute; border: 1px solid rgba(99,102,241,.22); border-radius: 50%; }
-.boot-logo::before { inset: 8px; border-top-color: var(--brand); border-right-color: transparent; animation: boot-orbit 4.8s linear infinite; }
-.boot-logo::after { inset: 18px; border-bottom-color: #a5b4fc; border-left-color: transparent; animation: boot-orbit 3.6s linear infinite reverse; }
-.boot-logo .brand-gem { position: relative; z-index: 1; width: 48px; height: 48px; border-radius: 13px; box-shadow: 0 9px 24px rgba(24,24,27,.18), 0 0 0 7px rgba(99,102,241,.07); animation: boot-logo-breathe 2.4s ease-in-out infinite; }
-.boot-logo .brand-gem::before { width: 21px; height: 5px; left: 8px; top: 12px; }
-.boot-logo .brand-gem::after { width: 21px; height: 5px; right: 8px; bottom: 12px; }
-.boot-logo i { position: absolute; width: 5px; height: 5px; top: 7px; right: 20px; border-radius: 50%; background: #818cf8; box-shadow: 0 0 0 5px rgba(129,140,248,.1); animation: boot-signal 1.8s ease-in-out infinite; }
-.boot-center > .secondary-button { min-width: 112px; margin-top: 24px; }
-@keyframes boot-orbit { to { transform: rotate(360deg); } }
-@keyframes boot-logo-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.035); } }
-@keyframes boot-signal { 0%, 100% { opacity: .38; transform: scale(.78); } 50% { opacity: 1; transform: scale(1.12); } }
-@media (prefers-reduced-motion: reduce) { .boot-logo::before, .boot-logo::after, .boot-logo .brand-gem, .boot-logo i, .boot-status-dot { animation: none; } }
+.app-boot { position: fixed; z-index: 50; inset: 0; width: 100%; min-height: 100dvh; display: grid; place-items: center; overflow: hidden; padding: 24px; background: radial-gradient(circle at 50% 34%, rgba(129,140,248,.12), transparent 30%), radial-gradient(circle at 4% 100%, rgba(196,181,253,.16), transparent 32%), var(--canvas); }
+.app-boot::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(99,102,241,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,.025) 1px, transparent 1px); background-size: 48px 48px; pointer-events: none; }
+.boot-center { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; width: min(380px, 100%); text-align: center; }
+.boot-stage { position: relative; width: 190px; height: 150px; display: grid; place-items: center; }
+.boot-lens { position: relative; z-index: 1; width: 108px; height: 108px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.86); border-radius: 32px; background: linear-gradient(145deg, rgba(255,255,255,.78), rgba(238,239,255,.46)); box-shadow: 0 22px 44px rgba(93,79,125,.1), inset 0 1px rgba(255,255,255,.96); backdrop-filter: blur(18px); }
+.boot-lens .brand-gem { width: 60px; height: 60px; border-radius: 17px; box-shadow: 0 10px 24px rgba(24,24,27,.18); }
+.boot-lens .brand-gem::before { width: 26px; height: 6px; left: 10px; top: 15px; }
+.boot-lens .brand-gem::after { width: 26px; height: 6px; right: 10px; bottom: 15px; }
+.boot-corner { position: absolute; width: 20px; height: 20px; border-color: rgba(99,102,241,.4); border-style: solid; content: ""; }
+.boot-corner.top-left { top: 22px; left: 12px; border-width: 1px 0 0 1px; border-radius: 5px 0 0 0; }
+.boot-corner.top-right { top: 22px; right: 12px; border-width: 1px 1px 0 0; border-radius: 0 5px 0 0; }
+.boot-corner.bottom-left { bottom: 22px; left: 12px; border-width: 0 0 1px 1px; border-radius: 0 0 0 5px; }
+.boot-corner.bottom-right { right: 12px; bottom: 22px; border-width: 0 1px 1px 0; border-radius: 0 0 5px 0; }
+.boot-trace { position: absolute; right: 24px; bottom: 14px; left: 24px; height: 1px; overflow: hidden; background: linear-gradient(90deg, transparent, rgba(99,102,241,.12) 18%, rgba(99,102,241,.44) 50%, rgba(99,102,241,.12) 82%, transparent); }
+.boot-trace::after { position: absolute; top: -1px; left: -28%; width: 28%; height: 3px; border-radius: 99px; background: linear-gradient(90deg, transparent, rgba(99,102,241,.8), transparent); content: ""; animation: boot-trace-scan 2.8s ease-in-out infinite; }
+.boot-brand { color: var(--ink); font-size: 16px; font-weight: 650; letter-spacing: -.03em; }
+.boot-status { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; margin-top: 12px; padding: 0 12px; border: 1px solid rgba(99,102,241,.1); border-radius: 999px; color: var(--muted); background: rgba(255,255,255,.36); font-size: 12px; font-weight: 500; }
+.boot-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px rgba(99,102,241,.1); animation: boot-status-pulse 1.8s ease-in-out infinite; }
+.boot-message { max-width: 320px; margin-top: 10px; color: #98a0ae; font-size: 11px; line-height: 1.5; }
+.boot-message:empty { display: none; }
+.boot-retry { min-width: 96px; min-height: 40px; margin-top: 20px; border-radius: 10px; }
+@keyframes boot-trace-scan { 0% { transform: translateX(0); opacity: 0; } 25%, 75% { opacity: 1; } 100% { transform: translateX(460%); opacity: 0; } }
+@keyframes boot-status-pulse { 0%, 100% { opacity: .42; transform: scale(.82); } 50% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .boot-trace::after, .boot-status-dot { animation: none; } }
 
 /* Authentication */
 .auth-view { min-height: 100dvh; display: grid; grid-template-columns: minmax(520px, 1.15fr) minmax(420px, .85fr); background: var(--panel); }

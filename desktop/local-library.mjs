@@ -174,19 +174,43 @@ function encodeCursor(asset) {
   return Buffer.from(JSON.stringify({ createdAt: asset.createdAt, id: asset.id }), 'utf8').toString('base64url');
 }
 
-export function listLocalAssets({ limit = defaultLimit, cursor = null } = {}) {
+export function listLocalAssets({ limit = defaultLimit, cursor = null, kind = '', search = '', remoteStatus = '' } = {}) {
   const bounded = Math.max(1, Math.min(maxLimit, Number(limit) || defaultLimit));
   const position = decodeCursor(cursor);
+  const normalizedKind = ['image', 'video', 'audio'].includes(kind) ? kind : '';
+  const normalizedSearch = String(search || '').trim();
+  const normalizedRemoteStatus = String(remoteStatus || '').trim();
+  const where = [];
+  const params = { limit: bounded + 1 };
+  if (normalizedKind) {
+    where.push('kind = :kind');
+    params.kind = normalizedKind;
+  }
+  if (normalizedSearch) {
+    where.push('name LIKE :search');
+    params.search = `%${normalizedSearch}%`;
+  }
+  if (normalizedRemoteStatus) {
+    where.push('remote_status = :remoteStatus');
+    params.remoteStatus = normalizedRemoteStatus;
+  }
+  const countWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const totalParams = { ...params };
+  delete totalParams.limit;
+  const total = Number(db().prepare(`SELECT COUNT(*) AS count FROM assets ${countWhere}`).get(totalParams).count);
   const rows = db().prepare(`
     SELECT doc_json, created_at AS createdAt, id
     FROM assets
-    ${position ? 'WHERE (created_at < :cursorCreatedAt OR (created_at = :cursorCreatedAt AND id > :cursorId))' : ''}
+    ${where.length || position ? `WHERE ${[
+      ...where,
+      ...(position ? ['(created_at < :cursorCreatedAt OR (created_at = :cursorCreatedAt AND id > :cursorId))'] : []),
+    ].join(' AND ')}` : ''}
     ORDER BY created_at DESC, id ASC
-    LIMIT :limit`).all({ ...(position ? { cursorCreatedAt: position.createdAt, cursorId: position.id } : {}), limit: bounded + 1 });
+    LIMIT :limit`).all({ ...params, ...(position ? { cursorCreatedAt: position.createdAt, cursorId: position.id } : {}) });
   const hasMore = rows.length > bounded;
   const page = hasMore ? rows.slice(0, bounded) : rows;
   const items = page.map(rowToAsset).filter(Boolean);
-  return { items, nextCursor: hasMore && items.length ? encodeCursor(items.at(-1)) : '' };
+  return { items, total, nextCursor: hasMore && items.length ? encodeCursor(items.at(-1)) : '' };
 }
 
 export function listLocalAssetsByCloudIds(ids) {

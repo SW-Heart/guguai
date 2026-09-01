@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   workspace: Object.freeze({
     get: () => invoke('workspace:get'),
     choose: () => invoke('workspace:choose'),
+    activateAccount: accountId => invoke('workspace:activate-account', accountId),
+    deactivateAccount: () => invoke('workspace:deactivate-account'),
     open: () => invoke('workspace:open'),
   }),
   media: Object.freeze({
@@ -52,7 +54,6 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     syncLocal: payload => invoke('media:sync-local', payload),
     renameLocal: payload => invoke('media:rename-local', payload),
     removeLocal: assetId => invoke('media:remove-local', assetId),
-    saveLocalAs: payload => invoke('media:save-local-as', payload),
     url: assetId => invoke('media:url', assetId),
     showInFolder: assetId => invoke('media:show-in-folder', assetId),
   }),

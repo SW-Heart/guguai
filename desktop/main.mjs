@@ -8,6 +8,7 @@ import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
+import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
   closeLocalLibrary,
   countLocalAssets,
@@ -49,6 +50,9 @@ let tray;
 let isQuitting = false;
 let settings;
 let workspace;
+let workspaceRoot;
+let workspaceAccountId = '';
+let workspaceEpoch = 0;
 let trustedOrigin;
 let packageMetadata = {};
 let updateConfigured = false;
@@ -145,7 +149,10 @@ function syncOriginKey() {
 
 function syncCursor() {
   const origin = syncOriginKey();
-  return origin ? String(settings?.assetSyncCursors?.[origin] || '') : '';
+  if (!origin || !workspaceAccountId) return '';
+  const originCursors = settings?.assetSyncCursors?.[origin];
+  if (!originCursors || typeof originCursors !== 'object' || Array.isArray(originCursors)) return '';
+  return String(originCursors[workspaceAccountId] || '');
 }
 
 async function ensureWorkspace(root) {
@@ -157,15 +164,81 @@ async function ensureWorkspace(root) {
   return resolved;
 }
 
-async function setWorkspace(root, { persist = true } = {}) {
-  closeLocalLibrary();
-  workspace = await ensureWorkspace(root);
-  openLocalLibrary(workspace);
+async function ensureWorkspaceRoot(root) {
+  const resolved = path.resolve(root);
+  await fs.mkdir(path.join(resolved, 'accounts'), { recursive: true, mode: 0o700 });
+  return resolved;
+}
+
+function activeWorkspaceInfo() {
+  return {
+    path: workspace || workspaceRoot || '',
+    rootPath: workspaceRoot || '',
+    accountId: workspaceAccountId,
+    cursor: syncCursor(),
+    deviceId: settings?.deviceId || '',
+  };
+}
+
+async function setWorkspaceRoot(root, { persist = true } = {}) {
+  const resolved = await ensureWorkspaceRoot(root);
+  workspaceRoot = resolved;
+  if (workspaceAccountId) {
+    await activateWorkspaceAccount(workspaceAccountId, { persist: false });
+  } else {
+    workspaceEpoch += 1;
+    remoteDownloadLocks.clear();
+    closeLocalLibrary();
+    workspace = '';
+  }
   if (persist) {
-    settings.workspacePath = workspace;
+    settings.workspaceRootPath = workspaceRoot;
+    settings.workspacePath = workspace || workspaceRoot;
     await persistSettings();
   }
-  return workspace;
+  return activeWorkspaceInfo();
+}
+
+async function activateWorkspaceAccount(accountId, { persist = true } = {}) {
+  const normalizedAccountId = normalizeAccountId(accountId);
+  if (!workspaceRoot) {
+    workspaceRoot = configuredWorkspaceRoot(settings, path.join(app.getPath('documents'), 'GuGu AI Projects'));
+  }
+  const accountRoot = accountWorkspacePath(workspaceRoot, normalizedAccountId);
+  workspaceEpoch += 1;
+  remoteDownloadLocks.clear();
+  closeLocalLibrary();
+  workspace = await ensureWorkspace(accountRoot);
+  workspaceAccountId = normalizedAccountId;
+  openLocalLibrary(workspace);
+  if (persist) {
+    settings.workspaceRootPath = workspaceRoot;
+    settings.workspacePath = workspace;
+    settings.workspaceAccountId = workspaceAccountId;
+    await persistSettings();
+  }
+  return activeWorkspaceInfo();
+}
+
+async function deactivateWorkspaceAccount({ persist = true } = {}) {
+  workspaceEpoch += 1;
+  remoteDownloadLocks.clear();
+  closeLocalLibrary();
+  workspace = '';
+  workspaceAccountId = '';
+  if (persist) {
+    settings.workspaceRootPath ||= workspaceRoot || '';
+    settings.workspacePath = workspaceRoot || '';
+    settings.workspaceAccountId = '';
+    await persistSettings();
+  }
+  return activeWorkspaceInfo();
+}
+
+function assertActiveWorkspace(expectedWorkspace, expectedEpoch) {
+  if (!workspace || !workspaceAccountId || workspace !== expectedWorkspace || workspaceEpoch !== expectedEpoch) {
+    throw new Error('本地工作区已切换，请重试');
+  }
 }
 
 function libraryAsset(assetId) {
@@ -202,9 +275,12 @@ function localMediaMimeType(asset, target) {
 
 async function importFile(filePath) {
   if (!workspace) throw new Error('工作区尚未初始化');
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const stat = await fs.stat(filePath);
   if (!stat.isFile()) throw new Error('选择的路径不是文件');
   const digest = await hashFile(filePath);
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   const existing = findLocalAssetByDigest(digest.sha256, digest.size);
   if (existing) return { ...existing, reused: true };
 
@@ -216,6 +292,7 @@ async function importFile(filePath) {
   const temporary = `${target}.${process.pid}.${randomUUID()}.part`;
   await fs.copyFile(filePath, temporary);
   await fs.rename(temporary, target);
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   const asset = {
     id: `local_${randomUUID()}`,
     name: originalName,
@@ -294,10 +371,12 @@ async function completeCloudUpload(uploadId) {
 }
 
 async function syncLocalAsset({ assetId, uploadForReference = false }) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const asset = libraryAsset(String(assetId || ''));
   if (!asset) throw new Error('本地素材不存在');
-  const source = path.resolve(workspace, asset.relativePath);
-  if (!isInside(workspace, source)) throw new Error('本地素材路径不受信任');
+  const source = path.resolve(targetWorkspace, asset.relativePath);
+  if (!isInside(targetWorkspace, source)) throw new Error('本地素材路径不受信任');
   const payload = JSON.stringify({ name: asset.name, mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 });
   if (asset.cloudAssetId && !uploadForReference) {
     const verifyResponse = await cloudRequest(`/api/files/${encodeURIComponent(asset.cloudAssetId)}/local-ready`, {
@@ -307,12 +386,14 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     });
     if (verifyResponse.ok) {
       const cloudAsset = await verifyResponse.json();
+      assertActiveWorkspace(targetWorkspace, targetEpoch);
       asset.remoteStatus = 'ready';
       asset.localStatus = 'saved';
       upsertLocalAsset(asset);
       return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: true };
     }
     if (verifyResponse.status !== 404) throw new Error(`云端素材校验失败（${verifyResponse.status}）`);
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
     asset.cloudAssetId = '';
     asset.remoteStatus = 'pending';
     upsertLocalAsset(asset);
@@ -320,6 +401,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
   const initResponse = await cloudRequest('/api/files/uploads/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
   if (!initResponse.ok) throw new Error(`上传初始化失败（${initResponse.status}）`);
   const intent = await initResponse.json();
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   if (intent.mode === 'reuse' && intent.asset) {
     if (!uploadForReference) {
       asset.cloudAssetId = intent.asset.id;
@@ -333,6 +415,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     throw new Error('上传协议无效，仅支持 PUT');
   }
   const bytes = await fs.readFile(source);
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   const storageResponse = await net.fetch(intent.uploadUrl, {
     method: 'PUT',
     headers: intent.headers || {},
@@ -341,6 +424,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
   if (!storageResponse.ok) throw new Error(`云端上传失败（${storageResponse.status}）`);
   const cloudAsset = await completeCloudUpload(intent.uploadId);
   if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   if (!uploadForReference) {
     asset.cloudAssetId = cloudAsset.id;
     asset.remoteStatus = 'ready';
@@ -352,12 +436,15 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
 
 async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType }) {
   if (!workspace) throw new Error('工作区尚未初始化');
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const cloudAssetId = String(assetId || '').trim();
   if (!cloudAssetId) throw new Error('缺少云端素材 ID');
   const existing = findLocalAssetByCloudId(cloudAssetId);
   if (existing) {
-    const existingPath = path.resolve(workspace, existing.relativePath);
-    if (isInside(workspace, existingPath) && await fs.access(existingPath).then(() => true).catch(() => false)) {
+    const existingPath = path.resolve(targetWorkspace, existing.relativePath);
+    if (isInside(targetWorkspace, existingPath) && await fs.access(existingPath).then(() => true).catch(() => false)) {
+      assertActiveWorkspace(targetWorkspace, targetEpoch);
       existing.localStatus = 'saved';
       upsertLocalAsset(existing);
       return { ...existing, url: localMediaUrl(existing.id), reused: true };
@@ -371,8 +458,9 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
   if (!response.ok || !response.body) throw new Error(`媒体下载失败（${response.status}）`);
   const originalName = safeName(name, `${kind === 'video' ? '生成视频' : '生成图片'}-${cloudAssetId}`);
   const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
-  const temporary = path.join(workspace, '.gugu', 'transfers', `${cloudAssetId}.${randomUUID()}.part`);
-  const output = path.join(workspace, 'library');
+  const temporary = path.join(targetWorkspace, '.gugu', 'transfers', `${cloudAssetId}.${randomUUID()}.part`);
+  const output = path.join(targetWorkspace, 'library');
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   await fs.mkdir(output, { recursive: true });
   const hash = createHash('sha256');
   let size = 0;
@@ -382,7 +470,8 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
     const sha256 = hash.digest('hex');
     const targetName = `${sha256.slice(0, 16)}-${originalName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')}${extension && !path.extname(originalName) ? extension : ''}`;
     const relativePath = path.join('library', targetName);
-    const target = path.join(workspace, relativePath);
+    const target = path.join(targetWorkspace, relativePath);
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
     await fs.rename(temporary, target);
     const asset = {
       ...(existing || {}),
@@ -398,6 +487,7 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
       remoteStatus: 'ready',
       localStatus: 'saved',
     };
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
     upsertLocalAsset(asset);
     return { ...asset, url: localMediaUrl(asset.id), reused: false };
   } catch (error) {
@@ -411,7 +501,10 @@ async function downloadRemoteAsset(payload = {}) {
   if (!cloudAssetId) return downloadRemoteAssetInternal(payload);
   const inFlight = remoteDownloadLocks.get(cloudAssetId);
   if (inFlight) return inFlight;
-  const task = downloadRemoteAssetInternal(payload).finally(() => remoteDownloadLocks.delete(cloudAssetId));
+  let task;
+  task = downloadRemoteAssetInternal(payload).finally(() => {
+    if (remoteDownloadLocks.get(cloudAssetId) === task) remoteDownloadLocks.delete(cloudAssetId);
+  });
   remoteDownloadLocks.set(cloudAssetId, task);
   return task;
 }
@@ -427,24 +520,16 @@ async function renameLocalAsset({ assetId, name }) {
 }
 
 async function removeLocalAsset(assetId) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const asset = libraryAsset(String(assetId || ''));
   if (!asset) throw new Error('本地素材不存在');
-  const target = path.resolve(workspace, asset.relativePath);
-  if (!isInside(workspace, target)) throw new Error('本地素材路径不受信任');
+  const target = path.resolve(targetWorkspace, asset.relativePath);
+  if (!isInside(targetWorkspace, target)) throw new Error('本地素材路径不受信任');
   await fs.unlink(target).catch(() => {});
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
   deleteLocalAsset(asset.id);
   return true;
-}
-
-async function saveLocalAssetAs({ assetId }) {
-  const asset = libraryAsset(String(assetId || ''));
-  if (!asset) throw new Error('本地素材不存在');
-  const source = path.resolve(workspace, asset.relativePath);
-  if (!isInside(workspace, source)) throw new Error('本地素材路径不受信任');
-  const result = await dialog.showSaveDialog(mainWindow, { title: '保存素材副本', defaultPath: path.join(app.getPath('downloads'), asset.name), buttonLabel: '保存' });
-  if (result.canceled || !result.filePath) return { canceled: true };
-  await fs.copyFile(source, result.filePath);
-  return { canceled: false, path: result.filePath };
 }
 
 function localMediaUrl(assetId) {
@@ -478,36 +563,41 @@ function parseLocalMediaRange(value, size) {
 }
 
 async function materializeLocalAssets(items) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const assets = await Promise.all(items.map(async item => {
     const relativePath = String(item?.relativePath || '');
     if (!relativePath) return null;
-    const target = path.resolve(workspace, relativePath);
-    if (!isInside(workspace, target)) return null;
+    const target = path.resolve(targetWorkspace, relativePath);
+    if (!isInside(targetWorkspace, target)) return null;
     const stat = await fs.stat(target).catch(() => null);
     if (!stat?.isFile()) return null;
-    return { ...item, localStatus: 'saved', url: localMediaUrl(item.id) };
+    return { ...item, localStatus: 'saved', url: `gugu-media://asset/${encodeURIComponent(item.id)}` };
   }));
+  if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return [];
   return assets.filter(Boolean);
 }
 
 async function listLocalAssets(options = {}) {
-  if (!workspace) return { items: [], nextCursor: '' };
+  if (!workspace) return { items: [], total: 0, nextCursor: '' };
   const page = Array.isArray(options.cloudAssetIds)
-    ? { items: listLocalAssetsByCloudIds(options.cloudAssetIds), nextCursor: '' }
+    ? { items: listLocalAssetsByCloudIds(options.cloudAssetIds), total: options.cloudAssetIds.length, nextCursor: '' }
     : queryLocalAssets(options);
-  return { items: await materializeLocalAssets(page.items), nextCursor: page.nextCursor };
+  return { items: await materializeLocalAssets(page.items), total: page.total, nextCursor: page.nextCursor };
 }
 
 async function serveLocalMedia(request) {
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
   const url = new URL(request.url);
   const assetId = decodeURIComponent(url.pathname.replace(/^\//, ''));
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
   const asset = libraryAsset(assetId);
-  if (!asset || !workspace) return new Response('Not Found', { status: 404 });
-  const target = path.resolve(workspace, asset.relativePath);
-  if (!isInside(workspace, target)) return new Response('Forbidden', { status: 403 });
+  if (!asset || !targetWorkspace || !workspaceAccountId) return new Response('Not Found', { status: 404 });
+  const target = path.resolve(targetWorkspace, asset.relativePath);
+  if (!isInside(targetWorkspace, target)) return new Response('Forbidden', { status: 403 });
   const stat = await fs.stat(target).catch(() => null);
-  if (!stat?.isFile()) return new Response('Not Found', { status: 404 });
+  if (!stat?.isFile() || targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status: 404 });
 
   const range = parseLocalMediaRange(request.headers.get('range'), stat.size);
   if (range?.unsatisfiable) return new Response(null, { status: 416, headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${stat.size}` } });
@@ -531,7 +621,7 @@ async function openOfflinePage(message = '') {
   if (!mainWindow) return;
   if (process.platform === 'win32') {
     setWindowsModalState(false);
-    mainWindow.setTitleBarOverlay({ color: '#10171b', symbolColor: '#9baaa5', height: windowsTitleBarOverlayHeight });
+    mainWindow.setTitleBarOverlay(windowsTitleBarOverlay);
   }
   await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: { message } });
 }
@@ -932,7 +1022,9 @@ function registerIpc() {
     version: app.getVersion(),
     nativeWindowControls: process.platform === 'win32',
     apiBase: configuredApiBase(),
-    workspacePath: workspace,
+    workspacePath: workspace || workspaceRoot || '',
+    workspaceRootPath: workspaceRoot || '',
+    workspaceAccountId,
     deviceId: settings.deviceId,
     assetSyncCursor: syncCursor(),
     updateUrl: updateFeedUrl(),
@@ -942,9 +1034,11 @@ function registerIpc() {
     const cursor = String(value || '');
     if (cursor.length > 1024) throw new Error('素材同步游标无效');
     const origin = syncOriginKey();
-    if (origin) {
+    if (origin && workspaceAccountId) {
       settings.assetSyncCursors ||= {};
-      settings.assetSyncCursors[origin] = cursor;
+      const current = settings.assetSyncCursors[origin];
+      if (!current || typeof current !== 'object' || Array.isArray(current)) settings.assetSyncCursors[origin] = {};
+      settings.assetSyncCursors[origin][workspaceAccountId] = cursor;
       await persistSettings();
     }
     return { deviceId: settings.deviceId, cursor };
@@ -1021,12 +1115,17 @@ function registerIpc() {
     if (!paymentWindow || paymentWindow.isDestroyed() || event.sender !== paymentWindow.webContents) return false;
     return closePaymentWindow();
   });
-  ipcMain.handle('workspace:get', () => ({ path: workspace, assetCount: countLocalAssets() }));
+  ipcMain.handle('workspace:get', () => ({ ...activeWorkspaceInfo(), assetCount: workspace ? countLocalAssets() : 0 }));
   ipcMain.handle('workspace:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 GuGu AI 工作区', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
-    await setWorkspace(result.filePaths[0]);
-    return { canceled: false, path: workspace };
+    return { canceled: false, ...(await setWorkspaceRoot(result.filePaths[0])) };
+  });
+  ipcMain.handle('workspace:activate-account', async (_event, accountId) => {
+    return activateWorkspaceAccount(accountId);
+  });
+  ipcMain.handle('workspace:deactivate-account', async () => {
+    return deactivateWorkspaceAccount();
   });
   ipcMain.handle('workspace:open', async () => {
     if (!workspace) return false;
@@ -1040,13 +1139,16 @@ function registerIpc() {
   ipcMain.handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
   ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
   ipcMain.handle('media:remove-local', (_event, assetId) => removeLocalAsset(assetId));
-  ipcMain.handle('media:save-local-as', (_event, payload) => saveLocalAssetAs(payload || {}));
   ipcMain.handle('media:url', (_event, assetId) => localMediaUrl(String(assetId || '')));
   ipcMain.handle('media:show-in-folder', async (_event, assetId) => {
+    const targetWorkspace = workspace;
+    const targetEpoch = workspaceEpoch;
     const asset = libraryAsset(String(assetId || ''));
-    if (!asset || !workspace) return false;
-    const target = path.resolve(workspace, asset.relativePath);
-    if (!isInside(workspace, target)) return false;
+    if (!asset || !targetWorkspace || !workspaceAccountId) return false;
+    const target = path.resolve(targetWorkspace, asset.relativePath);
+    if (!isInside(targetWorkspace, target)) return false;
+    if (!await fs.access(target).then(() => true).catch(() => false)) return false;
+    if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return false;
     shell.showItemInFolder(target);
     return true;
   });
@@ -1146,9 +1248,12 @@ async function bootstrap() {
   settingsReadyResolve?.();
   settingsReadyResolve = null;
   startupTrace('settings-ready');
-  const preferredWorkspace = settings.workspacePath || path.join(app.getPath('documents'), 'GuGu AI Projects');
+  workspaceRoot = configuredWorkspaceRoot(settings, path.join(app.getPath('documents'), 'GuGu AI Projects'));
+  settings.workspaceRootPath = workspaceRoot;
+  settings.workspacePath = workspaceRoot;
+  settings.workspaceAccountId = '';
   await Promise.all([
-    setWorkspace(preferredWorkspace, { persist: false }),
+    ensureWorkspaceRoot(workspaceRoot),
     // Persist the generated device ID without holding up workspace setup.
     persistSettings(),
   ]);

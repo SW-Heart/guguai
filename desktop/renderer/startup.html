@@ -7,68 +7,85 @@
   <style>
     :root {
       color-scheme: light;
-      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #20212a;
-      background: #f7f7f8;
+      --canvas: #f7f7f8;
+      --ink: #18181b;
+      --ink-soft: #3f3f46;
+      --muted: #667085;
+      --faint: #8b95a5;
+      --brand: #6366f1;
+      --brand-line: rgba(99,102,241,.16);
+      --glass-surface: linear-gradient(145deg, rgba(255,255,255,.78), rgba(238,240,255,.48));
+      --glass-line: rgba(255,255,255,.72);
+      --glass-shadow: 0 18px 52px rgba(24,24,27,.1), 0 3px 10px rgba(24,24,27,.05), inset 0 1px rgba(255,255,255,.86);
+      font-family: Inter, Geist, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: var(--canvas);
     }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; margin: 0; }
-    body { min-height: 100vh; overflow: hidden; background: radial-gradient(circle at 50% 35%, #fff 0, #f7f7f8 52%, #ededf1 100%); }
+    body { position: relative; min-height: 100vh; overflow: hidden; background: radial-gradient(circle at 18% 10%, rgba(165,180,252,.22), transparent 30%), radial-gradient(circle at 82% 86%, rgba(192,132,252,.16), transparent 27%), linear-gradient(140deg, #fff 0%, var(--canvas) 54%, #f0f0f3 100%); }
+    body::before { position: fixed; inset: 0; z-index: 0; pointer-events: none; content: ""; opacity: .24; background-image: linear-gradient(rgba(99,102,241,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,.08) 1px, transparent 1px); background-size: 72px 72px; mask-image: radial-gradient(ellipse at 50% 50%, #000 0%, transparent 68%); -webkit-mask-image: radial-gradient(ellipse at 50% 50%, #000 0%, transparent 68%); }
     body.desktop-runtime { padding-top: 56px; }
     .hidden { display: none !important; }
     .desktop-drag-region { position: fixed; z-index: 10; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; }
-    .desktop-window-controls { position: fixed; z-index: 20; top: 0; right: 0; height: 56px; display: flex; border-left: 1px solid #e2e3e8; background: rgba(255,255,255,.78); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
-    .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: #777986; background: transparent; display: grid; place-items: center; cursor: pointer; -webkit-app-region: no-drag; }
-    .desktop-window-controls button:hover { color: #20212a; background: #ececf0; }
+    .desktop-window-controls { position: fixed; z-index: 20; top: 0; right: 0; height: 56px; display: flex; border-left: 1px solid rgba(24,24,27,.08); background: rgba(247,247,248,.72); box-shadow: -8px 0 18px rgba(24,24,27,.035); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
+    .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: var(--muted); background: transparent; display: grid; place-items: center; cursor: pointer; -webkit-app-region: no-drag; transition: color 180ms cubic-bezier(.2,.8,.2,1), background 180ms cubic-bezier(.2,.8,.2,1); }
+    .desktop-window-controls button:hover { color: var(--ink); background: rgba(24,24,27,.06); }
+    .desktop-window-controls button:active { background: rgba(24,24,27,.1); }
     .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
-    .desktop-window-controls .window-close:hover { color: #fff; background: #b94a54; }
+    .desktop-window-controls .window-close:hover { color: #fff; background: #d6535c; }
     .desktop-window-controls .window-icon { width: 13px; height: 13px; }
-    .desktop-window-controls button:focus-visible { outline: 2px solid #696ce0; outline-offset: -2px; }
-    .startup-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; padding: 32px; }
-    .startup-content { width: min(520px, 100%); text-align: center; }
-    .startup-mark { position: relative; width: 68px; height: 68px; margin: 0 auto 22px; border-radius: 19px; color: #fff; background: #18181b; display: grid; place-items: center; box-shadow: 0 14px 30px rgba(24,24,27,.18); }
-    .startup-mark::before, .startup-mark::after { content: ""; width: 30px; height: 7px; border-radius: 3px; background: currentColor; position: absolute; }
-    .startup-mark::before { transform: translate(-5px, -10px) rotate(-38deg); }
-    .startup-mark::after { transform: translate(5px, 10px) rotate(-38deg); }
-    .startup-mark i { width: 7px; height: 7px; border-radius: 50%; background: #818cf8; box-shadow: 0 0 0 6px rgba(129,140,248,.12); }
-    .startup-content > span { color: #777986; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
-    .startup-content h1 { margin: 12px 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.035em; }
-    .startup-content > p { margin: 0; color: #737580; font-size: 12px; line-height: 1.7; }
-    .startup-status { min-height: 19px; margin-top: 24px; color: #777986; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .startup-spinner { width: 18px; height: 18px; margin: 0 auto 10px; border: 2px solid #d9d9e1; border-top-color: #696ce0; border-radius: 50%; animation: spin .8s linear infinite; }
+    .desktop-window-controls button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .startup-shell { position: relative; z-index: 1; min-height: calc(100vh - 56px); display: grid; place-items: center; padding: 32px; }
+    .startup-content { width: min(430px, 100%); text-align: center; }
+    .startup-stage { position: relative; width: 190px; height: 150px; margin: 0 auto 25px; display: grid; place-items: center; }
+    .startup-corner { position: absolute; z-index: 1; width: 21px; height: 21px; border-color: rgba(99,102,241,.34); border-style: solid; }
+    .startup-corner.top-left { top: 4px; left: 8px; border-width: 1px 0 0 1px; border-radius: 8px 0 0; }
+    .startup-corner.top-right { top: 4px; right: 8px; border-width: 1px 1px 0 0; border-radius: 0 8px 0 0; }
+    .startup-corner.bottom-left { bottom: 4px; left: 8px; border-width: 0 0 1px 1px; border-radius: 0 0 0 8px; }
+    .startup-corner.bottom-right { right: 8px; bottom: 4px; border-width: 0 1px 1px 0; border-radius: 0 0 8px; }
+    .startup-lens { position: relative; z-index: 2; width: 108px; height: 108px; border: 1px solid rgba(255,255,255,.84); border-radius: 30px; background: linear-gradient(145deg, rgba(255,255,255,.62), rgba(231,233,255,.26)); box-shadow: 0 16px 32px rgba(73,76,160,.11), inset 0 1px rgba(255,255,255,.9); display: grid; place-items: center; backdrop-filter: blur(24px) saturate(1.22); -webkit-backdrop-filter: blur(24px) saturate(1.22); }
+    .startup-mark { width: 60px; height: 60px; border-radius: 17px; background: #18181b; display: grid; place-items: center; box-shadow: 0 9px 22px rgba(24,24,27,.2); }
+    .startup-mark-icon { display: block; width: 60px; height: 60px; border-radius: 17px; }
+    .startup-trace { position: absolute; z-index: 3; right: 20px; bottom: 14px; left: 20px; height: 2px; overflow: hidden; border-radius: 99px; background: rgba(99,102,241,.1); }
+    .startup-trace::after { position: absolute; top: 0; left: 0; width: 34%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, transparent, var(--brand), transparent); content: ""; animation: trace 1.65s ease-in-out infinite; }
+    .startup-brand h1 { margin: 0; color: var(--ink); font-size: 20px; font-weight: 650; letter-spacing: -.035em; }
+    .startup-status { width: max-content; max-width: 100%; min-height: 36px; margin: 18px auto 0; padding: 0 14px; border: 1px solid rgba(255,255,255,.68); border-radius: 999px; background: rgba(255,255,255,.38); box-shadow: inset 0 1px rgba(255,255,255,.72); backdrop-filter: blur(14px) saturate(1.12); -webkit-backdrop-filter: blur(14px) saturate(1.12); display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .startup-spinner { width: 14px; height: 14px; flex: 0 0 14px; border: 2px solid rgba(99,102,241,.16); border-top-color: var(--brand); border-radius: 50%; animation: spin .8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .update-dialog { position: fixed; z-index: 40; inset: 0; padding: 24px; background: rgba(20,21,28,.3); display: grid; place-items: center; backdrop-filter: blur(7px); }
-    .update-card { position: relative; width: min(468px, 100%); padding: 32px 34px 28px; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 20px; color: #f8f8fb; background: #1c1d23; box-shadow: 0 30px 100px rgba(12,12,18,.35), 0 0 0 1px rgba(132,133,255,.08) inset; text-align: center; }
-    .update-card::before { position: absolute; top: -145px; left: 50%; width: 300px; height: 300px; border-radius: 50%; background: rgba(117,119,255,.23); filter: blur(34px); transform: translateX(-50%); content: ""; pointer-events: none; }
-    .update-close { position: absolute; z-index: 1; top: 14px; right: 14px; width: 32px; height: 32px; padding: 7px; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; color: #9799a7; background: rgba(255,255,255,.04); display: grid; place-items: center; cursor: pointer; }
-    .update-close:hover { color: #fff; border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.09); }
+    @keyframes trace { 0% { transform: translateX(-130%); } 100% { transform: translateX(390%); } }
+    .update-dialog { position: fixed; z-index: 40; inset: 0; padding: 24px; background: rgba(24,24,27,.14); display: grid; place-items: center; backdrop-filter: blur(10px) saturate(1.05); -webkit-backdrop-filter: blur(10px) saturate(1.05); }
+    .update-card { position: relative; width: min(400px, 100%); padding: 26px 28px 24px; border: 1px solid var(--glass-line); border-radius: 22px; color: var(--ink); background: var(--glass-surface); box-shadow: var(--glass-shadow), 0 30px 80px rgba(24,24,27,.12); backdrop-filter: blur(28px) saturate(1.12); -webkit-backdrop-filter: blur(28px) saturate(1.12); text-align: left; }
+    .update-close { position: absolute; z-index: 1; top: 12px; right: 12px; width: 34px; height: 34px; padding: 7px; border: 1px solid rgba(255,255,255,.68); border-radius: 10px; color: var(--muted); background: rgba(255,255,255,.42); display: grid; place-items: center; cursor: pointer; transition: color 180ms cubic-bezier(.2,.8,.2,1), background 180ms cubic-bezier(.2,.8,.2,1); }
+    .update-close:hover { color: var(--ink); background: rgba(255,255,255,.72); }
     .update-close svg { width: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
-    .update-mark { position: relative; z-index: 1; width: 56px; height: 56px; margin: 4px auto 17px; border: 1px solid rgba(159,161,255,.35); border-radius: 17px; color: #b7b8ff; background: linear-gradient(145deg, rgba(117,119,255,.26), rgba(117,119,255,.06)); display: grid; place-items: center; box-shadow: 0 11px 28px rgba(89,91,220,.2); }
-    .update-mark svg { width: 28px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
-    .update-kicker { position: relative; z-index: 1; color: #9899b9; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; }
-    .update-card h2 { position: relative; z-index: 1; margin: 11px 0 8px; color: #fff; font-size: 24px; font-weight: 650; letter-spacing: -.035em; }
-    .update-card > p { position: relative; z-index: 1; max-width: 310px; margin: 0 auto; color: #b6b7c2; font-size: 12px; line-height: 1.7; }
-    .update-versions { position: relative; z-index: 1; margin: 25px auto 20px; padding: 13px 16px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(255,255,255,.045); display: flex; align-items: center; justify-content: center; gap: 17px; }
-    .update-versions span { min-width: 96px; display: grid; gap: 5px; }
-    .update-versions small { color: #858693; font-size: 10px; }
-    .update-versions strong { color: #f4f4f7; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .update-versions i { width: 20px; height: 1px; background: rgba(255,255,255,.22); }
-    .update-progress-wrap { position: relative; z-index: 1; min-height: 39px; display: grid; gap: 7px; }
-    .update-progress-track { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.1); }
-    .update-progress { position: relative; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #7376ff, #b18dff); transition: width 180ms ease; }
+    .update-mark { width: 44px; height: 44px; margin-bottom: 18px; border: 1px solid rgba(99,102,241,.16); border-radius: 13px; color: var(--brand); background: linear-gradient(145deg, rgba(255,255,255,.72), rgba(224,226,255,.68)); display: grid; place-items: center; box-shadow: inset 0 1px rgba(255,255,255,.82); }
+    .update-mark svg { width: 24px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
+    .update-card h2 { margin: 0; color: var(--ink); font-size: 22px; font-weight: 650; letter-spacing: -.035em; }
+    .update-card > p { max-width: 310px; margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .update-versions { margin: 22px 0 18px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.62); border-radius: 13px; background: rgba(255,255,255,.42); display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); align-items: center; gap: 12px; }
+    .update-versions span { min-width: 0; display: grid; gap: 4px; }
+    .update-versions span:last-child { text-align: right; }
+    .update-versions small { color: var(--faint); font-size: 10px; }
+    .update-versions strong { color: var(--ink-soft, #3f3f46); font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .update-versions i { width: 16px; height: 1px; background: var(--brand-line); }
+    .update-progress-wrap { min-height: 39px; display: grid; gap: 7px; }
+    .update-progress-track { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(99,102,241,.1); }
+    .update-progress { position: relative; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 180ms cubic-bezier(.2,.8,.2,1); }
     .update-progress.is-indeterminate { width: 38%; animation: progress 1.15s ease-in-out infinite; }
     @keyframes progress { 0%, 100% { transform: translateX(-110%); } 50% { transform: translateX(240%); } }
-    .update-progress-wrap > span { color: #9697a5; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .update-hint { min-height: 18px; margin-top: 12px !important; color: #7f808d !important; font-size: 10px !important; }
-    .update-actions { position: relative; z-index: 1; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.08); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .update-progress-wrap > span { color: var(--faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+    .update-hint { min-height: 18px; margin-top: 12px !important; color: var(--faint) !important; font-size: 10px !important; }
+    .update-actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(99,102,241,.1); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .update-later, .update-action { min-height: 40px; border-radius: 8px; font-size: 11px; cursor: pointer; }
-    .update-later { padding: 7px 12px; border: 0; color: #a4a5b0; background: transparent; }
-    .update-later:hover { color: #fff; background: rgba(255,255,255,.07); }
-    .update-action { min-width: 126px; padding: 7px 16px; border: 1px solid #8587ff; color: #fff; background: linear-gradient(135deg, #6f73ef, #9b77ee); box-shadow: 0 8px 20px rgba(102,103,231,.22); }
-    .update-action:disabled { color: #bfc0ca; background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.08); box-shadow: none; cursor: wait; }
-    .update-card.ready .update-mark { color: #c9ffbd; border-color: rgba(139,245,111,.32); background: linear-gradient(145deg, rgba(112,220,88,.25), rgba(112,220,88,.06)); box-shadow: 0 11px 28px rgba(88,180,70,.15); }
-    .update-card.error .update-mark { color: #ffb2b8; border-color: rgba(255,150,160,.28); background: rgba(217,89,104,.12); box-shadow: none; }
-    @media (max-width: 560px) { .startup-shell { padding: 22px; } .update-card { padding: 28px 21px 22px; } .update-versions { gap: 9px; padding-inline: 9px; } .update-versions span { min-width: 82px; } }
+    .update-later { padding: 7px 12px; border: 1px solid transparent; color: var(--muted); background: transparent; }
+    .update-later:hover { color: var(--ink); border-color: rgba(255,255,255,.56); background: rgba(255,255,255,.42); }
+    .update-action { min-width: 118px; padding: 7px 16px; border: 1px solid rgba(255,255,255,.42); color: #fff; background: linear-gradient(135deg, #5c5ee9, #8062ec); box-shadow: 0 8px 18px rgba(91,92,232,.18); }
+    .update-action:disabled { color: var(--faint); background: rgba(255,255,255,.42); border-color: rgba(255,255,255,.58); box-shadow: none; cursor: wait; }
+    .update-card.ready .update-mark { color: #397052; border-color: rgba(77,124,90,.18); background: linear-gradient(145deg, rgba(237,246,239,.88), rgba(214,239,220,.68)); }
+    .update-card.error .update-mark { color: #b24d55; border-color: rgba(178,77,85,.18); background: linear-gradient(145deg, rgba(255,241,242,.9), rgba(255,224,227,.7)); }
+    @media (prefers-reduced-motion: reduce) { .startup-spinner, .startup-trace::after, .update-progress.is-indeterminate { animation: none; } }
+    @media (max-width: 560px) { .startup-shell { padding: 22px; } .startup-stage { width: 180px; height: 144px; } .startup-corner.top-left, .startup-corner.bottom-left { left: 4px; } .startup-corner.top-right, .startup-corner.bottom-right { right: 4px; } .update-card { padding: 24px 21px 22px; } .update-versions { gap: 9px; padding-inline: 10px; } }
   </style>
 </head>
 <body>
@@ -80,24 +97,38 @@
   </div>
   <main class="startup-shell">
     <section class="startup-content" aria-live="polite">
-      <div class="startup-mark" aria-hidden="true"><i></i></div>
-      <span>GUGU AI / DESKTOP</span>
-      <h1>正在启动 GuGu AI</h1>
-      <p>正在连接创作服务，请稍候。</p>
-      <div class="startup-status"><div class="startup-spinner" aria-hidden="true"></div><span id="startupStatus">正在准备工作区…</span></div>
+      <div class="startup-stage" aria-hidden="true">
+        <span class="startup-corner top-left"></span>
+        <span class="startup-corner top-right"></span>
+        <span class="startup-corner bottom-left"></span>
+        <span class="startup-corner bottom-right"></span>
+        <div class="startup-lens">
+          <div class="startup-mark">
+            <svg class="startup-mark-icon" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+              <rect width="64" height="64" rx="16" fill="#18181b"/>
+              <rect x="11" y="16.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 25 21)"/>
+              <rect x="25" y="38.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 39 43)"/>
+            </svg>
+          </div>
+        </div>
+        <div class="startup-trace"></div>
+      </div>
+      <div class="startup-brand">
+        <h1>GuGu AI</h1>
+      </div>
+      <div class="startup-status"><div class="startup-spinner" aria-hidden="true"></div><span id="startupStatus">正在连接服务…</span></div>
     </section>
   </main>
   <section id="updateDialog" class="update-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="updateTitle" aria-describedby="updateMessage">
     <div class="update-card">
       <button id="closeUpdate" class="update-close" type="button" aria-label="关闭更新提示" title="稍后提醒"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
       <div class="update-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/><path d="M5 5.5A8.5 8.5 0 0 1 19 8"/></svg></div>
-      <span class="update-kicker">GUGU AI · DESKTOP UPDATE</span>
       <h2 id="updateTitle">发现新版本</h2>
-      <p id="updateMessage">新版本正在准备下载。</p>
+      <p id="updateMessage">准备下载最新版本。</p>
       <div class="update-versions" aria-label="版本信息"><span><small>当前版本</small><strong id="currentVersion">—</strong></span><i aria-hidden="true"></i><span><small>新版本</small><strong id="nextVersion">—</strong></span></div>
       <div id="progressWrap" class="update-progress-wrap" aria-live="polite"><div class="update-progress-track"><div id="progress" class="update-progress"></div></div><span id="progressLabel">准备下载…</span></div>
-      <p id="updateHint" class="update-hint">更新下载期间你可以等待工作区连接完成。</p>
-      <footer class="update-actions"><button id="laterUpdate" class="update-later" type="button">稍后提醒</button><button id="updateAction" class="update-action" type="button" disabled>正在下载…</button></footer>
+      <p id="updateHint" class="update-hint">下载完成后重启更新。</p>
+      <footer class="update-actions"><button id="laterUpdate" class="update-later" type="button">稍后</button><button id="updateAction" class="update-action" type="button" disabled>正在下载…</button></footer>
     </div>
   </section>
   <script>
@@ -155,43 +186,43 @@
       progressWrap.classList.remove('hidden');
       if (status === 'available') {
         $('#updateTitle').textContent = '发现新版本';
-        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 正在准备下载，完成后会提醒你重启更新。`;
+        $('#updateMessage').textContent = '新版本已就绪。';
         progress.style.width = '0%';
         progress.classList.add('is-indeterminate');
         $('#progressLabel').textContent = '准备下载…';
-        $('#updateHint').textContent = '更新正在后台下载，请保持客户端打开。';
+        $('#updateHint').textContent = '下载完成后重启更新。';
         $('#updateAction').textContent = '正在下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloading') {
         $('#updateTitle').textContent = '正在下载更新';
-        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 正在下载，完成后会提醒你重启更新。`;
+        $('#updateMessage').textContent = '正在获取最新版本。';
         progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
         if (!hasProgress) progress.classList.add('is-indeterminate');
         $('#progressLabel').textContent = hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…';
-        $('#updateHint').textContent = '下载进度会实时更新，请保持客户端打开。';
+        $('#updateHint').textContent = '下载完成后重启更新。';
         $('#updateAction').textContent = '正在下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloaded') {
         $('#updateTitle').textContent = '更新已下载';
-        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 已下载完成，可以重启客户端更新。`;
+        $('#updateMessage').textContent = '新版本已准备好。';
         progress.style.width = '100%';
         $('#progressLabel').textContent = '下载完成';
-        $('#updateHint').textContent = '点击“重启更新”后客户端会关闭，请按系统提示完成安装。';
+        $('#updateHint').textContent = '重启客户端完成更新。';
         $('#updateAction').textContent = '重启更新';
         $('#updateAction').disabled = false;
       } else if (status === 'installing') {
         $('#updateTitle').textContent = '正在退出客户端';
-        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 即将关闭，请按系统提示完成更新。`;
+        $('#updateMessage').textContent = '客户端即将关闭。';
         progress.style.width = '100%';
         $('#progressLabel').textContent = '正在退出…';
-        $('#updateHint').textContent = '客户端关闭后，请按安装程序提示完成覆盖安装。';
+        $('#updateHint').textContent = '按安装程序提示完成更新。';
         $('#updateAction').textContent = '正在退出…';
         $('#updateAction').disabled = true;
       } else if (status === 'error') {
-        $('#updateTitle').textContent = '更新暂不可用';
+        $('#updateTitle').textContent = '更新失败';
         $('#updateMessage').textContent = updateState.message || '更新下载失败，请稍后重试。';
         progressWrap.classList.add('hidden');
-        $('#updateHint').textContent = '可以稍后再次检查更新。';
+        $('#updateHint').textContent = '请稍后重新检查。';
         $('#updateAction').textContent = '重新检查';
         $('#updateAction').disabled = false;
       }
@@ -219,13 +250,13 @@
     bridge?.updates?.onStatus?.(payload => {
       updateState = { ...updateState, ...(payload || {}) };
       if (['current', 'unconfigured', 'idle'].includes(payload?.status)) {
-        $('#startupStatus').textContent = '正在连接创作服务…';
+        $('#startupStatus').textContent = '正在连接服务…';
         $('#updateDialog').classList.add('hidden');
         updateDismissed = false;
         void bridge?.window?.setModalState?.(false);
         return;
       }
-      if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查客户端更新…';
+      if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查更新…';
       renderUpdate(payload);
     });
     Promise.all([bridge?.getInfo?.(), bridge?.updates?.getStatus?.()]).then(([info, status]) => {

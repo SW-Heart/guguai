@@ -5,12 +5,25 @@ import {
   canRemoveImportedLocalAsset,
   cloudAssetFromDesktopSync,
   desktopHydrationRetryDelay,
+  desktopMediaPayload,
   isAwaitingDesktopDelivery,
   isRemoteReferenceReady,
   needsReferenceUpload,
   shouldHydrateDesktopAsset,
   shouldRemoveUploadJobLocalAsset,
 } from '../public/desktop-media-sync.js';
+
+test('desktop folder reveal payload distinguishes cloud, hydrated, and local-only assets', () => {
+  assert.deepEqual(desktopMediaPayload({ id:'cloud-1', name:'历史图片.png', kind:'image', mimeType:'image/png' }), {
+    assetId:'cloud-1', localAssetId:'', url:'/api/files/cloud-1/direct', name:'历史图片.png', kind:'image', mimeType:'image/png',
+  });
+  assert.deepEqual(desktopMediaPayload({ id:'cloud-2', localId:'local-2', directUrl:'/signed-route', name:'已接收.mp4', kind:'video', mimeType:'video/mp4' }), {
+    assetId:'cloud-2', localAssetId:'local-2', url:'/signed-route', name:'已接收.mp4', kind:'video', mimeType:'video/mp4',
+  });
+  assert.deepEqual(desktopMediaPayload({ id:'local-3', localOnly:true, name:'本地素材.webp', kind:'image', mimeType:'image/webp' }), {
+    assetId:'', localAssetId:'local-3', url:'', name:'本地素材.webp', kind:'image', mimeType:'image/webp',
+  });
+});
 
 test('desktop hydration retries transient failures with bounded backoff', () => {
   assert.equal(desktopHydrationRetryDelay(1), 750);

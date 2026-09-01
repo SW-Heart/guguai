@@ -110,7 +110,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
 
   const child = spawn(process.execPath, ['server.mjs'], {
     cwd: path.resolve(new URL('..', import.meta.url).pathname),
-    env: { ...process.env, NODE_ENV: 'development', DESKTOP_APP_ONLY: 'false', DATA_DIR: dataDir, PORT: String(port), OAI_API_BASE: `${upstreamBase}/v1`, OAIAPI_GEMINI_KEY: 'test-oai-key', DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS: '3600' },
+    env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DATA_DIR: dataDir, PORT: String(port), OAI_API_BASE: `${upstreamBase}/v1`, OAIAPI_GEMINI_KEY: 'test-oai-key', DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS: '3600' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {

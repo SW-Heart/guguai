@@ -100,6 +100,13 @@ test('website auth and Alipay APIs remain available in desktop-only mode', () =>
   assert.equal(__test.websiteApiAllowed('/api/admin/users'), false);
 });
 
+test('creator routes serve the workspace only to the desktop client', () => {
+  assert.equal(__test.staticEntryFile('/login', { desktop:false, appOnly:true }), 'home.html');
+  assert.equal(__test.staticEntryFile('/image', { desktop:false, appOnly:true }), 'home.html');
+  assert.equal(__test.staticEntryFile('/login', { desktop:true, appOnly:true }), 'index.html');
+  assert.equal(__test.staticEntryFile('/image', { desktop:true, appOnly:true }), 'index.html');
+});
+
 test('drama video generation preserves the submitted prompt and only falls back when absent', () => {
   assert.equal(__test.resolveVideoPrompt('用户最终 Prompt', '系统编译 Prompt'), '用户最终 Prompt');
   assert.equal(__test.resolveVideoPrompt('  ', '系统编译 Prompt'), '系统编译 Prompt');

@@ -212,7 +212,6 @@ NODE_ENV=development
 PORT=4317
 DATA_DIR=./data
 TRUST_PROXY=
-DESKTOP_APP_ONLY=true
 # 官网下载按钮（留空时使用 GuGu AI 桌面安装包稳定别名，也可按部署需要覆盖）
 PUBLIC_MAC_DOWNLOAD_URL=
 PUBLIC_WINDOWS_DOWNLOAD_URL=
@@ -228,7 +227,7 @@ DESKTOP_API_BASE=
 
 生产安装包采用标准的“桌面客户端 + 线上 API 服务”架构：客户端只连接构建时写入的线上 API 地址，不内置或自动启动 Node 服务，也不会把项目 `.env`、模型密钥或 OSS 密钥打进安装包。若地址未配置或服务暂时不可达，客户端会打开服务连接页；填写 HTTPS API 地址并保存后即可重试。`npm run desktop:dev` 仅用于本地开发，会启动项目服务并把桌面端指向本机地址。
 
-网页入口默认是 GuGu AI 官网，创作工作台只对桌面客户端开放；`/guguadmin` 和 `/api/admin/*` 仍供管理后台使用。客户端通过受控请求标识访问工作台，普通浏览器访问 `/image`、`/video`、`/drama`、`/files` 会回到官网。需要临时启用网页工作台时，可在服务环境设置 `DESKTOP_APP_ONLY=false`，不建议在生产环境长期使用。
+网页入口是 GuGu AI 官网，创作工作台只对桌面客户端开放；`/guguadmin` 和 `/api/admin/*` 仍供管理后台使用。客户端通过受控请求标识访问工作台，普通浏览器访问 `/login`、`/image`、`/video`、`/drama`、`/files` 都会回到官网，生产环境不提供开启浏览器工作台的配置。
 
 发布生产/内测包时必须设置 `DESKTOP_API_BASE`，例如：
 
@@ -273,19 +272,21 @@ curl --fail https://ai.example.com/healthz
 
 此时构建桌面客户端时使用 `DESKTOP_API_BASE=https://ai.example.com` 即可。完整的 systemd、Nginx 和 HTTPS 配置见下方「生产部署与域名」。
 
-客户端默认工作区为系统 Documents 下的 `GuGu AI Projects`，也可以在右上角「本地工作区」切换。每个工作区包含以下目录：
+客户端默认工作区根目录为系统 Documents 下的 `GuGu AI Projects`，也可以在右上角「本地工作区」切换。登录后，客户端会在根目录下为当前账号使用独立目录；不同账号不会共用本地素材索引或媒体文件：
 
 ```text
 GuGu AI Projects/
-├── library/                 # 素材和生成成品的本地主副本
-├── projects/                # 短剧项目文件
-├── exports/                 # 导出成片
-└── .gugu/
-    ├── library.db           # 本地 SQLite 索引、SHA-256、云端关联 ID
-    ├── library-index.json   # 旧版本索引，仅首次启动时迁移
-    ├── transfers/           # 下载/上传临时文件
-    ├── cache/
-    └── logs/
+└── accounts/
+    └── <userId>/
+        ├── library/             # 当前账号的素材和生成成品本地主副本
+        ├── projects/            # 当前账号的短剧项目文件
+        ├── exports/             # 当前账号的导出成片
+        └── .gugu/
+            ├── library.db       # 当前账号的本地 SQLite 索引
+            ├── library-index.json # 旧版本索引，仅该账号目录首次启动时迁移
+            ├── transfers/       # 下载/上传临时文件
+            ├── cache/
+            └── logs/
 ```
 
 ### 本地优先与 R2 备份
@@ -680,7 +681,7 @@ curl --fail http://127.0.0.1:4317/readyz
 
 元数据保存在 `${DATA_DIR:-data}/studio.db`，数据库使用 WAL 模式；浏览器直传和未被桌面客户端接收的生成结果会归档到私有 R2，生成结果归档使用任务临时目录中转。SQLite 热备份不包含 R2 对象，生产环境还必须为 R2 配置生命周期、版本控制或独立备份策略。
 
-桌面客户端的媒体主副本位于用户选择的本地工作区，服务端数据库只保存素材元数据和云端对象关联。桌面工作区需要纳入用户电脑的备份策略；`.gugu/library.db`、`.gugu/library-index.json`（旧版本迁移源）与 `library/` 必须一起备份，不能只备份索引文件。
+桌面客户端的媒体主副本位于当前账号的本地工作区，服务端数据库只保存素材元数据和云端对象关联。桌面工作区需要纳入用户电脑的备份策略；`accounts/<userId>/.gugu/library.db`、`accounts/<userId>/.gugu/library-index.json`（旧版本迁移源）与对应的 `library/` 必须一起备份，不能只备份索引文件。升级到账号隔离目录后，旧版本根目录下的共享本地索引不会自动归属任何账号；云端历史素材会在该账号首次登录时重新接收到账号目录。
 
 备份请使用：
 

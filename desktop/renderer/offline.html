@@ -3,29 +3,198 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GuGu AI · 服务连接</title>
+  <title>GuGu AI · 暂时离线</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #080c11; color: #eef5f2; }
-    body { min-height: 100vh; margin: 0; padding: 32px; background: radial-gradient(circle at 50% 0, #17352c 0, transparent 42%), #080c11; }
-    body.desktop-runtime { padding-top: 56px; }
-    body.desktop-runtime:not(.desktop-darwin) { padding-top: 72px; }
+    :root {
+      color-scheme: light;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #18181b;
+      background: #f7f7f8;
+      --canvas: #f7f7f8;
+      --ink: #18181b;
+      --muted: #667085;
+      --brand: #6366f1;
+      --danger: #d84d5b;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 34%, rgba(129, 140, 248, .12), transparent 30%),
+        radial-gradient(circle at 4% 100%, rgba(196, 181, 253, .16), transparent 32%),
+        var(--canvas);
+    }
+
+    body::before {
+      position: fixed;
+      inset: 0;
+      background-image: linear-gradient(rgba(99, 102, 241, .025) 1px, transparent 1px), linear-gradient(90deg, rgba(99, 102, 241, .025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      content: "";
+      pointer-events: none;
+    }
+
     .hidden { display: none !important; }
-    .desktop-drag-region { position: fixed; z-index: 10; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; }
-    .desktop-window-controls { position: fixed; z-index: 20; top: 0; right: 0; height: 56px; display: flex; border-left: 1px solid #26352f; background: rgba(16,23,27,.92); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
-    .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: #9baaa5; background: transparent; display: grid; place-items: center; cursor: pointer; -webkit-app-region: no-drag; }
-    .desktop-window-controls button:hover { color: #eef5f2; background: #24352f; }
-    .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
-    .desktop-window-controls .window-close:hover { color: #fff; background: #b94a54; }
+    .desktop-runtime { padding-top: 56px; }
+    .desktop-runtime:not(.desktop-darwin) { padding-top: 72px; }
+
+    .desktop-drag-region {
+      position: fixed;
+      z-index: 10;
+      top: 0;
+      right: 144px;
+      left: 0;
+      height: 56px;
+      -webkit-app-region: drag;
+    }
+
+    .desktop-window-controls {
+      position: fixed;
+      z-index: 20;
+      top: 0;
+      right: 0;
+      height: 56px;
+      display: flex;
+      border-left: 1px solid rgba(24, 24, 27, .07);
+      background: rgba(255, 255, 255, .58);
+      backdrop-filter: blur(16px);
+      -webkit-app-region: no-drag;
+    }
+
+    .desktop-window-controls button {
+      width: 46px;
+      height: 56px;
+      padding: 0;
+      border: 0;
+      color: #8b93a3;
+      background: transparent;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+
+    .desktop-window-controls button:hover { color: var(--ink); background: rgba(99, 102, 241, .08); }
+    .desktop-window-controls .window-close:hover { color: #fff; background: var(--danger); }
+    .desktop-window-controls button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
     .desktop-window-controls .window-icon { width: 13px; height: 13px; }
-    .desktop-window-controls button:focus-visible { outline: 2px solid #8cf0ca; outline-offset: -2px; }
-    main { width: min(980px, 100%); margin: 0 auto; padding: 38px; border: 1px solid #26352f; border-radius: 20px; background: #10171b; box-shadow: 0 24px 80px #0008; }
-    .mark { color: #8cf0ca; font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .18em; }
-    h1 { margin: 12px 0 8px; font-size: 26px; } p { color: #9baaa5; line-height: 1.65; font-size: 14px; }
-    #detail { padding: 12px 14px; border: 1px solid #26352f; border-radius: 10px; color: #c7d6d1; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-word; }
-    label { display: block; margin-top: 18px; color: #9baaa5; font-size: 12px; } input { width: 100%; box-sizing: border-box; margin-top: 7px; padding: 11px 12px; border: 1px solid #30423b; border-radius: 9px; color: #eef5f2; background: #0b1114; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; } button { margin-top: 20px; border: 0; border-radius: 10px; padding: 12px 18px; color: #06100d; background: #8cf0ca; font-weight: 700; cursor: pointer; } button.secondary { color: #c7d6d1; background: #24352f; }
-    .local-library { margin-top: 36px; padding-top: 26px; border-top: 1px solid #26352f; } .library-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; } .library-head h2 { margin: 0; font-size: 18px; } .library-head p { margin: 5px 0 0; font-size: 12px; } #localSearch { width: 220px; margin: 0; } .local-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 12px; margin-top: 18px; } .local-card { min-width: 0; padding: 0; border: 1px solid #26352f; border-radius: 12px; overflow: hidden; color: #dbe7e2; background: #0b1114; text-align: left; cursor: pointer; } .local-card:hover { border-color: #8cf0ca; transform: translateY(-2px); } .local-card-media { aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; background: #17231f; } .local-card-media img, .local-card-media video { width: 100%; height: 100%; object-fit: cover; } .local-card-media audio { width: 90%; } .audio-mark { color: #8cf0ca; font-size: 34px; } .local-card-name { display: block; padding: 9px 10px 2px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; } .local-card-meta { display: block; padding: 0 10px 10px; color: #7f928b; font-size: 10px; } .local-empty { grid-column: 1/-1; padding: 26px; border: 1px dashed #30423b; border-radius: 12px; color: #8da19a; text-align: center; font-size: 12px; }
-    @media (max-width: 620px) { body { padding: 16px; } main { padding: 24px; } .library-head { display: block; } #localSearch { width: 100%; margin-top: 12px; } }
+
+    .offline-shell {
+      position: relative;
+      z-index: 1;
+      min-height: calc(100vh - 56px);
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+
+    .offline-state {
+      width: min(380px, 100%);
+      text-align: center;
+    }
+
+    .offline-stage {
+      position: relative;
+      width: 180px;
+      height: 142px;
+      margin: 0 auto 22px;
+      display: grid;
+      place-items: center;
+    }
+
+    .offline-icon {
+      position: relative;
+      z-index: 1;
+      width: 104px;
+      height: 104px;
+      border: 1px solid rgba(255, 255, 255, .86);
+      border-radius: 30px;
+      color: var(--danger);
+      background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(255, 241, 242, .44));
+      display: grid;
+      place-items: center;
+      box-shadow: 0 22px 44px rgba(93, 79, 125, .1), inset 0 1px rgba(255, 255, 255, .96);
+      backdrop-filter: blur(18px);
+    }
+
+    .offline-corner {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-color: rgba(99, 102, 241, .36);
+      border-style: solid;
+      content: "";
+    }
+
+    .offline-corner.top-left { top: 19px; left: 12px; border-width: 1px 0 0 1px; border-radius: 5px 0 0 0; }
+    .offline-corner.top-right { top: 19px; right: 12px; border-width: 1px 1px 0 0; border-radius: 0 5px 0 0; }
+    .offline-corner.bottom-left { bottom: 19px; left: 12px; border-width: 0 0 1px 1px; border-radius: 0 0 0 5px; }
+    .offline-corner.bottom-right { right: 12px; bottom: 19px; border-width: 0 1px 1px 0; border-radius: 0 0 5px 0; }
+
+    .offline-icon svg { width: 44px; height: 44px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; }
+    .offline-icon .signal-dot { fill: currentColor; stroke: none; }
+
+    .offline-state h1 {
+      margin: 0;
+      color: var(--ink);
+      font-size: 21px;
+      font-weight: 650;
+      letter-spacing: -.045em;
+    }
+
+    .offline-state p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 450;
+      letter-spacing: -.01em;
+      line-height: 1.6;
+    }
+
+    .offline-detail {
+      max-width: 320px;
+      margin: 8px auto 0 !important;
+      color: #98a0ae !important;
+      font-size: 11px !important;
+      line-height: 1.5 !important;
+    }
+
+    .offline-retry {
+      min-width: 96px;
+      min-height: 40px;
+      margin-top: 22px;
+      padding: 0 18px;
+      border: 1px solid rgba(99, 102, 241, .16);
+      border-radius: 10px;
+      color: #fff;
+      background: var(--brand);
+      box-shadow: 0 8px 18px rgba(99, 102, 241, .2);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+    }
+
+    .offline-retry:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(99, 102, 241, .26); }
+    .offline-retry:active { transform: translateY(0); }
+    .offline-retry:disabled { cursor: wait; opacity: .64; }
+    .offline-retry:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .offline-retry { transition: none; }
+    }
+
+    @media (max-width: 620px) {
+      .offline-shell { padding: 24px; }
+      .offline-stage { margin-bottom: 18px; }
+      .offline-icon { width: 92px; height: 92px; border-radius: 27px; }
+      .offline-icon svg { width: 40px; height: 40px; }
+    }
   </style>
 </head>
 <body>
@@ -35,80 +204,79 @@
     <button id="windowMaximize" type="button" aria-label="最大化窗口" title="最大化"><svg class="window-icon maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg><svg class="window-icon restore-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v10H8z"/><path d="M6 16H5V6h10v1"/></svg></button>
     <button id="windowClose" class="window-close" type="button" aria-label="关闭窗口" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
   </div>
-  <main>
-    <span class="mark">GUGU AI / DESKTOP</span>
-    <h1>创作服务暂时无法连接</h1>
-    <p>客户端需要连接线上创作服务。请填写服务地址后重试；你的本地工作区不会受到影响。开发调试时可运行 <code>npm run desktop:dev</code>。</p>
-    <div id="detail">正在读取连接信息…</div>
-    <label for="apiBase">创作服务地址</label>
-    <input id="apiBase" type="url" spellcheck="false" placeholder="https://studio.example.com">
-    <div class="actions"><button id="saveAndRetry" type="button">保存并连接</button><button id="retry" class="secondary" type="button">按当前地址重试</button></div>
-    <label for="updateUrl">自动更新地址（可选）</label>
-    <input id="updateUrl" type="url" spellcheck="false" placeholder="https://download.example.com/gugu-ai">
-    <div class="actions"><button id="saveUpdateUrl" class="secondary" type="button">保存更新地址</button></div>
-    <section class="local-library" aria-labelledby="localLibraryTitle">
-      <div class="library-head"><div><h2 id="localLibraryTitle">本地素材库</h2><p id="localSummary">正在读取本地工作区…</p></div><input id="localSearch" type="search" placeholder="搜索本地素材" aria-label="搜索本地素材"></div>
-      <div id="localGrid" class="local-grid"></div>
+
+  <main class="offline-shell">
+    <section class="offline-state" role="alert" aria-live="assertive">
+      <div class="offline-stage" aria-hidden="true">
+        <span class="offline-corner top-left"></span>
+        <span class="offline-corner top-right"></span>
+        <span class="offline-corner bottom-left"></span>
+        <span class="offline-corner bottom-right"></span>
+        <div class="offline-icon">
+        <svg viewBox="0 0 48 48">
+          <path d="M9 19.5c8.4-7.8 21.6-7.8 30 0"/>
+          <path d="M15.5 26c4.8-4.4 12.2-4.4 17 0"/>
+          <path d="M22 32.5c1.2-1.1 2.8-1.1 4 0"/>
+          <path d="m10 10 28 28"/>
+          <circle class="signal-dot" cx="24" cy="36.5" r="2.2"/>
+        </svg>
+        </div>
+      </div>
+      <h1>无法连接服务</h1>
+      <p>请检查网络后重试。</p>
+      <p id="offlineDetail" class="offline-detail hidden"></p>
+      <button id="retryConnection" class="offline-retry" type="button">重试</button>
     </section>
   </main>
+
   <script>
-    const detail = document.querySelector('#detail');
-    const apiBase = document.querySelector('#apiBase');
-    const updateUrl = document.querySelector('#updateUrl');
-    const localGrid = document.querySelector('#localGrid');
-    const localSummary = document.querySelector('#localSummary');
-    const localSearch = document.querySelector('#localSearch');
-    const windowControls = document.querySelector('#desktopWindowControls');
-    const dragRegion = document.querySelector('#desktopDragRegion');
-    let localAssets = [];
+    const bridge = window.guguDesktop;
+    const $ = selector => document.querySelector(selector);
+
     function setupWindowControls(info) {
       document.body.classList.add('desktop-runtime', `desktop-${info?.platform || 'win32'}`);
-      const windowApi = window.guguDesktop?.window;
+      const windowApi = bridge?.window;
       if (!windowApi || info?.platform === 'darwin') return;
-      dragRegion.classList.remove('hidden');
+      $('#desktopDragRegion').classList.remove('hidden');
       if (info?.nativeWindowControls === true) return;
-      windowControls.classList.remove('hidden');
+      $('#desktopWindowControls').classList.remove('hidden');
       const updateState = maximized => {
         const isMaximized = Boolean(maximized);
-        document.querySelector('#windowMaximize')?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
-        document.querySelector('#windowMaximize').title = isMaximized ? '还原' : '最大化';
-        document.querySelector('.maximize-icon')?.classList.toggle('hidden', isMaximized);
-        document.querySelector('.restore-icon')?.classList.toggle('hidden', !isMaximized);
+        $('#windowMaximize')?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
+        $('#windowMaximize').title = isMaximized ? '还原' : '最大化';
+        $('.maximize-icon')?.classList.toggle('hidden', isMaximized);
+        $('.restore-icon')?.classList.toggle('hidden', !isMaximized);
       };
-      document.querySelector('#windowMinimize').onclick = () => void windowApi.minimize();
-      document.querySelector('#windowMaximize').onclick = () => void windowApi.toggleMaximize();
-      document.querySelector('#windowClose').onclick = () => void windowApi.close();
+      $('#windowMinimize').onclick = () => void windowApi.minimize();
+      $('#windowMaximize').onclick = () => void windowApi.toggleMaximize();
+      $('#windowClose').onclick = () => void windowApi.close();
       windowApi.onState?.(payload => updateState(payload?.maximized));
       Promise.resolve(windowApi.isMaximized?.()).then(updateState).catch(() => updateState(false));
     }
-    const message = new URLSearchParams(location.search).get('message');
-    detail.textContent = message || '未提供错误信息';
-    const kindOf = item => item.kind || (String(item.mimeType || '').startsWith('image/') ? 'image' : String(item.mimeType || '').startsWith('video/') ? 'video' : String(item.mimeType || '').startsWith('audio/') ? 'audio' : '');
-    const sizeOf = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
-    function renderLocal() {
-      const query = localSearch.value.trim().toLowerCase();
-      const assets = localAssets.filter(item => !query || String(item.name || '').toLowerCase().includes(query));
-      localSummary.textContent = `${localAssets.length} 个本地素材 · 双击素材可在文件夹中显示`;
-      localGrid.replaceChildren();
-      if (!assets.length) { const empty = document.createElement('div'); empty.className = 'local-empty'; empty.textContent = localAssets.length ? '没有匹配的本地素材' : '本地工作区还没有素材'; localGrid.append(empty); return; }
-      assets.forEach(item => {
-        const card = document.createElement('button'); card.type = 'button'; card.className = 'local-card'; card.title = '双击在文件夹中显示';
-        const media = document.createElement('div'); media.className = 'local-card-media'; const kind = kindOf(item);
-        if (kind === 'image') { const image = document.createElement('img'); image.src = item.url; image.alt = item.name || '本地图片'; image.loading = 'lazy'; media.append(image); }
-        else if (kind === 'video') { const video = document.createElement('video'); video.src = item.url; video.preload = 'metadata'; video.muted = true; media.append(video); }
-        else if (kind === 'audio') { const audio = document.createElement('audio'); audio.src = item.url; audio.controls = true; audio.onclick = event => event.stopPropagation(); media.append(audio); }
-        else { const mark = document.createElement('span'); mark.className = 'audio-mark'; mark.textContent = '♫'; media.append(mark); }
-        const name = document.createElement('strong'); name.className = 'local-card-name'; name.textContent = item.name || '未命名文件';
-        const meta = document.createElement('small'); meta.className = 'local-card-meta'; meta.textContent = `${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'} · ${sizeOf(Number(item.size) || 0)}`;
-        card.append(media, name, meta); card.ondblclick = () => window.guguDesktop?.media?.showInFolder?.(item.id) || window.guguDesktop?.workspace?.open?.(); localGrid.append(card);
-      });
+
+    bridge?.getInfo?.().then(setupWindowControls).catch(() => setupWindowControls());
+
+    const detail = new URLSearchParams(window.location.search).get('message');
+    if (detail) {
+      const detailElement = $('#offlineDetail');
+      detailElement.textContent = detail;
+      detailElement.classList.remove('hidden');
     }
-    localSearch.oninput = renderLocal;
-    window.guguDesktop?.media?.listLocal?.().then(assets => { localAssets = Array.isArray(assets) ? assets : []; renderLocal(); }).catch(error => { localSummary.textContent = `本地工作区读取失败：${error.message}`; });
-    window.guguDesktop?.getInfo?.().then(info => { apiBase.value = info.apiBase || ''; updateUrl.value = info.updateUrl || ''; setupWindowControls(info); }).catch(() => {});
-    document.querySelector('#saveAndRetry').onclick = async () => { const button = document.querySelector('#saveAndRetry'); button.disabled = true; detail.textContent = '正在保存地址并连接…'; try { await window.guguDesktop?.setApiBase?.(apiBase.value); } catch (error) { detail.textContent = error.message; button.disabled = false; } };
-    document.querySelector('#retry').onclick = () => window.guguDesktop?.retry?.() || location.reload();
-    document.querySelector('#saveUpdateUrl').onclick = async () => { const button = document.querySelector('#saveUpdateUrl'); button.disabled = true; detail.textContent = '正在保存自动更新地址…'; try { const result = await window.guguDesktop?.setUpdateUrl?.(updateUrl.value); detail.textContent = result?.restartRequired ? '更新地址已保存，请重启客户端后生效。' : '更新地址已保存。'; } catch (error) { detail.textContent = error.message; } finally { button.disabled = false; } };
+
+    const retryButton = $('#retryConnection');
+    retryButton.onclick = async () => {
+      retryButton.disabled = true;
+      retryButton.textContent = '正在重试…';
+      try {
+        await bridge?.retry?.();
+      } catch {
+        retryButton.disabled = false;
+        retryButton.textContent = '重试';
+      }
+    };
+
+    // Keep the page calm while the connection recovers in the background.
+    window.setTimeout(() => void bridge?.retry?.(), 5000);
   </script>
 </body>
 </html>

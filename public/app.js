@@ -1,6 +1,6 @@
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=5';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=6';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -44,15 +44,16 @@ const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteU
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
 let tasksRequest = null;
-let filesRequest = null;
-let remoteFileCursor = '';
-let remoteFileHasMore = true;
-let remoteFileTotal = null;
+let libraryFiles = [];
 let localFileCursor = '';
 let localFileHasMore = true;
+let localFileTotal = 0;
 let fileQueryKey = '';
+let fileLoadVersion = 0;
 let desktopSyncInfo = { deviceId:'', cursor:'' };
 let desktopSyncRequest = null;
+let desktopSyncRequestEpoch = 0;
+let desktopAssetSyncTimer = 0;
 let pollTimer = 0;
 let notificationPanelCloseTimer = 0;
 let contactPanelCloseTimer = 0;
@@ -60,6 +61,8 @@ const activePollDelay = 6000;
 const idlePollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
 let desktopWindowStateUnsubscribe = null;
+let desktopWorkspacePath = '';
+let desktopAccountEpoch = 0;
 const desktopHydrationQueue = [];
 const desktopHydrationQueued = new Set();
 const desktopHydrationAttempted = new Set();
@@ -75,17 +78,6 @@ async function api(url, options = {}) {
   if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
   return data;
 }
-async function listRemoteFilesPage({ cursor = '', kind = '', search = '' } = {}) {
-  const query = new URLSearchParams({ limit:'200', includeTotal:cursor ? '0' : '1' });
-  if (cursor) query.set('cursor', cursor);
-  if (kind && kind !== 'all') query.set('kind', kind);
-  if (search) query.set('search', search);
-  const response = await fetch(`/api/files?${query}`, { credentials:'same-origin' });
-  let data = []; try { data = await response.json(); } catch {}
-  if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
-  if (!Array.isArray(data)) throw new Error('文件列表格式无效');
-  return { items:data, nextCursor:response.headers.get('x-next-cursor') || '', total:Number(response.headers.get('x-total-count')) || null };
-}
 function desktopLocalClientAsset(item) {
   const cloudAssetId = String(item?.cloudAssetId || '');
   const id = cloudAssetId || String(item?.id || '');
@@ -99,35 +91,34 @@ async function listDesktopFiles(options = {}) {
   if (!bridge) return { items:[], nextCursor:'' };
   const local = await bridge.media.listLocal(options);
   const page = Array.isArray(local) ? { items:local, nextCursor:'' } : (local || {});
-  return { items:(Array.isArray(page.items) ? page.items : []).map(desktopLocalClientAsset).filter(Boolean), nextCursor:page.nextCursor || '' };
+  return { items:(Array.isArray(page.items) ? page.items : []).map(desktopLocalClientAsset).filter(Boolean), total:Number(page.total) || 0, nextCursor:page.nextCursor || '' };
 }
-async function enrichDesktopFiles(files, localFiles=null) {
-  const bridge = window.guguDesktop;
-  if (!bridge) return files;
-  try {
-    const supplied = Array.isArray(localFiles) ? localFiles : localFiles?.items;
-    const exact = (await bridge.media.listLocalByCloudIds(files.map(file => file.id))).map(desktopLocalClientAsset).filter(Boolean);
-    const local = [...exact, ...(supplied || [])];
-    const localByCloudId = new Map(local.filter(item => item.cloudAssetId).map(item => [item.cloudAssetId, item]));
-    return files.map(file => {
-      const localAsset = localByCloudId.get(file.id);
-      return localAsset ? { ...file, url: localAsset.url, remoteUrl: file.url, localStatus: 'saved', localPath: localAsset.relativePath } : file;
-    });
-  } catch { return files; }
+async function listHistoricalCloudAssetsPage(cursor = '') {
+  const query = new URLSearchParams({ limit:'200', includeTotal:cursor ? '0' : '1' });
+  if (cursor) query.set('cursor', cursor);
+  const response = await fetch(`/api/files?${query}`, { credentials:'same-origin' });
+  let data = []; try { data = await response.json(); } catch {}
+  if (!response.ok) { const error = Object.assign(new Error(data.error || '历史素材读取失败'), data); error.status = response.status; throw error; }
+  if (!Array.isArray(data)) throw new Error('历史素材列表格式无效');
+  return { items:data, nextCursor:response.headers.get('x-next-cursor') || '', total:Number(response.headers.get('x-total-count')) || 0 };
 }
-function mergeDesktopFiles(remoteFiles, localFiles) {
-  if (!window.guguDesktop) return remoteFiles;
-  const localByCloudId = new Map(localFiles.filter(item => item.cloudAssetId).map(item => [item.cloudAssetId, item]));
-  const remoteIds = new Set(remoteFiles.map(file => file.id));
-  const merged = remoteFiles.map(file => {
-    const local = localByCloudId.get(file.id);
-    return local ? { ...file, ...local, id:file.id, remoteUrl:file.url, localStatus:'saved' } : file;
+async function runWithConcurrency(items, worker, concurrency = 3) {
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length:Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex++];
+      await worker(item);
+    }
+  }));
+}
+function historicalSyncMarker(userId) {
+  return `gugu:history-local-v1:${desktopSyncInfo.deviceId}:${userId}:${desktopWorkspacePath}`;
+}
+async function acknowledgeDesktopAsset(file, localAsset) {
+  await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
+    method:'POST',
+    body:JSON.stringify({ size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType, deviceId:desktopSyncInfo.deviceId }),
   });
-  // Cloud-backed local records are only shown after the server page (or an
-  // exact task lookup) confirms they still exist. Otherwise a server-side
-  // deletion while this device was offline would resurrect a stale local row.
-  localFiles.filter(file => file.localOnly && !remoteIds.has(file.id)).forEach(file => merged.push(file));
-  return merged;
 }
 function renderAfterDesktopAssetHydration() {
   if (state.route === 'files') renderFiles();
@@ -144,41 +135,89 @@ function mergeStateFiles(files) {
 function applyDesktopLocalAsset(remoteFile, localAsset) {
   const local = desktopLocalClientAsset(localAsset);
   if (!local) return;
-  state.files = state.files.map(file => file.id === remoteFile.id
-    ? { ...file, ...local, id: remoteFile.id, localId: local.localId, cloudAssetId: remoteFile.id, remoteUrl: remoteFile.url, localStatus: 'saved', localPath: local.relativePath }
-    : file);
-  indexedFiles = null;
+  const file = { ...remoteFile, ...local, id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
+  const existed = state.files.some(item => item.id === file.id);
+  mergeStateFiles([file]);
+  if (libraryFileMatches(file)) {
+    libraryFiles = [file, ...libraryFiles.filter(item => item.id !== file.id)];
+    if (!existed) localFileTotal += 1;
+  }
   renderAfterDesktopAssetHydration();
 }
-async function hydrateDesktopAsset(file) {
+async function showDesktopAssetInFolder(file, control = null) {
+  const bridge = window.guguDesktop;
+  if (!bridge?.media || !file) return null;
+  const wasDisabled = Boolean(control?.disabled);
+  if (control) { control.disabled = true; control.setAttribute('aria-disabled', 'true'); }
+  try {
+    const localAssetId = String(file.localId || (file.localOnly ? file.id : ''));
+    if (!localAssetId || !await bridge.media.showInFolder(localAssetId)) throw new Error('本地素材不存在');
+    return true;
+  } catch (error) {
+    toast(`打开失败：${error.message}`);
+    return null;
+  } finally {
+    if (control) { control.disabled = wasDisabled; control.setAttribute('aria-disabled', String(wasDisabled)); }
+  }
+}
+async function hydrateDesktopAsset(file, { merge = true } = {}) {
   const bridge = window.guguDesktop;
   if (!bridge || !file || file.localOnly || file.localStatus === 'saved') return;
-  const result = await bridge.media.downloadRemote({
-    assetId: file.id,
-    url: file.directUrl || `/api/files/${encodeURIComponent(file.id)}/direct`,
-    name: file.name,
-    kind: file.kind,
-    mimeType: file.mimeType,
-  });
-  if (result?.unavailable) throw new Error(`远端文件已不存在（${result.status || 404}）`);
-  applyDesktopLocalAsset(file, result);
+  const result = await bridge.media.downloadRemote(desktopMediaPayload(file));
+  if (result?.unavailable) throw Object.assign(new Error(`远端文件已不存在（${result.status || 404}）`), { unavailable:true });
+  if (!result?.id) throw new Error('素材接收后未能写入本地工作区');
+  if (merge) applyDesktopLocalAsset(file, result);
   try {
-    await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
-      method: 'POST',
-      body: JSON.stringify({ size: result.size, sha256: result.sha256, mimeType: result.mimeType || file.mimeType, deviceId: desktopSyncInfo.deviceId }),
-    });
+    await acknowledgeDesktopAsset(file, result);
   } catch (error) {
     console.warn('[desktop] 本地文件已保存，但本地接收确认失败', { assetId: file.id, message: error.message });
   }
+  return result;
+}
+async function syncHistoricalCloudAssets(user) {
+  const bridge = window.guguDesktop;
+  if (!bridge?.media || !user?.id) throw new Error('客户端本地工作区尚未就绪');
+  const marker = historicalSyncMarker(user.id);
+  if (localStorage.getItem(marker) === 'complete') return { skipped:true, received:0, unavailable:0 };
+  let cursor = '';
+  let scanned = 0;
+  let received = 0;
+  let unavailable = 0;
+  const transientFailures = [];
+  do {
+    const page = await listHistoricalCloudAssetsPage(cursor);
+    const candidates = page.items.filter(file => file?.id && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
+    const localAssets = await bridge.media.listLocalByCloudIds(candidates.map(file => file.id));
+    const localByCloudId = new Map((localAssets || []).map(item => [String(item.cloudAssetId || ''), item]));
+    await runWithConcurrency(candidates, async file => {
+      const existing = localByCloudId.get(file.id);
+      try {
+        if (existing) await acknowledgeDesktopAsset(file, existing);
+        else { await hydrateDesktopAsset(file, { merge:false }); received += 1; }
+      } catch (error) {
+        if (error.unavailable) unavailable += 1;
+        else transientFailures.push({ assetId:file.id, message:error.message });
+      }
+    });
+    scanned += page.items.length;
+    const totalText = page.total ? ` / ${page.total}` : '';
+    showBoot('正在接收历史素材', `已检查 ${scanned}${totalText} 个记录，本次写入 ${received} 个文件。`);
+    cursor = page.nextCursor;
+  } while (cursor);
+  if (!transientFailures.length) localStorage.setItem(marker, 'complete');
+  else console.warn('[desktop] 历史素材仍有待重试项', transientFailures);
+  return { received, unavailable, failures:transientFailures.length };
 }
 async function runDesktopHydrationQueue() {
   if (desktopHydrationRunning) return;
+  const runEpoch = desktopAccountEpoch;
   desktopHydrationRunning = true;
   try {
-    while (desktopHydrationQueue.length) {
+    while (desktopHydrationQueue.length && runEpoch === desktopAccountEpoch) {
       const file = desktopHydrationQueue.shift();
       try {
         await hydrateDesktopAsset(file);
+        if (runEpoch !== desktopAccountEpoch) continue;
         // A successful copy is represented by localStatus in state. Do not
         // retain the attempt marker so a later missing-local-file check can
         // repair the copy in the same client session.
@@ -189,6 +228,7 @@ async function runDesktopHydrationQueue() {
         desktopHydrationRetryTimers.delete(file?.id);
       }
       catch (error) {
+        if (runEpoch !== desktopAccountEpoch) continue;
         const assetId = file?.id;
         desktopHydrationAttempted.delete(assetId);
         const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
@@ -204,14 +244,18 @@ async function runDesktopHydrationQueue() {
         }
       }
       finally {
-        desktopHydrationQueued.delete(file?.id);
-        desktopHydrationActive.delete(file?.id);
-        renderAfterDesktopAssetHydration();
+        if (runEpoch === desktopAccountEpoch) {
+          desktopHydrationQueued.delete(file?.id);
+          desktopHydrationActive.delete(file?.id);
+          renderAfterDesktopAssetHydration();
+        }
       }
     }
   } finally {
-    desktopHydrationRunning = false;
-    if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
+    if (runEpoch === desktopAccountEpoch) {
+      desktopHydrationRunning = false;
+      if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
+    }
   }
 }
 function queueDesktopHydration(files) {
@@ -231,14 +275,16 @@ function queueDesktopHydration(files) {
 async function syncDesktopDeliveries() {
   const bridge = window.guguDesktop;
   if (!bridge?.sync || !desktopSyncInfo.deviceId) return null;
-  if (desktopSyncRequest) return desktopSyncRequest;
-  desktopSyncRequest = (async () => {
+  const requestEpoch = desktopAccountEpoch;
+  if (desktopSyncRequest && desktopSyncRequestEpoch === requestEpoch) return desktopSyncRequest;
+  const request = (async () => {
     const query = new URLSearchParams({ deviceId:desktopSyncInfo.deviceId, limit:'100' });
     if (desktopSyncInfo.cursor) query.set('cursor', desktopSyncInfo.cursor);
     let result;
     try {
       result = await api(`/api/files/sync?${query}`);
     } catch (error) {
+      if (requestEpoch !== desktopAccountEpoch) return null;
       // A deployment may intentionally rotate the cursor signing material.
       // Reset once to a fresh checkpoint; the bounded delivery query still
       // covers recent remote-backed generations without replaying all history.
@@ -248,43 +294,40 @@ async function syncDesktopDeliveries() {
       query.delete('cursor');
       result = await api(`/api/files/sync?${query}`);
     }
-    let changed = false;
-    const deletedCloudAssetIds = [];
-    for (const change of result.changes || []) {
-      if (change.action === 'delete') {
-        deletedCloudAssetIds.push(change.assetId);
-        const before = state.files.length;
-        state.files = state.files.filter(file => file.id !== change.assetId);
-        changed ||= before !== state.files.length;
-      } else if (change.asset) {
-        mergeStateFiles([change.asset]);
-        changed = true;
-      }
-    }
-    if (deletedCloudAssetIds.length && bridge.media?.listLocalByCloudIds && bridge.media?.removeLocal) {
-      const staleLocalCopies = await bridge.media.listLocalByCloudIds(deletedCloudAssetIds);
-      await Promise.all((staleLocalCopies || []).map(item => bridge.media.removeLocal(item.id).catch(() => {})));
-    }
+    if (requestEpoch !== desktopAccountEpoch) return null;
     if (result.nextCursor) {
       desktopSyncInfo.cursor = result.nextCursor;
       await bridge.sync.setCursor(result.nextCursor);
     }
     const deliveries = (result.deliveries || []).filter(file => file?.id);
     if (deliveries.length) {
-      mergeStateFiles(deliveries);
       queueDesktopHydration(deliveries);
-      changed = true;
-    }
-    if (changed) {
-      renderFiles();
-      renderReferences();
-      if (['image','video'].includes(state.route)) renderTasks();
-      else if (state.route === 'drama') dramaController?.refreshTasks?.();
     }
     return result;
   })();
-  try { return await desktopSyncRequest; }
-  finally { desktopSyncRequest = null; }
+  desktopSyncRequest = request;
+  desktopSyncRequestEpoch = requestEpoch;
+  try { return await request; }
+  finally {
+    if (desktopSyncRequest === request) desktopSyncRequest = null;
+  }
+}
+function scheduleDesktopAssetSync(delay=15000) {
+  window.clearTimeout(desktopAssetSyncTimer);
+  if (!state.user || !window.guguDesktop?.sync) return;
+  desktopAssetSyncTimer = window.setTimeout(runDesktopAssetSyncWorker, delay);
+}
+async function runDesktopAssetSyncWorker() {
+  window.clearTimeout(desktopAssetSyncTimer);
+  desktopAssetSyncTimer = 0;
+  if (!state.user || !window.guguDesktop?.sync) return;
+  try {
+    const result = await syncDesktopDeliveries();
+    scheduleDesktopAssetSync(result?.hasMore ? 250 : 15000);
+  } catch (error) {
+    if (error.status !== 401) console.warn('[desktop] 后台素材同步暂不可用', error.message);
+    scheduleDesktopAssetSync(30000);
+  }
 }
 const esc = (value='') => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
@@ -1370,7 +1413,7 @@ function initDesktopModalState(bridge) {
   document.body.dataset.desktopModalStateBound = 'true';
   sync();
 }
-function showBoot(title = '正在恢复工作区', message = '正在确认登录状态，请稍候。', { retry = false } = {}) {
+function showBoot(title = '正在连接服务…', message = '', { retry = false } = {}) {
   setDesktopSurface('boot');
   $('#bootTitle').textContent = title;
   $('#bootMessage').textContent = message;
@@ -1379,12 +1422,56 @@ function showBoot(title = '正在恢复工作区', message = '正在确认登录
   toggleClass($('#authView'), 'hidden', true);
   toggleClass($('#appView'), 'hidden', true);
 }
+function resetDesktopAccountState() {
+  desktopAccountEpoch += 1;
+  window.clearTimeout(desktopAssetSyncTimer);
+  desktopAssetSyncTimer = 0;
+  for (const timer of desktopHydrationRetryTimers.values()) window.clearTimeout(timer);
+  desktopHydrationRetryTimers.clear();
+  desktopHydrationQueue.length = 0;
+  desktopHydrationQueued.clear();
+  desktopHydrationAttempted.clear();
+  desktopHydrationActive.clear();
+  desktopHydrationFailureCounts.clear();
+  desktopHydrationRunning = false;
+  localFileCursor = '';
+  localFileHasMore = true;
+  localFileTotal = 0;
+  fileQueryKey = '';
+  fileLoadVersion += 1;
+  libraryFiles = [];
+  state.files = [];
+  state.tasks = [];
+  state.refs = { image:[], video:[] };
+  state.uploadJobs.splice(0).forEach(job => {
+    if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
+  });
+  indexedFiles = null;
+  indexedTasks = null;
+  tasksById = new Map();
+  tasksByAssetId = new Map();
+  lastTaskRender = { route:'', filter:'', ready:null, tasks:null, files:null };
+}
+async function activateDesktopAccount(user) {
+  const bridge = window.guguDesktop;
+  if (!bridge?.workspace?.activateAccount || !user?.id) throw new Error('客户端账号工作区尚未就绪');
+  const info = await bridge.workspace.activateAccount(String(user.id));
+  resetDesktopAccountState();
+  desktopWorkspacePath = String(info.path || '');
+  $$('[data-workspace-open]').forEach(button => { button.title = `本地工作区：${desktopWorkspacePath || '未设置'}`; });
+  desktopSyncInfo = {
+    deviceId: String(info.deviceId || desktopSyncInfo.deviceId || ''),
+    cursor: String(info.cursor || ''),
+    accountId: String(info.accountId || user.id),
+  };
+  return info;
+}
 async function initDesktopBridge() {
   const bridge = window.guguDesktop;
   const buttons = $$('[data-workspace-open]');
   if (!bridge) {
     toggleClass($('#desktopWindowControls'), 'hidden', true);
-    return;
+    return false;
   }
   document.body.classList.add('desktop-runtime');
   initWindowControls(bridge);
@@ -1393,7 +1480,9 @@ async function initDesktopBridge() {
     desktopSyncInfo = {
       deviceId: String(info.deviceId || ''),
       cursor: String(info.assetSyncCursor || ''),
+      accountId: String(info.workspaceAccountId || ''),
     };
+    desktopWorkspacePath = String(info.workspacePath || '');
     if (!desktopSyncInfo.deviceId && bridge.sync?.getState) desktopSyncInfo = await bridge.sync.getState();
     document.body.classList.add(`desktop-${info.platform}`);
     initWindowControls(bridge, info);
@@ -1446,12 +1535,18 @@ async function initDesktopBridge() {
         if (payload?.status && payload.status !== 'idle') applyUpdateStatus(payload);
       }).catch(() => {});
     }
+    return true;
   } catch (error) {
     buttons.forEach(button => { button.title = `本地工作区不可用：${error.message}`; });
+    return false;
   }
 }
 function showAuth() {
   setDesktopSurface('auth');
+  window.clearTimeout(desktopAssetSyncTimer);
+  desktopAssetSyncTimer = 0;
+  resetDesktopAccountState();
+  void Promise.resolve(window.guguDesktop?.workspace?.deactivateAccount?.()).catch(error => console.warn('[desktop] 关闭账号工作区失败', error));
   state.user = null;
   toggleClass($('#bootView'), 'hidden', true);
   toggleClass($('#authView'), 'hidden', false);
@@ -1499,24 +1594,23 @@ async function enterApp(user) {
     window.location.replace(returnDestination);
     return;
   }
+  await activateDesktopAccount(user);
   state.user = user;
   state.initialSyncReady = false;
-  showBoot('正在加载工作区', '正在同步你的品牌素材与生成记录，请稍候。');
+  showBoot('正在加载工作区', '正在读取本地素材与生成记录，请稍候。');
   updateAccountIdentity(user);
   setCreditBalance(user.credits);
 
-  // Route first so the shell can paint immediately. The non-workspace requests
-  // still run in parallel, while files intentionally finish before tasks so an
-  // existing local media URL wins the first render after a desktop update.
+  // Keep the workspace hidden until the one-time historical receive pass has
+  // finished. Every visible binary must already exist in the local index.
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
-  showApp();
-
   const schedulePriceDialog = () => window.setTimeout(() => { void openModelPriceDialog({ auto:true }); }, 300);
-  const loadWorkspace = async () => { await loadFiles(); return loadTasks(); };
-  void Promise.all([loadConfig(), loadCredits(), loadNotifications(), loadWorkspace()]).then(
-    () => { finishInitialWorkspaceSync(); schedulePriceDialog(); },
-    error => { console.warn('[workspace] initial sync failed', error); finishInitialWorkspaceSync(); schedulePriceDialog(); },
-  );
+  await syncHistoricalCloudAssets(user);
+  await Promise.all([loadConfig(), loadCredits(), loadNotifications(), loadFiles(), loadTasks()]);
+  finishInitialWorkspaceSync();
+  showApp();
+  scheduleDesktopAssetSync(0);
+  schedulePriceDialog();
   // The price catalog is non-essential for the first interaction. It is
   // deferred until the initial background sync settles so it cannot compete
   // with the first page render or duplicate the config request.
@@ -1629,10 +1723,13 @@ $('#renameFileForm').addEventListener('submit', async event => {
   if (name === file.name) return closeRenameFileDialog();
   const button = $('#saveRenameFile'); button.disabled = true; renameFileError();
   try {
-    if (window.guguDesktop && file.localOnly) await window.guguDesktop.media.renameLocal({ assetId:file.localId || file.id, name });
+    if (window.guguDesktop?.media?.renameLocal) {
+      await window.guguDesktop.media.renameLocal({ assetId:file.localId || file.id, name });
+      file.name = name.trim();
+      indexedFiles = null;
+    }
     else {
       await api(`/api/files/${file.id}`, { method:'PATCH', body:JSON.stringify({ name }) });
-      if (window.guguDesktop && file.localId) await window.guguDesktop.media.renameLocal({ assetId:file.localId, name });
     }
     closeRenameFileDialog(); toast('文件已重命名'); await loadFiles();
   }
@@ -1647,8 +1744,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=58').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing });
+    dramaControllerPromise = import('./drama-studio.js?v=60').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder });
       return dramaController;
     });
   }
@@ -1677,7 +1774,14 @@ $('#accountButton').onclick = event => { event.stopPropagation(); const menu = $
 $('#markAllNotifications').onclick = event => { event.stopPropagation(); void markAllNotificationsRead(); };
 document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
-$('#logoutButton').onclick = async () => { await api('/api/auth/logout', { method:'POST', body:'{}' }); location.reload(); };
+$('#logoutButton').onclick = async () => {
+  try { await api('/api/auth/logout', { method:'POST', body:'{}' }); }
+  finally {
+    resetDesktopAccountState();
+    await Promise.resolve(window.guguDesktop?.workspace?.deactivateAccount?.()).catch(error => console.warn('[desktop] 关闭账号工作区失败', error));
+    location.reload();
+  }
+};
 async function loadConfig() {
   const service = $('#serviceState');
   const updateServiceState = hidden => {
@@ -1808,16 +1912,17 @@ async function loadTasks({ background=false }={}) {
         if (previewFile) renderPreviewMeta(previewFile);
       }
       if (refundedTask) await loadCredits();
-      const missingAssetIds = [...new Set(tasks.map(task => task.assetId).filter(assetId => assetId && !state.files.some(file => file.id === assetId)))].slice(0, 50);
+      const missingAssetIds = [...new Set(tasks.map(task => task.assetId).filter(assetId => assetId && !state.files.some(file => file.id === assetId)))];
       let assetsChanged = false;
-      if (missingAssetIds.length) {
-        const fetched = await Promise.all(missingAssetIds.map(async assetId => {
-          try { return await api(`/api/files/${encodeURIComponent(assetId)}`); } catch { return null; }
-        }));
-        const fetchedAssets = fetched.filter(Boolean);
-        mergeStateFiles(fetchedAssets);
-        queueDesktopHydration(fetchedAssets);
-        assetsChanged = fetched.some(Boolean);
+      if (missingAssetIds.length && window.guguDesktop?.media?.listLocalByCloudIds) {
+        const localAssets = [];
+        for (let index = 0; index < missingAssetIds.length; index += 500) {
+          localAssets.push(...(await window.guguDesktop.media.listLocalByCloudIds(missingAssetIds.slice(index, index + 500)))
+            .map(desktopLocalClientAsset)
+            .filter(Boolean));
+        }
+        mergeStateFiles(localAssets);
+        assetsChanged = localAssets.length > 0;
       }
       if (changed || assetsChanged) {
         if (state.route === 'drama') dramaController?.refreshTasks?.();
@@ -1834,17 +1939,21 @@ async function loadTasks({ background=false }={}) {
   try { return await tasksRequest; }
   finally { tasksRequest = null; }
 }
-function localDownloadAction(file, label='下载') {
-  if (window.guguDesktop && file?.localStatus === 'saved') return `<button class="task-action download-local" type="button" data-asset-id="${esc(file.localId || file.id)}" title="${label}" aria-label="${label}"><svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></svg></button>`;
-  return `<a class="task-action" href="/api/files/${encodeURIComponent(file.id)}/download" title="${label}" aria-label="${label}"><svg viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></svg></a>`;
+function localFileAction(file, label='在文件夹中显示') {
+  return `<button class="task-action show-in-folder" type="button" data-asset-id="${esc(file.id)}" title="${label}" aria-label="${label}"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/><path d="m12 13 3 3m0-3v3h-3"/></svg></button>`;
 }
-function configureDownloadLink(link, file) {
+function configureLocalFileAction(link, file) {
   if (!link || !file) return;
   link.onclick = null;
-  if (window.guguDesktop && file.localStatus === 'saved') {
-    link.href = '#';
-    link.onclick = async event => { event.preventDefault(); try { const result = await window.guguDesktop.media.saveLocalAs({ assetId:file.localId || file.id }); if (result?.path) toast(`已保存到 ${result.path}`); } catch (error) { toast(`保存失败：${error.message}`); } };
-  } else link.href = `/api/files/${encodeURIComponent(file.id)}/download`;
+  link.href = '#';
+  link.removeAttribute('download');
+  link.title = '在文件夹中显示';
+  link.setAttribute('aria-label', '在文件夹中显示');
+  const icon = link.querySelector('svg');
+  if (icon) icon.innerHTML = '<path d="M3 7h7l2 2h9v10H3z"/><path d="m12 13 3 3m0-3v3h-3"/>';
+  const labelNode = [...link.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+  if (labelNode) labelNode.textContent = '在文件夹中显示';
+  link.onclick = event => { event.preventDefault(); void showDesktopAssetInFolder(file, link); };
 }
 function taskCard(task) {
   const asset = fileById(task.assetId);
@@ -1859,7 +1968,7 @@ function taskCard(task) {
       : task.assetId && !localSyncing
         ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 1.7 3h15.4a2 2 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>成品文件未找到</b><p>任务已完成，但文件库中没有对应文件</p></div>`
         : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
-  const completedActions = asset && !localSyncing ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localDownloadAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
+  const completedActions = asset && !localSyncing ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
   const failedAction = task.status === 'failed' && !['wait','contact_support'].includes(failure?.action) ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>${esc(taskFailureActionLabel(failure))}</button>` : '';
   const openButton = localSyncing ? '' : `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>`;
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedAction}</div></article>`;
@@ -1939,10 +2048,9 @@ function reconcileCards(container, records, { card, signature, bind, empty }) {
 function bindTaskCard(card) {
   card.querySelector('.open-task')?.addEventListener('click', event => openGenerationDetail(event.currentTarget.dataset.taskId));
   card.querySelectorAll('.task-action[data-action]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); handleTaskAction(button.dataset.action, button.dataset.taskId); }));
-  card.querySelector('.download-local')?.addEventListener('click', async event => {
+  card.querySelector('.show-in-folder')?.addEventListener('click', async event => {
     event.stopPropagation();
-    const result = await window.guguDesktop?.media?.saveLocalAs?.({ assetId:event.currentTarget.dataset.assetId });
-    if (result?.path) toast(`已保存到 ${result.path}`);
+    await showDesktopAssetInFolder(fileById(event.currentTarget.dataset.assetId), event.currentTarget);
   });
 }
 function taskRenderSignature(task) {
@@ -1974,7 +2082,7 @@ function renderTasks() {
     && lastTaskRender.ready === renderState.ready
     && lastTaskRender.tasks === renderState.tasks
     && lastTaskRender.files === renderState.files) return;
-  let tasks = state.tasks.filter(task => task.type === state.route);
+  let tasks = state.tasks.filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId && fileById(task.assetId)?.localStatus === 'saved')));
   if (state.generationFilter !== 'all') tasks = tasks.filter(task => state.generationFilter === 'running' ? ['queued','running'].includes(task.status) || taskLocalSyncing(task) : task.status === state.generationFilter && !taskLocalSyncing(task));
   tasks.sort(compareTasksByRecency);
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0;
@@ -2094,7 +2202,7 @@ function openGenerationDetail(id) {
   $('#generationCoreMeta').innerHTML = generationParameterRows(task);
   $('#generationDetailMeta').innerHTML = generationSupplementalRows(task, fileText);
   const error = $('#generationDetailError'); const failure = taskFailure(task); error.textContent = taskErrorText(task); error.classList.toggle('hidden', !failure);
-  const download = $('#downloadGeneration'); download.classList.toggle('hidden', !asset || localSyncing); configureDownloadLink(download, localSyncing ? null : asset);
+  const fileAction = $('#downloadGeneration'); fileAction.classList.toggle('hidden', !asset || localSyncing); configureLocalFileAction(fileAction, localSyncing ? null : asset);
   $('#useGenerationReference').classList.toggle('hidden', !asset || localSyncing || task.type !== 'image');
   const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !asset || localSyncing); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
   const deleteButton = $('#deleteGeneration'); const active = localSyncing || ['queued','running'].includes(task.status); deleteButton.disabled = active; deleteButton.title = active ? '任务生成中，完成后才能删除' : '';
@@ -2124,65 +2232,50 @@ $('#deriveGeneration').onclick = () => { const task = state.tasks.find(item => i
 $('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmDelete({ title:'确认删除作品', message:'作品一旦删除，无法恢复。' })) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (task.assetId) clearFileReferences(task.assetId); closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
 
 async function loadFiles({ background=false, loadMore=false }={}) {
-  if (filesRequest) { const pending = filesRequest; return background ? pending : pending.then(() => loadFiles({ background:true, loadMore })); }
-  filesRequest = (async () => {
-    const search = $('#fileSearch').value.trim();
-    const queryKey = `${state.fileKind}|${search}`;
-    const reset = !loadMore || queryKey !== fileQueryKey;
-    if (reset) {
-      fileQueryKey = queryKey;
-      remoteFileCursor = '';
-      remoteFileHasMore = true;
-      remoteFileTotal = null;
-      localFileCursor = '';
-      localFileHasMore = true;
-      const taskAssetIds = new Set(state.tasks.map(task => task.assetId).filter(Boolean));
-      state.files = state.files.filter(file => file.localOnly || taskAssetIds.has(file.id));
+  const search = $('#fileSearch').value.trim();
+  const queryKey = `${state.fileKind}|${search}`;
+  const reset = !loadMore || queryKey !== fileQueryKey;
+  const requestVersion = reset ? ++fileLoadVersion : fileLoadVersion;
+  const cursor = reset ? '' : localFileCursor;
+  if (reset) {
+    fileQueryKey = queryKey;
+    localFileCursor = '';
+    localFileHasMore = true;
+  }
+  if (!window.guguDesktop?.media?.listLocal) {
+    libraryFiles = [];
+    localFileTotal = 0;
+    localFileHasMore = false;
+    renderFiles();
+    return state.files;
+  }
+  try {
+    const page = await listDesktopFiles({
+      limit:200,
+      cursor,
+      kind:state.fileKind === 'all' ? '' : state.fileKind,
+      search,
+    });
+    if (requestVersion !== fileLoadVersion || queryKey !== fileQueryKey) return state.files;
+    localFileCursor = page.nextCursor || '';
+    localFileHasMore = Boolean(page.nextCursor);
+    localFileTotal = page.total;
+    libraryFiles = reset
+      ? page.items
+      : [...libraryFiles, ...page.items.filter(file => !libraryFiles.some(item => item.id === file.id))];
+    if (reset && state.fileKind === 'all' && !search) {
+      state.files = mergeTransientFields(state.files, page.items, ['width','height']);
       indexedFiles = null;
-    }
-    let localPage = { items:[], nextCursor:'' };
-    try {
-      // These reads are independent: the sync request updates cursors and
-      // deliveries, while local SQLite and the remote page only read their
-      // current snapshots. Start them together to avoid making a slow network
-      // sync delay the first gallery render.
-      const syncPromise = syncDesktopDeliveries().catch(error => {
-        if (error.status === 401) throw error;
-        console.warn('[desktop] 增量素材同步暂不可用，将继续使用本地/分页数据', error.message);
-        return null;
-      });
-      const localPromise = window.guguDesktop && localFileHasMore
-        ? listDesktopFiles({ limit:200, cursor:localFileCursor })
-        : Promise.resolve(localPage);
-      const remotePromise = remoteFileHasMore
-        ? listRemoteFilesPage({ cursor:remoteFileCursor, kind:state.fileKind, search })
-        : Promise.resolve({ items:[], nextCursor:'', total:null });
-      const [, nextLocalPage, remotePage] = await Promise.all([syncPromise, localPromise, remotePromise]);
-      localPage = nextLocalPage;
-      remoteFileCursor = remotePage.nextCursor;
-      remoteFileHasMore = Boolean(remotePage.nextCursor);
-      if (remotePage.total !== null) remoteFileTotal = remotePage.total;
-      localFileCursor = localPage.nextCursor || '';
-      localFileHasMore = Boolean(localPage.nextCursor);
-      const files = mergeDesktopFiles(await enrichDesktopFiles(remotePage.items, localPage.items), localPage.items);
-      const before = listSignature(state.files, fileCardSignatureFields);
-      mergeStateFiles(files);
-      const changed = before !== listSignature(state.files, fileCardSignatureFields);
-      if (changed || reset) {
-        renderFiles();
-        renderReferences();
-        if (['image','video'].includes(state.route)) renderTasks();
-        else if (state.route === 'drama') dramaController?.refreshTasks?.();
-      }
-      return state.files;
-    } catch (error) {
-      if (error.status === 401) return location.reload();
-      if (!background) toast(window.guguDesktop && localPage.items.length ? '当前网络不可用，已从本地工作区加载素材' : error.message);
-      return state.files;
-    }
-  })();
-  try { return await filesRequest; }
-  finally { filesRequest = null; }
+    } else mergeStateFiles(page.items);
+    renderFiles();
+    renderReferences();
+    if (['image','video'].includes(state.route)) renderTasks();
+    else if (state.route === 'drama') dramaController?.refreshTasks?.();
+    return state.files;
+  } catch (error) {
+    if (!background) toast(`本地文件库加载失败：${error.message}`);
+    return state.files;
+  }
 }
 function assetDisplayName(file) {
   const stem = String(file.name || '').replace(/\.[^.]+$/, '').trim();
@@ -2193,7 +2286,7 @@ function assetDisplayName(file) {
   const date = new Date(file.createdAt); const day = Number.isNaN(date.getTime()) ? '' : `｜${String(date.getMonth()+1).padStart(2,'0')}月${String(date.getDate()).padStart(2,'0')}日`;
   return `导入${file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}${day}`;
 }
-function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? assetImageMarkup(file, displayName) : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : videoPreviewMarkup(file); const download = window.guguDesktop && file.localStatus === 'saved' ? `<button class="download-local" data-asset-id="${esc(file.localId || file.id)}">下载</button>` : `<a href="/api/files/${encodeURIComponent(file.id)}/download">下载</a>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${download}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
+function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? assetImageMarkup(file, displayName) : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : videoPreviewMarkup(file); const reveal = `<button class="show-in-folder" data-asset-id="${esc(file.id)}">在文件夹中显示</button>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${reveal}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
 function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
 function uploadJobKind(mimeType) { const value = String(mimeType || ''); return value.startsWith('image/') ? 'image' : value.startsWith('video/') ? 'video' : value.startsWith('audio/') ? 'audio' : ''; }
 function uploadJobMediaMarkup(job) { if (job.kind === 'image' && job.previewUrl) return `<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}">`; if (job.kind === 'video' && job.previewUrl) return `<video src="${esc(job.previewUrl)}" preload="metadata" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return '<span class="audio-file-mark">♫</span>'; }
@@ -2237,26 +2330,29 @@ function projectPendingReferenceToCreation(job) {
   else if (['image','video'].includes(job.referenceTarget) && !state.refs[job.referenceTarget].includes(job.id)) state.refs[job.referenceTarget] = [...state.refs[job.referenceTarget], job.id];
   renderReferences();
 }
+function libraryFileMatches(file) {
+  const query = $('#fileSearch').value.trim().toLowerCase();
+  return (state.fileKind === 'all' || file.kind === state.fileKind)
+    && (!query || `${file.name} ${assetDisplayName(file)}`.toLowerCase().includes(query));
+}
 function renderFiles() {
   if (state.route !== 'files') return;
   const query = $('#fileSearch').value.trim().toLowerCase();
-  const matches = file => (state.fileKind === 'all' || file.kind === state.fileKind) && (!query || `${file.name} ${assetDisplayName(file)}`.toLowerCase().includes(query));
   const uploads = state.uploadJobs.filter(job => job.context === 'library' && (!query || job.name.toLowerCase().includes(query)) && (state.fileKind === 'all' || job.kind === state.fileKind));
   const uploadingAssetIds = new Set(uploads.map(job => job.assetId).filter(Boolean));
-  const files = state.files.filter(file => matches(file) && !uploadingAssetIds.has(file.id));
-  const hasInitialData = state.initialSyncReady || state.files.length > 0 || uploads.length > 0;
-  const knownTotal = remoteFileTotal === null ? files.length : remoteFileTotal;
-  $('#fileCount').textContent = hasInitialData ? `${knownTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个上传中` : ''}` : '正在加载…';
+  const files = libraryFiles.filter(file => libraryFileMatches(file) && !uploadingAssetIds.has(file.id));
+  const hasInitialData = state.initialSyncReady || libraryFiles.length > 0 || uploads.length > 0;
+  $('#fileCount').textContent = hasInitialData ? `${localFileTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个同步中` : ''}` : '正在加载…';
   const empty = hasInitialData
-    ? uploads.length ? '' : emptyState(state.files.length ? '没有匹配的文件' : '文件库还是空的', state.files.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', state.files.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>')
-    : emptyState('正在加载文件库', '正在同步你的品牌素材，页面可以先使用。');
+    ? uploads.length ? '' : emptyState(libraryFiles.length ? '没有匹配的文件' : '文件库还是空的', libraryFiles.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', libraryFiles.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>')
+    : emptyState('正在加载文件库', '正在读取本地工作区，页面可以先使用。');
   const grid = $('#fileGrid');
   reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty });
   renderUploadJobCards(grid, uploads, 'file');
   grid.querySelector('.empty-upload')?.addEventListener('click', () => openUploadPicker('library'), { once:true });
   const loadMore = $('#loadMoreFiles');
   if (loadMore) {
-    const hasMore = remoteFileHasMore || localFileHasMore;
+    const hasMore = localFileHasMore;
     loadMore.classList.toggle('hidden', !hasMore);
     loadMore.disabled = false;
     loadMore.textContent = hasMore ? '加载更多' : '已加载全部';
@@ -2271,7 +2367,8 @@ $('#fileSearch').oninput = () => {
 $$('.type-tabs button').forEach(button => button.onclick = () => {
   state.fileKind = button.dataset.kind;
   $$('.type-tabs button').forEach(x => x.classList.toggle('active', x === button));
-  void loadFiles();
+  renderFiles();
+  void loadFiles({ background:true });
 });
 $('#loadMoreFiles')?.addEventListener('click', async event => {
   const button = event.currentTarget;
@@ -2286,9 +2383,13 @@ function clearFileReferences(fileId) {
   removeVideoPromptMentionNodes(fileId);
 }
 async function removeFile(file) {
-  if (window.guguDesktop && file.localOnly) {
-    await window.guguDesktop.media.removeLocal(file.id);
+  if (window.guguDesktop?.media?.removeLocal) {
+    await window.guguDesktop.media.removeLocal(file.localId || file.id);
     clearFileReferences(file.id);
+    state.files = state.files.filter(item => item.id !== file.id);
+    libraryFiles = libraryFiles.filter(item => item.id !== file.id);
+    indexedFiles = null;
+    localFileTotal = Math.max(0, localFileTotal - 1);
     await loadFiles();
     return;
   }
@@ -2300,7 +2401,7 @@ async function removeFile(file) {
 function bindFileActions(root) {
   root.querySelector('.preview-file')?.addEventListener('click', event => openPreview(event.currentTarget.dataset.id));
   root.querySelector('.more-button')?.addEventListener('click', event => { event.stopPropagation(); const button = event.currentTarget; $$('[data-menu]').forEach(menu => menu.classList.toggle('hidden', menu.dataset.menu !== button.dataset.id || !menu.classList.contains('hidden'))); });
-  root.querySelector('.download-local')?.addEventListener('click', async event => { event.stopPropagation(); const result = await window.guguDesktop?.media?.saveLocalAs?.({ assetId:event.currentTarget.dataset.assetId }); if (result?.path) toast(`已保存到 ${result.path}`); });
+  root.querySelector('.show-in-folder')?.addEventListener('click', async event => { event.stopPropagation(); await showDesktopAssetInFolder(fileById(event.currentTarget.dataset.assetId), event.currentTarget); });
   root.querySelector('.rename-file')?.addEventListener('click', event => { const file = state.files.find(x => x.id === event.currentTarget.dataset.id); openRenameFileDialog(file); });
   root.querySelector('.delete-file')?.addEventListener('click', async event => { const file = state.files.find(x => x.id === event.currentTarget.dataset.id); if (!file || !await confirmDelete({ title:'确认删除素材', message:'素材一旦删除，无法恢复。' })) return; try { await removeFile(file); toast('文件已删除'); } catch (error) { toast(error.message); } });
 }
@@ -3162,10 +3263,10 @@ function renderPreviewMeta(file, width=file.width, height=file.height) {
     + detailRow('原始文件名', file.name);
 }
 function renderPreviewMetaLegacy(file, width=file.width, height=file.height) { renderPreviewMeta(file, width, height); }
-function openPreviewLegacy(id) { const file = state.files.find(item => item.id === id); if (!file || !requireDesktopLocalAsset(file)) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } configureDownloadLink($('#previewDownload'), file); $('#previewDialog').showModal(); }
+function openPreviewLegacy(id) { const file = state.files.find(item => item.id === id); if (!file || !requireDesktopLocalAsset(file)) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } configureLocalFileAction($('#previewDownload'), file); $('#previewDialog').showModal(); }
 function usePreviewAsset(target) { const file = state.files.find(item => item.id === state.previewFileId); if (!file || file.kind !== 'image') return; if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型'); if (target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST') { const frame = state.videoFrames.first ? 'last' : 'first'; state.videoFrames[frame] = file.id; } else { const limit = target === 'video' ? videoReferenceLimit() : 7; if (!state.refs[target].includes(file.id)) state.refs[target] = [file.id, ...state.refs[target]].slice(0, limit); } $('#previewDialog').close(); navigate(target); renderReferences(); toast(`已将“${assetDisplayName(file)}”设为${target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST' ? '视频帧图片' : '参考图'}`); }
 async function copyPreviewGenerationPrompt() { const task = taskForAsset(fileById(state.previewFileId)); const prompt = task?.prompt || ''; if (!prompt) return toast('暂无可复制的创作描述'); try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(prompt); else if (!copyTextFallback(prompt)) throw new Error('copy failed'); toast('创作描述已复制'); } catch { toast('复制失败，请手动选择文字复制'); const text = $('#previewGenerationPromptText'); const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(text); selection.removeAllRanges(); selection.addRange(range); } }
-function openPreview(id) { const file = state.files.find(item => item.id === id); if (!file || !requireDesktopLocalAsset(file)) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : file.kind === 'audio' ? `<audio src="${file.url}" controls autoplay></audio>` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else if (file.kind === 'video') { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } configureDownloadLink($('#previewDownload'), file); $('#previewDialog').showModal(); }
+function openPreview(id) { const file = state.files.find(item => item.id === id); if (!file || !requireDesktopLocalAsset(file)) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : file.kind === 'audio' ? `<audio src="${file.url}" controls autoplay></audio>` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else if (file.kind === 'video') { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } configureLocalFileAction($('#previewDownload'), file); $('#previewDialog').showModal(); }
 $('#usePreviewForImage').onclick = () => usePreviewAsset('image');
 $('#usePreviewForVideo').onclick = () => usePreviewAsset('video');
 $('#closePreview').onclick = () => $('#previewDialog').close();
@@ -3178,7 +3279,11 @@ $('#copyPreviewGenerationPrompt').onclick = copyPreviewGenerationPrompt;
 $('#previewGenerationPromptToggle').onclick = () => { const prompt = $('#previewGenerationPromptText'); const toggle = $('#previewGenerationPromptToggle'); const expanded = prompt.classList.toggle('expanded'); toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? '收起描述' : '展开全部'; };
 
 async function bootstrap() {
-  await initDesktopBridge().catch(error => console.warn('[desktop] 初始化工作区桥接失败', error));
+  const desktopReady = await initDesktopBridge().catch(error => { console.warn('[desktop] 初始化工作区桥接失败', error); return false; });
+  if (!desktopReady) {
+    showBoot('请使用 GuGu AI 客户端', '创作工作台不支持浏览器访问。');
+    return;
+  }
   showBoot();
   try {
     const { user } = await api('/api/auth/me');
@@ -3188,7 +3293,7 @@ async function bootstrap() {
       showAuth();
       if (window.location.pathname !== authPath) window.history.replaceState({ route:'login' }, '', authPath);
     } else {
-      showBoot('暂时无法恢复工作区', '登录状态确认失败，请检查网络后重试。', { retry:true });
+      showBoot('无法恢复工作区', '请检查网络后重试。', { retry:true });
     }
   }
   renderReferences();

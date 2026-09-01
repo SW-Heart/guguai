@@ -14,6 +14,7 @@ import {
   openLocalLibrary,
   upsertLocalAsset,
 } from '../desktop/local-library.mjs';
+import { accountWorkspacePath } from '../desktop/workspace-scope.mjs';
 
 function asset(index, createdAt = new Date(Date.UTC(2026, 0, 1, 0, index % 60, Math.floor(index / 60))).toISOString()) {
   return {
@@ -29,6 +30,16 @@ function asset(index, createdAt = new Date(Date.UTC(2026, 0, 1, 0, index % 60, M
     updatedAt: createdAt,
     localStatus: 'saved',
     remoteStatus: 'ready',
+  };
+}
+
+function videoAsset(index, createdAt) {
+  return {
+    ...asset(index, createdAt),
+    name: `视频-${index}.mp4`,
+    relativePath: `library/file-${index}.mp4`,
+    mimeType: 'video/mp4',
+    kind: 'video',
   };
 }
 
@@ -59,6 +70,34 @@ test('local library migrates once and paginates without loading the whole index'
     } while (cursor);
     assert.equal(ids.length, 1002);
     assert.equal(new Set(ids).size, 1002);
+
+    upsertLocalAsset(videoAsset(2000));
+    upsertLocalAsset({ ...videoAsset(2001), name: '特别片段.mp4', remoteStatus: 'local_only' });
+    const videos = listLocalAssets({ kind: 'video', limit: 20 });
+    assert.equal(videos.total, 2);
+    assert.deepEqual(videos.items.map(item => item.id), ['local-2001', 'local-2000']);
+    const searched = listLocalAssets({ kind: 'video', search: '特别', limit: 20 });
+    assert.equal(searched.total, 1);
+    assert.equal(searched.items[0].id, 'local-2001');
+    const pending = listLocalAssets({ remoteStatus: 'local_only', limit: 20 });
+    assert.equal(pending.total, 1);
+    assert.equal(pending.items[0].id, 'local-2001');
+  } finally {
+    closeLocalLibrary();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('account-scoped workspace databases do not expose each other local assets', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'local-library-accounts-'));
+  try {
+    openLocalLibrary(accountWorkspacePath(root, 'user-a'));
+    upsertLocalAsset(asset(1));
+    closeLocalLibrary();
+
+    openLocalLibrary(accountWorkspacePath(root, 'user-b'));
+    assert.equal(countLocalAssets(), 0);
+    assert.equal(findLocalAssetByCloudId('cloud-1'), null);
   } finally {
     closeLocalLibrary();
     rmSync(root, { recursive: true, force: true });

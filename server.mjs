@@ -85,7 +85,10 @@ const desktopDirectDeliveryGraceMs = Math.max(10_000, Number(process.env.DESKTOP
 // The web surface is a public product page. The creator workspace is served
 // only to requests carrying the desktop client marker; tests can opt out to
 // exercise the HTTP API without having to add that marker.
-const desktopAppOnly = String(process.env.DESKTOP_APP_ONLY ?? (process.env.NODE_ENV === 'test' ? 'false' : 'true')).toLowerCase() !== 'false';
+// The creator workspace is a desktop product. Only isolated HTTP tests may
+// disable the desktop request marker; production configuration cannot turn the
+// browser workspace back on.
+const desktopAppOnly = process.env.NODE_ENV === 'production' || String(process.env.GUGU_TEST_ALLOW_BROWSER_WORKSPACE || '') !== '1';
 const defaultPublicDownloadBaseUrl = 'https://guguai.oss-cn-hangzhou.aliyuncs.com/oline/desktop-updates';
 const publicDownloadUrls = Object.freeze({
   mac: String(process.env.PUBLIC_MAC_DOWNLOAD_URL || `${defaultPublicDownloadBaseUrl}/latest-mac.dmg`).trim(),
@@ -1400,7 +1403,7 @@ async function prepareGenerationAsset(userId, task, result) {
   await saveAsset(userId, asset);
   return asset;
 }
-async function servePendingGenerationSource(res, asset, { download = false } = {}) {
+async function servePendingGenerationSource(res, asset) {
   if (!asset?.sourceUrl || asset.objectKey) return false;
   const sourceUrl = new URL(asset.sourceUrl);
   if (!['http:', 'https:'].includes(sourceUrl.protocol)) return false;
@@ -1419,7 +1422,6 @@ async function servePendingGenerationSource(res, asset, { download = false } = {
   const contentLength = response.headers.get('content-length');
   const headers = { 'Content-Type': contentType, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
   if (contentLength) headers['Content-Length'] = contentLength;
-  if (download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(asset.name)}`;
   res.writeHead(200, headers);
   Readable.fromWeb(response.body).pipe(res);
   return true;
@@ -1947,7 +1949,7 @@ async function recoverPendingGenerations() {
   }
 }
 
-async function serveFile(res, file, mimeType, downloadName = '', cacheControl = 'private, max-age=3600', validator = null) { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (downloadName) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}`; if (validator) { const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`; headers.ETag = etag; if (validator.ifNoneMatch === etag) { delete headers['Content-Length']; res.writeHead(304, headers); return res.end(); } } res.writeHead(200, headers); createReadStream(file).pipe(res); }
+async function serveFile(res, file, mimeType, cacheControl = 'private, max-age=3600', validator = null) { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (validator) { const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`; headers.ETag = etag; if (validator.ifNoneMatch === etag) { delete headers['Content-Length']; res.writeHead(304, headers); return res.end(); } } res.writeHead(200, headers); createReadStream(file).pipe(res); }
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 const marketingRouteFiles = new Map([
   ['/features', 'features.html'],
@@ -1956,15 +1958,18 @@ const marketingRouteFiles = new Map([
   ['/pricing/', 'pricing.html'],
 ]);
 function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
-
-async function serveStatic(res, pathname, req = null) {
-  const desktop = Boolean(req && isDesktopRequest(req));
-  const relative = marketingRouteFiles.get(pathname)
+function staticEntryFile(pathname, { desktop = false, appOnly = desktopAppOnly } = {}) {
+  return marketingRouteFiles.get(pathname)
     || (pathname === '/guguadmin' || pathname === '/guguadmin/'
       ? 'guguadmin.html'
       : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
-        ? (pathname === '/login' || desktop || !desktopAppOnly ? 'index.html' : 'home.html')
+        ? (desktop || !appOnly ? 'index.html' : 'home.html')
         : pathname.slice(1));
+}
+
+async function serveStatic(res, pathname, req = null) {
+  const desktop = Boolean(req && isDesktopRequest(req));
+  const relative = staticEntryFile(pathname, { desktop });
   const file = path.resolve(publicDir, relative);
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
@@ -1981,7 +1986,7 @@ async function serveStatic(res, pathname, req = null) {
   // depending on the request marker. Keep an intermediary cache from serving
   // one variant to the other.
   if (desktopAppOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
-  try { await serveFile(res, file, mime, '', cacheControl, revalidate && !versioned ? { ifNoneMatch: req?.headers['if-none-match'] || '' } : null); }
+  try { await serveFile(res, file, mime, cacheControl, revalidate && !versioned ? { ifNoneMatch:req?.headers['if-none-match'] || '' } : null); }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }
 
@@ -1992,7 +1997,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed, staticEntryFile };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2831,7 +2836,7 @@ const server = http.createServer(async (req, res) => {
       // Serve a local image first so gallery rendering never waits on remote storage.
       const localFile = path.join(assetFilesDir(user.id), asset.storageName);
       if (await fs.access(localFile).then(() => true).catch(() => false)) {
-        return serveFile(res, localFile, asset.mimeType, '', `private, max-age=${assetPreviewCacheSeconds}`);
+        return serveFile(res, localFile, asset.mimeType, `private, max-age=${assetPreviewCacheSeconds}`);
       }
       if (asset.objectKey) {
         const previewUrl = await signedAssetUrl(asset.objectKey, assetPreviewCacheSeconds + 60, { cacheControl: `private, max-age=${assetPreviewCacheSeconds}` });
@@ -2894,11 +2899,11 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(302, { Location: await signedAssetUrl(asset.objectKey), 'Cache-Control': 'private, no-store' });
         return res.end();
       }
-      if (await servePendingGenerationSource(res, asset, { download: false })) return;
+      if (await servePendingGenerationSource(res, asset)) return;
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
-    const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content|download))?$/);
-    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType, fileMatch[2] === 'download' ? asset.name : ''); if (asset.objectKey) { res.writeHead(302, { Location: await signedAssetUrl(asset.objectKey), 'Cache-Control': 'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset, { download: fileMatch[2] === 'download' })) return; return sendJson(res, 404, { error: '文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
+    const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content))?$/);
+    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType); if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset)) return; return sendJson(res, 404, { error:'文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
 
     const downloadMatch = url.pathname.match(/^\/downloads\/(mac|windows)$/);
     if (downloadMatch && req.method === 'GET') {

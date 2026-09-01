@@ -67,7 +67,7 @@ test('admin HTTP permissions and core workflows', async t => {
   await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', DESKTOP_APP_ONLY: 'false', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
   const admin = client(base);

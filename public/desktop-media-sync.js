@@ -2,6 +2,20 @@ export function cloudAssetFromDesktopSync(result) {
   return result?.cloudAsset?.id ? result.cloudAsset : null;
 }
 
+export function desktopMediaPayload(file) {
+  const localOnly = Boolean(file?.localOnly);
+  const assetId = String(file?.cloudAssetId || (!localOnly ? file?.id : '') || '');
+  const localAssetId = String(file?.localId || (localOnly ? file?.id : '') || '');
+  return {
+    assetId,
+    localAssetId,
+    url: assetId ? String(file?.directUrl || `/api/files/${encodeURIComponent(assetId)}/direct`) : '',
+    name: String(file?.name || '未命名文件'),
+    kind: String(file?.kind || ''),
+    mimeType: String(file?.mimeType || ''),
+  };
+}
+
 export function isRemoteReferenceReady(file) {
   return Boolean(file && !file.localOnly && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
 }

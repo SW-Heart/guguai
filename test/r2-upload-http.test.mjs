@@ -156,7 +156,7 @@ test('R2-only HTTP upload verifies, promotes, cleans up, and completes idempoten
     env: {
       ...process.env,
       NODE_ENV: 'development',
-      DESKTOP_APP_ONLY: 'false',
+      GUGU_TEST_ALLOW_BROWSER_WORKSPACE: '1',
       DATA_DIR: dataDir,
       PORT: String(port),
       DIRECT_UPLOAD_ENABLED: 'true',
