@@ -4,12 +4,21 @@ import test from 'node:test';
 import {
   canRemoveImportedLocalAsset,
   cloudAssetFromDesktopSync,
+  desktopHydrationRetryDelay,
   isAwaitingDesktopDelivery,
   isRemoteReferenceReady,
   needsReferenceUpload,
   shouldHydrateDesktopAsset,
   shouldRemoveUploadJobLocalAsset,
 } from '../public/desktop-media-sync.js';
+
+test('desktop hydration retries transient failures with bounded backoff', () => {
+  assert.equal(desktopHydrationRetryDelay(1), 750);
+  assert.equal(desktopHydrationRetryDelay(2), 1500);
+  assert.equal(desktopHydrationRetryDelay(3), 0);
+  assert.equal(desktopHydrationRetryDelay(1, { baseDelay:200, maxFailures:2 }), 200);
+  assert.equal(desktopHydrationRetryDelay(2, { baseDelay:200, maxFailures:2 }), 0);
+});
 
 test('desktop sync accepts only the canonical cloudAsset result', () => {
   const current = { cloudAsset: { id: 'cloud-current', name: 'current.png' } };

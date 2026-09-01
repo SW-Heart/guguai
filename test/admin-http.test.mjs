@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 
 import { closeDatabase, openDatabase, resetForTests } from '../lib/db.mjs';
 import { hashPassword } from '../lib/auth.mjs';
+import { adjustCredits, chargeGenerationMicro, refundGenerationMicro } from '../lib/ledger.mjs';
 import { insertUser } from '../lib/store.mjs';
 
 async function freePort() {
@@ -54,11 +55,16 @@ test('admin HTTP permissions and core workflows', async t => {
   const workDir = mkdtempSync(path.join(tmpdir(), 'admin-http-'));
   const port = await freePort();
   const adminId = randomUUID();
+  const refundedUserId = randomUUID();
   const adminPassword = 'admin-http-password-123';
   resetForTests();
   openDatabase({ file: path.join(workDir, 'studio.db') });
   const createdAt = new Date().toISOString();
   insertUser({ id: adminId, username: 'http_admin', role: 'admin', status: 'active', passwordHash: await hashPassword(adminPassword), credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  insertUser({ id: refundedUserId, username: 'refunded_user', role: 'user', status: 'active', passwordHash: 'scrypt:x:y', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  await adjustCredits(refundedUserId, 10_000_000, { actorUserId: adminId, idempotencyKey: 'seed-refund-user-balance', reasonCode: 'promotion' });
+  await chargeGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
+  await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   closeDatabase({ checkpoint: false });
 
   const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', DESKTOP_APP_ONLY: 'false', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -82,6 +88,12 @@ test('admin HTTP permissions and core workflows', async t => {
   const routes = await admin.call('/api/admin/model-routes');
   assert.equal(routes.response.status, 200);
   assert.ok(routes.data.channels.some(item => item.id === 'diw-main'));
+  const overviewAfterRefund = await admin.call('/api/admin/overview');
+  assert.equal(overviewAfterRefund.data.credits.spent, 0);
+  const refundedUser = await admin.call('/api/admin/users?query=refunded_user');
+  assert.equal(refundedUser.data.items[0].totalSpent, 0);
+  const refundedUserDetail = await admin.call(`/api/admin/users/${refundedUserId}`);
+  assert.equal(refundedUserDetail.data.user.totalSpent, 0);
   const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
   assert.equal(createdRoute.response.status, 201);
   assert.equal(createdRoute.data.route.salePriceYuan, 2.2);

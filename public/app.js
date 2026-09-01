@@ -1,7 +1,7 @@
 import { createDramaStudio } from './drama-studio.js?v=58';
 import { listSignature, mergeTransientFields, recordSignature } from './list-sync.js?v=1';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=4';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=5';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -65,6 +65,8 @@ const desktopHydrationQueue = [];
 const desktopHydrationQueued = new Set();
 const desktopHydrationAttempted = new Set();
 const desktopHydrationActive = new Set();
+const desktopHydrationFailureCounts = new Map();
+const desktopHydrationRetryTimers = new Map();
 let desktopHydrationRunning = false;
 let desktopUpdateState = { status: 'idle' };
 
@@ -182,9 +184,31 @@ async function runDesktopHydrationQueue() {
         // retain the attempt marker so a later missing-local-file check can
         // repair the copy in the same client session.
         desktopHydrationAttempted.delete(file?.id);
+        desktopHydrationFailureCounts.delete(file?.id);
+        const retryTimer = desktopHydrationRetryTimers.get(file?.id);
+        if (retryTimer) window.clearTimeout(retryTimer);
+        desktopHydrationRetryTimers.delete(file?.id);
       }
-      catch (error) { console.warn('[desktop] 自动同步素材失败', { assetId: file?.id, message: error.message }); }
-      finally { desktopHydrationQueued.delete(file?.id); desktopHydrationActive.delete(file?.id); }
+      catch (error) {
+        const assetId = file?.id;
+        desktopHydrationAttempted.delete(assetId);
+        const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
+        desktopHydrationFailureCounts.set(assetId, failureCount);
+        const retryDelay = desktopHydrationRetryDelay(failureCount);
+        console.warn('[desktop] 自动同步素材失败', { assetId, message:error.message, failureCount, retryDelay });
+        if (assetId && retryDelay && !desktopHydrationRetryTimers.has(assetId)) {
+          const timer = window.setTimeout(() => {
+            desktopHydrationRetryTimers.delete(assetId);
+            queueDesktopHydration([fileById(assetId) || file]);
+          }, retryDelay);
+          desktopHydrationRetryTimers.set(assetId, timer);
+        }
+      }
+      finally {
+        desktopHydrationQueued.delete(file?.id);
+        desktopHydrationActive.delete(file?.id);
+        renderAfterDesktopAssetHydration();
+      }
     }
   } finally {
     desktopHydrationRunning = false;
@@ -193,13 +217,16 @@ async function runDesktopHydrationQueue() {
 }
 function queueDesktopHydration(files) {
   if (!window.guguDesktop) return;
+  let queued = false;
   for (const file of files) {
-    if (!shouldHydrateDesktopAsset(file) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id)) continue;
+    if (!shouldHydrateDesktopAsset(file) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
     desktopHydrationAttempted.add(file.id);
     desktopHydrationQueued.add(file.id);
     desktopHydrationActive.add(file.id);
     desktopHydrationQueue.push(file);
+    queued = true;
   }
+  if (queued) renderAfterDesktopAssetHydration();
   if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
 }
 async function syncDesktopDeliveries() {
@@ -1479,14 +1506,15 @@ async function enterApp(user) {
   updateAccountIdentity(user);
   setCreditBalance(user.credits);
 
-  // Route first: the shell and its controls can paint while the workspace data
-  // is fetched in parallel. Each loader already refreshes the active surface
-  // when its own response arrives.
+  // Route first so the shell can paint immediately. The non-workspace requests
+  // still run in parallel, while files intentionally finish before tasks so an
+  // existing local media URL wins the first render after a desktop update.
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
   showApp();
 
   const schedulePriceDialog = () => window.setTimeout(() => { void openModelPriceDialog({ auto:true }); }, 300);
-  void Promise.all([loadConfig(), loadCredits(), loadNotifications(), loadFiles(), loadTasks()]).then(
+  const loadWorkspace = async () => { await loadFiles(); return loadTasks(); };
+  void Promise.all([loadConfig(), loadCredits(), loadNotifications(), loadWorkspace()]).then(
     () => { finishInitialWorkspaceSync(); schedulePriceDialog(); },
     error => { console.warn('[workspace] initial sync failed', error); finishInitialWorkspaceSync(); schedulePriceDialog(); },
   );

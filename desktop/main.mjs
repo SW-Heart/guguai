@@ -185,6 +185,13 @@ function mimeFromName(name) {
   }[extension] || 'application/octet-stream';
 }
 
+function localMediaMimeType(asset, target) {
+  const stored = String(asset?.mimeType || '').split(';')[0].trim().toLowerCase();
+  if (stored && stored !== 'application/octet-stream') return stored;
+  const named = mimeFromName(asset?.name || '');
+  return named !== 'application/octet-stream' ? named : mimeFromName(target);
+}
+
 async function importFile(filePath) {
   if (!workspace) throw new Error('工作区尚未初始化');
   const stat = await fs.stat(filePath);
@@ -502,7 +509,7 @@ async function serveLocalMedia(request) {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=0, must-revalidate',
     'Content-Length': String(Math.max(0, end - start + 1)),
-    'Content-Type': asset.mimeType || mimeFromName(target),
+    'Content-Type': localMediaMimeType(asset, target),
     'X-Content-Type-Options': 'nosniff',
   };
   const status = range ? 206 : 200;
@@ -1030,6 +1037,10 @@ async function createWindow() {
     minWidth: 1080,
     minHeight: 700,
     title: productName,
+    // Render the local startup surface before doing any network work. Without
+    // this, Electron paints its default white background while health checks
+    // and the remote studio page are still loading.
+    show: false,
     backgroundColor: '#f7f7f8',
     frame: usesNativeMacTitlebar || usesNativeWindowsControls,
     ...(usesNativeMacTitlebar ? {
@@ -1077,6 +1088,9 @@ async function createWindow() {
   mainWindow.on('will-leave-full-screen', () => markFullscreenTransition(true));
   mainWindow.on('enter-full-screen', () => markFullscreenTransition(false));
   mainWindow.on('leave-full-screen', () => markFullscreenTransition(false));
+  await mainWindow.loadFile(path.join(rendererDir, 'startup.html'));
+  mainWindow.show();
+  mainWindow.focus();
   await loadStudio();
   sendWindowState();
 }

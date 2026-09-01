@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GuGu AI · 正在启动</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #20212a;
+      background: #f7f7f8;
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; margin: 0; }
+    body { min-height: 100vh; overflow: hidden; background: radial-gradient(circle at 50% 35%, #fff 0, #f7f7f8 52%, #ededf1 100%); }
+    body.desktop-runtime { padding-top: 56px; }
+    .hidden { display: none !important; }
+    .desktop-drag-region { position: fixed; z-index: 10; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; }
+    .desktop-window-controls { position: fixed; z-index: 20; top: 0; right: 0; height: 56px; display: flex; border-left: 1px solid #e2e3e8; background: rgba(255,255,255,.78); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
+    .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: #777986; background: transparent; display: grid; place-items: center; cursor: pointer; -webkit-app-region: no-drag; }
+    .desktop-window-controls button:hover { color: #20212a; background: #ececf0; }
+    .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; }
+    .desktop-window-controls .window-close:hover { color: #fff; background: #b94a54; }
+    .desktop-window-controls .window-icon { width: 13px; height: 13px; }
+    .desktop-window-controls button:focus-visible { outline: 2px solid #696ce0; outline-offset: -2px; }
+    .startup-shell { min-height: calc(100vh - 56px); display: grid; place-items: center; padding: 32px; }
+    .startup-content { width: min(520px, 100%); text-align: center; }
+    .startup-mark { position: relative; width: 68px; height: 68px; margin: 0 auto 22px; border-radius: 19px; color: #fff; background: #18181b; display: grid; place-items: center; box-shadow: 0 14px 30px rgba(24,24,27,.18); }
+    .startup-mark::before, .startup-mark::after { content: ""; width: 30px; height: 7px; border-radius: 3px; background: currentColor; position: absolute; }
+    .startup-mark::before { transform: translate(-5px, -10px) rotate(-38deg); }
+    .startup-mark::after { transform: translate(5px, 10px) rotate(-38deg); }
+    .startup-mark i { width: 7px; height: 7px; border-radius: 50%; background: #818cf8; box-shadow: 0 0 0 6px rgba(129,140,248,.12); }
+    .startup-content > span { color: #777986; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; }
+    .startup-content h1 { margin: 12px 0 8px; font-size: 24px; font-weight: 650; letter-spacing: -.035em; }
+    .startup-content > p { margin: 0; color: #737580; font-size: 12px; line-height: 1.7; }
+    .startup-status { min-height: 19px; margin-top: 24px; color: #777986; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .startup-spinner { width: 18px; height: 18px; margin: 0 auto 10px; border: 2px solid #d9d9e1; border-top-color: #696ce0; border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .update-dialog { position: fixed; z-index: 40; inset: 0; padding: 24px; background: rgba(20,21,28,.3); display: grid; place-items: center; backdrop-filter: blur(7px); }
+    .update-card { position: relative; width: min(468px, 100%); padding: 32px 34px 28px; overflow: hidden; border: 1px solid rgba(255,255,255,.14); border-radius: 20px; color: #f8f8fb; background: #1c1d23; box-shadow: 0 30px 100px rgba(12,12,18,.35), 0 0 0 1px rgba(132,133,255,.08) inset; text-align: center; }
+    .update-card::before { position: absolute; top: -145px; left: 50%; width: 300px; height: 300px; border-radius: 50%; background: rgba(117,119,255,.23); filter: blur(34px); transform: translateX(-50%); content: ""; pointer-events: none; }
+    .update-close { position: absolute; z-index: 1; top: 14px; right: 14px; width: 32px; height: 32px; padding: 7px; border: 1px solid rgba(255,255,255,.1); border-radius: 9px; color: #9799a7; background: rgba(255,255,255,.04); display: grid; place-items: center; cursor: pointer; }
+    .update-close:hover { color: #fff; border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.09); }
+    .update-close svg { width: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 1.7; }
+    .update-mark { position: relative; z-index: 1; width: 56px; height: 56px; margin: 4px auto 17px; border: 1px solid rgba(159,161,255,.35); border-radius: 17px; color: #b7b8ff; background: linear-gradient(145deg, rgba(117,119,255,.26), rgba(117,119,255,.06)); display: grid; place-items: center; box-shadow: 0 11px 28px rgba(89,91,220,.2); }
+    .update-mark svg { width: 28px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
+    .update-kicker { position: relative; z-index: 1; color: #9899b9; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; }
+    .update-card h2 { position: relative; z-index: 1; margin: 11px 0 8px; color: #fff; font-size: 24px; font-weight: 650; letter-spacing: -.035em; }
+    .update-card > p { position: relative; z-index: 1; max-width: 310px; margin: 0 auto; color: #b6b7c2; font-size: 12px; line-height: 1.7; }
+    .update-versions { position: relative; z-index: 1; margin: 25px auto 20px; padding: 13px 16px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(255,255,255,.045); display: flex; align-items: center; justify-content: center; gap: 17px; }
+    .update-versions span { min-width: 96px; display: grid; gap: 5px; }
+    .update-versions small { color: #858693; font-size: 10px; }
+    .update-versions strong { color: #f4f4f7; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .update-versions i { width: 20px; height: 1px; background: rgba(255,255,255,.22); }
+    .update-progress-wrap { position: relative; z-index: 1; min-height: 39px; display: grid; gap: 7px; }
+    .update-progress-track { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.1); }
+    .update-progress { position: relative; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #7376ff, #b18dff); transition: width 180ms ease; }
+    .update-progress.is-indeterminate { width: 38%; animation: progress 1.15s ease-in-out infinite; }
+    @keyframes progress { 0%, 100% { transform: translateX(-110%); } 50% { transform: translateX(240%); } }
+    .update-progress-wrap > span { color: #9697a5; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .update-hint { min-height: 18px; margin-top: 12px !important; color: #7f808d !important; font-size: 10px !important; }
+    .update-actions { position: relative; z-index: 1; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.08); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .update-later, .update-action { min-height: 40px; border-radius: 8px; font-size: 11px; cursor: pointer; }
+    .update-later { padding: 7px 12px; border: 0; color: #a4a5b0; background: transparent; }
+    .update-later:hover { color: #fff; background: rgba(255,255,255,.07); }
+    .update-action { min-width: 126px; padding: 7px 16px; border: 1px solid #8587ff; color: #fff; background: linear-gradient(135deg, #6f73ef, #9b77ee); box-shadow: 0 8px 20px rgba(102,103,231,.22); }
+    .update-action:disabled { color: #bfc0ca; background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.08); box-shadow: none; cursor: wait; }
+    .update-card.ready .update-mark { color: #c9ffbd; border-color: rgba(139,245,111,.32); background: linear-gradient(145deg, rgba(112,220,88,.25), rgba(112,220,88,.06)); box-shadow: 0 11px 28px rgba(88,180,70,.15); }
+    .update-card.error .update-mark { color: #ffb2b8; border-color: rgba(255,150,160,.28); background: rgba(217,89,104,.12); box-shadow: none; }
+    @media (max-width: 560px) { .startup-shell { padding: 22px; } .update-card { padding: 28px 21px 22px; } .update-versions { gap: 9px; padding-inline: 9px; } .update-versions span { min-width: 82px; } }
+  </style>
+</head>
+<body>
+  <div id="desktopDragRegion" class="desktop-drag-region" aria-hidden="true"></div>
+  <div id="desktopWindowControls" class="desktop-window-controls hidden" role="group" aria-label="窗口控制">
+    <button id="windowMinimize" type="button" aria-label="最小化窗口" title="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+    <button id="windowMaximize" type="button" aria-label="最大化窗口" title="最大化"><svg class="window-icon maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg><svg class="window-icon restore-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v10H8z"/><path d="M6 16H5V6h10v1"/></svg></button>
+    <button id="windowClose" class="window-close" type="button" aria-label="关闭窗口" title="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </div>
+  <main class="startup-shell">
+    <section class="startup-content" aria-live="polite">
+      <div class="startup-mark" aria-hidden="true"><i></i></div>
+      <span>GUGU AI / DESKTOP</span>
+      <h1>正在启动 GuGu AI</h1>
+      <p>正在连接创作服务，请稍候。</p>
+      <div class="startup-status"><div class="startup-spinner" aria-hidden="true"></div><span id="startupStatus">正在准备工作区…</span></div>
+    </section>
+  </main>
+  <section id="updateDialog" class="update-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="updateTitle" aria-describedby="updateMessage">
+    <div class="update-card">
+      <button id="closeUpdate" class="update-close" type="button" aria-label="关闭更新提示" title="稍后提醒"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+      <div class="update-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/><path d="M5 5.5A8.5 8.5 0 0 1 19 8"/></svg></div>
+      <span class="update-kicker">GUGU AI · DESKTOP UPDATE</span>
+      <h2 id="updateTitle">发现新版本</h2>
+      <p id="updateMessage">新版本正在准备下载。</p>
+      <div class="update-versions" aria-label="版本信息"><span><small>当前版本</small><strong id="currentVersion">—</strong></span><i aria-hidden="true"></i><span><small>新版本</small><strong id="nextVersion">—</strong></span></div>
+      <div id="progressWrap" class="update-progress-wrap" aria-live="polite"><div class="update-progress-track"><div id="progress" class="update-progress"></div></div><span id="progressLabel">准备下载…</span></div>
+      <p id="updateHint" class="update-hint">更新下载期间你可以等待工作区连接完成。</p>
+      <footer class="update-actions"><button id="laterUpdate" class="update-later" type="button">稍后提醒</button><button id="updateAction" class="update-action" type="button" disabled>正在下载…</button></footer>
+    </div>
+  </section>
+  <script>
+    const bridge = window.guguDesktop;
+    const $ = selector => document.querySelector(selector);
+    let updateState = { status: 'idle' };
+    let updateDismissed = false;
+
+    function setupWindowControls(info) {
+      document.body.classList.add('desktop-runtime', `desktop-${info?.platform || 'win32'}`);
+      const windowApi = bridge?.window;
+      if (!windowApi || info?.platform === 'darwin') return;
+      if (info?.nativeWindowControls === true) return;
+      $('#desktopWindowControls').classList.remove('hidden');
+      const updateState = maximized => {
+        const isMaximized = Boolean(maximized);
+        $('#windowMaximize')?.setAttribute('aria-label', isMaximized ? '还原窗口' : '最大化窗口');
+        $('#windowMaximize').title = isMaximized ? '还原' : '最大化';
+        $('.maximize-icon')?.classList.toggle('hidden', isMaximized);
+        $('.restore-icon')?.classList.toggle('hidden', !isMaximized);
+      };
+      $('#windowMinimize').onclick = () => void windowApi.minimize();
+      $('#windowMaximize').onclick = () => void windowApi.toggleMaximize();
+      $('#windowClose').onclick = () => void windowApi.close();
+      windowApi.onState?.(payload => updateState(payload?.maximized));
+      Promise.resolve(windowApi.isMaximized?.()).then(updateState).catch(() => updateState(false));
+    }
+
+    function closeUpdateDialog() {
+      updateDismissed = true;
+      $('#updateDialog').classList.add('hidden');
+      void bridge?.window?.setModalState?.(false);
+    }
+
+    function openUpdateDialog() {
+      if (updateDismissed) return;
+      $('#updateDialog').classList.remove('hidden');
+      void bridge?.window?.setModalState?.(true);
+    }
+
+    function renderUpdate(payload, { open = true } = {}) {
+      updateState = { ...updateState, ...(payload || {}) };
+      const status = updateState.status;
+      const dialog = $('#updateDialog');
+      const card = dialog.querySelector('.update-card');
+      const progress = $('#progress');
+      const progressWrap = $('#progressWrap');
+      const percent = Number(updateState.percent);
+      const hasProgress = Number.isFinite(percent) && percent >= 0;
+      $('#currentVersion').textContent = updateState.currentVersion || '—';
+      $('#nextVersion').textContent = updateState.version || '新版本';
+      card.classList.toggle('ready', status === 'downloaded');
+      card.classList.toggle('error', status === 'error');
+      progress.classList.remove('is-indeterminate');
+      progressWrap.classList.remove('hidden');
+      if (status === 'available') {
+        $('#updateTitle').textContent = '发现新版本';
+        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 正在准备下载，完成后会提醒你重启更新。`;
+        progress.style.width = '0%';
+        progress.classList.add('is-indeterminate');
+        $('#progressLabel').textContent = '准备下载…';
+        $('#updateHint').textContent = '更新正在后台下载，请保持客户端打开。';
+        $('#updateAction').textContent = '正在下载…';
+        $('#updateAction').disabled = true;
+      } else if (status === 'downloading') {
+        $('#updateTitle').textContent = '正在下载更新';
+        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 正在下载，完成后会提醒你重启更新。`;
+        progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
+        if (!hasProgress) progress.classList.add('is-indeterminate');
+        $('#progressLabel').textContent = hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…';
+        $('#updateHint').textContent = '下载进度会实时更新，请保持客户端打开。';
+        $('#updateAction').textContent = '正在下载…';
+        $('#updateAction').disabled = true;
+      } else if (status === 'downloaded') {
+        $('#updateTitle').textContent = '更新已下载';
+        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 已下载完成，可以重启客户端更新。`;
+        progress.style.width = '100%';
+        $('#progressLabel').textContent = '下载完成';
+        $('#updateHint').textContent = '点击“重启更新”后客户端会关闭，请按系统提示完成安装。';
+        $('#updateAction').textContent = '重启更新';
+        $('#updateAction').disabled = false;
+      } else if (status === 'installing') {
+        $('#updateTitle').textContent = '正在退出客户端';
+        $('#updateMessage').textContent = `GuGu AI ${updateState.version || '新版本'} 即将关闭，请按系统提示完成更新。`;
+        progress.style.width = '100%';
+        $('#progressLabel').textContent = '正在退出…';
+        $('#updateHint').textContent = '客户端关闭后，请按安装程序提示完成覆盖安装。';
+        $('#updateAction').textContent = '正在退出…';
+        $('#updateAction').disabled = true;
+      } else if (status === 'error') {
+        $('#updateTitle').textContent = '更新暂不可用';
+        $('#updateMessage').textContent = updateState.message || '更新下载失败，请稍后重试。';
+        progressWrap.classList.add('hidden');
+        $('#updateHint').textContent = '可以稍后再次检查更新。';
+        $('#updateAction').textContent = '重新检查';
+        $('#updateAction').disabled = false;
+      }
+      if (open && ['available', 'downloading', 'downloaded', 'error'].includes(status)) openUpdateDialog();
+    }
+
+    $('#closeUpdate').onclick = $('#laterUpdate').onclick = closeUpdateDialog;
+    $('#updateAction').onclick = async () => {
+      if (updateState.status === 'error') {
+        closeUpdateDialog();
+        updateDismissed = false;
+        try { await bridge?.updates?.check?.(); } catch (error) { $('#startupStatus').textContent = error.message; }
+        return;
+      }
+      if (updateState.status !== 'downloaded') return;
+      $('#updateAction').disabled = true;
+      try {
+        const started = await bridge?.updates?.install?.();
+        if (!started) throw new Error('更新安装包尚未准备好，请稍后再试');
+      } catch (error) {
+        renderUpdate({ status: 'error', message: error.message, version: updateState.version });
+      }
+    };
+
+    bridge?.updates?.onStatus?.(payload => {
+      updateState = { ...updateState, ...(payload || {}) };
+      if (['current', 'unconfigured', 'idle'].includes(payload?.status)) {
+        $('#startupStatus').textContent = '正在连接创作服务…';
+        $('#updateDialog').classList.add('hidden');
+        updateDismissed = false;
+        void bridge?.window?.setModalState?.(false);
+        return;
+      }
+      if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查客户端更新…';
+      renderUpdate(payload);
+    });
+    Promise.all([bridge?.getInfo?.(), bridge?.updates?.getStatus?.()]).then(([info, status]) => {
+      setupWindowControls(info || {});
+      if (status?.status && status.status !== 'idle') {
+        updateState = { ...updateState, ...status };
+        renderUpdate(status);
+      }
+    }).catch(() => {});
+  </script>
+</body>
+</html>

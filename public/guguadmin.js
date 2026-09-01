@@ -425,23 +425,54 @@
     } catch (error) { table.innerHTML = errorMarkup(error.message, 'announcements'); table.querySelector('[data-retry="announcements"]')?.addEventListener('click', fetchAnnouncements); }
   }
 
+  function logDetailData(item, category) {
+    const common = { id: item.id, createdAt: item.createdAt };
+    if (category === 'generations') return { ...common, userId: item.userId, type: item.type, status: item.status, creditCost: item.creditCost, creditStatus: item.creditStatus, pricingVersion: item.pricingVersion, modelId: item.modelId, provider: item.provider, assetId: item.assetId, updatedAt: item.updatedAt, details: item.details };
+    if (category === 'credits') return { ...common, userId: item.userId, actorUserId: item.actorUserId, type: item.type, reasonCode: item.reasonCode, note: item.note, amount: item.amount, balanceAfter: item.balanceAfter, generationId: item.generationId, requestId: item.requestId, details: item.details };
+    if (category === 'llm') return { ...common, userId: item.userId, status: item.status, modelId: item.modelId, inputTokens: item.inputTokens, outputTokens: item.outputTokens, charged: item.charged, details: item.details };
+    if (category === 'audit') return { ...common, actorUserId: item.actorUserId, action: item.action, targetType: item.targetType, targetId: item.targetId, requestId: item.requestId, status: item.status, before: item.before, after: item.after, metadata: item.metadata };
+    return { ...common, level: item.level, category: item.category, requestId: item.requestId, userId: item.userId, modelId: item.modelId, generationId: item.generationId, message: item.message, details: item.details };
+  }
+  function compactLogDetailData(data) { return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined && value !== null && value !== '')); }
+  function stringifyLogDetails(value, pretty = false) {
+    try { return JSON.stringify(value, null, pretty ? 2 : 0) || '暂无详情'; } catch { return String(value); }
+  }
   function logDetails(item, category) {
-    if (category === 'audit') return JSON.stringify(item.after || item.before || item.metadata || {});
-    if (category === 'system') return item.message || JSON.stringify(item.details || {});
-    if (category === 'credits') return item.note || item.reasonCode || JSON.stringify(item.details || {});
-    return JSON.stringify(item.details || {});
+    const data = logDetailData(item, category);
+    if (category === 'system') return item.message || stringifyLogDetails(item.details || {});
+    if (category === 'credits') return item.note || item.reasonCode || stringifyLogDetails(item.details || {});
+    if (category === 'audit') return stringifyLogDetails(item.after || item.before || item.metadata || {});
+    return stringifyLogDetails(data.details || {});
+  }
+  function logDetailMarkup(item, category, index, colspan) {
+    const detailId = `log-detail-${category}-${index}`;
+    const preview = logDetails(item, category);
+    const fullDetails = stringifyLogDetails(compactLogDetailData(logDetailData(item, category)), true);
+    return `<td class="log-details-cell"><button class="log-expand-button" data-log-expand type="button" aria-expanded="false" aria-controls="${detailId}"><span class="log-json" title="${esc(preview)}">${esc(preview)}</span><span class="log-expand-label">查看详情</span><svg class="log-expand-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></td></tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整日志详情</strong><span>${date(item.createdAt)}</span></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
+  }
+  function logRowMarkup(item, category, index, cells, colspan) {
+    return `<tr class="log-row">${cells}${logDetailMarkup(item, category, index, colspan)}`;
   }
   function renderLogRows(category, items) {
-    if (category === 'generations') return `<table aria-label="生成任务日志"><thead><tr><th>时间</th><th>任务</th><th>状态</th><th>用户</th><th>模型</th><th>成本</th><th>详情</th></tr></thead><tbody>${items.map(item => `<tr><td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${item.creditCost === null ? '—' : money(item.creditCost)}</td><td class="log-json" title="${esc(logDetails(item, category))}">${esc(logDetails(item, category))}</td></tr>`).join('')}</tbody></table>`;
-    if (category === 'credits') return `<table aria-label="积分流水日志"><thead><tr><th>时间</th><th>流水</th><th>类型</th><th>用户</th><th>变动</th><th>余额</th><th>备注</th></tr></thead><tbody>${items.map(item => `<tr><td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${esc(item.type || item.reasonCode || '—')}</td><td>${esc(item.userId || '—')}</td><td class="${Number(item.amount) < 0 ? 'danger-text' : 'accent-text'}">${Number(item.amount) >= 0 ? '+' : ''}${money(item.amount)}</td><td>${money(item.balanceAfter)}</td><td class="log-json">${esc(logDetails(item, category))}</td></tr>`).join('')}</tbody></table>`;
-    if (category === 'llm') return `<table aria-label="LLM 用量日志"><thead><tr><th>时间</th><th>请求</th><th>状态</th><th>用户</th><th>模型</th><th>Tokens</th><th>计费</th></tr></thead><tbody>${items.map(item => `<tr><td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${money((item.inputTokens || 0) + (item.outputTokens || 0))}</td><td>${item.charged === null ? '—' : money(item.charged)}</td></tr>`).join('')}</tbody></table>`;
-    if (category === 'audit') return `<table aria-label="管理员审计日志"><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>管理员</th><th>状态</th><th>详情</th></tr></thead><tbody>${items.map(item => `<tr><td>${date(item.createdAt)}</td><td><b>${esc(item.action)}</b></td><td>${esc(item.targetType || '—')}<div class="detail">${esc(item.targetId || '—')}</div></td><td>${esc(item.actorUserId || '—')}</td><td>${badge(item.status)}</td><td class="log-json" title="${esc(logDetails(item, category))}">${esc(logDetails(item, category))}</td></tr>`).join('')}</tbody></table>`;
-    return `<table aria-label="系统异常日志"><thead><tr><th>时间</th><th>级别</th><th>分类</th><th>用户</th><th>模型</th><th>消息</th><th>详情</th></tr></thead><tbody>${items.map(item => `<tr><td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : 'warn')}</td><td>${esc(item.category || '—')}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${esc(item.message || '—')}</td><td class="log-json">${esc(logDetails(item, category))}</td></tr>`).join('')}</tbody></table>`;
+    if (category === 'generations') return `<table aria-label="生成任务日志"><thead><tr><th>时间</th><th>任务</th><th>状态</th><th>用户</th><th>模型</th><th>成本</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${item.creditCost === null ? '—' : money(item.creditCost)}</td>`, 7)).join('')}</tbody></table>`;
+    if (category === 'credits') return `<table aria-label="积分流水日志"><thead><tr><th>时间</th><th>流水</th><th>类型</th><th>用户</th><th>变动</th><th>余额</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${esc(item.type || item.reasonCode || '—')}</td><td>${esc(item.userId || '—')}</td><td class="${Number(item.amount) < 0 ? 'danger-text' : 'accent-text'}">${Number(item.amount) >= 0 ? '+' : ''}${money(item.amount)}</td><td>${money(item.balanceAfter)}</td>`, 7)).join('')}</tbody></table>`;
+    if (category === 'llm') return `<table aria-label="LLM 用量日志"><thead><tr><th>时间</th><th>请求</th><th>状态</th><th>用户</th><th>模型</th><th>Tokens</th><th>计费</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${money((item.inputTokens || 0) + (item.outputTokens || 0))}</td><td>${item.charged === null ? '—' : money(item.charged)}`, 8)).join('')}</tbody></table>`;
+    if (category === 'audit') return `<table aria-label="管理员审计日志"><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>管理员</th><th>状态</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td><b>${esc(item.action)}</b></td><td>${esc(item.targetType || '—')}<div class="detail">${esc(item.targetId || '—')}</div></td><td>${esc(item.actorUserId || '—')}</td><td>${badge(item.status)}`, 6)).join('')}</tbody></table>`;
+    return `<table aria-label="系统异常日志"><thead><tr><th>时间</th><th>级别</th><th>分类</th><th>用户</th><th>模型</th><th>消息</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : 'warn')}</td><td>${esc(item.category || '—')}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${esc(item.message || '—')}`, 7)).join('')}</tbody></table>`;
+  }
+  function bindLogDetails(root) {
+    root.querySelectorAll('[data-log-expand]').forEach(button => button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      const detailRow = document.getElementById(button.getAttribute('aria-controls'));
+      button.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      detailRow.hidden = expanded;
+      button.closest('.log-row')?.classList.toggle('is-expanded', !expanded);
+    }));
   }
 
   async function loadLogs() {
     const root = $('#view-logs');
-    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Observability</div><h2 id="logsTitle">日志中心</h2><p class="subtitle">按日志类型、用户、模型、状态和时间范围定位运营记录</p></div></div><div class="panel"><form id="logFilters" class="toolbar"><label class="control">日志类型<select id="logCategory"><option value="generations" ${state.logCategory === 'generations' ? 'selected' : ''}>生成任务</option><option value="credits" ${state.logCategory === 'credits' ? 'selected' : ''}>积分流水</option><option value="llm" ${state.logCategory === 'llm' ? 'selected' : ''}>LLM 用量</option><option value="audit" ${state.logCategory === 'audit' ? 'selected' : ''}>管理员审计</option><option value="system" ${state.logCategory === 'system' ? 'selected' : ''}>系统异常</option></select></label><label class="control">用户 ID<input id="logUserId" autocomplete="off"></label><label class="control">模型 ID<input id="logModelId" autocomplete="off"></label><label class="control">状态 / 级别 / 操作<input id="logStatus" placeholder="可选"></label><label class="control">开始时间<input id="logFrom" type="datetime-local"></label><label class="control">结束时间<input id="logTo" type="datetime-local"></label><button class="small-button" type="submit">查询日志</button></form><div id="logTable">${loadingMarkup('正在加载日志…')}</div></div>`;
+    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Observability</div><h2 id="logsTitle">日志中心</h2><p class="subtitle">按日志类型、用户、模型、状态和时间范围定位运营记录 · 点击“查看详情”展开完整内容</p></div></div><div class="panel"><form id="logFilters" class="toolbar"><label class="control">日志类型<select id="logCategory"><option value="generations" ${state.logCategory === 'generations' ? 'selected' : ''}>生成任务</option><option value="credits" ${state.logCategory === 'credits' ? 'selected' : ''}>积分流水</option><option value="llm" ${state.logCategory === 'llm' ? 'selected' : ''}>LLM 用量</option><option value="audit" ${state.logCategory === 'audit' ? 'selected' : ''}>管理员审计</option><option value="system" ${state.logCategory === 'system' ? 'selected' : ''}>系统异常</option></select></label><label class="control">用户 ID<input id="logUserId" autocomplete="off"></label><label class="control">模型 ID<input id="logModelId" autocomplete="off"></label><label class="control">状态 / 级别 / 操作<input id="logStatus" placeholder="可选"></label><label class="control">开始时间<input id="logFrom" type="datetime-local"></label><label class="control">结束时间<input id="logTo" type="datetime-local"></label><button class="small-button" type="submit">查询日志</button></form><div id="logTable">${loadingMarkup('正在加载日志…')}</div></div>`;
     $('#logFilters').onsubmit = event => { event.preventDefault(); state.logCategory = $('#logCategory').value; resetPager('log'); fetchLogs(); };
     $('#logCategory').onchange = () => { state.logCategory = $('#logCategory').value; resetPager('log'); fetchLogs(); };
     await fetchLogs();
@@ -462,6 +493,7 @@
     try {
       const data = await api(`/api/admin/logs/${category}?${params}`); const items = data.items || [];
       table.innerHTML = items.length ? `<div class="table-wrap">${renderLogRows(category, items)}</div>${pageControls('log', data.total, data.nextCursor, items.length)}` : emptyMarkup('暂无日志', '尝试放宽筛选条件或调整时间范围。');
+      bindLogDetails(table);
       bindPageControls('log', fetchLogs, data.nextCursor);
     } catch (error) { table.innerHTML = errorMarkup(error.message, 'logs'); table.querySelector('[data-retry="logs"]')?.addEventListener('click', fetchLogs); }
   }
