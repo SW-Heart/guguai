@@ -1969,18 +1969,19 @@ async function serveStatic(res, pathname, req = null) {
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
   const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-  // Fonts and images keep the long immutable cache. App code does not: it used
-  // to be cache-busted by a hand-maintained ?v= number in index.html, which
-  // silently served stale CSS/JS whenever someone forgot to bump it. These now
-  // revalidate on every load and answer 304 from the ETag, so the bytes on disk
-  // are always the bytes that run.
+  // Versioned JS/CSS URLs are safe to cache for a year: changing the version
+  // query is the explicit cache-busting contract. Keep unversioned code on
+  // ETag revalidation so a manually requested asset can never stay stale.
   const revalidate = ['.js', '.css'].includes(ext);
-  const cacheControl = revalidate ? 'no-cache' : ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
+  const versioned = revalidate && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
+  const cacheControl = versioned
+    ? 'public, max-age=31536000, immutable'
+    : revalidate ? 'no-cache' : ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
   // The same route serves the public home page or the desktop workspace
   // depending on the request marker. Keep an intermediary cache from serving
   // one variant to the other.
   if (desktopAppOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
-  try { await serveFile(res, file, mime, '', cacheControl, revalidate ? { ifNoneMatch: req?.headers['if-none-match'] || '' } : null); }
+  try { await serveFile(res, file, mime, '', cacheControl, revalidate && !versioned ? { ifNoneMatch: req?.headers['if-none-match'] || '' } : null); }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }
 

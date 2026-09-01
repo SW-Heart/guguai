@@ -8,6 +8,11 @@ directories:
 files:
   - desktop/**
   - package.json
+  # The desktop process only needs electron-updater. Keep server-only SDKs
+  # (S3 and Alipay) out of the ASAR to reduce installer size and cold-start
+  # filesystem scanning on machines with endpoint security enabled.
+  - '!node_modules/@aws-sdk/**'
+  - '!node_modules/alipay-sdk/**'
 extraResources:
   - from: desktop/assets/tray.ico
     to: tray.ico

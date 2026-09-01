@@ -1,5 +1,4 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
-import updater from 'electron-updater';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -28,7 +27,16 @@ const rendererDir = path.join(here, 'renderer');
 const productName = 'GuGu AI';
 const defaultApiBase = 'http://127.0.0.1:4317';
 const settingsFileName = 'desktop-settings.json';
-const { autoUpdater } = updater;
+let autoUpdater;
+let autoUpdaterConfigPromise;
+let settingsReadyResolve;
+const settingsReady = new Promise(resolve => { settingsReadyResolve = resolve; });
+const startupStartedAt = Date.now();
+function startupTrace(stage) {
+  if (!app.isPackaged || process.env.GUGU_STARTUP_LOG === '1') {
+    console.info(`[desktop-startup] ${stage} +${Date.now() - startupStartedAt}ms`);
+  }
+}
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'gugu-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
@@ -623,6 +631,7 @@ function startMacUpdateDownload(updateInfo) {
 
 async function launchDownloadedUpdateInstaller() {
   if (updateInstallStarted) return true;
+  await configureAutoUpdater();
   const installerPath = downloadedUpdatePath || String(autoUpdater.installerPath || '').trim();
   if (!installerPath) throw new Error('更新安装包尚未准备好，请稍后再试');
   await fs.access(installerPath);
@@ -640,42 +649,56 @@ async function launchDownloadedUpdateInstaller() {
 }
 
 function configureAutoUpdater() {
-  if (!app.isPackaged) return;
-  const url = updateFeedUrl();
-  if (!url) { sendUpdateStatus('unconfigured'); return; }
-  try {
-    const manualMacUpdate = process.platform === 'darwin';
-    autoUpdater.autoDownload = !manualMacUpdate;
-    // The renderer owns the confirmation step. Closing the app must never
-    // silently install an update because this client cannot complete a true
-    // in-place restart/reinstall flow reliably on every platform.
-    autoUpdater.autoInstallOnAppQuit = false;
-    // Keep electron-updater's blockmap/range-request path enabled. If a
-    // differential download cannot be assembled, electron-updater falls back
-    // to the complete package automatically.
-    autoUpdater.disableDifferentialDownload = false;
-    autoUpdater.setFeedURL({ provider: 'generic', url: `${url}/` });
-    updateConfigured = true;
-    autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
-    autoUpdater.on('update-available', info => {
-      sendUpdateStatus('available', { version: info.version });
-      if (manualMacUpdate) startMacUpdateDownload(info);
-    });
-    autoUpdater.on('update-not-available', info => sendUpdateStatus('current', { version: info.version }));
-    autoUpdater.on('download-progress', progress => sendUpdateStatus('downloading', { percent: Math.round(progress.percent), transferred: progress.transferred, total: progress.total }));
-    autoUpdater.on('update-downloaded', info => {
-      if (manualMacUpdate) return;
-      downloadedUpdatePath = String(info.downloadedFile || '').trim();
-      downloadedUpdateVersion = info.version;
-      sendUpdateStatus('downloaded', { version: info.version });
-    });
-    autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.message }));
-    setTimeout(() => autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message })), 4_000);
-  } catch (error) {
-    sendUpdateStatus('error', { message: error.message });
-  }
+  if (!app.isPackaged) return Promise.resolve();
+  if (autoUpdaterConfigPromise) return autoUpdaterConfigPromise;
+  autoUpdaterConfigPromise = (async () => {
+    // A user can click the startup-page update control before the asynchronous
+    // settings read has completed. Do not cache an "unconfigured" result based
+    // on the temporary defaults used for the first paint.
+    await settingsReady;
+    const url = updateFeedUrl();
+    if (!url) { sendUpdateStatus('unconfigured'); return; }
+    try {
+      // Keep the updater out of the initial module graph. It is only needed
+      // after the studio is visible or when the user explicitly checks.
+      const updaterModule = await import('electron-updater');
+      autoUpdater = updaterModule.autoUpdater || updaterModule.default?.autoUpdater;
+      if (!autoUpdater) throw new Error('自动更新模块不可用');
+      const manualMacUpdate = process.platform === 'darwin';
+      autoUpdater.autoDownload = !manualMacUpdate;
+      // The renderer owns the confirmation step. Closing the app must never
+      // silently install an update because this client cannot complete a true
+      // in-place restart/reinstall flow reliably on every platform.
+      autoUpdater.autoInstallOnAppQuit = false;
+      // Keep electron-updater's blockmap/range-request path enabled. If a
+      // differential download cannot be assembled, electron-updater falls back
+      // to the complete package automatically.
+      autoUpdater.disableDifferentialDownload = false;
+      autoUpdater.setFeedURL({ provider: 'generic', url: `${url}/` });
+      updateConfigured = true;
+      autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+      autoUpdater.on('update-available', info => {
+        sendUpdateStatus('available', { version: info.version });
+        if (manualMacUpdate) startMacUpdateDownload(info);
+      });
+      autoUpdater.on('update-not-available', info => sendUpdateStatus('current', { version: info.version }));
+      autoUpdater.on('download-progress', progress => sendUpdateStatus('downloading', { percent: Math.round(progress.percent), transferred: progress.transferred, total: progress.total }));
+      autoUpdater.on('update-downloaded', info => {
+        if (manualMacUpdate) return;
+        downloadedUpdatePath = String(info.downloadedFile || '').trim();
+        downloadedUpdateVersion = info.version;
+        sendUpdateStatus('downloaded', { version: info.version });
+      });
+      autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.message }));
+      setTimeout(() => autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message })), 4_000);
+    } catch (error) {
+      sendUpdateStatus('error', { message: error.message });
+    }
+  })();
+  return autoUpdaterConfigPromise;
 }
 async function checkForUpdates() {
+  await configureAutoUpdater();
   if (!updateConfigured) return { status: 'unconfigured' };
   try { const result = await autoUpdater.checkForUpdates(); return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' }; }
   catch (error) { sendUpdateStatus('error', { message: error.message }); return { status: 'error', message: error.message }; }
@@ -702,8 +725,9 @@ async function loadStudio() {
       setWindowsModalState(false);
       mainWindow.setTitleBarOverlay(windowsTitleBarOverlay);
     }
-    const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) throw new Error(`服务返回 ${response.status}`);
+    // Loading the actual page is the health check. A separate `/healthz`
+    // request used to add one full network round trip before the renderer
+    // could even begin loading its HTML, CSS and JavaScript.
     await mainWindow.loadURL(`${apiBase}/`);
   } catch (error) {
     await openOfflinePage(`无法连接创作服务：${error.message}`);
@@ -1028,7 +1052,7 @@ function registerIpc() {
   });
 }
 
-async function createWindow() {
+async function createWindow({ loadStudioAfter = true } = {}) {
   const usesNativeMacTitlebar = process.platform === 'darwin';
   const usesNativeWindowsControls = process.platform === 'win32';
   mainWindow = new BrowserWindow({
@@ -1091,29 +1115,49 @@ async function createWindow() {
   await mainWindow.loadFile(path.join(rendererDir, 'startup.html'));
   mainWindow.show();
   mainWindow.focus();
-  await loadStudio();
+  startupTrace('window-visible');
+  if (loadStudioAfter) await loadStudio();
   sendWindowState();
 }
 
 async function bootstrap() {
-  packageMetadata = await readJson(path.join(app.getAppPath(), 'package.json'), {});
-  settings = await readJson(path.join(app.getPath('userData'), settingsFileName), {});
+  // Install the protocol and IPC handlers before the first renderer paint so
+  // the startup page can come up while disk/database work happens in the
+  // background. The temporary defaults are replaced once settings load.
+  settings = { deviceId: randomUUID(), assetSyncCursors: {} };
+  protocol.handle('gugu-media', serveLocalMedia);
+  registerIpc();
+  // This is a web-based studio inside Electron, so the browser-style default
+  // application menu is noise rather than a useful part of the client UI.
+  Menu.setApplicationMenu(null);
+  await createWindow({ loadStudioAfter: false });
+
+  const [loadedPackageMetadata, loadedSettings] = await Promise.all([
+    readJson(path.join(app.getAppPath(), 'package.json'), {}),
+    readJson(path.join(app.getPath('userData'), settingsFileName), {}),
+  ]);
+  packageMetadata = loadedPackageMetadata;
+  settings = { ...settings, ...loadedSettings };
   settings.deviceId ||= randomUUID();
   settings.assetSyncCursors ||= {};
   // Production builds receive their online API endpoint through package metadata.
   // Keep the localhost fallback only for an unpackaged development run.
   if (!settings.apiBase && !app.isPackaged && process.env.GUGU_API_BASE) settings.apiBase = process.env.GUGU_API_BASE;
+  settingsReadyResolve?.();
+  settingsReadyResolve = null;
+  startupTrace('settings-ready');
   const preferredWorkspace = settings.workspacePath || path.join(app.getPath('documents'), 'GuGu AI Projects');
-  await setWorkspace(preferredWorkspace, { persist: false });
-  await persistSettings();
-  protocol.handle('gugu-media', serveLocalMedia);
-  registerIpc();
-  configureAutoUpdater();
+  await Promise.all([
+    setWorkspace(preferredWorkspace, { persist: false }),
+    // Persist the generated device ID without holding up workspace setup.
+    persistSettings(),
+  ]);
   createTray();
-  // This is a web-based studio inside Electron, so the browser-style default
-  // application menu is noise rather than a useful part of the client UI.
-  Menu.setApplicationMenu(null);
-  await createWindow();
+  await loadStudio();
+  startupTrace('studio-loaded');
+  // Updating is intentionally initialized after the first remote page load;
+  // its network check remains delayed by configureAutoUpdater itself.
+  void configureAutoUpdater();
 }
 
 app.whenReady().then(bootstrap).catch(async error => {
