@@ -599,11 +599,14 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
     }
   }
   const targetUrl = trustedMediaDownloadUrl(url);
-  const response = await fetchRemoteMedia(session.defaultSession, targetUrl);
+  const response = await fetchRemoteMedia(session.defaultSession, targetUrl, { sameOriginHeaders:await cloudCookies(targetUrl) });
   if (response.status === 404) {
     return { unavailable: true, status: 404, cloudAssetId };
   }
-  if (!response.ok || !response.body) throw new Error(`媒体下载失败（${response.status}）`);
+  if (!response.ok || !response.body) {
+    console.warn('[desktop] 媒体下载被拒绝', { assetId:cloudAssetId, status:response.status, path:new URL(targetUrl).pathname });
+    throw new Error(`媒体下载失败（${response.status}）`);
+  }
   const originalName = safeName(name, `${kind === 'video' ? '生成视频' : '生成图片'}-${cloudAssetId}`);
   const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
   const temporary = path.join(targetWorkspace, '.gugu', 'transfers', `${cloudAssetId}.${randomUUID()}.part`);
