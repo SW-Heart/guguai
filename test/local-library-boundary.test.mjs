@@ -38,7 +38,7 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('account workspace activation changes the frontend cache key', () => {
-  assert.match(index, /\/app\.js\?v=199/);
+  assert.match(index, /\/app\.js\?v=200/);
 });
 
 test('historical receive resumes from a per-page checkpoint and acknowledges in batches', () => {
