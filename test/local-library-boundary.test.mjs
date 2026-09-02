@@ -37,7 +37,7 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('account workspace activation changes the frontend cache key', () => {
-  assert.match(index, /\/app\.js\?v=196/);
+  assert.match(index, /\/app\.js\?v=197/);
 });
 
 test('workspace boot exposes progress for the initial load', () => {
