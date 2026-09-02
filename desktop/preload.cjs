@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     deactivateAccount: () => invoke('workspace:deactivate-account'),
     open: () => invoke('workspace:open'),
   }),
+  logs: Object.freeze({
+    collect: () => invoke('logs:collect'),
+    append: payload => invoke('logs:append', payload || {}),
+    openFolder: () => invoke('logs:open-folder'),
+  }),
   media: Object.freeze({
     chooseAndImport: options => invoke('media:choose-and-import', options || {}),
     listLocal: options => invoke('media:list-local', options || {}),

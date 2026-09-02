@@ -23,6 +23,7 @@ import {
   upsertLocalAsset,
 } from './local-library.mjs';
 import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
+import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -34,10 +35,25 @@ let autoUpdaterConfigPromise;
 let settingsReadyResolve;
 const settingsReady = new Promise(resolve => { settingsReadyResolve = resolve; });
 const startupStartedAt = Date.now();
+// 日志落盘要在其它任何模块产生输出之前接管 console，否则启动阶段的线索会丢。
+// app.getPath('logs') 在个别平台可能尚不可用，退回 userData/logs。
+function resolveLogDirectory() {
+  try { return app.getPath('logs'); }
+  catch { return path.join(app.getPath('userData'), 'logs'); }
+}
+initDesktopLogging({
+  dir: resolveLogDirectory(),
+  header: { version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron, packaged: app.isPackaged },
+});
 function startupTrace(stage) {
+  const line = `[desktop-startup] ${stage} +${Date.now() - startupStartedAt}ms`;
   if (!app.isPackaged || process.env.GUGU_STARTUP_LOG === '1') {
-    console.info(`[desktop-startup] ${stage} +${Date.now() - startupStartedAt}ms`);
+    console.info(line);
+    return;
   }
+  // 打包版不往 stdout 刷启动噪音，但启动阶段恰恰是最需要事后排查的地方，
+  // 所以仍然写进日志文件。
+  appendDesktopLog({ level: 'info', scope: 'startup', message: line });
 }
 
 protocol.registerSchemesAsPrivileged([
@@ -980,6 +996,45 @@ function isMainWindowEvent(event) {
   return Boolean(mainWindow && !mainWindow.isDestroyed() && event?.sender === mainWindow.webContents);
 }
 
+// 随日志一起上传的环境快照。用户描述往往只有「打不开」「卡住了」，
+// 版本、平台、服务地址和工作区状态是最先要确认的四件事。
+function desktopDiagnostics() {
+  return {
+    productName,
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+    versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+    locale: app.getLocale(),
+    uptimeSeconds: Math.round(process.uptime()),
+    apiBase: configuredApiBase(),
+    updateUrl: updateFeedUrl(),
+    updateStatus: currentUpdateStatus,
+    workspacePath: workspace || '',
+    workspaceRootPath: workspaceRoot || '',
+    workspaceAccountId,
+    deviceId: settings?.deviceId || '',
+    logDirectory: desktopLogDirectory(),
+  };
+}
+
+// 渲染进程可以转发自己的报错，但不能借此把磁盘写满。
+const rendererLogWindowMs = 60_000;
+const rendererLogMaxPerWindow = 300;
+let rendererLogWindowStartedAt = 0;
+let rendererLogCount = 0;
+function rendererLogAllowed(timestamp = Date.now()) {
+  if (timestamp - rendererLogWindowStartedAt >= rendererLogWindowMs) {
+    rendererLogWindowStartedAt = timestamp;
+    rendererLogCount = 1;
+    return true;
+  }
+  if (rendererLogCount >= rendererLogMaxPerWindow) return false;
+  rendererLogCount += 1;
+  return true;
+}
+
 function sendWindowState() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('desktop:window-state', {
@@ -1329,6 +1384,21 @@ function registerIpc() {
     shell.showItemInFolder(target);
     return true;
   });
+  ipcMain.handle('logs:append', (event, payload) => {
+    if (!isMainWindowEvent(event) || !rendererLogAllowed()) return false;
+    return appendDesktopLog({ level: payload?.level, scope: 'renderer', message: payload?.message });
+  });
+  ipcMain.handle('logs:collect', event => {
+    if (!isMainWindowEvent(event)) throw new Error('无效的日志收集请求');
+    return collectDesktopLogBundle({ diagnostics: desktopDiagnostics() });
+  });
+  ipcMain.handle('logs:open-folder', async () => {
+    const dir = desktopLogDirectory();
+    if (!dir) return false;
+    flushDesktopLog();
+    await shell.openPath(dir);
+    return true;
+  });
 }
 
 async function createWindow({ loadStudioAfter = true } = {}) {
@@ -1368,6 +1438,26 @@ async function createWindow({ loadStudioAfter = true } = {}) {
     hideMainWindowToTray();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+  // 页面自身的异常与崩溃只在渲染进程里可见，转录一份到日志文件，
+  // 否则用户上传的日志会缺掉最关键的那一段。
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    // Electron 新版把细节收在事件对象上，旧版走位置参数，两种都兼容。
+    const detail = event && typeof event === 'object' && 'message' in event
+      ? { level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId }
+      : { level, message, line, sourceId };
+    const normalized = typeof detail.level === 'number' ? ['info', 'warn', 'error', 'debug'][detail.level] || 'info' : detail.level;
+    if (!['warn', 'warning', 'error'].includes(String(normalized))) return;
+    if (!rendererLogAllowed()) return;
+    appendDesktopLog({ level: normalized, scope: 'page', message: `${detail.message} (${detail.sourceId || '未知来源'}:${detail.line || 0})` });
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[desktop] 渲染进程退出', details);
+    flushDesktopLog();
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.warn('[desktop] 页面加载失败', { errorCode, errorDescription, validatedURL });
+  });
+  mainWindow.on('unresponsive', () => console.warn('[desktop] 主窗口无响应'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };

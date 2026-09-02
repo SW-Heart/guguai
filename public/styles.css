@@ -687,6 +687,11 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .account-settings-body { display: grid; gap: 16px; }
 .account-settings-body .dialog-field small { color: var(--faint); font-size: 10px; line-height: 1.45; }
 .account-settings-body input[readonly] { color: var(--muted); background: var(--surface); }
+.support-log-dialog { width: min(460px, calc(100% - 32px)); }
+.support-log-dialog textarea { min-height: 78px; resize: vertical; }
+.support-log-dialog .dialog-footer { justify-content: space-between; }
+.support-log-result { margin: 12px 0 0; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--ink); background: var(--surface); font-size: 11px; line-height: 1.6; }
+.support-log-result.hidden { display: none; }
 .captcha-dialog { width: min(430px, calc(100% - 32px)); }
 .captcha-dialog-body { padding-top: 12px; }
 .captcha-dialog .captcha-field { gap: 10px; }

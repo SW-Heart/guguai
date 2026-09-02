@@ -71,6 +71,7 @@ const desktopHydrationFailureCounts = new Map();
 const desktopHydrationRetryTimers = new Map();
 let desktopHydrationRunning = false;
 let desktopUpdateState = { status: 'idle' };
+let desktopClientInfo = {};
 
 async function api(url, options = {}) {
   const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
@@ -389,7 +390,12 @@ async function syncDesktopDeliveries() {
     }
     const deliveries = (result.deliveries || []).filter(file => file?.id);
     if (deliveries.length) {
+      // Keep the cloud record in the UI before starting the download. If the
+      // download later fails, the generation can be rendered as a terminal
+      // missing-file state instead of looking like it is still syncing.
+      mergeStateFiles(deliveries);
       queueDesktopHydration(deliveries);
+      renderAfterDesktopAssetHydration();
     }
     return result;
   })();
@@ -1582,10 +1588,13 @@ async function initDesktopBridge() {
     };
     desktopWorkspacePath = String(info.workspacePath || '');
     if (!desktopSyncInfo.deviceId && bridge.sync?.getState) desktopSyncInfo = await bridge.sync.getState();
+    desktopClientInfo = info;
     document.body.classList.add(`desktop-${info.platform}`);
     initWindowControls(bridge, info);
     initDesktopModalState(bridge);
     initDesktopUpdateDialog(bridge);
+    initSupportLogDialog(bridge);
+    initRendererLogForwarding(bridge);
     buttons.forEach(button => {
       button.classList.remove('hidden');
       button.title = `本地工作区：${info.workspacePath || '未设置'}`;
@@ -1804,6 +1813,113 @@ $('#accountSettingsDialog').addEventListener('close', () => {
   accountSettingsError();
   requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
 });
+
+// 诊断日志上传。客户端把本机日志打包成 gzip，这里原样 PUT 给服务端，
+// 服务端转存后返回一个短编号，用户报给客服即可定位这次上传。
+let supportLogRestoreFocus = null;
+function supportLogError(message = '') {
+  const error = $('#supportLogError');
+  if (!error) return;
+  error.textContent = message;
+  toggleClass(error, 'hidden', !message);
+}
+function supportLogResult(message = '') {
+  const result = $('#supportLogResult');
+  if (!result) return;
+  result.textContent = message;
+  toggleClass(result, 'hidden', !message);
+}
+function openSupportLogDialog() {
+  const dialog = $('#supportLogDialog');
+  if (!dialog || dialog.open) return;
+  supportLogRestoreFocus = $('#accountButton');
+  setNotificationPanelOpen(false);
+  $('#accountMenu').classList.add('hidden');
+  $('#supportLogNote').value = '';
+  supportLogError();
+  supportLogResult();
+  $('#submitSupportLog').disabled = false;
+  $('#submitSupportLog').textContent = '上传日志';
+  dialog.showModal();
+  requestAnimationFrame(() => $('#supportLogNote').focus());
+}
+function closeSupportLogDialog() {
+  const dialog = $('#supportLogDialog');
+  if (dialog?.open) dialog.close();
+}
+async function uploadSupportLogBundle(note) {
+  const bridge = window.guguDesktop;
+  if (!bridge?.logs?.collect) throw new Error('当前客户端版本不支持日志上传，请先更新客户端');
+  const bundle = await bridge.logs.collect();
+  if (!bundle?.bytes?.length) throw new Error('本机暂无可上传的日志');
+  const query = new URLSearchParams();
+  if (note) query.set('note', note);
+  if (desktopClientInfo.version) query.set('version', desktopClientInfo.version);
+  if (desktopClientInfo.platform) query.set('platform', `${desktopClientInfo.platform}-${desktopClientInfo.arch || ''}`);
+  if (desktopSyncInfo.deviceId) query.set('deviceId', desktopSyncInfo.deviceId);
+  return api(`/api/support/logs?${query}`, {
+    method: 'POST',
+    body: new Blob([bundle.bytes], { type: bundle.mimeType }),
+    headers: { 'Content-Type': bundle.mimeType },
+  });
+}
+function initSupportLogDialog(bridge) {
+  const button = $('#supportLogButton');
+  const dialog = $('#supportLogDialog');
+  if (!button || !dialog || !bridge?.logs?.collect) return;
+  button.classList.remove('hidden');
+  if (dialog.dataset.bound === 'true') return;
+  button.onclick = event => { event.stopPropagation(); openSupportLogDialog(); };
+  $('#closeSupportLog').onclick = closeSupportLogDialog;
+  $('#openSupportLogFolder').onclick = async () => {
+    try {
+      const opened = await bridge.logs.openFolder();
+      if (!opened) supportLogError('日志文件夹暂不可用');
+    } catch (error) { supportLogError(`打开日志文件夹失败：${error.message}`); }
+  };
+  $('#supportLogForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const submit = $('#submitSupportLog');
+    supportLogError();
+    supportLogResult();
+    submit.disabled = true;
+    submit.textContent = '上传中…';
+    try {
+      const result = await uploadSupportLogBundle($('#supportLogNote').value.trim());
+      supportLogResult(`上传成功，日志编号 ${result.reference}（${Math.max(1, Math.round((result.size || 0) / 1024))} KB）。请把这个编号告诉客服。`);
+      submit.textContent = '已上传';
+      toast(`诊断日志已上传，编号 ${result.reference}`);
+    } catch (error) {
+      supportLogError(error.message);
+      submit.disabled = false;
+      submit.textContent = '上传日志';
+    }
+  });
+  dialog.addEventListener('click', event => { if (event.target === dialog) closeSupportLogDialog(); });
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeSupportLogDialog(); });
+  dialog.addEventListener('close', () => {
+    const restore = supportLogRestoreFocus;
+    supportLogRestoreFocus = null;
+    supportLogError();
+    supportLogResult();
+    requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
+  });
+  dialog.dataset.bound = 'true';
+}
+// 页面侧的异常也要进日志文件，否则用户上传上来只有主进程视角。
+function initRendererLogForwarding(bridge) {
+  const append = bridge?.logs?.append;
+  if (typeof append !== 'function' || document.body.dataset.desktopLogForwardBound === 'true') return;
+  const forward = (level, message) => { void Promise.resolve(append({ level, message })).catch(() => {}); };
+  window.addEventListener('error', event => {
+    forward('error', `${event.message || '页面脚本异常'} @ ${event.filename || '未知文件'}:${event.lineno || 0}:${event.colno || 0}\n${event.error?.stack || ''}`);
+  });
+  window.addEventListener('unhandledrejection', event => {
+    const reason = event.reason;
+    forward('error', `未处理的 Promise 异常：${reason?.stack || reason?.message || reason}`);
+  });
+  document.body.dataset.desktopLogForwardBound = 'true';
+}
 
 let deleteConfirmationResolver = null;
 let deleteConfirmationRestoreFocus = null;
@@ -2035,22 +2151,41 @@ async function loadTasks({ background=false }={}) {
     try {
       const responseTasks = await api('/api/generations');
       const projectTaskIds = state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
-      const visibleTaskIds = new Set(responseTasks.map(task => task.id));
-      const missingProjectTaskIds = [...projectTaskIds].filter(id => !visibleTaskIds.has(id));
+      // The global list is ordered/paginated for the gallery. A project must
+      // never use that list as the authority for one of its versions: the
+      // gallery request can already be in flight when a task reaches terminal
+      // failure. Re-read every task referenced by the open drama project by ID
+      // and let those records win.
+      const projectTaskIdsToHydrate = [...projectTaskIds];
       const projectTasks = [];
       try {
-        for (let index = 0; index < missingProjectTaskIds.length; index += 100) {
-          const ids = missingProjectTaskIds.slice(index, index + 100);
+        for (let index = 0; index < projectTaskIdsToHydrate.length; index += 100) {
+          const ids = projectTaskIdsToHydrate.slice(index, index + 100);
           projectTasks.push(...await api(`/api/generations?ids=${encodeURIComponent(ids.join(','))}`));
         }
       } catch (error) {
         if (error.status === 401) throw error;
         console.warn('[tasks] failed to hydrate drama project generations', error);
-        projectTasks.push(...state.tasks.filter(task => projectTaskIds.has(task.id)));
+        const responseTaskIds = new Set(responseTasks.map(task => task.id));
+        const hydratedTaskIds = new Set(projectTasks.map(task => task.id));
+        // Keep an already-known project task only when the global response did
+        // not contain it. Never let a stale in-memory record replace a newer
+        // terminal status returned by the gallery request.
+        projectTasks.push(...state.tasks.filter(task => projectTaskIds.has(task.id)
+          && !responseTaskIds.has(task.id)
+          && !hydratedTaskIds.has(task.id)));
       }
       const hydratedTasks = [...responseTasks];
-      const hydratedIds = new Set(visibleTaskIds);
-      for (const task of projectTasks) if (!hydratedIds.has(task.id)) { hydratedIds.add(task.id); hydratedTasks.push(task); }
+      const hydratedIndexById = new Map(hydratedTasks.map((task, index) => [task.id, index]));
+      for (const task of projectTasks) {
+        const index = hydratedIndexById.get(task.id);
+        if (index === undefined) {
+          hydratedIndexById.set(task.id, hydratedTasks.length);
+          hydratedTasks.push(task);
+        } else {
+          hydratedTasks[index] = task;
+        }
+      }
       // A local submission may finish while this GET is in flight. Do not let
       // its older response erase tasks that are already visible in memory.
       const tasks = mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, hydratedTasks);
@@ -2114,19 +2249,20 @@ function configureLocalFileAction(link, file) {
 function taskCard(task) {
   const asset = fileById(task.assetId);
   const localSyncing = taskLocalSyncing(task, asset);
+  const localReady = Boolean(asset && asset.localStatus === 'saved' && !localSyncing);
   const displayStatus = taskDisplayStatus(task, asset);
   const progressMarkup = localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
   const failure = task.status === 'failed' ? taskFailure(task) : null;
-  const media = asset && !localSyncing
+  const media = localReady
     ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
     : task.status === 'failed'
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
       : task.assetId && !localSyncing
         ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 1.7 3h15.4a2 2 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>成品文件未找到</b><p>任务已完成，但文件库中没有对应文件</p></div>`
         : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
-  const completedActions = asset && !localSyncing ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
+  const completedActions = localReady ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
   const failedAction = task.status === 'failed' && !['wait','contact_support'].includes(failure?.action) ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>${esc(taskFailureActionLabel(failure))}</button>` : '';
-  const openButton = localSyncing ? '' : `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>`;
+  const openButton = localReady || task.status === 'failed' || (task.assetId && !localSyncing) ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>` : '';
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedAction}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
@@ -2238,7 +2374,10 @@ function renderTasks() {
     && lastTaskRender.ready === renderState.ready
     && lastTaskRender.tasks === renderState.tasks
     && lastTaskRender.files === renderState.files) return;
-  let tasks = state.tasks.filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId && fileById(task.assetId)?.localStatus === 'saved')));
+  // Keep completed tasks with an asset ID visible until their local delivery
+  // is resolved. Hiding them here made the generation page show only the
+  // failed sibling versions while the drama page showed a spinner forever.
+  let tasks = state.tasks.filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId)));
   if (state.generationFilter !== 'all') tasks = tasks.filter(task => state.generationFilter === 'running' ? ['queued','running'].includes(task.status) || taskLocalSyncing(task) : task.status === state.generationFilter && !taskLocalSyncing(task));
   tasks.sort(compareTasksByRecency);
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0;
@@ -2340,11 +2479,12 @@ function openGenerationDetail(id) {
   const task = taskById(id); if (!task) return;
   const asset = fileById(task.assetId);
   const localSyncing = taskLocalSyncing(task, asset);
-  if (asset && !localSyncing && !requireDesktopLocalAsset(asset)) return; state.detailTaskId = id;
+  const localReady = Boolean(asset && asset.localStatus === 'saved' && !localSyncing);
+  if (localSyncing && !requireDesktopLocalAsset(asset)) return; state.detailTaskId = id;
   const displayStatus = taskDisplayStatus(task, asset);
   const media = localSyncing
     ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在同步到本地…</span></div>'
-    : asset
+    : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
     : task.assetId
       ? `<div class="detail-missing-file"><b>成品文件未找到</b><span>任务已完成，但文件库中没有对应文件</span></div>`
@@ -2354,17 +2494,17 @@ function openGenerationDetail(id) {
   const status = $('#generationDetailStatus'); status.className = `detail-status ${displayStatus}`; status.textContent = statusText(displayStatus);
   $('#generationDetailPrompt').textContent = task.prompt;
   const promptElement = $('#generationDetailPrompt'); const promptToggle = $('#generationDetailPromptToggle'); promptElement.classList.remove('expanded'); promptToggle.classList.add('hidden'); promptToggle.setAttribute('aria-expanded', 'false'); promptToggle.textContent = '展开全部'; requestAnimationFrame(() => { const overflowing = promptElement.scrollHeight > promptElement.clientHeight + 1; promptToggle.classList.toggle('hidden', !overflowing); });
-  const fileText = localSyncing ? '正在同步到本地' : asset ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : '暂无成品文件';
+  const fileText = localSyncing ? '正在同步到本地' : localReady ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : task.assetId ? '成品文件未保存到本机' : '暂无成品文件';
   $('#generationCoreMeta').innerHTML = generationParameterRows(task);
   $('#generationDetailMeta').innerHTML = generationSupplementalRows(task, fileText);
   const error = $('#generationDetailError'); const failure = taskFailure(task); error.textContent = taskErrorText(task); error.classList.toggle('hidden', !failure);
-  const fileAction = $('#downloadGeneration'); fileAction.classList.toggle('hidden', !asset || localSyncing); configureLocalFileAction(fileAction, localSyncing ? null : asset);
-  $('#useGenerationReference').classList.toggle('hidden', !asset || localSyncing || task.type !== 'image');
-  const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !asset || localSyncing); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
+  const fileAction = $('#downloadGeneration'); fileAction.classList.toggle('hidden', !localReady); configureLocalFileAction(fileAction, localReady ? asset : null);
+  $('#useGenerationReference').classList.toggle('hidden', !localReady || task.type !== 'image');
+  const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !localReady); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
   const deleteButton = $('#deleteGeneration'); const active = localSyncing || ['queued','running'].includes(task.status); deleteButton.disabled = active; deleteButton.title = active ? '任务生成中，完成后才能删除' : '';
 
   $('#generationDetailDialog').showModal();
-  if (asset && !localSyncing) {
+  if (localReady) {
     if (task.type === 'image') {
       const image = $('#generationDetailMedia img');
       const syncImage = () => { asset.width = image.naturalWidth; asset.height = image.naturalHeight; fitDetailMedia(image, asset.width, asset.height); $('#generationDetailFile').textContent = `${formatBytes(asset.size)} · ${asset.width} × ${asset.height} px`; };

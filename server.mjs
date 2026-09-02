@@ -25,6 +25,8 @@ import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model
 import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
+import { appendSystemEvent } from './lib/audit.mjs';
+import { putSupportLogObject, supportLogMaxBytes, supportLogObjectKey, supportLogStorageReady, SUPPORT_LOG_MIME } from './lib/support-logs.mjs';
 import {
   closePaymentOrder,
   createPaymentOrder,
@@ -135,6 +137,10 @@ const assetPreviewCacheSeconds = Math.max(30, Math.min(300, assetUrlExpiresSecon
 const uploadMaxPendingPerUser = Math.max(1, Number(process.env.UPLOAD_MAX_PENDING_PER_USER || 3));
 const uploadInitLimitPerMinute = Math.max(1, Number(process.env.UPLOAD_INIT_LIMIT_PER_MINUTE || 10));
 const uploadInitAttempts = new Map();
+// 诊断日志上传是人工触发的排查动作，一小时几次足够，限流只为挡住异常重试。
+const supportLogWindowMs = 60 * 60_000;
+const supportLogLimitPerHour = Math.max(1, Number(process.env.SUPPORT_LOG_LIMIT_PER_HOUR || 6));
+const supportLogAttempts = new Map();
 const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
@@ -350,6 +356,7 @@ function requireUser(req, res) { const user = currentUser(req); if (!user) { sen
 function mutationAllowed(req) { if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) return true; const origin = req.headers.origin; if (!origin) return true; try { return new URL(origin).host === req.headers.host; } catch { return false; } }
 
 async function bodyJson(req, limit = 2_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { throw Object.assign(new Error('JSON 格式不正确'), { statusCode: 400 }); } }
+async function bodyBuffer(req, limit, tooLargeMessage = '请求体过大') { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(tooLargeMessage), { statusCode: 413 }); chunks.push(chunk); } return Buffer.concat(chunks); }
 async function bodyForm(req, limit = 1_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } return Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))); }
 function sendJson(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
 function sendText(res, status, value, contentType = 'text/plain; charset=utf-8') { res.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(String(value)); }
@@ -1290,6 +1297,17 @@ function uploadInitRateAllowed(userId, timestamp = Date.now()) {
     return true;
   }
   if (current.count >= uploadInitLimitPerMinute) return false;
+  current.count += 1;
+  return true;
+}
+function supportLogRateAllowed(userId, timestamp = Date.now()) {
+  const key = String(userId);
+  const current = supportLogAttempts.get(key);
+  if (!current || timestamp - current.startedAt >= supportLogWindowMs) {
+    supportLogAttempts.set(key, { startedAt: timestamp, count: 1 });
+    return true;
+  }
+  if (current.count >= supportLogLimitPerHour) return false;
   current.count += 1;
   return true;
 }
@@ -2793,6 +2811,40 @@ const server = http.createServer(async (req, res) => {
       });
       setPageHeaders(res, page);
       return sendJson(res, 200, page.items.map(publicAsset));
+    }
+    // 客户端诊断日志上传。请求体就是客户端 gzip 好的日志包，服务端直接转存对象
+    // 存储；素材直传那套 intent 状态机在这里没有价值（不入素材库、不需要秒传），
+    // 而日志包本身只有几百 KB，走服务端反而少两次往返。
+    if (url.pathname === '/api/support/logs' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      if (!supportLogStorageReady) return sendJson(res, 503, { error: '诊断日志上传服务尚未配置' });
+      if (!supportLogRateAllowed(user.id)) return sendJson(res, 429, { error: '日志上传过于频繁，请稍后再试' });
+      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      if (contentType !== SUPPORT_LOG_MIME) return sendJson(res, 415, { error: '日志包必须以 application/gzip 提交' });
+      const bundle = await bodyBuffer(req, supportLogMaxBytes, `日志包不能超过 ${Math.round(supportLogMaxBytes / (1024 * 1024))} MB`);
+      if (bundle.length < 3) return sendJson(res, 400, { error: '日志包为空' });
+      if (bundle[0] !== 0x1f || bundle[1] !== 0x8b) return sendJson(res, 415, { error: '日志包必须是 gzip 数据' });
+      const note = String(url.searchParams.get('note') || '').replace(/[\r\n\u0000-\u001f]+/g, ' ').trim().slice(0, 500);
+      const objectKey = supportLogObjectKey(user.id);
+      await putSupportLogObject(objectKey, bundle);
+      const event = appendSystemEvent({
+        level: 'info',
+        category: 'client_log',
+        userId: user.id,
+        message: note || '客户端上传诊断日志',
+        details: {
+          objectKey,
+          size: bundle.length,
+          note,
+          username: user.username,
+          appVersion: String(url.searchParams.get('version') || '').trim().slice(0, 40),
+          platform: String(url.searchParams.get('platform') || '').trim().slice(0, 40),
+          deviceId: normalizeDeviceId(url.searchParams.get('deviceId')),
+          userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
+        },
+      });
+      // 用户拿到短编号后报给客服，后台按编号直接定位这一次上传。
+      return sendJson(res, 201, { ok: true, reference: event.id.slice(0, 8), size: bundle.length, uploadedAt: event.createdAt });
     }
     if (url.pathname === '/api/files/uploads/init' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;

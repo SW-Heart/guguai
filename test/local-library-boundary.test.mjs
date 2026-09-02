@@ -92,8 +92,10 @@ test('desktop file actions only reveal an existing local asset', () => {
   assert.doesNotMatch(actionSource, /downloadRemote|applyDesktopLocalAsset|saveLocalAs|location\.|window\.open/);
 });
 
-test('completed generation cards require a saved local asset', () => {
-  assert.match(app, /task\.status !== 'completed' \|\| Boolean\(task\.assetId && fileById\(task\.assetId\)\?\.localStatus === 'saved'\)/);
+test('completed generation cards stay visible while requiring a saved local asset for preview', () => {
+  assert.match(app, /task\.status !== 'completed' \|\| Boolean\(task\.assetId\)/);
+  assert.match(app, /const localReady = Boolean\(asset && asset\.localStatus === 'saved' && !localSyncing\)/);
+  assert.match(app, /task\.assetId && !localSyncing/);
   assert.doesNotMatch(app, /api\/files\/\$\{encodeURIComponent\(file\.id\)\}\/download/);
 });
 
@@ -104,8 +106,18 @@ test('task polling updates rich short-drama state independently from gallery car
   assert.match(app, /if \(stateChanged \|\| assetsChanged\) dramaController\?\.refreshTasks\?\.\(\)/);
 });
 
+test('project-bound generation statuses override the paginated gallery snapshot', () => {
+  const loadTasksStart = app.indexOf('async function loadTasks(');
+  const loadTasksEnd = app.indexOf('\nfunction localFileAction', loadTasksStart);
+  const loadTasksSource = app.slice(loadTasksStart, loadTasksEnd);
+  assert.match(loadTasksSource, /const projectTaskIdsToHydrate = \[\.\.\.projectTaskIds\];/);
+  assert.match(loadTasksSource, /\/api\/generations\?ids=\$\{encodeURIComponent\(ids\.join\(','\)\)\}/);
+  assert.match(loadTasksSource, /hydratedTasks\[index\] = task/);
+});
+
 test('short-drama completed tasks wait for local assets before becoming selectable', () => {
   assert.match(dramaStudio, /generationNeedsLocalAssetSync\(task\(id\), taskAsset\(id\), assetSyncing\)/);
+  assert.match(dramaStudio, /file\.localStatus === 'saved'/);
   assert.match(dramaStudio, /!generated\.assetId\|\|!taskLocallyReady\(item\.taskId\)/);
   assert.match(dramaStudio, /function resourceVersionCard[\s\S]*?const syncing=taskSyncing\(taskId\); const ready=taskLocallyReady\(taskId\)/);
   assert.match(dramaStudio, /function videoVersion[\s\S]*?const syncing=taskSyncing\(id\);const ready=taskLocallyReady\(id\)/);
