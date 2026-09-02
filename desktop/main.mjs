@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
 import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
+  claimLocalAssetByPath,
   closeLocalLibrary,
   countLocalAssets,
   deleteLocalAsset,
@@ -273,6 +274,133 @@ function localMediaMimeType(asset, target) {
   return named !== 'application/octet-stream' ? named : mimeFromName(target);
 }
 
+function ffmpegExecutableCandidates() {
+  const executable = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  return [
+    String(process.env.GUGU_FFMPEG_PATH || '').trim(),
+    app.isPackaged ? path.join(process.resourcesPath, 'ffmpeg', executable) : '',
+    app.isPackaged ? path.join(process.resourcesPath, executable) : '',
+  ].filter(Boolean);
+}
+
+async function resolveFfmpegExecutable() {
+  const candidates = ffmpegExecutableCandidates();
+  try {
+    const module = await import('ffmpeg-static');
+    const bundled = String(module.default || module || '').trim();
+    if (bundled) {
+      candidates.push(bundled);
+      // Native executables cannot be spawned from inside an ASAR archive.
+      candidates.push(bundled.replace(/\.asar([\\/])/i, '.asar.unpacked$1'));
+    }
+  } catch {
+    // The dependency is present in packaged builds; leave development builds
+    // usable when node_modules has not been installed yet.
+  }
+  for (const candidate of [...new Set(candidates)]) {
+    if (await fs.access(candidate, fs.constants?.X_OK).then(() => true).catch(() => false)) return candidate;
+  }
+  // The development environment normally supplies ffmpeg through PATH. A
+  // packaged build should use the static binary bundled by electron-builder;
+  // keeping PATH as a fallback also makes local development straightforward.
+  return 'ffmpeg';
+}
+
+function runFfmpeg(args, { cwd, timeoutMs = 900_000 } = {}) {
+  return resolveFfmpegExecutable().then(command => new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    let stderr = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill('SIGKILL');
+      reject(new Error(`本地视频处理超时：${stderr.trim().slice(-800) || 'FFmpeg 未在规定时间内完成'}`));
+    }, timeoutMs);
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.once('error', error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error.code === 'ENOENT') reject(new Error('本地视频处理需要 FFmpeg，请重新安装客户端或配置 GUGU_FFMPEG_PATH'));
+      else reject(error);
+    });
+    child.once('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`本地视频处理失败（${signal || `退出码 ${code}`}）：${stderr.trim().slice(-1200) || 'FFmpeg 未返回错误信息'}`));
+    });
+  }));
+}
+
+function localAssetPath(asset, targetWorkspace = workspace) {
+  if (!asset || !targetWorkspace || !asset.relativePath) throw new Error('本地素材记录不完整');
+  const target = path.resolve(targetWorkspace, asset.relativePath);
+  if (!isInside(targetWorkspace, target)) throw new Error('本地素材路径不受信任');
+  return target;
+}
+
+async function localAssetResult(asset, { name = '', source = '', projectId = '' } = {}) {
+  if (!asset) throw new Error('本地素材未生成');
+  if (name) asset.name = safeName(name, asset.name);
+  if (source) asset.source = source;
+  if (projectId) asset.projectId = String(projectId);
+  asset.localStatus = 'saved';
+  asset.remoteStatus = 'local_only';
+  upsertLocalAsset(asset);
+  return { ...asset, localId: asset.id, localOnly: true, url: localMediaUrl(asset.id) };
+}
+
+async function extractLocalTailFrame({ assetId, name = '尾帧', projectId = '' } = {}) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
+  const sourceAsset = libraryAsset(String(assetId || ''));
+  if (!sourceAsset || sourceAsset.kind !== 'video') throw new Error('选中的分镜视频不在本地文件库中');
+  const source = localAssetPath(sourceAsset, targetWorkspace);
+  if (!await fs.stat(source).then(stat => stat.isFile()).catch(() => false)) throw new Error('选中的分镜视频本地文件不存在');
+  const transferDir = path.join(targetWorkspace, '.gugu', 'transfers');
+  const output = path.join(transferDir, `tail-${randomUUID()}.jpg`);
+  await fs.mkdir(transferDir, { recursive: true, mode: 0o700 });
+  try {
+    await runFfmpeg(['-y', '-sseof', '-0.08', '-i', source, '-frames:v', '1', '-q:v', '2', output], { cwd: targetWorkspace, timeoutMs: 120_000 });
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
+    const imported = await importFile(output);
+    return localAssetResult(imported, { name: `${name} · 尾帧.jpg`, source: 'drama_tail_frame', projectId });
+  } finally {
+    await fs.unlink(output).catch(() => {});
+  }
+}
+
+async function assembleLocalVideos({ assetIds = [], name = '完整成片', projectId = '' } = {}) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
+  const ids = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(value => String(value || '')).filter(Boolean))];
+  if (!ids.length) throw new Error('没有可拼接的本地分镜视频');
+  const sources = ids.map(id => {
+    const asset = libraryAsset(id);
+    if (!asset || asset.kind !== 'video') throw new Error('存在不在本地文件库中的分镜视频');
+    return localAssetPath(asset, targetWorkspace);
+  });
+  for (const source of sources) {
+    if (!await fs.stat(source).then(stat => stat.isFile()).catch(() => false)) throw new Error('存在缺失的本地分镜视频');
+  }
+  const transferDir = path.join(targetWorkspace, '.gugu', 'transfers');
+  const concatFile = path.join(transferDir, `concat-${randomUUID()}.txt`);
+  const output = path.join(transferDir, `final-${randomUUID()}.mp4`);
+  await fs.mkdir(transferDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(concatFile, sources.map(file => `file '${file.replaceAll("'", "'\\''")}'`).join('\n'), { mode: 0o600 });
+  try {
+    await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-c:a', 'aac', '-movflags', '+faststart', output], { cwd: targetWorkspace });
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
+    const imported = await importFile(output);
+    return localAssetResult(imported, { name: `${name} · 完整成片.mp4`, source: 'drama_final', projectId });
+  } finally {
+    await Promise.all([fs.unlink(concatFile).catch(() => {}), fs.unlink(output).catch(() => {})]);
+  }
+}
+
 async function importFile(filePath) {
   if (!workspace) throw new Error('工作区尚未初始化');
   const targetWorkspace = workspace;
@@ -286,6 +414,8 @@ async function importFile(filePath) {
 
   const originalName = safeName(path.basename(filePath));
   const extension = path.extname(originalName).toLowerCase();
+  const mimeType = mimeFromName(originalName);
+  const kind = mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : 'image';
   const targetName = `${digest.sha256.slice(0, 16)}-${originalName}`;
   const relativePath = path.join('library', targetName);
   const target = path.join(workspace, relativePath);
@@ -297,7 +427,8 @@ async function importFile(filePath) {
     id: `local_${randomUUID()}`,
     name: originalName,
     relativePath,
-    mimeType: mimeFromName(originalName),
+    mimeType,
+    kind,
     extension,
     size: digest.size,
     sha256: digest.sha256,
@@ -309,10 +440,10 @@ async function importFile(filePath) {
   return { ...asset, reused: false };
 }
 
-async function chooseAndImportFiles() {
+async function chooseAndImportFiles({ multiple = true } = {}) {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '导入素材到 GuGu AI',
-    properties: ['openFile', 'multiSelections'],
+    properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
     filters: [
       { name: '媒体文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a', 'aac', 'weba'] },
       { name: '所有文件', extensions: ['*'] },
@@ -473,6 +604,11 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
     const target = path.join(targetWorkspace, relativePath);
     assertActiveWorkspace(targetWorkspace, targetEpoch);
     await fs.rename(temporary, target);
+    // 同内容同名的云端素材会算出同一个 relativePath；若已被别的本地记录占用，复用那条记录，
+    // 否则插入新行会撞 assets.relative_path 唯一约束，导致该素材永远无法接收。
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
+    const claimed = claimLocalAssetByPath({ relativePath, cloudAssetId, sha256, size, previousId: existing?.id || '' });
+    if (claimed) return { ...claimed, url: localMediaUrl(claimed.id), reused: true };
     const asset = {
       ...(existing || {}),
       id: existing?.id || `local_${randomUUID()}`,
@@ -869,10 +1005,13 @@ function createTrayIcon() {
 
   const isMac = process.platform === 'darwin';
   const svg = isMac
-    ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#000" d="M11 16.5h28v9H11z" transform="rotate(-38 25 21)"/><path fill="#000" d="M25 38.5h28v9H25z" transform="rotate(-38 39 43)"/></svg>'
+    // Keep the macOS menu-bar item consistent with the GuGu AI app logo.
+    // A template icon strips the white mark and makes the old two-path icon
+    // appear empty until the status item is activated, so preserve the full
+    // colored mark here instead.
+    ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#18181b"/><rect x="11" y="16.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 25 21)"/><rect x="25" y="38.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 39 43)"/></svg>'
     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#18181b"/><rect x="11" y="16.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 25 21)"/><rect x="25" y="38.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 39 43)"/></svg>';
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-  if (isMac) image.setTemplateImage(true);
   return image.resize({ width: isMac ? 18 : 16, height: isMac ? 18 : 16 });
 }
 
@@ -1132,11 +1271,13 @@ function registerIpc() {
     await shell.openPath(workspace);
     return true;
   });
-  ipcMain.handle('media:choose-and-import', chooseAndImportFiles);
+  ipcMain.handle('media:choose-and-import', (_event, options) => chooseAndImportFiles(options));
   ipcMain.handle('media:list-local', (_event, options) => listLocalAssets(options || {}));
   ipcMain.handle('media:list-local-by-cloud-ids', async (_event, ids) => (await listLocalAssets({ cloudAssetIds: ids })).items);
   ipcMain.handle('media:download-remote', (_event, payload) => downloadRemoteAsset(payload || {}));
   ipcMain.handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
+  ipcMain.handle('media:extract-tail', (_event, payload) => extractLocalTailFrame(payload || {}));
+  ipcMain.handle('media:assemble-videos', (_event, payload) => assembleLocalVideos(payload || {}));
   ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
   ipcMain.handle('media:remove-local', (_event, assetId) => removeLocalAsset(assetId));
   ipcMain.handle('media:url', (_event, assetId) => localMediaUrl(String(assetId || '')));

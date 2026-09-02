@@ -24,3 +24,13 @@ export function mergeTransientFields(previous, next, fields) {
     return Object.keys(transient).length ? { ...record, ...transient } : record;
   });
 }
+
+// Keep records inserted locally while a server list request is in flight. The
+// server response can legitimately predate those inserts, especially when a
+// batch creates several records concurrently.
+export function mergeRecordsAddedDuringRequest(requestSnapshot, current, response) {
+  const requestedIds = new Set(requestSnapshot.map(record => record?.id));
+  const responseIds = new Set(response.map(record => record?.id));
+  const added = current.filter(record => record?.id != null && !requestedIds.has(record.id) && !responseIds.has(record.id));
+  return [...added, ...response];
+}

@@ -6,17 +6,19 @@ import {
   __test as routeTest,
   checkModelRoutes,
   createModelRoute,
+  createModelRouteCredential,
   ensureDefaultModelRoutes,
   listModelRouteChannels,
   listModelRoutes,
   publicModelPrices,
+  routeCredential,
   selectModelRoute,
   updateModelRoute,
   updateRoutePolicy,
 } from '../lib/model-routes.mjs';
 
 const originalKeys = {};
-for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY']) originalKeys[name] = process.env[name];
+for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
 
 function freshDb() {
   resetForTests();
@@ -25,6 +27,7 @@ function freshDb() {
   process.env.WJ_TJWD_KEY = 'wj-test';
   process.env.WJ_SD_PY_900_KEY = 'wj-py-test';
   process.env.CNTCN_KEY = 'cntcn-test';
+  process.env.MODEL_ROUTE_CREDENTIAL_SECRET = 'model-route-test-secret';
   ensureDefaultModelRoutes();
 }
 
@@ -124,5 +127,20 @@ test('Seedance route selection, pricing and catalog health', async t => {
       logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'wj-py900', upstreamModelId: 'custom-seedance-720p',
       priority: 13, costYuan: 1, salePriceYuan: 2,
     }), /相同的上游模型 ID/);
+  });
+
+  await t.test('multiple WJ credentials can be added and keep independent model catalogs', async () => {
+    const credential = createModelRouteCredential({ channelName: 'WJ', label: 'Seedance 2.5 专用 Key', provider: 'wj', adapterType: 'wj-video', baseUrl: 'https://www.weijinapi.top', apiKey: 'wj-new-model-key' }, { actorUserId: 'admin' });
+    assert.equal(credential.channelName, 'WJ');
+    assert.equal(credential.configured, true);
+    assert.equal(credential.keyHint, '••••••••••••-key');
+    assert.equal(Object.hasOwn(credential, 'apiKey'), false);
+    assert.notEqual(sql('SELECT api_key_ciphertext FROM model_route_credentials WHERE id = :id').get({ id: credential.id }).api_key_ciphertext, 'wj-new-model-key');
+    assert.equal(routeCredential(credential.id), 'wj-new-model-key');
+    const created = createModelRoute({ logicalModelId: 'seedance-2.5', quality: '720p', credentialId: credential.id, upstreamModelId: 'seedance2.5-new-model', priority: 1, costYuan: 8, salePriceYuan: 10 });
+    let authorization = '';
+    await checkModelRoutes({ routeIds: [created.id], fetchImpl: async (_url, options) => { authorization = options.headers.Authorization; return new Response(JSON.stringify({ data: [{ id: 'seedance2.5-new-model' }] }), { status: 200 }); } });
+    assert.equal(authorization, 'Bearer wj-new-model-key');
+    assert.equal(listModelRouteChannels().find(item => item.id === credential.id).label, 'WJ · Seedance 2.5 专用 Key');
   });
 });

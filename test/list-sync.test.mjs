@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changedRecordIds, listSignature, mergeTransientFields, recordSignature } from '../public/list-sync.js';
+import { changedRecordIds, listSignature, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from '../public/list-sync.js';
 
 const taskFields = ['id','status','assetId','updatedAt'];
 
@@ -41,5 +41,17 @@ test('server refresh preserves locally measured media dimensions', () => {
   assert.deepEqual(mergeTransientFields(previous, refreshed, ['width','height']), [
     { id:'asset-a', name:'renamed.png', width:1200, height:1600 },
     { id:'asset-b', name:'video.mp4' },
+  ]);
+});
+
+test('server refresh preserves records added while the request was in flight', () => {
+  const snapshot = [{ id:'existing', status:'completed' }];
+  const current = [{ id:'new-2', status:'queued' }, { id:'new-1', status:'queued' }, ...snapshot];
+  const response = [{ id:'new-1', status:'running' }, ...snapshot];
+
+  assert.deepEqual(mergeRecordsAddedDuringRequest(snapshot, current, response), [
+    { id:'new-2', status:'queued' },
+    { id:'new-1', status:'running' },
+    { id:'existing', status:'completed' },
   ]);
 });

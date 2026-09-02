@@ -158,6 +158,38 @@ export function findLocalAssetByCloudId(cloudAssetId) {
   return rowToAsset(db().prepare('SELECT doc_json FROM assets WHERE cloud_asset_id = :cloudAssetId').get({ cloudAssetId: String(cloudAssetId || '') }));
 }
 
+export function findLocalAssetByRelativePath(relativePath) {
+  return rowToAsset(db().prepare('SELECT doc_json FROM assets WHERE relative_path = :relativePath').get({ relativePath: String(relativePath || '') }));
+}
+
+// relative_path 是唯一列：同内容同名的素材会落到同一个工作区文件上。若该路径已归属另一条记录，
+// 就把它认领为当前云端素材的本地记录并返回，避免插入新行时触发唯一约束失败。
+// cloud_asset_id 同样唯一，因此只有在占位记录尚未绑定云端 ID 时才写入，并先清掉旧的失效记录。
+export function claimLocalAssetByPath({ relativePath, cloudAssetId = '', sha256 = '', size = 0, previousId = '' } = {}) {
+  const owner = findLocalAssetByRelativePath(relativePath);
+  if (!owner || !owner.id || owner.id === String(previousId || '')) return null;
+  const adoptable = !owner.cloudAssetId;
+  const claimed = {
+    ...owner,
+    cloudAssetId: adoptable ? String(cloudAssetId || '') : owner.cloudAssetId,
+    sha256: String(sha256 || owner.sha256 || ''),
+    size: Number.isSafeInteger(Number(size)) ? Number(size) : owner.size,
+    updatedAt: new Date().toISOString(),
+    localStatus: 'saved',
+    remoteStatus: 'ready',
+  };
+  db().exec('BEGIN');
+  try {
+    if (adoptable && previousId) deleteLocalAsset(String(previousId));
+    upsert(claimed);
+    db().exec('COMMIT');
+  } catch (error) {
+    db().exec('ROLLBACK');
+    throw error;
+  }
+  return claimed;
+}
+
 export function findLocalAssetByDigest(sha256, size) {
   return rowToAsset(db().prepare('SELECT doc_json FROM assets WHERE sha256 = :sha256 AND size = :size LIMIT 1').get({ sha256: String(sha256 || ''), size: Number(size) }));
 }

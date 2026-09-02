@@ -90,6 +90,14 @@ test('generation credits follow platform pricing', () => {
   assert.equal(__test.generationCost('video', 15), 15);
 });
 
+test('model quotes accept validated local reference counts', () => {
+  assert.deepEqual(__test.normalizeQuoteReferenceCounts({ image:2, video:1, audio:0 }), { image:2, video:1, audio:0 });
+  assert.deepEqual(__test.normalizeQuoteReferenceCounts(undefined), { image:0, video:0, audio:0 });
+  assert.throws(() => __test.normalizeQuoteReferenceCounts({ image:-1 }), /参考素材数量无效/);
+  assert.throws(() => __test.normalizeQuoteReferenceCounts({ image:101 }), /参考素材数量无效/);
+  assert.throws(() => __test.normalizeQuoteReferenceCounts('1'), /参考素材数量格式无效/);
+});
+
 test('website auth and Alipay APIs remain available in desktop-only mode', () => {
   assert.equal(__test.websiteApiAllowed('/api/auth/me'), true);
   assert.equal(__test.websiteApiAllowed('/api/auth/sms/login'), true);
@@ -105,6 +113,13 @@ test('creator routes serve the workspace only to the desktop client', () => {
   assert.equal(__test.staticEntryFile('/image', { desktop:false, appOnly:true }), 'home.html');
   assert.equal(__test.staticEntryFile('/login', { desktop:true, appOnly:true }), 'index.html');
   assert.equal(__test.staticEntryFile('/image', { desktop:true, appOnly:true }), 'index.html');
+});
+
+test('development scripts revalidate while production versioned assets stay immutable', () => {
+  assert.equal(__test.staticCacheControl('.js', { versioned:true, production:false }), 'no-cache');
+  assert.equal(__test.staticCacheControl('.css', { versioned:true, production:false }), 'no-cache');
+  assert.equal(__test.staticCacheControl('.js', { versioned:true, production:true }), 'public, max-age=31536000, immutable');
+  assert.equal(__test.staticCacheControl('.js', { versioned:false, production:true }), 'no-cache');
 });
 
 test('drama video generation preserves the submitted prompt and only falls back when absent', () => {
@@ -153,6 +168,16 @@ test('professional project normalization preserves ten-second durations', () => 
   });
   assert.equal(project.settings.shotDuration, 10);
   assert.equal(project.shots[0].duration, 10);
+});
+
+test('professional project normalization preserves GuGu 2.0 short durations', () => {
+  const project = __test.normalizeDramaProject({
+    mode:'professional', settings:{shotDuration:5}, resources:[],
+    shots:[{title:'五秒镜头',duration:5,resourceIds:[],referenceAssetIds:[],generation:{type:'REFERENCE',modelId:'minimax-h3-15s',quality:'480p'},videoVersions:[]}],
+  });
+  assert.equal(project.settings.shotDuration, 5);
+  assert.equal(project.shots[0].duration, 5);
+  assert.equal(project.shots[0].generation.quality, '480p');
 });
 
 test('ordered video reference selections survive project normalization', () => {

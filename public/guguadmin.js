@@ -161,7 +161,7 @@
     return data;
   }
 
-  const loaders = { overview: loadOverview, users: loadUsers, models: loadModels, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
+  const loaders = { overview: loadOverview, users: loadUsers, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
   function showView(name) {
     if (!loaders[name]) return;
     if (state.view !== name) {
@@ -223,6 +223,54 @@
       table.querySelectorAll('[data-user-enable]').forEach(button => button.onclick = () => changeUser(button.dataset.userEnable, 'enable'));
       bindPageControls('users', fetchUsers, data.nextCursor);
     } catch (error) { table.innerHTML = errorMarkup(error.message, 'users'); table.querySelector('[data-retry="users"]')?.addEventListener('click', fetchUsers); }
+  }
+
+  function credentialDialogFields(credential = null) {
+    return [
+      { name: 'channelName', label: '渠道名称', type: 'text', value: credential?.channelName || '', placeholder: '例如 WJ', required: true, maxLength: 100, help: '同一渠道可以添加多个不同权限的 Key。' },
+      { name: 'label', label: 'Key 名称', type: 'text', value: credential?.label || '', placeholder: '例如 Seedance 2.5 专用 Key', required: true, maxLength: 100 },
+      { name: 'provider', label: 'Provider 标识', type: 'text', value: credential?.provider || 'wj', placeholder: '例如 wj', required: true, maxLength: 80 },
+      { name: 'adapterType', label: '接口适配类型', type: 'select', value: credential?.adapterType || 'wj-video', options: [{ value: 'wj-video', label: 'WJ 视频协议' }, { value: 'diw-video', label: 'DIW 视频协议' }, { value: 'cntcn-video', label: 'CNTCN 视频协议' }], required: true },
+      { name: 'baseUrl', label: 'API Base URL', type: 'url', value: credential?.baseUrl || '', placeholder: 'https://example.com', required: true, maxLength: 500 },
+      { name: 'apiKey', label: credential ? '更换 API Key（留空保持不变）' : 'API Key', type: 'password', value: '', placeholder: credential ? '留空保持当前 Key' : '请输入 API Key', required: !credential, maxLength: 2000 },
+      { name: 'enabled', type: 'checkbox', label: '启用该 Key', checked: credential ? credential.enabled : true, help: '停用后绑定该 Key 的线路不会参与自动或手动选路。' },
+    ];
+  }
+
+  function validateCredentialDialog(input, editing = false) {
+    const required = ['channelName', 'label', 'provider', 'adapterType', 'baseUrl'].every(name => String(input[name] || '').trim());
+    let validUrl = false;
+    try { validUrl = ['http:', 'https:'].includes(new URL(input.baseUrl).protocol); } catch {}
+    if (!required || !validUrl || (!editing && !String(input.apiKey || '').trim())) return '请完整填写渠道、Key 名称、适配类型、URL 和 API Key。';
+    return null;
+  }
+
+  async function editCredential(credential) {
+    await showAdminDialog({ kicker: '渠道 Key', title: `编辑 ${credential.channelName} · ${credential.label}`, description: 'API Key 只写入服务端并以加密形式保存，页面不会回显明文。', submit: '保存 Key', fields: credentialDialogFields(credential), validate: values => validateCredentialDialog(values, true), onSubmit: async values => { await api(`/api/admin/model-route-credentials/${encodeURIComponent(credential.id)}`, { method: 'PATCH', body: JSON.stringify({ ...values, expectedVersion: credential.version }) }); toast('渠道 Key 已更新'); await loadCredentials(); await loadModels(); } });
+  }
+
+  async function addCredential() {
+    await showAdminDialog({ kicker: '新增渠道 Key', title: '添加渠道凭证', description: '同一渠道可以添加多个权限不同的 Key；保存后可在模型线路中选择具体 Key。', submit: '添加 Key', fields: credentialDialogFields(), validate: values => validateCredentialDialog(values, false), onSubmit: async values => { await api('/api/admin/model-route-credentials', { method: 'POST', body: JSON.stringify(values) }); toast('渠道 Key 已添加'); await loadCredentials(); } });
+  }
+
+  async function checkCredential(id) {
+    const button = document.querySelector(`[data-check-credential="${CSS.escape(id)}"]`);
+    setButtonBusy(button, true, '检查中…');
+    try { const result = await api('/api/admin/model-route-credentials/check', { method: 'POST', body: JSON.stringify({ credentialId: id }) }); toast(`已检查 ${result.items?.length || 0} 条线路`); await loadCredentials(); await loadModels(); }
+    catch (error) { toast(error.message); setButtonBusy(button, false); }
+  }
+
+  async function loadCredentials() {
+    const root = $('#view-credentials');
+    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Credentials</div><h2 id="credentialsTitle">渠道与 Key</h2><p class="subtitle">管理上游渠道和不同权限的 API Key；每个 Key 独立检查模型目录</p></div><div class="view-heading-actions"><button class="primary" id="addCredential" type="button">新增渠道 Key</button></div></div><div class="panel">${loadingMarkup('正在读取渠道 Key…')}</div>`;
+    try {
+      const data = await api('/api/admin/model-route-credentials');
+      const items = data.items || [];
+      root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Credentials</div><h2 id="credentialsTitle">渠道与 Key</h2><p class="subtitle">同一个 WJ 渠道可以维护多个模型权限不同的 Key</p></div><div class="view-heading-actions"><button class="primary" id="addCredential" type="button">新增渠道 Key</button></div></div><div class="panel"><div class="panel-head"><div><h3>渠道凭证</h3><p class="detail">Key 仅显示掩码；停用凭证后关联线路会自动跳过。</p></div></div>${items.length ? `<div class="table-wrap"><table aria-label="渠道 Key 列表"><thead><tr><th>渠道</th><th>Key</th><th>接口</th><th>API Base URL</th><th>状态</th><th>线路数</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td><b>${esc(item.channelName)}</b><div class="detail">${esc(item.provider)}</div></td><td><b>${esc(item.label)}</b><div class="detail">${esc(item.keyHint || (item.configured ? '已配置' : '未配置'))}</div></td><td>${esc(item.adapterType)}</td><td class="detail">${esc(item.baseUrl)}</td><td>${item.enabled ? badge(item.configured ? 'configured' : 'credential_error', item.configured ? 'ok' : 'bad') : badge('disabled')}</td><td>${money(item.routeCount)}</td><td class="actions"><button class="small-button" data-edit-credential="${esc(item.id)}" type="button">编辑</button><button class="small-button" data-check-credential="${esc(item.id)}" type="button">检查模型</button></td></tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无渠道 Key', '添加第一个渠道凭证后，就可以在模型线路中选择它。')}</div>`;
+      $('#addCredential').onclick = addCredential;
+      root.querySelectorAll('[data-edit-credential]').forEach(button => button.onclick = () => editCredential(items.find(item => item.id === button.dataset.editCredential)));
+      root.querySelectorAll('[data-check-credential]').forEach(button => button.onclick = () => checkCredential(button.dataset.checkCredential));
+    } catch (error) { root.innerHTML = `${errorMarkup(error.message, 'credentials')}`; root.querySelector('[data-retry="credentials"]')?.addEventListener('click', loadCredentials); }
   }
 
   function userDetailHtml(user) {
@@ -332,7 +380,7 @@
     catch (error) { toast(error.message); select.disabled = false; }
   }
 
-  function channelDialogOptions(channels, selected) { return (channels || []).map(channel => ({ value: channel.id, label: `${channel.label} · ${channel.envKey}${channel.configured ? '' : '（未配置）'}` })).filter(option => option.value).map(option => ({ ...option, selected: option.value === selected })); }
+  function channelDialogOptions(channels, selected) { return (channels || []).map(channel => ({ value: channel.id, label: `${channel.label}${channel.envKey ? ` · ${channel.envKey}` : ''}${channel.configured ? '' : '（未配置）'}${channel.enabled === false ? '（已停用）' : ''}` })).filter(option => option.value).map(option => ({ ...option, selected: option.value === selected })); }
   function routeDialogFields({ route = null, channels = [], nextPriority = 1 }) {
     const selectedChannel = route?.credentialId || channels.find(channel => channel.configured)?.id || channels[0]?.id || '';
     return [

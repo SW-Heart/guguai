@@ -1,6 +1,5 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { execFile as execFileCallback } from 'node:child_process';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -41,7 +40,6 @@ import {
 } from './lib/alipay-payments.mjs';
 
 const scrypt = promisify(scryptCallback);
-const execFile = promisify(execFileCallback);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, 'public');
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(here, 'data');
@@ -157,7 +155,10 @@ const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
 const videoDurations = new Set([8, 10, 15, 20, 30]);
-const dramaVideoDurations = new Set([8, 10, 15, 20, 30]);
+// Short-drama shots are model-specific. GuGu 2.0 accepts every integer
+// duration from 1 to 15 seconds, so the project persistence layer must not
+// collapse those values back to the legacy 8/10/15/20/30-second set.
+const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2' });
 const invitationCodes = new Set();
@@ -1357,6 +1358,18 @@ function referenceAssetCounts(userId, ids) {
   }
   return counts;
 }
+function normalizeQuoteReferenceCounts(value) {
+  const counts = { image: 0, video: 0, audio: 0 };
+  if (value === undefined || value === null) return counts;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('参考素材数量格式无效'), { statusCode:400 });
+  for (const kind of Object.keys(counts)) {
+    const count = value[kind] === undefined ? 0 : Number(value[kind]);
+    if (!Number.isSafeInteger(count) || count < 0 || count > 100) throw Object.assign(new Error('参考素材数量无效'), { statusCode:400 });
+    counts[kind] = count;
+  }
+  if (Object.values(counts).reduce((sum, count) => sum + count, 0) > 100) throw Object.assign(new Error('参考素材数量过多'), { statusCode:400 });
+  return counts;
+}
 async function referenceAssetHasReadableSource(userId, asset) {
   if (!asset?.storageName) return false;
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
@@ -1463,35 +1476,6 @@ async function archiveGenerationResult(userId, task, resultUrl) {
     task.assetId = assetId;
     task.status = 'completed';
     task.error = '';
-  });
-}
-async function archiveLocalAsset(userId, sourceFile, { name, kind, mimeType, source, projectId }) {
-  const id = randomUUID(); const extension = path.extname(sourceFile); const storageName = `${id}${extension}`; const stat = await fs.stat(sourceFile);
-  const asset = { id, ownerId:userId, name, kind, mimeType, size:stat.size, storageName, source, projectId, sourceGenerationId:'', sourceUrl:'', createdAt:now(), updatedAt:now() };
-  try { await uploadAssetFile(userId, asset, sourceFile); } finally { await fs.unlink(sourceFile).catch(() => {}); }
-  return asset;
-}
-async function extractVideoTailFrame(userId, project, shot) {
-  const task = findGeneration(userId, shot.selectedVideoTaskId); const video = task?.assetId ? findAsset(userId, task.assetId) : null;
-  if (!video || video.kind !== 'video') throw Object.assign(new Error('请先选择一个已完成的分镜视频'), { statusCode:400 });
-  return withMediaTempDir(`tail-${shot.id}`, async jobDir => {
-    const source = await ensureLocalAsset(userId, video, jobDir); const temp = path.join(jobDir, 'tail.jpg');
-    await execFile('ffmpeg', ['-y','-sseof','-0.08','-i',source,'-frames:v','1','-q:v','2',temp], { timeout:120_000 });
-    const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 分镜 ${shot.shotNumber} 尾帧.jpg`, kind:'image', mimeType:'image/jpeg', source:'drama_tail_frame', projectId:project.id });
-    shot.tailFrameAssetId = asset.id; await saveDramaProject(userId, project); return asset;
-  });
-}
-async function assembleDramaProject(userId, project) {
-  if (!project.shots.length) throw Object.assign(new Error('项目还没有分镜'), { statusCode:400 });
-  if (project.mode === 'professional' && project.shots.length < 2) throw Object.assign(new Error('专业编辑项目至少需要 2 个分镜才能合成'), { statusCode:400 });
-  return withMediaTempDir(`assemble-${project.id}`, async jobDir => {
-    const sources = [];
-    for (const shot of project.shots) { const task = findGeneration(userId, shot.selectedVideoTaskId); const asset = task?.assetId ? findAsset(userId, task.assetId) : null; if (!asset || asset.kind !== 'video') throw Object.assign(new Error(`分镜 ${shot.shotNumber} 还没有选择完成的视频`), { statusCode:400 }); sources.push(await ensureLocalAsset(userId, asset, jobDir)); }
-    const concatFile = path.join(jobDir, 'concat.txt'); const temp = path.join(jobDir, 'final.mp4');
-    await fs.writeFile(concatFile, sources.map(file => `file '${file.replaceAll("'", "'\\''")}'`).join('\n'));
-    await execFile('ffmpeg', ['-y','-f','concat','-safe','0','-i',concatFile,'-c:v','libx264','-preset','medium','-crf','20','-c:a','aac','-movflags','+faststart',temp], { timeout:900_000, maxBuffer:10_000_000 });
-    const asset = await archiveLocalAsset(userId, temp, { name:`${project.title} · 完整成片.mp4`, kind:'video', mimeType:'video/mp4', source:'drama_final', projectId:project.id });
-    project.finalAssetId = asset.id; project.step = 'video'; project.status = 'completed'; await saveDramaProject(userId, project); return asset;
   });
 }
 function progressPersistenceHooks(userId, task) {
@@ -1950,6 +1934,12 @@ async function recoverPendingGenerations() {
 }
 
 async function serveFile(res, file, mimeType, cacheControl = 'private, max-age=3600', validator = null) { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (validator) { const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`; headers.ETag = etag; if (validator.ifNoneMatch === etag) { delete headers['Content-Length']; res.writeHead(304, headers); return res.end(); } } res.writeHead(200, headers); createReadStream(file).pipe(res); }
+function staticCacheControl(ext, { versioned = false, production = process.env.NODE_ENV === 'production' } = {}) {
+  if (['.js', '.css'].includes(ext)) {
+    return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
+  }
+  return ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
+}
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
 const marketingRouteFiles = new Map([
   ['/features', 'features.html'],
@@ -1974,14 +1964,12 @@ async function serveStatic(res, pathname, req = null) {
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
   const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-  // Versioned JS/CSS URLs are safe to cache for a year: changing the version
-  // query is the explicit cache-busting contract. Keep unversioned code on
-  // ETag revalidation so a manually requested asset can never stay stale.
+  // Production versioned JS/CSS URLs are safe to cache for a year. Development
+  // must revalidate on every request because files can change without a query
+  // version bump while the desktop client is running.
   const revalidate = ['.js', '.css'].includes(ext);
   const versioned = revalidate && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
-  const cacheControl = versioned
-    ? 'public, max-age=31536000, immutable'
-    : revalidate ? 'no-cache' : ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
+  const cacheControl = staticCacheControl(ext, { versioned });
   // The same route serves the public home page or the desktop workspace
   // depending on the request marker. Keep an intermediary cache from serving
   // one variant to the other.
@@ -1997,7 +1985,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed, staticEntryFile };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2445,11 +2433,6 @@ const server = http.createServer(async (req, res) => {
     if (resourceSelectMatch && req.method === 'PATCH') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,resourceSelectMatch[1]); const resource=project?.resources.find(item=>item.id===resourceSelectMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); if(!resource.versions.includes(input.taskId))return sendJson(res,400,{error:'该版本不属于此资源'}); if(resource.selectedTaskId!==input.taskId){resource.selectedTaskId=input.taskId;resource.lifecycle={...resource.lifecycle,status:'approved',revision:(resource.lifecycle?.revision||1)+1,approvedAt:now()};project.shots.filter(shot=>shot.resourceIds.includes(resource.id)).forEach(shot=>{shot.lifecycle.staleReasons=[...new Set([...(shot.lifecycle.staleReasons||[]),`${resource.name} 视觉版本已变更`])];});} await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
     const shotVideoMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/videos$/);
     if (shotVideoMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,shotVideoMatch[1]); const shot=project?.shots.find(item=>item.id===shotVideoMatch[2]); if(!shot)return sendJson(res,404,{error:'分镜不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId)); if(!task||task.type!=='video')return sendJson(res,400,{error:'视频任务不存在'}); if(!shot.videoVersions.includes(task.id))shot.videoVersions.push(task.id); shot.selectedVideoTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
-    const tailMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/tail-frame$/);
-    if (tailMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,tailMatch[1]); const shot=project?.shots.find(item=>item.id===tailMatch[2]); if(!shot)return sendJson(res,404,{error:'分镜不存在'}); const asset=await extractVideoTailFrame(user.id,project,shot); return sendJson(res,201,{asset:publicAsset(asset),project:publicDramaProject(project)}); }
-    const assembleMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/assemble$/);
-    if (assembleMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,assembleMatch[1]); if(!project)return sendJson(res,404,{error:'项目不存在'}); const asset=await assembleDramaProject(user.id,project); return sendJson(res,201,{asset:publicAsset(asset),project:publicDramaProject(project)}); }
-
     if (url.pathname === '/api/drama/analyze-script' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
       if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error: 'LLM 服务尚未配置' });
@@ -2524,15 +2507,21 @@ const server = http.createServer(async (req, res) => {
       const user = await requireUser(req, res); if (!user) return;
       const input = await bodyJson(req);
       const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
-      // Price previews can run before deferred reference uploads finish. The
-      // reference itself does not change the price, so validate the selected
-      // mode with a virtual reference while keeping real asset validation for
-      // the generation submission endpoint below.
+      const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
+      const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
+      // Price previews can run before deferred reference uploads finish. Local
+      // clients supply only media-kind counts so route compatibility and price
+      // are exact without uploading assets just to render a button. Generation
+      // submission still validates the real asset records and readable sources.
       const generationType = String(input.generationType || '').toUpperCase();
-      const quoteReferenceCount = requestedReferenceCount || (['REFERENCE', 'FIRST&LAST'].includes(generationType) ? 1 : 0);
+      const quoteReferenceCount = requestedReferenceCount || suppliedReferenceCount || (['REFERENCE', 'FIRST&LAST'].includes(generationType) ? 1 : 0);
       const request = validateVideoRequest(input, quoteReferenceCount);
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false });
-      const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: referenceAssetCounts(user.id, referenceAssetIds) }) : null;
+      const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds) : suppliedReferenceCounts;
+      if (request.referenceLimits) {
+        for (const kind of Object.keys(quotedReferenceCounts)) if (quotedReferenceCounts[kind] > Number(request.referenceLimits[kind] || 0)) throw Object.assign(new Error(`参考${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}最多支持 ${request.referenceLimits[kind] || 0} 个`), { statusCode:400 });
+      }
+      const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: quotedReferenceCounts }) : null;
       if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前选项没有兼容且可用的调用线路' });
       if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:`${route.id}:${route.version}` });
       const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;

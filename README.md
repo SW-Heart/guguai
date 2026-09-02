@@ -20,13 +20,14 @@ GuGu AI 是一个单机运行的 AI 图片、视频与短剧创作工作台。�
 需要以下软件：
 
 - **Node.js 22.13.0 或更高版本**：项目使用无需实验开关的内置 `node:sqlite`。
-- **ffmpeg**：用于提取镜头尾帧和合成最终 MP4。
+- **FFmpeg**：正式桌面客户端已内置，用于本地提取镜头尾帧和合成最终 MP4；仅在开发环境直接运行时需要系统 `ffmpeg` 或 `GUGU_FFMPEG_PATH`。
 - 可用的 Duomi、TTAPI、LLM、Cloudflare R2 与阿里云短信服务凭据，按实际启用的功能配置。
 
 确认工具可用：
 
 ```bash
 node --version
+# 仅直接运行开发环境并执行本地媒体处理时需要
 ffmpeg -version
 ```
 
@@ -62,13 +63,15 @@ cp .env.example .env
 | Grok Video 视频 | `OAI_API_BASE`、`OAIAPI_GROK_KEY`、`OAI_GROK_MODEL` | 使用 OAI 兼容接口的 Grok Video，支持 6/12 秒、480p/720p 和 7 种画幅；仅支持 1 张参考图，按 1 积分/秒计费 |
 | Veo 3.1 视频 | `OAI_API_BASE`、`OAIAPI_VEO_KEY`、`OAI_VEO_31_MODEL` | 使用 oairegbox 的 `firefly-veo-3.1`，支持 4/6/8 秒文生视频和单图参考图视频 |
 | MiniMax H3 视频 | `OAI_API_BASE`、`OAIAPI_MINIMAX_KEY`、`OAI_MINIMAX_H3_768_MODEL`、`OAI_MINIMAX_H3_2K_MODEL` | 平台统一展示为 MiniMax H3；选择 768p 路由到 768p 模型，选择 2K 路由到 2K 模型，支持 4–15 秒文本、参考图和首尾帧视频 |
-| Seedance 2.0 / 2.5 动态线路 | `DIW_API_BASE`、`DIW_KEY`、`WJ_API_BASE`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY`、`CNTCN_API_BASE`、`CNTCN_KEY` | 后台按模型与分辨率维护完整调用线路；每 10 分钟通过 `/v1/models` 自动停用或恢复缺失模型，支持手动指定优先线路 |
+| Seedance 2.0 / 2.5 动态线路 | `DIW_API_BASE`、`DIW_KEY`、`WJ_API_BASE`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY`、`CNTCN_API_BASE`、`CNTCN_KEY`、`MODEL_ROUTE_CREDENTIAL_SECRET` | 后台按模型与分辨率维护完整调用线路；每 10 分钟按每个渠道 Key 通过 `/v1/models` 自动停用或恢复缺失模型，支持后台新增不同权限的 Key 和手动指定优先线路 |
 | Seedance 2.0 Fast 视频 | `DIW_API_BASE`、`DIW_KEY` | 使用 DIW 的 `ed-seedance 2.0 fast 720p`，固定 15 秒/720p，支持 9 图 + 3 视频 + 3 音频参考 |
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
 | 短信登录 | `SMS_ACCESS_KEY_ID`、`SMS_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；短信凭据与媒体存储凭据相互隔离 |
-| 文件存储 | `R2_*`、`R2_REFERENCE_*`、`MEDIA_OBJECT_PREFIX` | 用户素材、生成结果和成片固定使用私有 R2；模型参考图片使用独立临时 R2 Bucket |
+
+模型线路的渠道 Key 可在管理后台“渠道与 Key”中维护。同一渠道（例如 WJ）可以添加多个权限不同的 Key；每个 Key 会独立检查 `/v1/models` 并绑定到具体模型线路。后台新增的 Key 使用 `MODEL_ROUTE_CREDENTIAL_SECRET` 加密保存，该密钥必须长期稳定，不能在重启或迁移时更换，否则已保存的 Key 无法解密。已有的 `DIW_KEY`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY` 和 `CNTCN_KEY` 会作为兼容的初始凭证继续使用。
+| 文件存储 | `R2_*`、`R2_REFERENCE_*`、`MEDIA_OBJECT_PREFIX` | 用户素材和服务端兜底的生成结果使用私有 R2；桌面尾帧/成片保存在本地；模型参考图片使用独立临时 R2 Bucket |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
 | 浏览器直传 | `DIRECT_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`、`R2_ASSET_URL_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 使用 R2 预签名 PUT；上传完成后服务端执行对象大小、MIME 和文件头校验，默认开启 |
 
@@ -106,6 +109,7 @@ DIW_KEY=your_diw_key
 WJ_API_BASE=https://www.weijinapi.top
 WJ_TJWD_KEY=your_wj_tjwd_key
 WJ_SD_PY_900_KEY=your_wj_seedance_900_key
+MODEL_ROUTE_CREDENTIAL_SECRET=replace_with_a_long_random_secret
 MODEL_ROUTE_CHECK_INTERVAL_MS=600000
 # 动态视频线路创建任务的提交请求超时时间（默认 180 秒）
 VIDEO_ROUTE_SUBMIT_TIMEOUT_MS=180000
@@ -295,6 +299,7 @@ GuGu AI Projects/
 - 导入完成后再向服务端发起 R2 预签名 PUT 直传。服务端按同一账号的 SHA-256 做秒传复用，因此重复上传只提交元数据。
 - AI 生成完成后，客户端优先通过受保护的交付地址直接从上游结果链接把成品落到本地 `library/`；上游需要鉴权时由服务端代为转发，避免把密钥交给客户端。文件库、任务卡片和预览优先使用本地 `gugu-media://` 地址，不再重复从网络加载。
 - 生成结果会给客户端一个短暂的本地接收窗口（默认 120 秒）。客户端完成 SHA-256 校验并回执后，服务端不再把该成品上传 R2；只有客户端未接收、下载失败或客户端离线时，服务端才将结果归档到 R2，作为临时兜底和跨设备来源。
+- 短剧项目在桌面客户端内提取尾帧、合并成片，均由本机 FFmpeg 直接写入 `library/`；尾帧和最终成片不会因为这些操作新增 R2 对象。只有把本地素材提交给图像/视频模型时，才按需同步一个云端参考源。
 - 客户端启动时先读取本地 SQLite 索引；首次成功联网只接收有限的待交付成品，之后通过服务端签名游标按增量同步变更，并以每台设备的 `deviceId` 记录本地回执。文件库使用 keyset 分页，任务卡片按 `assetId` 精确补取，不会为了打开页面扫描全部素材。网络不可用时仍可搜索、预览、重命名、删除和另存本地素材。
 - R2 是临时备份/跨设备同步来源，不是客户端浏览的主存储。服务器不需要把大文件转存到应用服务器；生成接口仍需联网，未同步的本地素材不会被提交为生成参考图。
 - 临时参考图在请求完成后按对象键精确清理；为覆盖服务重启场景，必须在 `R2_REFERENCE_IMAGE_PREFIX` 对应前缀配置 R2 生命周期过期规则。应用不会按周期 `ListObjects` 扫描整个参考图 Bucket。
@@ -456,7 +461,7 @@ sudo certbot renew --dry-run
 
 - HTTP 到 HTTPS 跳转、HSTS 和基础安全响应头。
 - 30 MB 请求上限，覆盖 20 MB 图片和 25 MB 视频上传。
-- 1800 秒上游超时，覆盖智能导演、尾帧和成片合成。
+- 1800 秒上游超时，覆盖智能导演和服务端生成任务处理。
 - 原始 `Host` 与真实客户端 IP 传递。
 - 普通登录和管理员登录的 Nginx IP 限流，超限统一返回 HTTP 429。
 - `/healthz` 存活检查和 `/readyz` SQLite 就绪检查。
@@ -559,8 +564,8 @@ http://127.0.0.1:4317/guguadmin
 4. 审阅并编辑故事梗概、剧本、场次、资源和分镜，然后确认进入资源步骤。
 5. 为角色、场景、物品生成候选图，并为每项资源选择一个定稿版本。
 6. 审查分镜的剧本节拍、起止状态、镜头运动、资源引用和连续性；完成后进入视频生成。
-7. 为每个分镜选择视频模式并提交生成，选定最终视频版本。
-8. 所有镜头完成后，一键合成完整成片并下载。
+7. 为每个分镜选择视频模式并提交生成，选定最终视频版本；生成视频先保存到本机。
+8. 所有镜头完成后，在桌面端一键合成本地完整成片，并在文件库或工作区中查看。
 
 > 智能导演依赖 LLM 配置，会按实际 Token 用量结算积分；系统会在调用前冻结上限积分，并在完成后按实际用量结算。
 
@@ -577,7 +582,7 @@ http://127.0.0.1:4317/guguadmin
    - **首尾帧**：设置首帧，尾帧可选；适合控制动作衔接。
 5. 提交镜头视频，生成完成后选择要用于成片的版本。
 6. 可从已选视频提取尾帧，并将其用作下一镜的首帧。
-7. 至少完成 2 个镜头，且每镜都选定一个完成版本后，点击「一键拼接」生成完整成片。
+7. 至少完成 3 个镜头，且每镜都选定一个已保存到本机的完成版本后，点击「一键拼接」生成本地完整成片。
 
 ### 视频模式与限制
 
@@ -718,7 +723,7 @@ npm run db:backup
 
 ### 提取尾帧或合成成片失败
 
-确认 `ffmpeg` 已安装并已加入 `PATH`，再重试操作。
+正式桌面客户端会内置 FFmpeg；开发环境若未使用打包客户端，请确认 `ffmpeg` 已安装并已加入 `PATH`，或配置 `GUGU_FFMPEG_PATH` 后再重试。
 
 ### 无法合成专业编辑项目
 
@@ -731,7 +736,7 @@ npm run db:backup
 ## 数据与安全边界
 
 - 服务使用 SQLite 保存用户、项目、任务、文件元数据、会话和积分流水；账号、任务、素材和项目均按用户隔离。
-- 上传素材、生成结果、尾帧和成片固定归档到私有 R2，服务本地保留缓存；桌面安装包、更新清单和 blockmap 仍单独发布到 OSS。
+- 上传素材和服务端兜底的生成结果归档到私有 R2；桌面客户端生成的尾帧、最终成片直接保存在本地工作区，桌面安装包、更新清单和 blockmap 仍单独发布到 OSS。
 - 密码使用带随机盐的 `scrypt` 哈希保存；会话 Cookie 为 `HttpOnly`、`SameSite=Lax`。
 - 写操作会校验同源请求；登录失败过多会被临时限流。
 - 当前设计适合单机单进程运行。不要让多个服务进程同时使用同一个 SQLite 数据目录。

@@ -8,6 +8,7 @@ directories:
 files:
   - desktop/**
   - package.json
+  - node_modules/ffmpeg-static/**
   # The desktop process only needs electron-updater. Keep server-only SDKs
   # (S3 and Alipay) out of the ASAR to reduce installer size and cold-start
   # filesystem scanning on machines with endpoint security enabled.
@@ -17,6 +18,8 @@ extraResources:
   - from: desktop/assets/tray.ico
     to: tray.ico
 asar: true
+asarUnpack:
+  - node_modules/ffmpeg-static/**/*
 mac:
   category: public.app-category.video
   target:

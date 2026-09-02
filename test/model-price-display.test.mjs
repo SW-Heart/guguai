@@ -7,6 +7,16 @@ process.env.WJ_SD_PY_900_KEY = 'test-wj-py-key';
 process.env.CNTCN_KEY = 'test-cntcn-key';
 const { __test } = await import('../server.mjs');
 
+const app = await (await import('node:fs/promises')).readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+test('video price catalog formats per-second credits to one decimal place', () => {
+  const start = app.indexOf('function priceCreditsText(');
+  const end = app.indexOf('\nfunction modelPriceCard(', start);
+  const formatter = new Function('creditText', 'priceUnitLabel', `${app.slice(start, end)}\nreturn priceCreditsText;`)(() => 'fallback', unit => unit);
+  assert.equal(formatter(1.3333, 'second'), '1.3 积分 / second');
+  assert.equal(formatter(18, 'request'), 'fallback 积分 / request');
+});
+
 test('Seedance price catalog displays normalized per-second amounts', () => {
   const catalog = __test.publicPlatformPrices({ imagePerRequest: 1, videoPerSecond: 1, version: 1 }, {
     models: [

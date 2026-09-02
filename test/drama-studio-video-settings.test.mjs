@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateVirtualShotRange, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewRenderSignature, videoTaskProgress } from '../public/drama-studio.js';
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [
@@ -52,6 +52,23 @@ test('switching to a restrictive model selects supported defaults for every inco
   });
 });
 
+test('short-drama routed video quotes include every route-selection parameter', () => {
+  const shot = {
+    aspectRatio:'9:16',
+    duration:30,
+    generation:{ modelId:'seedance-2.5', type:'REFERENCE', quality:'720p', count:4 },
+  };
+  const input = buildDramaVideoQuoteInput(shot, ['image', 'image', 'video', 'audio']);
+
+  assert.deepEqual(input, {
+    modelId:'seedance-2.5', generationType:'REFERENCE', aspectRatio:'9:16', duration:30, quality:'720p',
+    referenceAssetIds:[], referenceCounts:{ image:2, video:1, audio:1 },
+  });
+  assert.equal(dramaVideoQuoteSignature(input), dramaVideoQuoteSignature(buildDramaVideoQuoteInput({ ...shot, generation:{ ...shot.generation, count:1 } }, ['audio', 'image', 'video', 'image'])));
+  assert.notEqual(dramaVideoQuoteSignature(input), dramaVideoQuoteSignature({ ...input, quality:'480p' }));
+  assert.notEqual(dramaVideoQuoteSignature(input), dramaVideoQuoteSignature({ ...input, referenceCounts:{ image:1, video:1, audio:1 } }));
+});
+
 test('shot preview signatures react only to tasks and files used by that shot', () => {
   const shot = { selectedVideoTaskId:'task-1', videoVersions:['task-1','task-2'] };
   const tasks = [
@@ -69,6 +86,20 @@ test('shot preview signatures react only to tasks and files used by that shot', 
   const failed = tasks.map(item => item.id === 'task-1' ? { ...item, status:'failed', error:'参考图片不符合生成要求。请检查图片格式。', failure:{ code:'INVALID_REFERENCE' } } : item);
   assert.notEqual(shotPreviewRenderSignature(shot, failed, files), initial);
   assert.notEqual(shotPreviewRenderSignature(shot, failed.map(item => item.id === 'task-1' ? { ...item, error:'内容未通过生成检查。请调整描述。', failure:{ code:'CONTENT_REJECTED' } } : item), files), shotPreviewRenderSignature(shot, failed, files));
+});
+
+test('shot preview content signatures ignore progress-only updates', () => {
+  const shot = { selectedVideoTaskId:'task-1', videoVersions:['task-1'] };
+  const tasks = [{ id:'task-1', type:'video', status:'running', progress:10, progressStage:'provider_processing', assetId:'' }];
+
+  assert.equal(
+    shotPreviewContentSignature(shot, tasks, []),
+    shotPreviewContentSignature(shot, [{ ...tasks[0], progress:80, progressStage:'polling_retry' }], []),
+  );
+  assert.notEqual(
+    shotPreviewContentSignature(shot, tasks, []),
+    shotPreviewContentSignature(shot, [{ ...tasks[0], status:'completed', assetId:'file-1' }], [{ id:'file-1', url:'gugu-media://file-1' }]),
+  );
 });
 
 test('video task progress only renders valid, queryable percentages', () => {

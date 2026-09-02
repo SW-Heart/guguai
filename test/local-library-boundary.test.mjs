@@ -37,7 +37,15 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('account workspace activation changes the frontend cache key', () => {
-  assert.match(index, /\/app\.js\?v=192/);
+  assert.match(index, /\/app\.js\?v=196/);
+});
+
+test('workspace boot exposes progress for the initial load', () => {
+  assert.match(index, /id="bootProgress"/);
+  assert.match(index, /role="progressbar"/);
+  assert.match(app, /function setBootProgress\(/);
+  assert.match(app, /const initialLoadSteps = \[/);
+  assert.match(app, /updateHistoryProgress\(0, '正在扫描历史素材'\)/);
 });
 
 test('generation polling resolves completed media from the local index only', () => {
