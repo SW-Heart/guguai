@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoTaskProgress } from '../public/drama-studio.js';
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [
@@ -109,6 +109,25 @@ test('video task progress only renders valid, queryable percentages', () => {
   assert.equal(videoTaskProgress({ progress: null }), null);
   assert.equal(videoTaskProgress({ progress: 'unknown' }), null);
   assert.equal(videoTaskProgress({ progress: 101 }), null);
+});
+
+test('video preview only spins for genuinely active or syncing tasks', () => {
+  assert.equal(videoPreviewVersionState({ status:'queued' }), 'pending');
+  assert.equal(videoPreviewVersionState({ status:'running' }), 'pending');
+  assert.equal(videoPreviewVersionState({ status:'completed' }, { syncing:true }), 'syncing');
+  assert.equal(videoPreviewVersionState({ status:'failed' }), 'failed');
+  assert.equal(videoPreviewVersionState({ status:'completed' }), 'missing');
+  assert.equal(videoPreviewVersionState(undefined), 'missing');
+  assert.equal(videoPreviewVersionState({ status:'completed' }, { ready:true }), 'ready');
+});
+
+test('completed generation remains syncing until its local asset appears', () => {
+  const task = { status:'completed', assetId:'asset-1' };
+  assert.equal(generationNeedsLocalAssetSync(task, undefined), true);
+  assert.equal(generationNeedsLocalAssetSync(task, { id:'asset-1' }, () => true), true);
+  assert.equal(generationNeedsLocalAssetSync(task, { id:'asset-1' }, () => false), false);
+  assert.equal(generationNeedsLocalAssetSync({ status:'completed', assetId:'' }, undefined), false);
+  assert.equal(generationNeedsLocalAssetSync({ status:'failed', assetId:'asset-1' }, undefined), false);
 });
 
 test('virtual shot range keeps an overscanned window across variable card heights', () => {

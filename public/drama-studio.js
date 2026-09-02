@@ -61,6 +61,20 @@ export function dramaVideoQuoteSignature(input) {
   ]);
 }
 
+export function videoPreviewVersionState(task, { ready = false, syncing = false } = {}) {
+  if (ready) return 'ready';
+  if (task?.status === 'failed') return 'failed';
+  if (syncing) return 'syncing';
+  if (['queued', 'running'].includes(task?.status)) return 'pending';
+  return 'missing';
+}
+
+export function generationNeedsLocalAssetSync(task, file, isAssetSyncing = () => false) {
+  return task?.status === 'completed'
+    && Boolean(task.assetId)
+    && (!file || isAssetSyncing(file));
+}
+
 function shotPreviewRenderSignatureFromMaps(shot, taskById, fileById, isAssetSyncing = () => false) {
   const ids = [...new Set([shot?.selectedVideoTaskId, ...(shot?.videoVersions || [])].filter(Boolean))];
   return [shot?.selectedVideoTaskId || '', ...ids.map(id => {
@@ -210,10 +224,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   };
   const taskAsset = id => asset(task(id)?.assetId);
   const assetSyncing = file => Boolean(isAssetSyncing?.(file));
-  const taskSyncing = id => {
-    const generation = task(id);
-    return generation?.status === 'completed' && assetSyncing(taskAsset(id));
-  };
+  const taskSyncing = id => generationNeedsLocalAssetSync(task(id), taskAsset(id), assetSyncing);
   const taskLocallyReady = id => {
     const generation = task(id);
     const file = taskAsset(id);
@@ -497,9 +508,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function resetCreateProjectDialog(){document.querySelectorAll('[data-create-drama-mode]').forEach(button=>{button.disabled=button.hasAttribute('data-unavailable');button.classList.remove('creating');});}
   function openCreateProjectDialog(){const dialog=document.querySelector('#createDramaProjectDialog');resetCreateProjectDialog();dialog.showModal();requestAnimationFrame(()=>dialog.querySelector('[data-create-drama-mode]:not(:disabled)')?.focus());}
   async function chooseProjectMode(mode){const dialog=document.querySelector('#createDramaProjectDialog');const selected=dialog.querySelector(`[data-create-drama-mode="${mode}"]`);dialog.querySelectorAll('[data-create-drama-mode]').forEach(button=>button.disabled=true);selected?.classList.add('creating');const created=await createProject(mode);if(created)dialog.close();else resetCreateProjectDialog();}
-  async function load(force=false) { if(busy)return; busy=true; try { const result=await api('/api/drama/projects'); projects=result.projects; if(project&&!force){ const fresh=projects.find(item=>item.id===project.id); if(fresh)project=restoreLocalProjectOutputs(fresh); render(); } else renderProjects(); } catch(error){toast(error.message)} finally{busy=false} }
+  async function load(force=false) { if(busy)return; busy=true; try { const result=await api('/api/drama/projects'); projects=result.projects; if(project&&!force){ const fresh=projects.find(item=>item.id===project.id); if(fresh)project=restoreLocalProjectOutputs(fresh); state.dramaProject=project; await loadTasks(); render(); } else renderProjects(); } catch(error){toast(error.message)} finally{busy=false} }
   async function createProject(mode) { try { const result=await api('/api/drama/projects',{method:'POST',body:JSON.stringify({title:mode==='smart'?'未命名智能短剧':'未命名剧本',mode,settings:{shotCount:5,totalDuration:100,shotDuration:20,aspectRatio:'9:16'}})}); projects=[result.project,...projects]; await openProject(result.project.id); return true; }catch(error){toast(error.message);return false;} }
-  async function openProject(id) { try { requireDesktopMedia('listLocal'); await loadFiles({background:true}); const result=await api(`/api/drama/projects/${id}`); professionalPreviewTaskIds.clear(); professionalVideoQuoteCache.clear(); project=restoreLocalProjectOutputs(normalizeProjectData(result.project)); projectAssetIds=[...project.projectAssetIds]; projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{})); viewStep=project.step; scriptDraft=null; state.dramaProject=project; setStudioVisible(true); syncProjectHeader(); modelState(); render(); }catch(error){toast(error.message)} }
+  async function openProject(id) { try { requireDesktopMedia('listLocal'); await loadFiles({background:true}); const result=await api(`/api/drama/projects/${id}`); professionalPreviewTaskIds.clear(); professionalVideoQuoteCache.clear(); project=restoreLocalProjectOutputs(normalizeProjectData(result.project)); projectAssetIds=[...project.projectAssetIds]; projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{})); viewStep=project.step; scriptDraft=null; state.dramaProject=project; await loadTasks(); setStudioVisible(true); syncProjectHeader(); modelState(); render(); }catch(error){toast(error.message)} }
   async function closeProject(){ await flushSave(); resetWorkbenchVideoObserver(); resetVirtualShotWindow(); virtualShotHeights.clear(); virtualShotProjectId=''; professionalPreviewTaskIds.clear(); professionalVideoQuoteCache.clear(); deferredProfessionalRender=false; project=null; viewStep=null; scriptDraft=null; assetPickerShotId=''; state.dramaProject=null; syncProjectHeader(); renderProjects(); }
   async function patch(changes,{quiet=false}={}) { if(!project)return; Object.keys(changes).forEach(key=>pendingKeys.delete(key)); saveLabel('保存中…'); try { const result=await api(`/api/drama/projects/${project.id}`,{method:'PATCH',body:JSON.stringify(changes)}); project=restoreLocalProjectOutputs(normalizeProjectData(result.project)); projects=mergeDramaProjectList(projects,project); state.dramaProject=project; saveLabel('已保存'); if(!quiet)render(true); return project; }catch(error){saveLabel('保存失败');toast(error.message);throw error} }
   async function navigateStep(step){ await flushSave(); const frontier=professional()?stepOrder.length-1:stepOrder.indexOf(project.maxStep||project.step); if(stepOrder.indexOf(step)>frontier)return; viewStep=step; assetPickerShotId=''; dropFocus(); render(true); const host=scroller(); if(host)host.scrollTop=0; }
@@ -561,9 +572,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
           const generated=task(item.taskId);
           if(!generated||['queued','running'].includes(generated.status)){remaining.push(item);return;}
           if(generated.status==='failed'){remaining.push(item);return;}
+          if(generated.status!=='completed'||!generated.assetId||!taskLocallyReady(item.taskId)){remaining.push(item);return;}
           pendingChanged=true;
           shotChanged=true;
-          if(generated.status!=='completed'||!generated.assetId){remaining.push(item);return;}
           const id=generated.assetId;
           if(item.targetType==='frame') setProfessionalFrameValue(shot,item.frameField,id);
           else { shot.professionalAssets[item.kind]=[...new Set([...(shot.professionalAssets[item.kind]||[]),id])]; syncProfessionalReferences(shot); }
@@ -584,7 +595,11 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     }
     if(!changed||(!professional()&&(viewStep==='script'||viewStep==='storyboard')))return;
     const active=document.activeElement;
-    if(!professional()&&root.contains(active)&&active?.matches('textarea,input,select,[contenteditable="true"]'))return;
+    if(!professional()&&root.contains(active)&&active?.matches('textarea,input,select,[contenteditable="true"]')){
+      deferProfessionalRender();
+      active.addEventListener('blur',scheduleFlushDeferredProfessionalRender,{once:true});
+      return;
+    }
     const dialog=document.querySelector('#professionalAssetDialog');
     if(professional()&&dialog?.open){patchProfessionalTaskSurfaces();return;}
     if(professional()){
@@ -594,7 +609,11 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       }else patchProfessionalTaskSurfaces();
       return;
     }
-    if(workbenchHasActiveInteraction())return;
+    if(workbenchHasActiveInteraction()){
+      deferProfessionalRender();
+      active?.addEventListener?.('blur',scheduleFlushDeferredProfessionalRender,{once:true});
+      return;
+    }
     render(true,{focus:false});
   }
 
@@ -957,11 +976,14 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function workbenchShotPreview(shot){
     const previewTaskId=professionalPreviewTaskIds.get(shot?.id)||shot?.selectedVideoTaskId;
     const selectedTask=task(previewTaskId);
-    const selectedFile=taskLocallyReady(previewTaskId)?taskAsset(previewTaskId):null;
+    const selectedReady=taskLocallyReady(previewTaskId);
+    const selectedSyncing=taskSyncing(previewTaskId);
+    const selectedFile=selectedReady?taskAsset(previewTaskId):null;
+    const selectedState=videoPreviewVersionState(selectedTask,{ready:selectedReady,syncing:selectedSyncing});
     const showFailureDetails=selectedTask?.status==='failed'&&professionalPreviewTaskIds.get(shot?.id)===previewTaskId;
     const versions=(shot?.videoVersions||[]).map(id=>({id,file:taskAsset(id),task:task(id)}));
-    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:showFailureDetails?generationFailurePreviewMarkup(selectedTask):selectedTask?.status==='failed'?generationFailurePromptMarkup():workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(previewTaskId)}</b></div>`;
-    const versionStrip=versions.length?`<div class="wb-preview-versions" aria-label="视频版本">${versions.map(item=>{const ready=taskLocallyReady(item.id);const failed=item.task?.status==='failed';const syncing=taskSyncing(item.id);const pendingLabel=syncing?'视频同步中':item.task?.status==='queued'?'视频排队中':'视频生成中';const failureLabel=failed?taskFailure(item.task)?.message||'生成失败':'';const thumb=failed?`<span class="wb-preview-thumb-failed" aria-hidden="true">${generationFailureIcon}</span><span class="sr-only">生成失败：${esc(failureLabel)}，点击查看失败原因</span>`:ready?workbenchVideoMarkup(item.file):`<i class="wb-preview-thumb-loader" aria-hidden="true"></i><span class="sr-only">${pendingLabel}</span>`;return `<button type="button" class="wb-preview-thumb ${item.id===previewTaskId?'selected':''} ${failed?'is-failed':''}" data-wb-preview-video="${item.id}" data-wb-preview-shot="${shot.id}" aria-label="点击查看${esc(shot.title)}视频版本${failed?'，生成失败，查看失败原因':ready?'':'，'+pendingLabel}" title="${failed?'查看生成失败原因':ready?'点击查看大视频':pendingLabel}" ${ready||failed?'':'disabled'}><span class="${failed||ready?'':'wb-preview-thumb-pending'}">${thumb}</span></button>`;}).join('')}</div>`:'';
+    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:showFailureDetails?generationFailurePreviewMarkup(selectedTask):selectedState==='failed'?generationFailurePromptMarkup():selectedState==='syncing'?`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>视频同步中…</b></div>`:selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(previewTaskId)}</b></div>`:previewTaskId?`<div class="wb-preview-empty wb-preview-missing"><span class="wb-preview-missing-icon" aria-hidden="true">${generationFailureIcon}</span><b>任务记录不可用</b><small>请刷新后重试，或重新生成此版本</small></div>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>生成后在这里预览</b></div>`;
+    const versionStrip=versions.length?`<div class="wb-preview-versions" aria-label="视频版本">${versions.map(item=>{const ready=taskLocallyReady(item.id);const syncing=taskSyncing(item.id);const versionState=videoPreviewVersionState(item.task,{ready,syncing});const failed=versionState==='failed';const missing=versionState==='missing';const pending=versionState==='pending'||versionState==='syncing';const pendingLabel=versionState==='syncing'?'视频同步中':item.task?.status==='queued'?'视频排队中':'视频生成中';const failureLabel=failed?taskFailure(item.task)?.message||'生成失败':'';const thumb=failed?`<span class="wb-preview-thumb-failed" aria-hidden="true">${generationFailureIcon}</span><span class="sr-only">生成失败：${esc(failureLabel)}，点击查看失败原因</span>`:ready?workbenchVideoMarkup(item.file):missing?`<span class="wb-preview-thumb-missing" aria-hidden="true">${generationFailureIcon}</span><span class="sr-only">任务记录不可用</span>`:`<i class="wb-preview-thumb-loader" aria-hidden="true"></i><span class="sr-only">${pendingLabel}</span>`;return `<button type="button" class="wb-preview-thumb ${item.id===previewTaskId?'selected':''} ${failed?'is-failed':''} ${missing?'is-missing':''} ${pending?'is-pending':''}" data-wb-preview-video="${item.id}" data-wb-preview-shot="${shot.id}" aria-label="点击查看${esc(shot.title)}视频版本${failed?'，生成失败，查看失败原因':ready?'':missing?'，任务记录不可用':`，${pendingLabel}，点击在上方查看生成进度`}" title="${failed?'查看生成失败原因':ready?'点击查看大视频':missing?'任务记录不可用':`${pendingLabel} · 点击查看生成进度`}" ${missing?'disabled':''}><span class="${failed||ready||missing?'':'wb-preview-thumb-pending'}">${thumb}</span></button>`;}).join('')}</div>`:'';
     return `<section class="wb-shot-preview" aria-label="${esc(shot?.title||'分镜')}预览"><header><b>预览</b><span>${versions.length?`${versions.length} 个版本`:'暂无视频'}</span></header><div class="wb-preview-stage" style="--video-ratio:${ratioCss(shot?.aspectRatio||'9:16')}">${media}</div>${versionStrip}</section>`;
   }
 
@@ -1031,7 +1053,12 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
 
   function bindWorkbenchPreviewActions(scope=root){
     scope.querySelectorAll('[data-wb-preview-file]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const file=asset(button.dataset.wbPreviewFile);if(file&&assetSyncing(file))return toast('素材正在同步到本地，请稍后再预览');openProfessionalMediaPreview(button.dataset.wbPreviewFile);}));
-    scope.querySelectorAll('[data-wb-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();professionalPreviewShotId=button.dataset.wbPreviewShot;professionalShotId=button.dataset.wbPreviewShot;const previewTaskId=button.dataset.wbPreviewVideo;const shot=project.shots.find(item=>item.id===professionalShotId);const generation=task(previewTaskId);const selectedFile=taskAsset(previewTaskId);const canPreview=taskLocallyReady(previewTaskId);activateProfessionalShot(professionalPreviewShotId);if(!shot)return;if(generation?.status==='failed'){professionalPreviewTaskIds.set(shot.id,previewTaskId);patchProfessionalTaskSurfaces();return;}if(canPreview&&selectedFile){professionalPreviewTaskIds.delete(shot.id);shot.selectedVideoTaskId=previewTaskId;queueProfessionalSave();patchProfessionalTaskSurfaces();openProfessionalMediaPreview(selectedFile.id);}}));
+    scope.querySelectorAll('[data-wb-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();professionalPreviewShotId=button.dataset.wbPreviewShot;professionalShotId=button.dataset.wbPreviewShot;const previewTaskId=button.dataset.wbPreviewVideo;const shot=project.shots.find(item=>item.id===professionalShotId);const generation=task(previewTaskId);const selectedFile=taskAsset(previewTaskId);const canPreview=taskLocallyReady(previewTaskId);activateProfessionalShot(professionalPreviewShotId);if(!shot)return;if(canPreview&&selectedFile){professionalPreviewTaskIds.delete(shot.id);shot.selectedVideoTaskId=previewTaskId;queueProfessionalSave();patchProfessionalTaskSurfaces();openProfessionalMediaPreview(selectedFile.id);return;}
+      // Failed and still-generating versions both stay clickable: the click only moves the
+      // large preview onto that task so the user can watch its progress or failure reason.
+      if(videoPreviewVersionState(generation,{ready:canPreview,syncing:taskSyncing(previewTaskId)})==='missing')return;
+      professionalPreviewTaskIds.set(shot.id,previewTaskId);
+      patchProfessionalTaskSurfaces();}));
   }
 
   function patchWorkbenchPreviewProgress(card, shot){
@@ -1245,7 +1272,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function professionalPendingCards(shot,{kind='',frameField=''}={}){
     const persisted=(shot.pendingImageGenerations||[]).filter(item=>kind?item.targetType==='category'&&item.kind===kind:item.targetType==='frame'&&item.frameField===frameField);
     const transient=professionalPendingImageGenerations.filter(item=>item.shotId===shot.id&&(kind?item.targetType==='category'&&item.kind===kind:item.targetType==='frame'&&item.frameField===frameField));
-    return [...transient,...persisted].map(item=>{const generation=item.taskId?task(item.taskId):null;const failed=generation?.status==='failed';const status=failed?generationFailureMarkup(generation):generation?.status==='running'?'图像生成中':'等待生成';return `<article class="professional-pending-image ${failed?'failed':''}"><div class="professional-pending-visual"><span class="loader-ring"></span></div><div><b>${esc(item.label||'图片')}</b><span>${status}</span></div>${failed?`<button type="button" data-professional-dismiss-pending="${item.id}" data-professional-pending-shot="${shot.id}" aria-label="关闭失败任务">×</button>`:''}</article>`;}).join('');
+    return [...transient,...persisted].map(item=>{const generation=item.taskId?task(item.taskId):null;const failed=generation?.status==='failed';const missing=Boolean(item.taskId&&!generation);const syncing=Boolean(item.taskId&&taskSyncing(item.taskId));const unavailable=Boolean(generation?.status==='completed'&&!generation.assetId);const terminal=failed||missing||unavailable;const status=failed?generationFailureMarkup(generation):missing?'任务记录不可用':unavailable?'生成结果不可用':syncing?'图片同步中':generation?.status==='running'?'图像生成中':generation?.status==='queued'?'图像排队中':'正在提交';const visual=terminal?`<span class="professional-pending-failure" aria-hidden="true">${generationFailureIcon}</span>`:'<span class="loader-ring"></span>';return `<article class="professional-pending-image ${failed?'failed':''} ${missing||unavailable?'missing':''}"><div class="professional-pending-visual">${visual}</div><div><b>${esc(item.label||'图片')}</b><span>${status}</span></div>${terminal?`<button type="button" data-professional-dismiss-pending="${item.id}" data-professional-pending-shot="${shot.id}" aria-label="关闭${failed?'失败':missing?'缺失':'不可用'}任务">×</button>`:''}</article>`;}).join('');
   }
 
   function professionalShotEditor(shot){
@@ -1610,7 +1637,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
   async function confirmScriptReview(){const button=document.querySelector('#confirmScriptReview');const status=document.querySelector('#scriptActionStatus');const value=document.querySelector('#reviewScript').value.trim();if(!value){status.textContent='剧本正文不能为空。';document.querySelector('#reviewScript').focus();return;}collectDirectorReview();button.disabled=true;button.innerHTML='<span class="button-spinner"></span> 正在保存并进入下一步';try{const result=await patch({script:value,synopsis:project.synopsis,scenes:project.scenes,resources:project.resources,shots:project.shots,step:'resources'},{quiet:true});project=result;viewStep='resources';scriptDraft=null;render();}catch(error){status.textContent=`保存失败：${error.message}`;button.disabled=false;button.innerHTML='确认方案，进入资源生成 <span>→</span>';}}
 
-  function resourceVersionCard(resource,taskId){ const generation=task(taskId); const file=taskAsset(taskId); const selected=resource.selectedTaskId===taskId; const syncing=generation?.status==='completed'&&assetSyncing(file); const ready=generation?.status==='completed'&&Boolean(file)&&!syncing; const status=generation?.status==='failed'?generationFailureMarkup(generation):syncing?'同步中…':generation?({queued:'排队中',running:'生成中'}[generation.status]||generation.status):'记录缺失'; return `<button class="resource-version ${selected?'selected':''}" data-select-resource="${resource.id}" data-task-id="${taskId}" ${ready?'':'disabled'}>${ready?`<img src="${file.url}" alt="${esc(resource.name)}">`:`<span class="version-state">${status}</span>`}<i>${selected&&ready?'✓ 已选':ready?'选择此版':syncing?'同步中…':'等待完成'}</i></button>`; }
+  function resourceVersionCard(resource,taskId){ const generation=task(taskId); const file=taskAsset(taskId); const selected=resource.selectedTaskId===taskId; const syncing=taskSyncing(taskId); const ready=taskLocallyReady(taskId); const status=generation?.status==='failed'?generationFailureMarkup(generation):syncing?'同步中…':generation?({queued:'排队中',running:'生成中'}[generation.status]||generation.status):'记录缺失'; return `<button class="resource-version ${selected?'selected':''}" data-select-resource="${resource.id}" data-task-id="${taskId}" ${ready?'':'disabled'}>${ready?`<img src="${file.url}" alt="${esc(resource.name)}">`:`<span class="version-state">${status}</span>`}<i>${selected&&ready?'✓ 已选':ready?'选择此版':syncing?'同步中…':'等待完成'}</i></button>`; }
   function renderResources(){
     const groups=['character','location','prop']; const missing=project.resources.filter(item=>!item.selectedTaskId||!taskLocallyReady(item.selectedTaskId)).length;
     root.innerHTML=`<section class="stage-head"><div><span>STEP 2 / VISUAL BIBLE</span><h2>资源生成</h2><p>页面设定就是图片模型的输入。修改身份、外观、服装或标准视图后，下方实际 Prompt 会同步更新。</p></div><div class="stage-head-actions"><span class="readiness-badge">${project.resources.length-missing}/${project.resources.length} 已定稿</span><button id="addResource" class="secondary-button">＋ 添加资源</button><button id="generateAllResources" class="gradient-button" ${!project.resources.length?'disabled':''}>一键生成${missing?` · ${missing} 项`:''}</button></div></section><div class="resource-tabs">${groups.map(type=>`<button data-resource-filter="${type}">${typeNames[type]} ${project.resources.filter(x=>x.type===type).length}</button>`).join('')}</div><div class="resource-board">${groups.map(type=>`<section class="resource-group" data-resource-group="${type}"><header><b>${typeNames[type]}资源</b><span>${project.resources.filter(x=>x.type===type).length} 项</span><button data-add-resource-type="${type}" class="text-button" type="button">＋ 添加${typeNames[type]}</button></header>${project.resources.filter(x=>x.type===type).map(resource=>`<article class="resource-editor professional" data-resource-id="${resource.id}"><div class="resource-definition"><div class="resource-card-status"><span class="lifecycle-chip ${resource.lifecycle.status}">${resource.selectedTaskId?(taskLocallyReady(resource.selectedTaskId)?'已选定':'生成中'):'待定稿'}</span><small>REV ${resource.lifecycle.revision}</small></div><div class="resource-name-row"><label>类型<select data-resource-field="type">${Object.entries(typeNames).map(([value,label])=>`<option value="${value}" ${resource.type===value?'selected':''}>${label}</option>`).join('')}</select></label><label>资产名称<input data-resource-field="name" value="${esc(resource.name)}"></label></div><label>核心定义<textarea data-resource-field="description">${esc(resource.description)}</textarea></label><div class="bible-grid"><label>身份 / 空间锚点<textarea data-bible-field="identity">${esc(resource.bible.identity)}</textarea></label><label>外观 / 固定陈设<textarea data-bible-field="appearance">${esc(resource.bible.appearance)}</textarea></label><label>服装 / 材质状态<textarea data-bible-field="costume">${esc(resource.bible.costume)}</textarea></label><label>标准视图 / 标准机位<textarea data-bible-field="canonicalViews">${esc(resource.bible.canonicalViews)}</textarea></label></div><label>连续性补充备注<textarea data-bible-field="stateNotes">${esc(resource.bible.stateNotes)}</textarea></label><section class="compiled-resource-prompt"><header><b>实际提交给图片模型的 Prompt</b><span>由上方全部设定实时合成</span></header><textarea data-compiled-resource-prompt readonly>${esc(buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio}))}</textarea></section><div><span><button data-delete-resource="${resource.id}" class="text-button danger-link">删除</button><button data-save-resource="${resource.id}" class="text-button">保存并升版</button></span><button data-generate-resource="${resource.id}" class="resource-generate">${resource.versions.length?'生成候选版本':'生成资源图'} · ${state.pricing.image} 积分</button></div></div><div class="resource-versions"><header><b>视觉候选</b><span>可多次生成，选择一版作为后续一致性底图</span></header><div>${resource.versions.length?resource.versions.map(id=>resourceVersionCard(resource,id)).join(''):'<div class="version-empty">尚未生成视觉版本</div>'}</div></div></article>`).join('')||'<div class="resource-group-empty">还没有这类资源，点上方「添加」新建一个。</div>'}</section>`).join('')}</div><footer class="stage-action-bar"><div><button id="resourceBack" class="secondary-button">← 剧本设计</button></div><div><button id="resourceNext" class="stage-next">确认资源，进入分镜设计 →</button></div></footer>`;
@@ -1686,7 +1713,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   async function toggleAssetOnShot(shotId,assetId){const shot=project.shots.find(x=>x.id===shotId);if(!shot)return;if(shot.referenceAssetIds.includes(assetId)){shot.referenceAssetIds=shot.referenceAssetIds.filter(id=>id!==assetId);}else{shot.referenceAssetIds.push(assetId);}await patch({shots:project.shots});}
   async function removeAssetFromShot(shotId,assetId){const shot=project.shots.find(x=>x.id===shotId);shot.referenceAssetIds=shot.referenceAssetIds.filter(id=>id!==assetId);for(const resource of project.resources){if(taskAsset(resource.selectedTaskId)?.id===assetId)shot.resourceIds=shot.resourceIds.filter(id=>id!==resource.id);}await patch({shots:project.shots});}
 
-  function videoVersion(shot,id){const generation=task(id);const file=taskAsset(id);const selected=shot.selectedVideoTaskId===id;const syncing=generation?.status==='completed'&&assetSyncing(file);const ready=generation?.status==='completed'&&Boolean(file)&&!syncing;const status=generation?.status==='failed'?generationFailureMarkup(generation):syncing?'同步中…':generation?({queued:'排队中',running:'生成中'}[generation.status]||generation.status):'记录缺失';return `<button class="video-version ${selected?'selected':''}" data-select-video="${id}" data-shot-id="${shot.id}" ${ready?'':'disabled'}>${ready?workbenchVideoMarkup(file):`<span>${status}</span>`}<i>${selected&&ready?'✓ 当前版本':ready?'选择此版':syncing?'同步中…':'等待完成'}</i></button>`;}
+  function videoVersion(shot,id){const generation=task(id);const file=taskAsset(id);const selected=shot.selectedVideoTaskId===id;const syncing=taskSyncing(id);const ready=taskLocallyReady(id);const status=generation?.status==='failed'?generationFailureMarkup(generation):syncing?'同步中…':generation?({queued:'排队中',running:'生成中'}[generation.status]||generation.status):'记录缺失';return `<button class="video-version ${selected?'selected':''}" data-select-video="${id}" data-shot-id="${shot.id}" ${ready?'':'disabled'}>${ready?workbenchVideoMarkup(file):`<span>${status}</span>`}<i>${selected&&ready?'✓ 当前版本':ready?'选择此版':syncing?'同步中…':'等待完成'}</i></button>`;}
   function videoRoute(shot){
     const routing=state.config?.videoCapabilities?.routing||[];
     const firstLast=shot.generation.type==='FIRST&LAST'&&shot.duration===8;

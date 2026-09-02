@@ -191,4 +191,47 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const thirdSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(secondSyncData.nextCursor)}&limit=20`, { headers });
   assert.equal(thirdSync.status, 200);
   assert.equal((await thirdSync.json()).deliveries.some(file => file.id === remoteBackedAssetId), false, '同一设备确认后不应重复投递');
+
+  // 批量确认：客户端启动对账一次提交一页，单条被拒绝不能让整批失败。
+  const authenticatedDigest = createHash('sha256').update(authenticatedPayload).digest('hex');
+  const batch = await fetch(`${base}/api/files/local-ready`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      deviceId: 'device-b-123456',
+      items: [
+        { id: authenticatedAssetId, size: authenticatedPayload.length, sha256: authenticatedDigest, mimeType: 'video/mp4' },
+        { id: 'missing-asset', size: 1, sha256: authenticatedDigest, mimeType: 'video/mp4' },
+        { id: localAssetId, size: localPayload.length, sha256: 'not-a-digest', mimeType: 'video/mp4' },
+      ],
+    }),
+  });
+  assert.equal(batch.status, 200);
+  const batchData = await batch.json();
+  assert.equal(batchData.acknowledged, 1);
+  assert.deepEqual(batchData.results.map(result => [result.id, result.ok]), [
+    [authenticatedAssetId, true],
+    ['missing-asset', false],
+    [localAssetId, false],
+  ]);
+  assert.match(batchData.results[1].error, /文件不存在/);
+  assert.match(batchData.results[2].error, /SHA-256/);
+
+  const acknowledgedInBatch = await fetch(`${base}/api/files/${authenticatedAssetId}`, { headers });
+  const acknowledgedInBatchAsset = await acknowledgedInBatch.json();
+  assert.equal(acknowledgedInBatchAsset.deliveryStatus, 'local_ready');
+  assert.equal(acknowledgedInBatchAsset.size, authenticatedPayload.length);
+  const batchGenerations = await fetch(`${base}/api/generations`, { headers });
+  const batchGeneration = (await batchGenerations.json()).find(item => item.id === authenticatedTaskId);
+  assert.equal(batchGeneration.status, 'completed');
+
+  const emptyBatch = await fetch(`${base}/api/files/local-ready`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-b-123456', items: [] }),
+  });
+  assert.equal(emptyBatch.status, 400);
+  const oversizedBatch = await fetch(`${base}/api/files/local-ready`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: 'device-b-123456', items: Array.from({ length: 201 }, () => ({ id: localAssetId, size: 1, sha256: authenticatedDigest, mimeType: 'video/mp4' })) }),
+  });
+  assert.equal(oversizedBatch.status, 400);
 });

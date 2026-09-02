@@ -53,6 +53,25 @@ test('SMS send delegates code generation to Alibaba and verification checks PASS
   assert.equal(calls[0].options.method, 'POST');
 });
 
+test('SMS verification failures are invalid codes, not unavailable services', async () => {
+  const config = smsConfigFromEnv({ SMS_ACCESS_KEY_ID: 'access-id', SMS_ACCESS_KEY_SECRET: 'access-secret' });
+  const unknown = await checkSmsVerifyCode({
+    phone: '13800138000',
+    code: '000000',
+    config,
+    fetchImpl: async () => response({ Code: 'OK', Success: true, RequestId: 'unknown-request', Model: { VerifyResult: 'UNKNOWN' } }),
+  });
+  assert.deepEqual(unknown, { verified: false, requestId: 'unknown-request' });
+
+  const rejected = await checkSmsVerifyCode({
+    phone: '13800138000',
+    code: '000000',
+    config,
+    fetchImpl: async () => response({ Code: 'isv.ValidateFail', Success: false, RequestId: 'rejected-request' }, 400),
+  });
+  assert.deepEqual(rejected, { verified: false, requestId: 'rejected-request' });
+});
+
 test('SMS API errors do not leak upstream text and preserve throttling status', async () => {
   const config = smsConfigFromEnv({ SMS_ACCESS_KEY_ID: 'access-id', SMS_ACCESS_KEY_SECRET: 'access-secret' });
   await assert.rejects(

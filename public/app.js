@@ -39,7 +39,7 @@ function taskForAsset(file) {
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
-const taskSignatureFields = ['id','type','status','progress','assetId','updatedAt','error','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt'];
+const taskSignatureFields = ['id','type','status','progress','progressStage','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt','submittedAt','finishedAt'];
 const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','referenceSourceAvailable','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
@@ -93,8 +93,8 @@ async function listDesktopFiles(options = {}) {
   const page = Array.isArray(local) ? { items:local, nextCursor:'' } : (local || {});
   return { items:(Array.isArray(page.items) ? page.items : []).map(desktopLocalClientAsset).filter(Boolean), total:Number(page.total) || 0, nextCursor:page.nextCursor || '' };
 }
-async function listHistoricalCloudAssetsPage(cursor = '') {
-  const query = new URLSearchParams({ limit:'200', includeTotal:cursor ? '0' : '1' });
+async function listHistoricalCloudAssetsPage(cursor = '', { includeTotal = !cursor } = {}) {
+  const query = new URLSearchParams({ limit:'200', includeTotal:includeTotal ? '1' : '0' });
   if (cursor) query.set('cursor', cursor);
   const response = await fetch(`/api/files?${query}`, { credentials:'same-origin' });
   let data = []; try { data = await response.json(); } catch {}
@@ -114,11 +114,43 @@ async function runWithConcurrency(items, worker, concurrency = 3) {
 function historicalSyncMarker(userId) {
   return `gugu:history-local-v1:${desktopSyncInfo.deviceId}:${userId}:${desktopWorkspacePath}`;
 }
+// 历史接收是可恢复的：每处理完一整页且该页没有可重试的失败，就把游标写回本地。
+// 早先只有「全程零失败」才写完成标记，素材一多几乎必然遇到一次网络抖动，
+// 于是每次启动都要从头重扫整个素材库。
+function readHistoricalSyncCheckpoint(marker) {
+  const raw = localStorage.getItem(marker);
+  if (!raw) return { complete:false, cursor:'', scanned:0 };
+  if (raw === 'complete') return { complete:true, cursor:'', scanned:0 };
+  try {
+    const value = JSON.parse(raw);
+    if (value?.status === 'complete') return { complete:true, cursor:'', scanned:0 };
+    return { complete:false, cursor:String(value?.cursor || ''), scanned:Math.max(0, Number(value?.scanned) || 0) };
+  } catch { return { complete:false, cursor:'', scanned:0 }; }
+}
+function writeHistoricalSyncCheckpoint(marker, { complete=false, cursor='', scanned=0 } = {}) {
+  if (complete) { localStorage.setItem(marker, 'complete'); return; }
+  if (!cursor) return;
+  localStorage.setItem(marker, JSON.stringify({ cursor, scanned }));
+}
 async function acknowledgeDesktopAsset(file, localAsset) {
   await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
     method:'POST',
     body:JSON.stringify({ size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType, deviceId:desktopSyncInfo.deviceId }),
   });
+}
+// 一页素材一次提交。逐条确认会把上万条历史素材变成上万次并发上限只有 3 的 HTTP 往返，
+// 登录遮罩会因此挂很久。逐条结果里的错误是服务端的确定性拒绝（素材已删、元数据无效），
+// 重试也不会变好，因此只记录告警，不阻塞断点前移；网络层失败仍以异常形式抛出。
+async function acknowledgeDesktopAssets(entries) {
+  if (!entries.length) return { rejected:[] };
+  const result = await api('/api/files/local-ready', {
+    method:'POST',
+    body:JSON.stringify({
+      deviceId:desktopSyncInfo.deviceId,
+      items:entries.map(({ file, localAsset }) => ({ id:file.id, size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType })),
+    }),
+  });
+  return { rejected:(result?.results || []).filter(item => item && !item.ok).map(item => ({ assetId:item.id, message:item.error || '本地接收确认失败' })) };
 }
 function renderAfterDesktopAssetHydration() {
   if (state.route === 'files') renderFiles();
@@ -178,16 +210,20 @@ async function syncHistoricalCloudAssets(user) {
   const bridge = window.guguDesktop;
   if (!bridge?.media || !user?.id) throw new Error('客户端本地工作区尚未就绪');
   const marker = historicalSyncMarker(user.id);
-  if (localStorage.getItem(marker) === 'complete') {
+  const checkpoint = readHistoricalSyncCheckpoint(marker);
+  if (checkpoint.complete) {
     setBootProgress(58, '历史素材已就绪');
     return { skipped:true, received:0, unavailable:0 };
   }
-  let cursor = '';
-  let scanned = 0;
+  let cursor = checkpoint.cursor;
+  let scanned = checkpoint.scanned;
   let total = 0;
   let pageNumber = 0;
   let received = 0;
   let unavailable = 0;
+  // 一旦某页出现可重试的失败，后续页即便成功也不再前移本地游标，
+  // 否则下次启动会跳过那页里没接收到的素材。
+  let checkpointClean = true;
   const transientFailures = [];
   const historyStart = 8;
   const historyEnd = 58;
@@ -199,30 +235,51 @@ async function syncHistoricalCloudAssets(user) {
       setBootProgress(Math.min(historyEnd - 4, historyStart + 5 + pageNumber * 5), label, { indeterminate:true });
     }
   };
-  updateHistoryProgress(0, '正在扫描历史素材');
+  updateHistoryProgress(scanned, scanned ? '正在继续接收历史素材' : '正在扫描历史素材');
   do {
-    const page = await listHistoricalCloudAssetsPage(cursor);
+    // 只有本次运行的第一次请求需要总数，续传时也要拿到它才能显示确定的进度。
+    const page = await listHistoricalCloudAssetsPage(cursor, { includeTotal:pageNumber === 0 });
     total = total || page.total;
     const pageStart = scanned;
     const candidates = page.items.filter(file => file?.id && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
     const localAssets = await bridge.media.listLocalByCloudIds(candidates.map(file => file.id));
     const localByCloudId = new Map((localAssets || []).map(item => [String(item.cloudAssetId || ''), item]));
-    let pageProcessed = 0;
-    await runWithConcurrency(candidates, async file => {
+    const present = [];
+    const absent = [];
+    for (const file of candidates) {
       const existing = localByCloudId.get(file.id);
+      if (existing) present.push({ file, localAsset:existing });
+      else absent.push(file);
+    }
+    let pageProcessed = 0;
+    let pageFailures = 0;
+    const reportPageProgress = () => {
+      const pageChecked = candidates.length
+        ? pageStart + (page.items.length * pageProcessed / candidates.length)
+        : pageStart + page.items.length;
+      const checked = Math.min(pageStart + page.items.length, pageChecked);
+      updateHistoryProgress(checked, `正在接收历史素材 · 已检查 ${Math.round(checked)}${total ? ` / ${total}` : ''} 个记录`);
+    };
+    // 已经在本地的素材走批量确认，只有真正缺失的才需要逐个下载。
+    if (present.length) {
+      const { rejected } = await acknowledgeDesktopAssets(present);
+      if (rejected.length) console.warn('[desktop] 部分历史素材的本地接收确认被拒绝', rejected);
+      pageProcessed += present.length;
+      reportPageProgress();
+    }
+    await runWithConcurrency(absent, async file => {
       try {
-        if (existing) await acknowledgeDesktopAsset(file, existing);
-        else { await hydrateDesktopAsset(file, { merge:false }); received += 1; }
+        await hydrateDesktopAsset(file, { merge:false });
+        received += 1;
       } catch (error) {
         if (error.unavailable) unavailable += 1;
-        else transientFailures.push({ assetId:file.id, message:error.message });
+        else {
+          pageFailures += 1;
+          transientFailures.push({ assetId:file.id, message:error.message });
+        }
       } finally {
         pageProcessed += 1;
-        const pageChecked = candidates.length
-          ? pageStart + (page.items.length * pageProcessed / candidates.length)
-          : pageStart + page.items.length;
-        const totalText = total ? ` / ${total}` : '';
-        updateHistoryProgress(Math.min(pageStart + page.items.length, pageChecked), `正在接收历史素材 · 已检查 ${Math.round(Math.min(pageStart + page.items.length, pageChecked))}${totalText} 个记录`);
+        reportPageProgress();
       }
     });
     scanned += page.items.length;
@@ -231,6 +288,8 @@ async function syncHistoricalCloudAssets(user) {
     $('#bootMessage').textContent = `已检查 ${scanned}${totalText} 个记录，本次写入 ${received} 个文件。`;
     cursor = page.nextCursor;
     pageNumber += 1;
+    if (pageFailures) checkpointClean = false;
+    if (checkpointClean) writeHistoricalSyncCheckpoint(marker, cursor ? { cursor, scanned } : { complete:true });
   } while (cursor);
   if (!transientFailures.length) localStorage.setItem(marker, 'complete');
   else console.warn('[desktop] 历史素材仍有待重试项', transientFailures);
@@ -1795,7 +1854,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=62').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=63').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder });
       return dramaController;
     });
@@ -1806,6 +1865,17 @@ function ensureDramaController() {
 function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; toggleClass($('#appView'), 'library-mode', files); toggleClass($('#appView'), 'wide-mode', drama); toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject)); toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional'); toggleClass($('#creatorPanel'), 'hidden', wide); toggleClass($('#generationView'), 'hidden', wide); toggleClass($('#filesView'), 'hidden', !files); toggleClass($('#dramaView'), 'hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute)); renderTasks(); } else if (files) renderFiles(); else { void ensureDramaController().then(controller => { if (state.route !== 'drama') return; controller.modelState(); return controller.load(); }).catch(error => toast(`短剧模块加载失败：${error.message}`)); } }
 $$('.rail-button[data-route]').forEach(button => button.onclick = () => navigate(button.dataset.route));
 window.addEventListener('popstate', () => { if (state.user) navigate(routeFromPath(window.location.pathname), { historyMode:'none' }); });
+
+// The skip link may only surface while the user is genuinely tabbing. Neither
+// `:focus` nor `:focus-visible` is trustworthy here: the desktop shell hides the
+// window to the tray, and when it is shown again macOS restores the first
+// responder, which Chromium reports as a keyboard focus. That repainted the
+// panel over the window chrome on every reopen, so keyboard intent is tracked
+// explicitly and reset whenever the window stops being the active one.
+const setKeyboardNavigating = active => document.body.classList.toggle('keyboard-nav', active);
+window.addEventListener('keydown', event => { if (event.key === 'Tab') setKeyboardNavigating(true); }, true);
+window.addEventListener('pointerdown', () => setKeyboardNavigating(false), true);
+window.addEventListener('blur', () => setKeyboardNavigating(false));
 const notificationMenuItem = $('.notification-menu-item');
 const notificationMenuButton = $('#notificationMenuButton');
 notificationMenuItem?.addEventListener('mouseenter', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
@@ -1946,23 +2016,53 @@ $('#dramaScriptForm').onsubmit = async event => {
 };
 }
 
+function dramaProjectGenerationIds(project) {
+  return new Set([
+    ...(project?.resources || []).flatMap(resource => [resource.selectedTaskId, ...(resource.versions || [])]),
+    ...(project?.shots || []).flatMap(shot => [
+      shot.selectedVideoTaskId,
+      ...(shot.videoVersions || []),
+      ...(shot.pendingImageGenerations || []).map(item => item?.taskId),
+    ]),
+    ...(project?.storyboard?.shots || []).flatMap(shot => [shot.keyframeTaskId, shot.videoTaskId]),
+  ].map(value => String(value || '')).filter(Boolean));
+}
+
 async function loadTasks({ background=false }={}) {
   if (tasksRequest) { const pending = tasksRequest; return background ? pending : pending.then(() => loadTasks({ background:true })); }
   const requestSnapshot = state.tasks;
   tasksRequest = (async () => {
     try {
       const responseTasks = await api('/api/generations');
+      const projectTaskIds = state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
+      const visibleTaskIds = new Set(responseTasks.map(task => task.id));
+      const missingProjectTaskIds = [...projectTaskIds].filter(id => !visibleTaskIds.has(id));
+      const projectTasks = [];
+      try {
+        for (let index = 0; index < missingProjectTaskIds.length; index += 100) {
+          const ids = missingProjectTaskIds.slice(index, index + 100);
+          projectTasks.push(...await api(`/api/generations?ids=${encodeURIComponent(ids.join(','))}`));
+        }
+      } catch (error) {
+        if (error.status === 401) throw error;
+        console.warn('[tasks] failed to hydrate drama project generations', error);
+        projectTasks.push(...state.tasks.filter(task => projectTaskIds.has(task.id)));
+      }
+      const hydratedTasks = [...responseTasks];
+      const hydratedIds = new Set(visibleTaskIds);
+      for (const task of projectTasks) if (!hydratedIds.has(task.id)) { hydratedIds.add(task.id); hydratedTasks.push(task); }
       // A local submission may finish while this GET is in flight. Do not let
       // its older response erase tasks that are already visible in memory.
-      const tasks = mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, responseTasks);
+      const tasks = mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, hydratedTasks);
       const previousCreditStatus = new Map(state.tasks.map(task => [task.id, task.creditStatus]));
       const refundedTask = tasks.some(task => ['refunded', 'refund_failed'].includes(task.creditStatus) && previousCreditStatus.get(task.id) !== task.creditStatus);
       // updatedAt is useful metadata but is not rendered on a task card. Do
       // not rebuild the gallery merely because the server touched a timestamp
       // during background polling.
-      const changed = listSignature(state.tasks, taskCardSignatureFields) !== listSignature(tasks, taskCardSignatureFields);
-      if (changed) state.tasks = tasks;
-      if (changed && $('#previewDialog')?.open && state.previewFileId) {
+      const stateChanged = listSignature(state.tasks, taskSignatureFields) !== listSignature(tasks, taskSignatureFields);
+      const cardsChanged = listSignature(state.tasks, taskCardSignatureFields) !== listSignature(tasks, taskCardSignatureFields);
+      if (stateChanged) state.tasks = tasks;
+      if (cardsChanged && $('#previewDialog')?.open && state.previewFileId) {
         const previewFile = fileById(state.previewFileId);
         if (previewFile) renderPreviewMeta(previewFile);
       }
@@ -1979,9 +2079,10 @@ async function loadTasks({ background=false }={}) {
         mergeStateFiles(localAssets);
         assetsChanged = localAssets.length > 0;
       }
-      if (changed || assetsChanged) {
-        if (state.route === 'drama') dramaController?.refreshTasks?.();
-        else renderTasks();
+      if (state.route === 'drama') {
+        if (stateChanged || assetsChanged) dramaController?.refreshTasks?.();
+      } else if (cardsChanged || assetsChanged) {
+        renderTasks();
       }
       if (state.user && !document.hidden) scheduleTaskPoll();
       return state.tasks;

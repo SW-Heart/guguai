@@ -48,6 +48,7 @@ let mainWindow;
 let paymentWindow;
 let paymentView;
 let tray;
+let trayMenu;
 let isQuitting = false;
 let settings;
 let workspace;
@@ -698,10 +699,25 @@ function parseLocalMediaRange(value, size) {
   return { start, end };
 }
 
+// 每次列素材都要逐条确认文件仍在磁盘上。一页最多 500 条，全部同时 stat 会让冷缓存的磁盘
+// 排队等待，因此限制并发深度，结果顺序仍与输入一致。
+const localAssetStatConcurrency = 16;
+async function mapWithConcurrency(items, worker, concurrency) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await worker(items[index]);
+    }
+  }));
+  return results;
+}
+
 async function materializeLocalAssets(items) {
   const targetWorkspace = workspace;
   const targetEpoch = workspaceEpoch;
-  const assets = await Promise.all(items.map(async item => {
+  const assets = await mapWithConcurrency(items, async item => {
     const relativePath = String(item?.relativePath || '');
     if (!relativePath) return null;
     const target = path.resolve(targetWorkspace, relativePath);
@@ -709,7 +725,7 @@ async function materializeLocalAssets(items) {
     const stat = await fs.stat(target).catch(() => null);
     if (!stat?.isFile()) return null;
     return { ...item, localStatus: 'saved', url: `gugu-media://asset/${encodeURIComponent(item.id)}` };
-  }));
+  }, localAssetStatConcurrency);
   if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return [];
   return assets.filter(Boolean);
 }
@@ -991,28 +1007,32 @@ function setWindowsModalState(active) {
   }
 }
 
+function trayAssetPath(fileName) {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, fileName)
+    : path.join(here, 'assets', fileName);
+}
+
 function createTrayIcon() {
+  // `nativeImage` only decodes PNG and JPEG. An SVG data URL silently produces
+  // an empty image, which macOS renders as an invisible status item that just
+  // highlights dark when clicked, so every platform loads a bitmap asset.
   if (process.platform === 'win32') {
-    // Windows' notification area is not a reliable SVG renderer. Use the
-    // packaged multi-size ICO so the shell can choose the correct DPI image.
-    const iconPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'tray.ico')
-      : path.join(here, 'assets', 'tray.ico');
+    // Windows picks the matching DPI frame out of the multi-size ICO.
+    const iconPath = trayAssetPath('tray.ico');
     const image = nativeImage.createFromPath(iconPath);
     if (image.isEmpty()) throw new Error(`Windows 托盘图标加载失败：${iconPath}`);
     return image;
   }
 
-  const isMac = process.platform === 'darwin';
-  const svg = isMac
-    // Keep the macOS menu-bar item consistent with the GuGu AI app logo.
-    // A template icon strips the white mark and makes the old two-path icon
-    // appear empty until the status item is activated, so preserve the full
-    // colored mark here instead.
-    ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#18181b"/><rect x="11" y="16.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 25 21)"/><rect x="25" y="38.5" width="28" height="9" rx="3" fill="#fff" transform="rotate(-38 39 43)"/></svg>'
-    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#18181b"/><rect x="11" y="16.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 25 21)"/><rect x="25" y="38.5" width="28" height="9" rx="3" fill="#8cf0ca" transform="rotate(-38 39 43)"/></svg>';
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-  return image.resize({ width: isMac ? 18 : 16, height: isMac ? 18 : 16 });
+  // `trayTemplate.png` ships with a `@2x` sibling, so Electron picks the Retina
+  // frame automatically. Template mode lets macOS tint the mark for the current
+  // menu bar and for the highlighted state.
+  const iconPath = trayAssetPath('trayTemplate.png');
+  const image = nativeImage.createFromPath(iconPath);
+  if (image.isEmpty()) throw new Error(`托盘图标加载失败：${iconPath}`);
+  if (process.platform === 'darwin') image.setTemplateImage(true);
+  return image;
 }
 
 function showMainWindow() {
@@ -1145,12 +1165,28 @@ function createTray() {
   if (tray) return;
   tray = new Tray(createTrayIcon());
   tray.setToolTip(productName);
-  tray.setContextMenu(Menu.buildFromTemplate([
+  // Keep the menu on a module-level reference so it stays alive for the manual
+  // popup below.
+  trayMenu = Menu.buildFromTemplate([
     { label: '打开 GuGu AI', click: showMainWindow },
     { type: 'separator' },
     { label: '退出客户端', click: () => { isQuitting = true; app.quit(); } },
-  ]));
-  tray.on('click', showMainWindow);
+  ]);
+
+  // Linux app indicators expose a menu and no dependable click event, so the
+  // menu has to stay attached there.
+  if (process.platform === 'linux') {
+    tray.setContextMenu(trayMenu);
+    return;
+  }
+
+  // `setContextMenu` makes macOS open the menu on a primary click too, which is
+  // not what a status item should do. A primary click just restores the client;
+  // the menu is popped up by hand for secondary clicks, which covers right
+  // click, two-finger click and Control-click.
+  tray.on('click', () => showMainWindow());
+  tray.on('double-click', () => showMainWindow());
+  tray.on('right-click', () => tray?.popUpContextMenu(trayMenu));
 }
 
 function registerIpc() {
@@ -1416,6 +1452,7 @@ app.on('will-quit', () => {
   closeLocalLibrary();
   tray?.destroy();
   tray = null;
+  trayMenu = null;
 });
 app.on('window-all-closed', () => {
   // Keep the process alive for the tray when the last window is hidden or

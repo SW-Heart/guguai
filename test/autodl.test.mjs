@@ -84,9 +84,12 @@ test('AutoDL retry backoff remains bounded by the maximum poll duration', async 
     pollIntervalMs: 10,
     maxDurationMs: 25,
     maxPolls: 100,
-  }), /等待超时/);
+  }), error => /等待超时/.test(error.message)
+    && error.providerTaskId === 'task-timeout'
+    && error.pollTimedOut === true
+    && error.upstreamTerminal === true);
   assert.equal(clock, 25);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1, '到达总时限后不应再发起一次上游请求');
 });
 
 test('AutoDL submit persists the provider task before polling and does not resubmit', async () => {
@@ -128,6 +131,19 @@ test('resumed AutoDL polling only queries the existing provider task', async () 
   assert.match(calls[0].url, /\/result\/existing-task$/);
 });
 
+test('resumed AutoDL polling does not reset an expired persisted deadline', async () => {
+  let calls = 0;
+  await assert.rejects(() => pollAutodlVideo('expired-task', {}, {
+    fetchJson: async () => { calls++; return {}; },
+    sleep: async () => {},
+    now: () => 1_001,
+    startedAt: 0,
+    maxDurationMs: 1_000,
+    maxPolls: 5,
+  }), error => error.pollTimedOut === true && error.upstreamTerminal === true);
+  assert.equal(calls, 0);
+});
+
 test('AutoDL submission without a task id remains awaiting reconciliation', async () => {
   await assert.rejects(() => createAutodlVideo({
     prompt: '提交失败', duration: 5, quality: '768p', aspectRatio: '16:9',
@@ -157,5 +173,21 @@ test('AutoDL terminal poll status fails immediately without retrying', async () 
     maxDurationMs: 1_000,
     maxPolls: 5,
   }), error => error.provider === 'autodl' && error.providerTaskId === 'failed-task' && error.upstreamTerminal === true);
+  assert.equal(calls, 1);
+});
+
+test('AutoDL authentication poll errors fail immediately', async () => {
+  let calls = 0;
+  await assert.rejects(() => pollAutodlVideo('auth-failed-task', {}, {
+    fetchJson: async () => {
+      calls++;
+      throw Object.assign(new Error('unauthorized'), { upstreamStatus:401 });
+    },
+    sleep: async () => {},
+    maxDurationMs: 1_000,
+    maxPolls: 5,
+  }), error => error.provider === 'autodl'
+    && error.providerTaskId === 'auth-failed-task'
+    && error.upstreamTerminal === true);
   assert.equal(calls, 1);
 });

@@ -63,7 +63,8 @@ const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
 const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
-const oaiMaxPollDurationMs = Math.max(oaiPollIntervalMs, Number(process.env.OAI_MAX_POLL_DURATION_MS || 30 * 60_000));
+const videoMaxPollDurationMs = Math.max(60_000, Number(process.env.VIDEO_MAX_POLL_DURATION_MS || 60 * 60_000));
+const oaiMaxPollDurationMs = Math.max(oaiPollIntervalMs, Number(process.env.OAI_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
 const oaiMaxPolls = Math.max(1, Math.ceil(oaiMaxPollDurationMs / oaiPollIntervalMs));
 const ttapiPollIntervalMs = 8_000;
 const ttapiMaxPollBackoffMs = 60_000;
@@ -74,8 +75,8 @@ const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROU
 const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 5 * 60_000));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
-const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || 360));
-const autodlMaxPollDurationMs = autodlMaxPolls * autodlPollIntervalMs;
+const autodlMaxPollDurationMs = Math.max(autodlPollIntervalMs, Number(process.env.AUTODL_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
+const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || Math.ceil(autodlMaxPollDurationMs / autodlPollIntervalMs)));
 const generationRetryMaxDelayMs = 60_000;
 const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
@@ -195,6 +196,29 @@ sessionSweeper.unref();
 
 const now = () => new Date().toISOString();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function videoPollTimeoutError(provider, taskId) {
+  return Object.assign(new Error(`${provider || '视频'}任务等待超时`), {
+    provider,
+    providerTaskId: taskId,
+    upstreamTerminal: true,
+    pollTimedOut: true,
+  });
+}
+function videoPollRemainingMs(startedAt, maxDurationMs) {
+  return Math.max(0, maxDurationMs - (Date.now() - startedAt));
+}
+function videoPollStartedAt(task, fallback = Date.now()) {
+  for (const value of [task?.submittedAt, task?.createdAt]) {
+    const persisted = Date.parse(value || '');
+    if (Number.isFinite(persisted)) return persisted;
+  }
+  return fallback;
+}
+function videoPollRequestSignal(provider, taskId, startedAt, maxDurationMs, requestTimeoutMs) {
+  const remainingMs = videoPollRemainingMs(startedAt, maxDurationMs);
+  if (remainingMs <= 0) throw videoPollTimeoutError(provider, taskId);
+  return AbortSignal.timeout(Math.max(1, Math.min(requestTimeoutMs, remainingMs)));
+}
 const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
 const normalizeDeviceId = value => {
   const deviceId = String(value || '').trim();
@@ -456,18 +480,25 @@ async function fetchJson(url, options = {}) {
 async function createImage(task, refs) { const payload = { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality }; if (refs.length) payload.image = refs.slice(0, 7); const created = await fetchJson(`${duomiBase}/v1/images/generations?async=true`, { method: 'POST', headers: { Authorization: process.env.DUOMI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const taskId = created.id || created.task_id; if (!taskId) throw new Error('图片任务没有返回任务 ID'); for (let i = 0; i < 100; i++) { await sleep(6000); const state = await fetchJson(`${duomiBase}/v1/tasks/${taskId}`, { headers: { Authorization: process.env.DUOMI_API_KEY } }); if (state.state === 'succeeded') return { taskId, url: state.data?.images?.[0]?.url }; if (['error', 'failed'].includes(state.state)) throw new Error(state.message || '图片生成失败'); } throw new Error('图片任务等待超时'); }
 async function createDuomiVideo(task, refs) {
   let taskId = '';
+  let pollStartedAt = 0;
   try {
     const created = await fetchJson(`${duomiBase}/v1/videos/generations`, { method: 'POST', headers: { Authorization: process.env.DUOMI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(buildVideoPayload(task, refs)) });
     taskId = created.id || created.task_id;
     if (!taskId) throw Object.assign(new Error('多米视频任务没有返回任务 ID'), { provider: 'duomi', fallbackEligible: false });
-    for (let i = 0; i < 160; i++) {
-      await sleep(8000);
-      const state = await fetchJson(`${duomiBase}/v1/videos/tasks/${taskId}`, { headers: { Authorization: process.env.DUOMI_API_KEY } });
+    pollStartedAt = Date.now();
+    for (;;) {
+      const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
+      if (remainingMs <= 0) throw videoPollTimeoutError('多米', taskId);
+      await sleep(Math.min(8000, remainingMs));
+      const state = await fetchJson(`${duomiBase}/v1/videos/tasks/${taskId}`, {
+        headers: { Authorization: process.env.DUOMI_API_KEY },
+        signal: videoPollRequestSignal('多米', taskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
+      });
       if (['succeeded', 'completed'].includes(state.state)) return { provider: 'duomi', taskId, url: state.data?.videos?.[0]?.url };
       if (['error', 'failed'].includes(state.state)) throw Object.assign(new Error(state.message || '多米视频生成失败'), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
     }
-    throw Object.assign(new Error('多米视频任务等待超时'), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
   } catch (error) {
+    if (pollStartedAt && Date.now() - pollStartedAt >= videoMaxPollDurationMs && !error.upstreamTerminal) error = videoPollTimeoutError('多米', taskId);
     console.error('[video] Duomi upstream failure', {
       generationId: task.id,
       modelId: task.videoModelId || task.modelId || null,
@@ -476,7 +507,7 @@ async function createDuomiVideo(task, refs) {
       status: error.upstreamStatus || null,
       message: error.upstreamMessage || error.message,
     });
-    if (taskId && error.fallbackEligible === undefined) error = Object.assign(new Error(error.message), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
+    if (taskId && error.fallbackEligible === undefined) error = Object.assign(error, { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
     throw error;
   }
 }
@@ -489,22 +520,26 @@ function isDefinitiveSubmitRejection(error) {
     && Number(error?.upstreamStatus) < 500
     && ![408, 409, 425, 429].includes(Number(error.upstreamStatus));
 }
-async function pollTtapiVideo(taskId, hooks = {}) {
+async function pollTtapiVideo(taskId, hooks = {}, pollStartedAt = Date.now()) {
   let consecutiveErrors = 0;
   let recovering = false;
   for (;;) {
     const delay = consecutiveErrors
       ? Math.min(ttapiPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), ttapiMaxPollBackoffMs)
       : ttapiPollIntervalMs;
-    await sleep(delay);
+    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
+    if (remainingMs <= 0) throw videoPollTimeoutError('TTAPI', taskId);
+    await sleep(Math.min(delay, remainingMs));
+    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('TTAPI', taskId);
     let state;
     try {
       state = await fetchJson(`${ttapiBase}/grok/fetch?jobId=${encodeURIComponent(taskId)}`, {
         headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY },
-        signal: AbortSignal.timeout(ttapiRequestTimeoutMs),
+        signal: videoPollRequestSignal('TTAPI', taskId, pollStartedAt, videoMaxPollDurationMs, ttapiRequestTimeoutMs),
       });
     } catch (error) {
-      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
+      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('TTAPI', taskId);
+      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: 'ttapi', providerTaskId: taskId, upstreamTerminal: true });
       consecutiveErrors++;
       recovering = true;
       const detail = upstreamRequestErrorDetail(error);
@@ -557,7 +592,7 @@ async function createTtapiVideo(task, refs, hooks = {}) {
     });
   }
   await hooks.onSubmitted?.({ provider: 'ttapi', taskId: String(taskId) });
-  return pollTtapiVideo(String(taskId), hooks);
+  return pollTtapiVideo(String(taskId), hooks, videoPollStartedAt(task));
 }
 function cntcnVideoUrl(value) {
   const candidates = [
@@ -577,18 +612,24 @@ function cntcnStatus(value) {
 function cntcnError(value) {
   return errorMessage(value?.error || value?.error_message || value?.api_error || value, 'CNTCN 视频生成失败');
 }
-async function pollCntcnVideo(taskId, hooks = {}) {
+async function pollCntcnVideo(taskId, hooks = {}, pollStartedAt = Date.now()) {
   let consecutiveErrors = 0;
   let recovering = false;
   for (;;) {
-    await sleep(consecutiveErrors ? Math.min(cntcnPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000) : cntcnPollIntervalMs);
+    const delay = consecutiveErrors ? Math.min(cntcnPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000) : cntcnPollIntervalMs;
+    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
+    if (remainingMs <= 0) throw videoPollTimeoutError('CNTCN', taskId);
+    await sleep(Math.min(delay, remainingMs));
+    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('CNTCN', taskId);
     let state;
     try {
       state = await fetchJson(`${cntcnBase}/videos/${encodeURIComponent(taskId)}`, {
         headers: { Authorization: `Bearer ${process.env.CNTCN_KEY}` },
-        signal: AbortSignal.timeout(cntcnRequestTimeoutMs),
+        signal: videoPollRequestSignal('CNTCN', taskId, pollStartedAt, videoMaxPollDurationMs, cntcnRequestTimeoutMs),
       });
     } catch (error) {
+      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('CNTCN', taskId);
+      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:'cntcn', providerTaskId:taskId, upstreamTerminal:true });
       consecutiveErrors++;
       recovering = true;
       const detail = upstreamRequestErrorDetail(error);
@@ -625,7 +666,7 @@ async function createCntcnVideo(task, refs, hooks = {}) {
     taskId = cntcnTaskId(created);
     if (!taskId) throw new Error('CNTCN 已接受请求，但没有返回任务 ID，提交结果待核对');
     await hooks.onSubmitted?.({ provider: 'cntcn', taskId });
-    return pollCntcnVideo(taskId, hooks);
+    return pollCntcnVideo(taskId, hooks, videoPollStartedAt(task));
   } catch (error) {
     if (error.upstreamTerminal) throw error;
     if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'cntcn', upstreamTerminal: true });
@@ -666,14 +707,22 @@ async function pollRoutedVideo(task, hooks = {}) {
   if (!key) throw Object.assign(new Error('任务原调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
   const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
   let consecutiveErrors = 0;
+  const pollStartedAt = videoPollStartedAt(task);
   for (;;) {
-    await sleep(consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000);
+    const delay = consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000;
+    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
+    if (remainingMs <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
+    await sleep(Math.min(delay, remainingMs));
+    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
     let state;
     try {
       state = await fetchJson(`${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}`, {
-        headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(60_000),
+        headers: { Authorization: `Bearer ${key}` },
+        signal: videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
       });
     } catch (error) {
+      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
+      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:task.provider, providerTaskId:task.providerTaskId, upstreamTerminal:true });
       consecutiveErrors++;
       await hooks.onPollError?.({ consecutiveErrors, detail: upstreamRequestErrorDetail(error) });
       continue;
@@ -744,7 +793,7 @@ async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
   const maxPolls = Math.max(1, Number(runtime.maxPolls ?? autodlMaxPolls));
   const maxDurationMs = Math.max(1, Number(runtime.maxDurationMs ?? autodlMaxPollDurationMs));
   const pollIntervalMs = Math.max(0, Number(runtime.pollIntervalMs ?? autodlPollIntervalMs));
-  const startedAt = nowMs();
+  const startedAt = Number.isFinite(runtime.startedAt) ? runtime.startedAt : nowMs();
   let consecutiveErrors = 0;
   let recovering = false;
   for (let attempt = 0; attempt < maxPolls; attempt++) {
@@ -754,15 +803,19 @@ async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
       ? Math.min(pollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000)
       : pollIntervalMs;
     await wait(Math.min(delay, remainingMs));
+    const requestRemainingMs = maxDurationMs - (nowMs() - startedAt);
+    if (requestRemainingMs <= 0) break;
     let state;
     try {
       state = await fetchState(`${autodlBase}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
         headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}` },
-        signal: AbortSignal.timeout(autodlRequestTimeoutMs),
+        signal: AbortSignal.timeout(Math.max(1, Math.min(autodlRequestTimeoutMs, requestRemainingMs))),
       });
       const businessError = autodlRetryableResponseError(state);
       if (businessError) throw businessError;
     } catch (error) {
+      if (maxDurationMs - (nowMs() - startedAt) <= 0) break;
+      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:'autodl', providerTaskId:taskId, upstreamTerminal:true });
       consecutiveErrors++;
       recovering = true;
       const detail = upstreamRequestErrorDetail(error);
@@ -785,7 +838,7 @@ async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
       throw Object.assign(new Error(state.msg || state.message || 'AutoDL 视频生成失败'), { provider: 'autodl', providerTaskId: taskId, upstreamTerminal: true });
     }
   }
-  throw Object.assign(new Error('AutoDL 视频任务等待超时'), { provider: 'autodl', providerTaskId: taskId });
+  throw videoPollTimeoutError('AutoDL', taskId);
 }
 function buildAutodlPayload(task, refs) {
   const groups = Array.isArray(refs) ? { images: refs, audios: [] } : (refs || { images: [], audios: [] });
@@ -813,7 +866,8 @@ async function createAutodlVideo(task, refs, hooks = {}, runtime = {}) {
     await hooks.onSubmitted?.({ provider: 'autodl', taskId });
     const immediateUrl = autodlVideoUrl(created);
     if (immediateUrl) return { provider: 'autodl', taskId, url: immediateUrl };
-    return pollAutodlVideo(taskId, hooks, runtime);
+    const persistedStartedAt = Date.parse(task.submittedAt || '');
+    return pollAutodlVideo(taskId, hooks, Number.isFinite(persistedStartedAt) ? { ...runtime, startedAt:persistedStartedAt } : runtime);
   } catch (error) {
     if (error.upstreamTerminal || error.submissionUncertain) throw error;
     if (!taskId && isDefinitiveSubmitRejection(error)) {
@@ -899,6 +953,7 @@ function oaiVideoRequest(task, refs, apiKey) {
 async function createOaiVideo(task, refs) {
   const apiKey = oaiKeyForTask(task);
   let taskId = '';
+  let pollStartedAt = 0;
   try {
     const request = oaiVideoRequest(task, refs, apiKey);
     const created = await fetchJson(`${oaiBase}/videos`, { method: 'POST', ...request, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
@@ -906,9 +961,16 @@ async function createOaiVideo(task, refs) {
     const submittedUrl = oaiVideoUrl(created);
     if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(submittedUrl) };
     if (!taskId) throw new Error('OAI 视频任务没有返回任务 ID');
+    pollStartedAt = Date.now();
     for (let i = 0; i < oaiMaxPolls; i++) {
-      await sleep(oaiPollIntervalMs);
-      const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
+      const remainingMs = videoPollRemainingMs(pollStartedAt, oaiMaxPollDurationMs);
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(oaiPollIntervalMs, remainingMs));
+      if (videoPollRemainingMs(pollStartedAt, oaiMaxPollDurationMs) <= 0) break;
+      const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: videoPollRequestSignal('OAI', taskId, pollStartedAt, oaiMaxPollDurationMs, oaiRequestTimeoutMs),
+      });
       const videoUrl = oaiVideoUrl(state);
       const status = oaiStatus(state);
       if (videoUrl) return { provider: 'oai', taskId, url: videoUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(videoUrl) };
@@ -919,9 +981,10 @@ async function createOaiVideo(task, refs) {
       }
       if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) throw new Error(errorMessage(state, 'OAI 视频生成失败'));
     }
-    throw new Error('OAI 视频任务等待超时');
+    throw videoPollTimeoutError('OAI', taskId);
   } catch (error) {
-    if (taskId && error.providerTaskId === undefined) error = Object.assign(new Error(error.message), { provider: 'oai', providerTaskId: taskId });
+    if (pollStartedAt && Date.now() - pollStartedAt >= oaiMaxPollDurationMs && !error.upstreamTerminal) error = videoPollTimeoutError('OAI', taskId);
+    if (taskId && error.providerTaskId === undefined) error = Object.assign(error, { provider: 'oai', providerTaskId: taskId });
     throw error;
   }
 }
@@ -1062,6 +1125,43 @@ function normalizeDramaProject(project) {
 }
 async function loadDramaProject(userId, id) { const project = findDramaProject(userId, id); return project ? normalizeDramaProject(project) : null; }
 async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
+// 单条与批量的本地接收确认共用同一套校验和副作用：写回素材元数据、标记该设备投递完成、
+// 结束对应生成任务的归档重试。返回 { error, status } 表示这一条被拒绝，调用方决定是整个
+// 请求失败（单条入口）还是只记录该条结果（批量入口）。
+const localReadyBatchLimit = 200;
+async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mimeType, deviceId = '' } = {}) {
+  const normalizedSize = Number(size);
+  const normalizedSha256 = String(sha256 || '').trim().toLowerCase();
+  const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
+  if (!Number.isSafeInteger(normalizedSize) || normalizedSize <= 0) return { status: 400, error: '本地文件大小无效' };
+  if (!/^[a-f0-9]{64}$/.test(normalizedSha256)) return { status: 400, error: '本地文件 SHA-256 无效' };
+  if (![...imageTypes, ...videoTypes, ...audioTypes].includes(normalizedMimeType)) return { status: 400, error: '本地文件类型无效' };
+  asset.size = normalizedSize;
+  asset.sha256 = normalizedSha256;
+  asset.mimeType = normalizedMimeType;
+  asset.deliveryStatus = 'local_ready';
+  asset.localReadyAt = now();
+  asset.remoteStatus = asset.objectKey ? 'ready' : 'local_only';
+  await saveAsset(userId, asset);
+  if (deviceId) markAssetDeliveryReady(userId, deviceId, asset.id);
+  if (asset.sourceGenerationId) {
+    const task = findGeneration(userId, asset.sourceGenerationId);
+    if (task?.assetId === asset.id) {
+      task.archivePending = false;
+      task.localReadyAt = asset.localReadyAt;
+      task.localDeliveryDeadlineAt = '';
+      task.lastArchiveError = '';
+      task.lastArchiveErrorAt = null;
+      task.status = 'completed';
+      task.error = '';
+      task.finishedAt ||= asset.localReadyAt;
+      await saveGenerationWithRetry(userId, task, 'local-delivery-ack');
+      const timer = generationRetryTimers.get(task.id);
+      if (timer) { clearTimeout(timer); generationRetryTimers.delete(task.id); }
+    }
+  }
+  return { asset };
+}
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.objectKey) await deleteObject(asset.objectKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 function publicAsset(asset) {
   const { ownerId, storageName, sourceUrl, sourceRequiresAuth, objectKey, objectUploadedAt, ...value } = asset;
@@ -1762,7 +1862,7 @@ function resumeTtapiGeneration(userId, task) {
       task.finishedAt = null;
       task.error = '';
       await saveGeneration(userId, task);
-      const result = await pollTtapiVideo(task.providerTaskId, ttapiPersistenceHooks(userId, task));
+      const result = await pollTtapiVideo(task.providerTaskId, ttapiPersistenceHooks(userId, task), videoPollStartedAt(task));
       await completeGenerationResult(userId, task, result);
     } catch (error) {
       if (error.upstreamTerminal) {
@@ -1790,7 +1890,7 @@ function resumeCntcnGeneration(userId, task) {
       task.finishedAt = null;
       task.error = '';
       await saveGeneration(userId, task);
-      const result = await pollCntcnVideo(task.providerTaskId, cntcnPersistenceHooks(userId, task));
+      const result = await pollCntcnVideo(task.providerTaskId, cntcnPersistenceHooks(userId, task), videoPollStartedAt(task));
       await completeGenerationResult(userId, task, result);
     } catch (error) {
       if (error.upstreamTerminal) await failGeneration(userId, task, error);
@@ -1840,7 +1940,7 @@ function resumeAutodlGeneration(userId, task) {
       task.finishedAt = null;
       task.error = '';
       await saveGeneration(userId, task);
-      const result = await pollAutodlVideo(task.providerTaskId, autodlPersistenceHooks(userId, task));
+      const result = await pollAutodlVideo(task.providerTaskId, autodlPersistenceHooks(userId, task), { startedAt:videoPollStartedAt(task) });
       await completeGenerationResult(userId, task, result);
     } catch (error) {
       if (error.upstreamTerminal) await failGeneration(userId, task, error);
@@ -1985,7 +2085,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, oaiMaxPollDurationMs, oaiMaxPolls, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2531,6 +2631,10 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/generations' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
+      if (url.searchParams.has('ids')) {
+        const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(safeId).filter(Boolean))].slice(0, 200);
+        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id)).filter(Boolean).map(publicGeneration));
+      }
       const page = listGenerations(user.id, { type: url.searchParams.get('type'), limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
       setPageHeaders(res, page);
       return sendJson(res, 200, page.items.map(publicGeneration));
@@ -2834,44 +2938,37 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
+    // 批量入口：客户端启动时的历史素材对账一次提交一整页，避免每条素材一次 HTTP 往返。
+    // 单条被拒绝不会让整个请求失败，逐条结果交给客户端判断哪些需要重试。
+    if (url.pathname === '/api/files/local-ready' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const input = await bodyJson(req);
+      const items = Array.isArray(input.items) ? input.items : [];
+      if (!items.length) return sendJson(res, 400, { error: '缺少本地接收确认条目' });
+      if (items.length > localReadyBatchLimit) return sendJson(res, 400, { error: `单次最多确认 ${localReadyBatchLimit} 个素材` });
+      const deviceId = normalizeDeviceId(input.deviceId);
+      const results = [];
+      for (const item of items) {
+        const assetId = safeId(item?.id);
+        const asset = assetId ? findAsset(user.id, assetId) : null;
+        if (!asset) {
+          results.push({ id: String(item?.id || ''), ok: false, error: '文件不存在' });
+          continue;
+        }
+        const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...item, deviceId });
+        results.push(outcome.error ? { id: asset.id, ok: false, error: outcome.error } : { id: asset.id, ok: true });
+      }
+      return sendJson(res, 200, { deviceId, acknowledged: results.filter(result => result.ok).length, results });
+    }
     const localReadyMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/local-ready$/);
     if (localReadyMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
       const asset = findAsset(user.id, localReadyMatch[1]);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       const input = await bodyJson(req);
-      const size = Number(input.size);
-      const sha256 = String(input.sha256 || '').trim().toLowerCase();
-      const mimeType = String(input.mimeType || '').trim().toLowerCase();
-      if (!Number.isSafeInteger(size) || size <= 0) return sendJson(res, 400, { error: '本地文件大小无效' });
-      if (!/^[a-f0-9]{64}$/.test(sha256)) return sendJson(res, 400, { error: '本地文件 SHA-256 无效' });
-      if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 400, { error: '本地文件类型无效' });
-      asset.size = size;
-      asset.sha256 = sha256;
-      asset.mimeType = mimeType;
-      asset.deliveryStatus = 'local_ready';
-      asset.localReadyAt = now();
-      asset.remoteStatus = asset.objectKey ? 'ready' : 'local_only';
-      await saveAsset(user.id, asset);
-      const deviceId = normalizeDeviceId(input.deviceId);
-      if (deviceId) markAssetDeliveryReady(user.id, deviceId, asset.id);
-      if (asset.sourceGenerationId) {
-        const task = findGeneration(user.id, asset.sourceGenerationId);
-        if (task?.assetId === asset.id) {
-          task.archivePending = false;
-          task.localReadyAt = asset.localReadyAt;
-          task.localDeliveryDeadlineAt = '';
-          task.lastArchiveError = '';
-          task.lastArchiveErrorAt = null;
-          task.status = 'completed';
-          task.error = '';
-          task.finishedAt ||= asset.localReadyAt;
-          await saveGenerationWithRetry(user.id, task, 'local-delivery-ack');
-          const timer = generationRetryTimers.get(task.id);
-          if (timer) { clearTimeout(timer); generationRetryTimers.delete(task.id); }
-        }
-      }
-      return sendJson(res, 200, publicAsset(asset));
+      const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...input, deviceId: normalizeDeviceId(input.deviceId) });
+      if (outcome.error) return sendJson(res, outcome.status, { error: outcome.error });
+      return sendJson(res, 200, publicAsset(outcome.asset));
     }
     const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
     if (directMediaMatch && req.method === 'GET') {

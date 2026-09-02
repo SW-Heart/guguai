@@ -17,6 +17,10 @@ files:
 extraResources:
   - from: desktop/assets/tray.ico
     to: tray.ico
+  - from: desktop/assets/trayTemplate.png
+    to: trayTemplate.png
+  - from: desktop/assets/trayTemplate@2x.png
+    to: trayTemplate@2x.png
 asar: true
 asarUnpack:
   - node_modules/ffmpeg-static/**/*

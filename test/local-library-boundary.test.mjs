@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+const dramaStudio = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
 const index = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
 
 test('desktop file library reads only the local workspace', () => {
@@ -21,7 +22,7 @@ test('history is received before the local-only file library becomes visible', (
   const enterAppEnd = app.indexOf('\nlet accountSettingsRestoreFocus', enterAppStart);
   const enterAppSource = app.slice(enterAppStart, enterAppEnd);
   assert.ok(enterAppSource.indexOf('await syncHistoricalCloudAssets(user)') < enterAppSource.indexOf('showApp()'));
-  assert.match(app, /async function listHistoricalCloudAssetsPage\(cursor = ''\)/);
+  assert.match(app, /async function listHistoricalCloudAssetsPage\(cursor = ''/);
   assert.match(app, /localStorage\.setItem\(marker, 'complete'\)/);
   assert.match(app, /async function runDesktopAssetSyncWorker\(\)/);
   assert.match(app, /scheduleDesktopAssetSync\(0\)/);
@@ -37,7 +38,25 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('account workspace activation changes the frontend cache key', () => {
-  assert.match(index, /\/app\.js\?v=197/);
+  assert.match(index, /\/app\.js\?v=199/);
+});
+
+test('historical receive resumes from a per-page checkpoint and acknowledges in batches', () => {
+  assert.match(app, /function readHistoricalSyncCheckpoint\(marker\)/);
+  assert.match(app, /function writeHistoricalSyncCheckpoint\(marker/);
+  assert.match(app, /async function acknowledgeDesktopAssets\(entries\)/);
+  const syncStart = app.indexOf('async function syncHistoricalCloudAssets(');
+  const syncEnd = app.indexOf('\nasync function runDesktopHydrationQueue', syncStart);
+  const syncSource = app.slice(syncStart, syncEnd);
+  // 断点必须从已持久化的游标续传，而不是每次都从头扫描。
+  assert.match(syncSource, /let cursor = checkpoint\.cursor;/);
+  assert.match(syncSource, /let scanned = checkpoint\.scanned;/);
+  // 已在本地的素材只允许走批量确认，逐条确认会退化成上万次 HTTP 往返。
+  assert.match(syncSource, /await acknowledgeDesktopAssets\(present\)/);
+  assert.doesNotMatch(syncSource, /await acknowledgeDesktopAsset\(/);
+  // 出现可重试失败的那一页之后不得再前移游标。
+  assert.match(syncSource, /if \(pageFailures\) checkpointClean = false;/);
+  assert.match(syncSource, /if \(checkpointClean\) writeHistoricalSyncCheckpoint\(marker/);
 });
 
 test('workspace boot exposes progress for the initial load', () => {
@@ -45,7 +64,7 @@ test('workspace boot exposes progress for the initial load', () => {
   assert.match(index, /role="progressbar"/);
   assert.match(app, /function setBootProgress\(/);
   assert.match(app, /const initialLoadSteps = \[/);
-  assert.match(app, /updateHistoryProgress\(0, '正在扫描历史素材'\)/);
+  assert.match(app, /updateHistoryProgress\(scanned, scanned \? '正在继续接收历史素材' : '正在扫描历史素材'\)/);
 });
 
 test('generation polling resolves completed media from the local index only', () => {
@@ -76,4 +95,25 @@ test('desktop file actions only reveal an existing local asset', () => {
 test('completed generation cards require a saved local asset', () => {
   assert.match(app, /task\.status !== 'completed' \|\| Boolean\(task\.assetId && fileById\(task\.assetId\)\?\.localStatus === 'saved'\)/);
   assert.doesNotMatch(app, /api\/files\/\$\{encodeURIComponent\(file\.id\)\}\/download/);
+});
+
+test('task polling updates rich short-drama state independently from gallery cards', () => {
+  assert.match(app, /const stateChanged = listSignature\(state\.tasks, taskSignatureFields\)/);
+  assert.match(app, /const cardsChanged = listSignature\(state\.tasks, taskCardSignatureFields\)/);
+  assert.match(app, /if \(stateChanged\) state\.tasks = tasks/);
+  assert.match(app, /if \(stateChanged \|\| assetsChanged\) dramaController\?\.refreshTasks\?\.\(\)/);
+});
+
+test('short-drama completed tasks wait for local assets before becoming selectable', () => {
+  assert.match(dramaStudio, /generationNeedsLocalAssetSync\(task\(id\), taskAsset\(id\), assetSyncing\)/);
+  assert.match(dramaStudio, /!generated\.assetId\|\|!taskLocallyReady\(item\.taskId\)/);
+  assert.match(dramaStudio, /function resourceVersionCard[\s\S]*?const syncing=taskSyncing\(taskId\); const ready=taskLocallyReady\(taskId\)/);
+  assert.match(dramaStudio, /function videoVersion[\s\S]*?const syncing=taskSyncing\(id\);const ready=taskLocallyReady\(id\)/);
+});
+
+test('short-drama task refresh deferred during editing is replayed after blur', () => {
+  const refreshStart = dramaStudio.indexOf('function refreshTasks()');
+  const refreshEnd = dramaStudio.indexOf('\n  function renderProfessionalShotWindow', refreshStart);
+  const refreshSource = dramaStudio.slice(refreshStart, refreshEnd);
+  assert.match(refreshSource, /deferProfessionalRender\(\);\s*active\.addEventListener\('blur',scheduleFlushDeferredProfessionalRender,\{once:true\}\)/);
 });
