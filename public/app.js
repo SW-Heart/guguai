@@ -1,12 +1,12 @@
 import { listSignature, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from './list-sync.js?v=2';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=7';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, mergeDesktopAssetRecord, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=8';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let indexedFiles = null;
@@ -50,6 +50,7 @@ let localFileHasMore = true;
 let localFileTotal = 0;
 let fileQueryKey = '';
 let fileLoadVersion = 0;
+let localFileStateRevision = 0;
 let desktopSyncInfo = { deviceId:'', cursor:'' };
 let desktopSyncRequest = null;
 let desktopSyncRequestEpoch = 0;
@@ -164,7 +165,9 @@ function renderAfterDesktopAssetHydration() {
   else if (state.route === 'drama') dramaController?.refreshTasks?.();
 }
 function mergeStateFiles(files) {
-  const incoming = mergeTransientFields(state.files, files, ['width','height']);
+  const previousById = new Map(state.files.map(file => [file.id, file]));
+  const incoming = mergeTransientFields(state.files, files, ['width','height'])
+    .map(file => mergeDesktopAssetRecord(previousById.get(file.id), file));
   const incomingIds = new Set(incoming.map(file => file.id));
   state.files = [...incoming, ...state.files.filter(file => !incomingIds.has(file.id))];
   indexedFiles = null;
@@ -173,6 +176,10 @@ function applyDesktopLocalAsset(remoteFile, localAsset) {
   const local = desktopLocalClientAsset(localAsset);
   if (!local) return;
   const file = { ...remoteFile, ...local, id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
+  // listLocal snapshots its SQLite rows before asynchronously statting each
+  // file. Mark this mutation so an older page is merged instead of replacing
+  // the newly hydrated record after it has already appeared in the gallery.
+  localFileStateRevision += 1;
   const existed = state.files.some(item => item.id === file.id);
   mergeStateFiles([file]);
   if (libraryFileMatches(file)) {
@@ -856,6 +863,169 @@ function insertVideoPromptMentions(assetIds, request = videoPromptMentionRequest
   normalizeEmptyVideoPrompt(editor);
   syncVideoPromptMentionsFromEditor();
   videoPromptMentionRequest = null;
+  return { editor, range:range.cloneRange() };
+}
+let imagePromptMentionRequest = null;
+let imagePromptCompositionFrame = 0;
+function imagePromptEditor() { return $('#imagePrompt'); }
+function imagePromptMentionMarkup(mention, resolvedFile = null) {
+  const file = resolvedFile || state.files.find(item => item.id === mention?.id);
+  const label = videoPromptMentionLabel(mention, file);
+  if (!file) return esc(`@${label}`);
+  return `<span class="image-prompt-mention" data-image-prompt-mention-id="${esc(file.id)}" data-image-prompt-mention-label="${esc(label)}" data-image-prompt-mention-kind="image" contenteditable="false" aria-label="引用${esc(label)}，图片"><span class="image-prompt-mention-thumb">${assetImageMarkup(file, label)}</span><span class="image-prompt-mention-name">${esc(label)}</span></span>`;
+}
+function serializeImagePromptEditor(editor = imagePromptEditor()) {
+  if (!editor) return '';
+  const visit = (node, isRoot = false) => {
+    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    if (node.classList.contains('image-prompt-mention')) return `@${node.dataset.imagePromptMentionLabel || node.textContent.trim()}`;
+    if (node.nodeName === 'BR') return '\n';
+    const text = [...node.childNodes].map(child => visit(child)).join('');
+    return !isRoot && /^(DIV|P)$/.test(node.nodeName) ? `${text}\n` : text;
+  };
+  return visit(editor, true).replace(/\u00a0/g, ' ').replace(new RegExp(videoRichEditorEmptyChar, 'g'), '');
+}
+function imagePromptMentionsFromEditor(editor = imagePromptEditor()) {
+  if (!editor) return [];
+  return [...editor.querySelectorAll('[data-image-prompt-mention-id]')]
+    .map(node => ({
+      id:String(node.dataset.imagePromptMentionId || ''),
+      label:String(node.dataset.imagePromptMentionLabel || '').replace(/^@/, '').trim(),
+      kind:'image',
+    }))
+    .filter(item => item.id && item.label)
+    .filter((item, index, list) => list.findIndex(other => other.id === item.id && other.label === item.label) === index)
+    .slice(0, 40);
+}
+function normalizeEmptyImagePrompt(editor = imagePromptEditor()) {
+  if (!editor) return;
+  if (serializeImagePromptEditor(editor).trim()) { editor.dataset.empty = 'false'; return; }
+  editor.replaceChildren();
+  editor.dataset.empty = 'true';
+}
+function imagePromptText() { return serializeImagePromptEditor().trimEnd(); }
+function setImagePromptText(value = '') {
+  const editor = imagePromptEditor();
+  if (!editor) return;
+  editor.textContent = String(value || '');
+  state.imagePromptMentions = [];
+  imagePromptMentionRequest = null;
+  normalizeEmptyImagePrompt(editor);
+}
+function imagePromptMentionAtCaret(editor, direction) {
+  const selection = window.getSelection();
+  if (!editor || !selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode)) return null;
+  const range = selection.getRangeAt(0);
+  const container = range.startContainer;
+  const offset = range.startOffset;
+  const element = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+  const inside = element?.closest('.image-prompt-mention');
+  if (inside && editor.contains(inside)) return inside;
+  const isMention = node => node?.nodeType === Node.ELEMENT_NODE && node.classList.contains('image-prompt-mention');
+  if (container.nodeType === Node.TEXT_NODE) {
+    const value = container.nodeValue || '';
+    if (direction === 'backward' && offset === 0 && isMention(container.previousSibling)) return container.previousSibling;
+    if (direction === 'backward' && offset === value.length && value === ' ' && isMention(container.previousSibling)) return container.previousSibling;
+    if (direction === 'forward' && offset === value.length && isMention(container.nextSibling)) return container.nextSibling;
+  } else if (container.nodeType === Node.ELEMENT_NODE) {
+    const adjacent = container.childNodes[direction === 'backward' ? offset - 1 : offset];
+    if (isMention(adjacent)) return adjacent;
+  }
+  return null;
+}
+function removeImagePromptMentionAtCaret(editor, event) {
+  if (!['Backspace', 'Delete'].includes(event.key) || event.isComposing || editor.dataset.composing === 'true') return false;
+  const direction = event.key === 'Backspace' ? 'backward' : 'forward';
+  const mention = imagePromptMentionAtCaret(editor, direction);
+  if (!mention) return false;
+  event.preventDefault();
+  const after = mention.nextSibling;
+  const before = mention.previousSibling;
+  mention.remove();
+  syncImagePromptInput();
+  if (after?.isConnected && after.nodeType === Node.TEXT_NODE) setVideoPromptCaret(editor, after, 0);
+  else if (before?.isConnected && before.nodeType === Node.TEXT_NODE) setVideoPromptCaret(editor, before, before.nodeValue.length);
+  else setVideoPromptCaret(editor);
+  return true;
+}
+function syncImagePromptMentionsFromEditor() {
+  const previousMentionIds = new Set(state.imagePromptMentions.map(item => item.id));
+  const mentions = imagePromptMentionsFromEditor();
+  const mentionIds = mentions.map(item => item.id);
+  const nextMentionIds = new Set(mentionIds);
+  state.imagePromptMentions = mentions;
+  state.refs.image = state.refs.image.filter(id => !previousMentionIds.has(id) || nextMentionIds.has(id));
+  state.refs.image = normalizeImageReferenceIds([...mentionIds, ...state.refs.image.filter(id => !nextMentionIds.has(id))]);
+}
+function removeImagePromptMentionNodes(assetId) {
+  const id = String(assetId || '');
+  const editor = imagePromptEditor();
+  let restoreCaret = null;
+  const selection = window.getSelection();
+  const selectionRange = selection?.rangeCount && editor?.contains(selection.anchorNode) ? selection.getRangeAt(0) : null;
+  editor?.querySelectorAll('[data-image-prompt-mention-id]').forEach(node => {
+    if (node.dataset.imagePromptMentionId !== id) return;
+    let touchesSelection = false;
+    try { touchesSelection = Boolean(selectionRange?.intersectsNode(node)); } catch {}
+    if (touchesSelection && !restoreCaret) restoreCaret = { after:node.nextSibling, before:node.previousSibling };
+    node.remove();
+  });
+  state.imagePromptMentions = state.imagePromptMentions.filter(item => item.id !== id);
+  normalizeEmptyImagePrompt(editor);
+  syncImagePromptState();
+  if (restoreCaret) {
+    if (restoreCaret.after?.isConnected && restoreCaret.after.nodeType === Node.TEXT_NODE) setVideoPromptCaret(editor, restoreCaret.after, 0);
+    else if (restoreCaret.before?.isConnected && restoreCaret.before.nodeType === Node.TEXT_NODE) setVideoPromptCaret(editor, restoreCaret.before, restoreCaret.before.nodeValue.length);
+    else setVideoPromptCaret(editor);
+  }
+}
+function pruneImagePromptMentionsToReferences() {
+  const activeReferenceIds = new Set(state.refs.image);
+  state.imagePromptMentions.filter(item => !activeReferenceIds.has(item.id)).forEach(item => removeImagePromptMentionNodes(item.id));
+}
+function insertImagePromptMentions(assetIds, request = imagePromptMentionRequest) {
+  const editor = request?.editor || imagePromptEditor();
+  if (!editor) return;
+  const selected = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(String))]
+    .map(id => referenceFileById(id))
+    .filter(file => file?.kind === 'image');
+  const existingIds = new Set(imagePromptMentionsFromEditor(editor).map(item => item.id));
+  const files = selected.filter(file => !existingIds.has(file.id));
+  const range = request?.range?.cloneRange?.() || document.createRange();
+  if (!request?.range || !editor.contains(range.startContainer)) { range.selectNodeContents(editor); range.collapse(false); }
+  editor.focus();
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  removeVideoPromptTrigger(range);
+  files.forEach(file => {
+    const holder = document.createElement('span');
+    const mention = { id:file.id, label:file.name, kind:'image' };
+    holder.innerHTML = imagePromptMentionMarkup(mention, file);
+    let chip = holder.firstElementChild;
+    if (!chip) {
+      const label = videoPromptMentionLabel(mention, file);
+      chip = document.createElement('span');
+      chip.className = 'image-prompt-mention';
+      chip.dataset.imagePromptMentionId = String(file.id);
+      chip.dataset.imagePromptMentionLabel = label;
+      chip.dataset.imagePromptMentionKind = 'image';
+      chip.contentEditable = 'false';
+      chip.setAttribute('aria-label', `引用${label}，图片`);
+      chip.textContent = `@${label}`;
+    }
+    range.insertNode(chip);
+    const spacer = document.createTextNode(' ');
+    chip.after(spacer);
+    range.setStart(spacer, spacer.nodeValue.length);
+    range.collapse(true);
+  });
+  selection.removeAllRanges();
+  selection.addRange(range);
+  normalizeEmptyImagePrompt(editor);
+  syncImagePromptMentionsFromEditor();
+  imagePromptMentionRequest = null;
   return { editor, range:range.cloneRange() };
 }
 const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1048576).toFixed(1)} MB`;
@@ -1708,6 +1878,8 @@ function resetDesktopAccountState() {
   state.tasks = [];
   state.generationPreparations = [];
   state.refs = { image:[], video:[] };
+  state.imagePromptMentions = [];
+  state.videoPromptMentions = [];
   state.uploadJobs.splice(0).forEach(job => {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
   });
@@ -2391,6 +2563,7 @@ async function loadTasks({ background=false }={}) {
             .map(desktopLocalClientAsset)
             .filter(Boolean));
         }
+        if (localAssets.length) localFileStateRevision += 1;
         mergeStateFiles(localAssets);
         assetsChanged = localAssets.length > 0;
       }
@@ -2641,7 +2814,7 @@ function continueFromTask(task, target=task.type, includeReference=false) {
   navigate(target);
   const prompt = $(`#${target}Prompt`);
   if (target === 'video') setVideoPromptText(task.prompt || '');
-  else prompt.value = task.prompt || '';
+  else setImagePromptText(task.prompt || '');
   prompt.dispatchEvent(new Event('input', { bubbles:true }));
   if (target === 'image' && task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); } }
   if (target === 'video' && task.type === 'video') {
@@ -2723,6 +2896,7 @@ async function loadFiles({ background=false, loadMore=false }={}) {
   const queryKey = `${state.fileKind}|${search}`;
   const reset = !loadMore || queryKey !== fileQueryKey;
   const requestVersion = reset ? ++fileLoadVersion : fileLoadVersion;
+  const requestLocalStateRevision = localFileStateRevision;
   const cursor = reset ? '' : localFileCursor;
   if (reset) {
     fileQueryKey = queryKey;
@@ -2737,15 +2911,22 @@ async function loadFiles({ background=false, loadMore=false }={}) {
       search,
     });
     if (requestVersion !== fileLoadVersion || queryKey !== fileQueryKey) return state.files;
+    const localStateChanged = requestLocalStateRevision !== localFileStateRevision;
     localFileCursor = page.nextCursor || '';
     localFileHasMore = Boolean(page.nextCursor);
-    localFileTotal = page.total;
+    const pageIds = new Set(page.items.map(file => file.id));
     libraryFiles = reset
-      ? page.items
+      ? localStateChanged
+        ? [...libraryFiles.filter(file => !pageIds.has(file.id)), ...page.items]
+        : page.items
       : [...libraryFiles, ...page.items.filter(file => !libraryFiles.some(item => item.id === file.id))];
+    localFileTotal = localStateChanged ? Math.max(page.total, libraryFiles.length) : page.total;
     if (reset && state.fileKind === 'all' && !search) {
-      state.files = mergeTransientFields(state.files, page.items, ['width','height']);
-      indexedFiles = null;
+      if (localStateChanged) mergeStateFiles(page.items);
+      else {
+        state.files = mergeTransientFields(state.files, page.items, ['width','height']);
+        indexedFiles = null;
+      }
     } else mergeStateFiles(page.items);
     renderFiles();
     renderReferences();
@@ -2789,7 +2970,7 @@ function createUploadJob(file, context, { previewUrl='', mimeType='', deferUploa
   state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
 }
 function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
-function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; state.files=[asset,...state.files.filter(item=>item.id!==asset.id)]; indexedFiles=null; const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
+function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; localFileStateRevision += 1; state.files=[asset,...state.files.filter(item=>item.id!==asset.id)]; indexedFiles=null; const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
 function failUploadJob(job, error) { if (!job) return; job.status='failed'; job.progress=0; job.error=error?.message || '上传失败'; job.label=job.error; notifyUploadSurfaceChanged(); }
 function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); if (shouldRemoveUploadJobLocalAsset(job) && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error)); notifyUploadSurfaceChanged(); }
 function autoSelectUploadedReference(asset, kind, job) {
@@ -2859,6 +3040,7 @@ function clearFileReferences(fileId) {
   state.refs.video = state.refs.video.filter(id => id !== fileId);
   if (state.videoFrames.first === fileId) state.videoFrames.first = '';
   if (state.videoFrames.last === fileId) state.videoFrames.last = '';
+  removeImagePromptMentionNodes(fileId);
   removeVideoPromptMentionNodes(fileId);
 }
 async function removeFile(file) {
@@ -2892,6 +3074,7 @@ document.addEventListener('click', () => $$('[data-menu]').forEach(menu => menu.
 function videoReferenceParameters(modelId=$('#videoModel')?.value) { return videoModelParameters(modelId, 'REFERENCE'); }
 function referenceLimits(modelId=$('#videoModel')?.value) { const parameters = videoReferenceParameters(modelId); const configured = parameters?.referenceLimits; if (configured) return configured; const maxImages = Number(parameters?.maxImages || 0); return { image: maxImages, video: 0, audio: 0, total: maxImages }; }
 function referenceFileKinds(modelId=$('#videoModel')?.value) { const limits = referenceLimits(modelId); return new Set(['image', 'video', 'audio'].filter(kind => Number(limits[kind] || 0) > 0)); }
+function normalizeImageReferenceIds(ids) { return [...new Set(Array.isArray(ids) ? ids : [])].filter(id => referenceFileById(id)?.kind === 'image').slice(0, 7); }
 function pendingReferenceJob(id) { return state.uploadJobs.find(job => job.id === id && job.context === 'reference') || null; }
 function pendingReferenceFile(job) { return job ? { id:job.id, name:job.name, kind:job.kind, mimeType:job.mimeType, size:job.size, url:job.previewUrl, previewUrl:job.previewUrl, pendingUpload:true, localOnly:true } : null; }
 function referenceFileById(id) {
@@ -3068,7 +3251,8 @@ function renderReferences() {
     state.refs.video = normalizeVideoReferenceIds(state.refs.video);
     pruneVideoPromptMentionsToReferences();
   }
-  state.refs.image = state.refs.image.filter(id => referenceFileById(id)?.kind === 'image');
+  state.refs.image = normalizeImageReferenceIds(state.refs.image);
+  pruneImagePromptMentionsToReferences();
   if (state.videoFrames.first && !referenceFileById(state.videoFrames.first)) state.videoFrames.first = '';
   if (state.videoFrames.last && !referenceFileById(state.videoFrames.last)) state.videoFrames.last = '';
   const imageSelected = state.refs.image.map(id => referenceFileById(id)).filter(Boolean);
@@ -3089,6 +3273,7 @@ function renderReferences() {
   $$('.remove-ref[data-target]').forEach(button => button.onclick = () => {
     const id=button.dataset.id;
     state.refs[button.dataset.target] = state.refs[button.dataset.target].filter(item => item !== id);
+    if (button.dataset.target === 'image') removeImagePromptMentionNodes(id);
     if (button.dataset.target === 'video') removeVideoPromptMentionNodes(id);
     if (pendingReferenceJob(id)) removeUploadJob(id);
     if (!videoHasImages()) state.videoGenerationType = 'TEXT';
@@ -3127,6 +3312,7 @@ function openReferenceDialog(target, { mentionRequest = null } = {}) {
   if (target === 'video' && videoGenerationParameters().mode === 'FIRST&LAST') return toast('请分别选择首帧和尾帧图片');
   referenceDialogCommitted=false;
   referenceDialogOriginal={ target, value:[...state.refs[target]] };
+  imagePromptMentionRequest = target === 'image' ? mentionRequest : null;
   videoPromptMentionRequest = target === 'video' ? mentionRequest : null;
   state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
@@ -3134,20 +3320,23 @@ function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
   referenceDialogCommitted=false;
   referenceDialogOriginal={ target:'video-frame', frame, value:state.videoFrames[frame] || '' };
+  imagePromptMentionRequest = null;
   videoPromptMentionRequest = null;
   state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.referenceKind = 'all'; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal();
 }
-function closeReferenceDialog() { videoPromptMentionRequest = null; $('#referenceDialog').close(); }
+function closeReferenceDialog() { imagePromptMentionRequest = null; videoPromptMentionRequest = null; $('#referenceDialog').close(); }
 $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDialog;
-$('#referenceDialog').addEventListener('close', () => { if (!referenceDialogCommitted) { restoreReferenceDialogOriginal(); cleanupUncommittedReferenceJobs(); renderReferences(); } referenceDialogCommitted=false; referenceDialogOriginal=null; videoPromptMentionRequest = null; });
+$('#referenceDialog').addEventListener('close', () => { if (!referenceDialogCommitted) { restoreReferenceDialogOriginal(); cleanupUncommittedReferenceJobs(); renderReferences(); } referenceDialogCommitted=false; referenceDialogOriginal=null; imagePromptMentionRequest = null; videoPromptMentionRequest = null; });
 $('#confirmReference').onclick = () => {
   const pendingCount = state.dialogSelection.filter(id => pendingReferenceJob(id)?.deferUpload).length;
-  const mentionRequest = state.referenceTarget === 'video' ? videoPromptMentionRequest : null;
+  const mentionRequest = state.referenceTarget === 'image' ? imagePromptMentionRequest : state.referenceTarget === 'video' ? videoPromptMentionRequest : null;
   if (state.referenceTarget === 'video-frame') state.videoFrames[state.videoFrameTarget] = state.dialogSelection[0] || '';
   else state.refs[state.referenceTarget] = [...state.dialogSelection];
   let insertion = null;
-  if (mentionRequest) insertion = insertVideoPromptMentions(state.dialogSelection, mentionRequest);
-  else videoPromptMentionRequest = null;
+  if (mentionRequest) insertion = state.referenceTarget === 'image'
+    ? insertImagePromptMentions(state.dialogSelection, mentionRequest)
+    : insertVideoPromptMentions(state.dialogSelection, mentionRequest);
+  else { imagePromptMentionRequest = null; videoPromptMentionRequest = null; }
   cleanupUncommittedReferenceJobs();
   referenceDialogCommitted=true;
   renderReferences(); $('#referenceDialog').close();
@@ -3172,7 +3361,7 @@ function resetReferenceDialogScroll() {
 function renderReferenceDialog() {
   const isFrame = state.referenceTarget === 'video-frame';
   const isVideo = state.referenceTarget === 'video';
-  const promptMentionMode = isVideo && Boolean(videoPromptMentionRequest);
+  const promptMentionMode = ['image', 'video'].includes(state.referenceTarget) && Boolean(isVideo ? videoPromptMentionRequest : imagePromptMentionRequest);
   const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
   const allowedKinds = isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
   if (state.referenceKind !== 'all' && !allowedKinds.has(state.referenceKind)) state.referenceKind = 'all';
@@ -3344,7 +3533,7 @@ $$('.prompt-presets button').forEach(button => button.onclick = () => {
   const form = button.closest('form');
   const prompt = form.querySelector('[contenteditable="true"], textarea');
   if (form.dataset.panel === 'video') setVideoPromptText(button.dataset.preset);
-  else prompt.value = button.dataset.preset;
+  else setImagePromptText(button.dataset.preset);
   prompt.dispatchEvent(new Event('input', { bubbles:true }));
   prompt.focus();
 });
@@ -3353,7 +3542,7 @@ const videoPromptMaxLength = 4096;
 function videoPromptLimit(modelId=$('#videoModel')?.value) { return modelId === 'minimax-h3-15s' ? 10000 : videoPromptMaxLength; }
 const promptMaxHeight = 200;
 function autoResizePrompt(prompt) { if (!prompt) return; prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, promptMaxHeight)}px`; }
-function syncImagePromptState() { const prompt = $('#imagePrompt'); autoResizePrompt(prompt); const count = Array.from(prompt.value).length; const countElement = $('#imagePromptCount'); const overLimit = count > imagePromptMaxLength; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setCustomValidity(overLimit ? `图片提示词不能超过 ${imagePromptMaxLength} 个字符` : ''); $('#imageForm .generate').disabled = overLimit; }
+function syncImagePromptState() { const prompt = imagePromptEditor(); autoResizePrompt(prompt); const count = Array.from(imagePromptText()).length; const countElement = $('#imagePromptCount'); const overLimit = count > imagePromptMaxLength; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setAttribute('aria-invalid', String(overLimit)); prompt.dataset.maxLength = String(imagePromptMaxLength); $('#imageForm .generate').disabled = overLimit; }
 function syncVideoPromptState() {
   const prompt = videoPromptEditor();
   autoResizePrompt(prompt);
@@ -3370,7 +3559,31 @@ function syncVideoPromptState() {
   prompt.dataset.maxLength = String(maxLength);
   $('#videoForm .generate').disabled = overLimit || !$('#videoModel').value || missingImages;
 }
-$('#imagePrompt').oninput = syncImagePromptState;
+function syncImagePromptInput() {
+  const prompt = imagePromptEditor();
+  const previousReferenceIds = [...state.refs.image];
+  normalizeEmptyImagePrompt(prompt);
+  syncImagePromptMentionsFromEditor();
+  syncImagePromptState();
+  if (previousReferenceIds.length !== state.refs.image.length || previousReferenceIds.some(id => !state.refs.image.includes(id))) renderReferences();
+  if (imagePromptMentionRequest || !videoPromptTriggerAtCaret(prompt)) return;
+  const selection = window.getSelection();
+  imagePromptMentionRequest = { editor:prompt, range:selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null };
+  openReferenceDialog('image', { mentionRequest:imagePromptMentionRequest });
+}
+$('#imagePrompt').addEventListener('compositionstart', () => { $('#imagePrompt').dataset.composing = 'true'; });
+$('#imagePrompt').addEventListener('compositionend', () => {
+  const editor = imagePromptEditor();
+  editor.dataset.composing = 'false';
+  cancelAnimationFrame(imagePromptCompositionFrame);
+  imagePromptCompositionFrame = requestAnimationFrame(() => syncImagePromptInput());
+});
+$('#imagePrompt').addEventListener('keydown', event => { removeImagePromptMentionAtCaret(imagePromptEditor(), event); });
+$('#imagePrompt').oninput = event => {
+  const editor = imagePromptEditor();
+  if (event.isComposing || event.inputType === 'insertCompositionText' || editor.dataset.composing === 'true') return;
+  syncImagePromptInput();
+};
 function syncVideoPromptInput() {
   const prompt = videoPromptEditor();
   const previousReferenceIds = [...state.refs.video];
@@ -3403,7 +3616,9 @@ function replacePendingReferenceId(oldId, newId) {
   if (state.videoFrames.first === oldId) state.videoFrames.first=newId;
   if (state.videoFrames.last === oldId) state.videoFrames.last=newId;
   state.dialogSelection=replace(state.dialogSelection);
+  state.imagePromptMentions=state.imagePromptMentions.map(item => item.id === oldId ? { ...item, id:newId } : item);
   state.videoPromptMentions=state.videoPromptMentions.map(item => item.id === oldId ? { ...item, id:newId } : item);
+  $('#imagePrompt')?.querySelectorAll(`[data-image-prompt-mention-id="${CSS.escape(oldId)}"]`).forEach(node => { node.dataset.imagePromptMentionId=newId; });
   $('#videoPrompt')?.querySelectorAll(`[data-video-prompt-mention-id="${CSS.escape(oldId)}"]`).forEach(node => { node.dataset.videoPromptMentionId=newId; });
 }
 async function uploadPendingReferenceJob(job) {
@@ -3491,8 +3706,8 @@ async function submitGeneration(type, form, payload) {
     state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
     renderTasks();
     setCreditBalance(result.balance);
-    if (type === 'video') setVideoPromptText(''); else form.querySelector('textarea').value = '';
-    (type === 'video' ? videoPromptEditor() : form.querySelector('textarea')).dispatchEvent(new Event('input', { bubbles:true }));
+    if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
+    (type === 'video' ? videoPromptEditor() : imagePromptEditor()).dispatchEvent(new Event('input', { bubbles:true }));
     state.refs[type] = [];
     if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
     renderReferences();
@@ -3520,7 +3735,7 @@ async function submitGeneration(type, form, payload) {
   }
   finally { generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
-$('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
+$('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptInput(); const prompt = imagePromptText(); if (!prompt.trim()) return toast('请填写创作描述'); if (Array.from(prompt).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:replaceAssetMentions(prompt, state.imagePromptMentions), size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
 $('#imageQuantity').onchange = () => commitImageQuantity($('#imageQuantity').value);
 $('#imageQuantityDecrease').onclick = () => changeImageQuantity(-1);

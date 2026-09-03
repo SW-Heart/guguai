@@ -16,6 +16,27 @@ export function desktopMediaPayload(file) {
   };
 }
 
+// Cloud change records describe remote metadata only. Once the desktop has
+// verified a local file, a later server upsert must not replace its local URL
+// or readiness fields and make a completed generation look unsynced again.
+export function mergeDesktopAssetRecord(existing, incoming) {
+  if (!existing || !incoming) return incoming;
+  const locallySaved = existing.localStatus === 'saved' && String(existing.url || '').startsWith('gugu-media://');
+  if (!locallySaved) return incoming;
+  const remoteUrl = String(incoming.remoteUrl || incoming.url || existing.remoteUrl || '');
+  return {
+    ...incoming,
+    ...(existing.localId ? { localId:existing.localId } : {}),
+    ...(existing.cloudAssetId ? { cloudAssetId:existing.cloudAssetId } : {}),
+    url: existing.url,
+    localStatus: 'saved',
+    ...(existing.localPath ? { localPath:existing.localPath } : {}),
+    ...(existing.relativePath ? { relativePath:existing.relativePath } : {}),
+    localOnly: Boolean(existing.localOnly),
+    ...(remoteUrl ? { remoteUrl } : {}),
+  };
+}
+
 export function isRemoteReferenceReady(file) {
   return Boolean(file && !file.localOnly && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
 }

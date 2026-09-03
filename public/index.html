@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=185">
+  <link rel="stylesheet" href="/styles.css?v=186">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
@@ -108,7 +108,7 @@
 
     <aside id="creatorPanel" class="creator-panel">
       <form id="imageForm" class="generator-form" data-panel="image">
-        <label class="field-label" for="imagePrompt">创作描述</label><div class="prompt-box"><textarea id="imagePrompt" required maxlength="5000" placeholder="描述商品、场景、光线与构图…"></textarea><div class="prompt-box-meta"><span class="prompt-count"><b id="imagePromptCount">0</b> / 5000</span></div></div>
+        <span id="imagePromptLabel" class="field-label">创作描述</span><div class="prompt-box"><div id="imagePrompt" class="rich-prompt-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="imagePromptLabel" data-placeholder="描述商品、场景、光线与构图，或@参考图片"></div><div class="prompt-box-meta"><span class="prompt-count"><b id="imagePromptCount">0</b> / 5000</span></div></div>
         <div class="prompt-presets" aria-label="常用商品图场景"><button type="button" data-preset="纯色影棚背景，商品居中，柔和棚拍光，干净商业摄影，高级质感">白底主图</button><button type="button" data-preset="商品置于精致生活方式场景，自然侧光，真实材质，适合品牌详情页">场景图</button><button type="button" data-preset="商品微距特写，突出材质纹理与工艺细节，商业广告摄影">细节特写</button></div>
         <div class="reference-head"><span class="field-label">参考图片</span></div><div id="imageReferences" class="reference-strip"><button class="add-reference pick-reference" data-target="image" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button></div>
         <div class="control-section"><span class="field-label">画布比例</span><div class="ratio-grid" data-select="imageSize">
@@ -206,6 +206,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js?v=213"></script>
+  <script type="module" src="/app.js?v=215"></script>
 </body>
 </html>

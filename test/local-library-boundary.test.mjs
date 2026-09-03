@@ -40,9 +40,9 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=213/);
-  assert.match(index, /\/styles\.css\?v=185/);
-  assert.match(app, /\.\/desktop-media-sync\.js\?v=7/);
+  assert.match(index, /\/app\.js\?v=215/);
+  assert.match(index, /\/styles\.css\?v=186/);
+  assert.match(app, /\.\/desktop-media-sync\.js\?v=8/);
   assert.match(app, /\.\/drama-studio\.js\?v=70/);
 });
 
@@ -53,6 +53,15 @@ test('pending video references always insert a real mention node', () => {
   assert.match(insertSource, /videoPromptMentionMarkup\(mention, file\)/);
   assert.match(insertSource, /if \(!chip\) \{/);
   assert.ok(insertSource.indexOf('if (!chip) {') < insertSource.indexOf('range.insertNode(chip)'));
+});
+
+test('image prompt supports reference mentions and compiles them before submission', () => {
+  assert.match(index, /id="imagePrompt" class="rich-prompt-editor" contenteditable="true"/);
+  assert.match(app, /function insertImagePromptMentions\(/);
+  assert.match(app, /openReferenceDialog\('image', \{ mentionRequest:imagePromptMentionRequest \}\)/);
+  assert.match(app, /prompt:replaceAssetMentions\(prompt, state\.imagePromptMentions\)/);
+  assert.match(app, /data-image-prompt-mention-id/);
+  assert.match(app, /button\.dataset\.target === 'image'\) removeImagePromptMentionNodes/);
 });
 
 test('desktop updater uses single-range differential downloads for Aliyun OSS', () => {
@@ -112,6 +121,19 @@ test('generation polling resolves completed media from the local index only', ()
   assert.match(loadTasksSource, /media\.listLocalByCloudIds\(missingAssetIds\.slice\(index, index \+ 500\)\)/);
   assert.doesNotMatch(loadTasksSource, /api\(`\/api\/files\//);
   assert.doesNotMatch(loadTasksSource, /queueDesktopHydration/);
+});
+
+test('a completed desktop hydration invalidates older local-library snapshots', () => {
+  const applyStart = app.indexOf('function applyDesktopLocalAsset(');
+  const applyEnd = app.indexOf('\nasync function removeDesktopCloudAssets', applyStart);
+  const applySource = app.slice(applyStart, applyEnd);
+  const loadFilesStart = app.indexOf('async function loadFiles(');
+  const loadFilesEnd = app.indexOf('\nfunction assetDisplayName', loadFilesStart);
+  const loadFilesSource = app.slice(loadFilesStart, loadFilesEnd);
+  assert.match(app, /mergeDesktopAssetRecord\(previousById\.get\(file\.id\), file\)/);
+  assert.ok(applySource.indexOf('localFileStateRevision += 1') < applySource.indexOf('mergeStateFiles([file])'));
+  assert.match(loadFilesSource, /const localStateChanged = requestLocalStateRevision !== localFileStateRevision/);
+  assert.match(loadFilesSource, /if \(localStateChanged\) mergeStateFiles\(page\.items\)/);
 });
 
 test('targeted missing-file repairs bypass stale local-ready delivery state', () => {

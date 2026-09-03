@@ -8,10 +8,34 @@ import {
   desktopMediaPayload,
   isAwaitingDesktopDelivery,
   isRemoteReferenceReady,
+  mergeDesktopAssetRecord,
   needsReferenceUpload,
   shouldHydrateDesktopAsset,
   shouldRemoveUploadJobLocalAsset,
 } from '../public/desktop-media-sync.js';
+
+test('cloud local-ready upserts cannot replace a verified desktop copy', () => {
+  const local = {
+    id:'cloud-1', cloudAssetId:'cloud-1', localId:'local-1', name:'old.png',
+    url:'gugu-media://asset/local-1', remoteUrl:'/api/files/cloud-1/content',
+    localStatus:'saved', localPath:'library/old.png', relativePath:'library/old.png',
+    remoteStatus:'pending', deliveryStatus:'awaiting_local',
+  };
+  const upsert = {
+    id:'cloud-1', name:'renamed.png', url:'/api/files/cloud-1/content',
+    directUrl:'/api/files/cloud-1/direct', remoteStatus:'local_only', deliveryStatus:'local_ready',
+  };
+
+  const merged = mergeDesktopAssetRecord(local, upsert);
+  assert.equal(merged.name, 'renamed.png');
+  assert.equal(merged.deliveryStatus, 'local_ready');
+  assert.equal(merged.localStatus, 'saved');
+  assert.equal(merged.localId, 'local-1');
+  assert.equal(merged.localPath, 'library/old.png');
+  assert.equal(merged.url, 'gugu-media://asset/local-1');
+  assert.equal(merged.remoteUrl, '/api/files/cloud-1/content');
+  assert.equal(shouldHydrateDesktopAsset(merged), false);
+});
 
 test('desktop folder reveal payload distinguishes cloud, hydrated, and local-only assets', () => {
   assert.deepEqual(desktopMediaPayload({ id:'cloud-1', name:'历史图片.png', kind:'image', mimeType:'image/png' }), {
