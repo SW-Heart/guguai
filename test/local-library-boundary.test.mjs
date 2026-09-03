@@ -38,8 +38,8 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=201/);
-  assert.match(app, /\.\/drama-studio\.js\?v=64/);
+  assert.match(index, /\/app\.js\?v=203/);
+  assert.match(app, /\.\/drama-studio\.js\?v=67/);
 });
 
 test('historical receive resumes from a per-page checkpoint and acknowledges in batches', () => {

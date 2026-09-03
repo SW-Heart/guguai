@@ -111,10 +111,11 @@ test('video task progress only renders valid, queryable percentages', () => {
   assert.equal(videoTaskProgress({ progress: 101 }), null);
 });
 
-test('video preview only spins for genuinely active or syncing tasks', () => {
+test('video preview stays in generation state until the local asset is ready', () => {
   assert.equal(videoPreviewVersionState({ status:'queued' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'running' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'completed' }, { syncing:true }), 'syncing');
+  assert.equal(videoPreviewVersionState({ status:'completed', assetId:'asset-1' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'failed' }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'failed' }, { ready:true, syncing:true }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'completed' }), 'missing');
