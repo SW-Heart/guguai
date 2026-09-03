@@ -67,6 +67,9 @@ const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
 const videoMaxPollDurationMs = Math.max(60_000, Number(process.env.VIDEO_MAX_POLL_DURATION_MS || 60 * 60_000));
+const imagePollIntervalMs = Math.max(10, Number(process.env.IMAGE_POLL_INTERVAL_MS || 6_000));
+const imageMaxPollDurationMs = Math.max(imagePollIntervalMs, Number(process.env.IMAGE_MAX_POLL_DURATION_MS || 10 * 60_000));
+const providerSubmissionShutdownGraceMs = Math.max(1_000, Number(process.env.PROVIDER_SUBMISSION_SHUTDOWN_GRACE_MS || 15_000));
 const oaiMaxPollDurationMs = Math.max(oaiPollIntervalMs, Number(process.env.OAI_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
 const oaiMaxPolls = Math.max(1, Math.ceil(oaiMaxPollDurationMs / oaiPollIntervalMs));
 const ttapiPollIntervalMs = 8_000;
@@ -147,6 +150,7 @@ const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
 
 const activeGenerations = new Map();
+const pendingProviderSubmissions = new Set();
 const generationRetryTimers = new Map();
 const providerTaskIdTimeoutTimers = new Map();
 const assetRestores = new Map();
@@ -310,7 +314,8 @@ function publicGeneration(task) {
   const failure = task.status === 'failed'
     ? { code: generationFailureCode(task), ...generationFailureCatalog[generationFailureCode(task)] }
     : null;
-  const progressStage = task.status !== 'running' ? task.status
+  const progressStage = task.awaitingReferences ? 'preparing_references'
+    : task.status !== 'running' ? task.status
     : task.submissionUncertain ? 'awaiting_reconciliation'
       : task.archivePending ? 'archiving'
         : task.lastPollError ? 'polling_retry'
@@ -489,7 +494,81 @@ async function fetchJson(url, options = {}) {
   }
   return value;
 }
-async function createImage(task, refs) { const payload = { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality }; if (refs.length) payload.image = refs.slice(0, 7); const created = await fetchJson(`${duomiBase}/v1/images/generations?async=true`, { method: 'POST', headers: { Authorization: process.env.DUOMI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const taskId = created.id || created.task_id; if (!taskId) throw new Error('图片任务没有返回任务 ID'); for (let i = 0; i < 100; i++) { await sleep(6000); const state = await fetchJson(`${duomiBase}/v1/tasks/${taskId}`, { headers: { Authorization: process.env.DUOMI_API_KEY } }); if (state.state === 'succeeded') return { taskId, url: state.data?.images?.[0]?.url }; if (['error', 'failed'].includes(state.state)) throw new Error(state.message || '图片生成失败'); } throw new Error('图片任务等待超时'); }
+function trackProviderSubmission(operation) {
+  const tracked = Promise.resolve(operation);
+  pendingProviderSubmissions.add(tracked);
+  void tracked.finally(() => pendingProviderSubmissions.delete(tracked)).catch(() => {});
+  return tracked;
+}
+async function waitForProviderSubmissions(timeoutMs = providerSubmissionShutdownGraceMs) {
+  const submissions = [...pendingProviderSubmissions];
+  if (!submissions.length) return { pending:0, timedOut:false };
+  let timeout;
+  const timedOut = await Promise.race([
+    Promise.allSettled(submissions).then(() => false),
+    new Promise(resolve => { timeout = setTimeout(() => resolve(true), Math.max(1, timeoutMs)); }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  return { pending:pendingProviderSubmissions.size, timedOut };
+}
+async function pollDuomiImage(taskId, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false } = {}) {
+  let consecutiveErrors = 0;
+  let firstRequest = true;
+  for (;;) {
+    let remainingMs = videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs);
+    if (remainingMs <= 0 && !(firstRequest && allowExpiredFinalCheck)) throw videoPollTimeoutError('图片', taskId);
+    if (!(firstRequest && immediate)) {
+      await sleep(Math.min(imagePollIntervalMs, Math.max(1, remainingMs)));
+      remainingMs = videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs);
+    }
+    firstRequest = false;
+    let state;
+    try {
+      state = await fetchJson(`${duomiBase}/v1/tasks/${encodeURIComponent(taskId)}`, {
+        headers: { Authorization: process.env.DUOMI_API_KEY },
+        signal:remainingMs > 0
+          ? videoPollRequestSignal('图片', taskId, pollStartedAt, imageMaxPollDurationMs, 60_000)
+          : AbortSignal.timeout(60_000),
+      });
+      consecutiveErrors = 0;
+      await hooks.onPollRecovered?.();
+    } catch (error) {
+      if ([401, 403].includes(Number(error.upstreamStatus))) {
+        throw Object.assign(error, { provider:'duomi', providerTaskId:taskId, upstreamTerminal:true });
+      }
+      if (videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs) <= 0) throw videoPollTimeoutError('图片', taskId);
+      consecutiveErrors += 1;
+      await hooks.onPollError?.({ consecutiveErrors, detail:error.message });
+      console.error('[image] Duomi poll transport failure; task remains active', { taskId, consecutiveErrors, detail:error.message });
+      continue;
+    }
+    const status = String(state.state || state.status || '').toLowerCase();
+    if (['succeeded', 'completed', 'success', 'done'].includes(status)) {
+      return { provider:'duomi', taskId, url:state.data?.images?.[0]?.url || state.data?.url || state.url };
+    }
+    if (['error', 'failed', 'failure', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
+      throw Object.assign(new Error(errorMessage(state.message || state.error || state, '图片生成失败')), {
+        provider:'duomi', providerTaskId:taskId, upstreamTerminal:true,
+      });
+    }
+  }
+}
+async function createImage(task, refs, hooks = {}) {
+  const payload = { model:task.model, prompt:task.prompt, size:task.size, quality:task.quality };
+  if (refs.length) payload.image = refs.slice(0, 7);
+  const taskId = await trackProviderSubmission((async () => {
+    const created = await fetchJson(`${duomiBase}/v1/images/generations?async=true`, {
+      method:'POST',
+      headers:{ Authorization:process.env.DUOMI_API_KEY, 'Content-Type':'application/json' },
+      body:JSON.stringify(payload),
+    });
+    const submittedTaskId = created.id || created.task_id;
+    if (!submittedTaskId) throw new Error('图片任务没有返回任务 ID');
+    await hooks.onSubmitted?.({ provider:'duomi', taskId:String(submittedTaskId) });
+    return String(submittedTaskId);
+  })());
+  return pollDuomiImage(taskId, hooks, videoPollStartedAt(task));
+}
 async function createDuomiVideo(task, refs) {
   let taskId = '';
   let pollStartedAt = 0;
@@ -1673,11 +1752,25 @@ async function archiveGenerationResult(userId, task, resultUrl) {
     const localFile = path.join(jobDir, storageName);
     const downloadHeaders = generationSourceHeaders(task, resultUrl);
     const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
+    // The desktop may acknowledge the direct download while this fallback is
+    // fetching the same upstream file. Never overwrite that newer local-ready
+    // record with the snapshot captured before the download started.
+    const beforeUpload = findAsset(userId, assetId);
+    const currentTask = findGeneration(userId, task.id);
+    if (beforeUpload?.deliveryStatus === 'local_ready' || currentTask?.localReadyAt) return;
+    const objectKey = beforeUpload?.objectKey || assetObjectKey(userId, storageName);
+    await putObject(objectKey, localFile, saved.contentType);
+    const latest = findAsset(userId, assetId);
+    const latestTask = findGeneration(userId, task.id);
+    if (latest?.deliveryStatus === 'local_ready' || latestTask?.localReadyAt) {
+      if (!beforeUpload?.objectKey) await deleteObject(objectKey).catch(error => console.warn('[generation] 清理并发归档对象失败', { generationId:task.id, message:error.message }));
+      return;
+    }
     const asset = {
-      ...(existing || {}),
+      ...(latest || beforeUpload || existing || {}),
       id: assetId,
       ownerId: userId,
-      name: existing?.name || generationAssetName(task, extension),
+      name: latest?.name || beforeUpload?.name || existing?.name || generationAssetName(task, extension),
       kind: task.type,
       mimeType: saved.contentType,
       size: saved.size,
@@ -1688,10 +1781,12 @@ async function archiveGenerationResult(userId, task, resultUrl) {
       sourceRequiresAuth: Boolean(task.sourceRequiresAuth),
       deliveryStatus: 'remote_backed_up',
       remoteStatus: 'ready',
-      createdAt: existing?.createdAt || now(),
+      objectKey,
+      objectUploadedAt: now(),
+      createdAt: latest?.createdAt || beforeUpload?.createdAt || existing?.createdAt || now(),
       updatedAt: now(),
     };
-    await uploadAssetFile(userId, asset, localFile);
+    await saveAsset(userId, asset);
     task.assetId = assetId;
     task.status = 'completed';
     task.error = '';
@@ -1707,6 +1802,36 @@ function progressPersistenceHooks(userId, task) {
     onProgressAbsent: async () => {
       if (!Object.prototype.hasOwnProperty.call(task, 'progress')) return;
       delete task.progress;
+      await saveGeneration(userId, task);
+    },
+  };
+}
+function duomiImagePersistenceHooks(userId, task) {
+  return {
+    onSubmitted: async ({ provider, taskId }) => {
+      clearProviderTaskIdTimeout(task.id);
+      task.provider = provider;
+      task.providerTaskId = taskId;
+      task.submittedAt ||= now();
+      task.submissionUncertain = false;
+      task.error = '';
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
+      await saveGenerationWithRetry(userId, task, 'duomi-image-submitted');
+    },
+    onPollError: async ({ consecutiveErrors, detail }) => {
+      task.status = 'running';
+      task.lastPollError = detail;
+      task.lastPollErrorAt = now();
+      task.pollFailureCount = consecutiveErrors;
+      await saveGeneration(userId, task);
+    },
+    onPollRecovered: async () => {
+      if (!task.lastPollError && !task.pollFailureCount) return;
+      task.lastPollError = '';
+      task.lastPollErrorAt = null;
+      task.pollFailureCount = 0;
       await saveGeneration(userId, task);
     },
   };
@@ -1818,33 +1943,44 @@ function scheduleGenerationArchive(userId, task) {
   generationRetryTimers.set(task.id, timer);
 }
 async function archiveGenerationWithRetry(userId, task) {
-  if (!task.archivePending || task.localReadyAt) return true;
+  let current = findGeneration(userId, task.id) || task;
+  if (!current.archivePending || current.localReadyAt) { Object.assign(task, current); return true; }
   let failures = Number(task.archiveFailureCount) || 0;
   for (let attempt = 1; attempt <= archiveAttemptsPerRun; attempt++) {
     try {
-      await archiveGenerationResult(userId, task, task.sourceUrl);
-      task.archiveFailureCount = 0;
-      task.archivePending = false;
-      task.localDeliveryDeadlineAt = '';
-      task.lastArchiveError = '';
-      task.lastArchiveErrorAt = null;
+      await archiveGenerationResult(userId, current, current.sourceUrl);
+      current = findGeneration(userId, task.id) || current;
+      current.archiveFailureCount = 0;
+      current.archivePending = false;
+      current.localDeliveryDeadlineAt = '';
+      current.lastArchiveError = '';
+      current.lastArchiveErrorAt = null;
+      current.status = 'completed';
+      current.error = '';
+      current.finishedAt ||= now();
+      await saveGenerationWithRetry(userId, current, 'archive-completed');
+      Object.assign(task, current);
       return true;
     } catch (error) {
+      current = findGeneration(userId, task.id) || current;
+      if (current.localReadyAt || !current.archivePending) { Object.assign(task, current); return true; }
       failures++;
-      task.status = 'running';
-      task.archiveFailureCount = failures;
-      task.lastArchiveError = error.message;
-      task.lastArchiveErrorAt = now();
-      await saveGeneration(userId, task);
+      current.status = 'running';
+      current.archiveFailureCount = failures;
+      current.lastArchiveError = error.message;
+      current.lastArchiveErrorAt = now();
+      await saveGeneration(userId, current);
+      Object.assign(task, current);
       console.error('[generation] archive retry scheduled', { generationId: task.id, failures, message: error.message });
       if (attempt < archiveAttemptsPerRun) {
         await sleep(Math.min(2_000 * 2 ** Math.min(attempt - 1, 5), generationRetryMaxDelayMs));
       }
     }
   }
-  task.archivePending = true;
-  await saveGenerationWithRetry(userId, task, 'archive-deferred');
-  scheduleGenerationArchive(userId, task);
+  current.archivePending = true;
+  await saveGenerationWithRetry(userId, current, 'archive-deferred');
+  Object.assign(task, current);
+  scheduleGenerationArchive(userId, current);
   return false;
 }
 async function completeGenerationResult(userId, task, result) {
@@ -1932,7 +2068,9 @@ function startGeneration(userId, task) {
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
-      const hooks = task.routeId
+      const hooks = task.type === 'image' && task.provider === 'duomi'
+        ? duomiImagePersistenceHooks(userId, task)
+        : task.routeId
         ? routedPersistenceHooks(userId, task)
         : task.provider === 'ttapi'
         ? ttapiPersistenceHooks(userId, task)
@@ -1941,7 +2079,7 @@ function startGeneration(userId, task) {
           : task.provider === 'autodl'
             ? autodlPersistenceHooks(userId, task)
             : {};
-      const result = task.type === 'image' ? await createImage(task, refs) : await createVideo(task, refs, hooks);
+      const result = task.type === 'image' ? await createImage(task, refs, hooks) : await createVideo(task, refs, hooks);
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
       await completeGenerationResult(userId, task, result);
     } catch (error) {
@@ -1954,7 +2092,7 @@ function startGeneration(userId, task) {
         task.error = error.message;
         task.creditStatus = 'charged';
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if ((task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
+      } else if ((task.type === 'image' || task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
         task.status = 'running';
         task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
         task.creditStatus = 'charged';
@@ -1969,6 +2107,34 @@ function startGeneration(userId, task) {
         activeGenerations.delete(task.id);
         scheduleProviderTaskIdTimeout(userId, task);
       }
+    }
+  })();
+  activeGenerations.set(task.id, promise);
+  return promise;
+}
+function resumeDuomiImageGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
+  const promise = (async () => {
+    try {
+      task.status = 'running';
+      task.finishedAt = null;
+      task.error = '';
+      await saveGenerationWithRetry(userId, task, 'duomi-image-recovery-running');
+      const result = await pollDuomiImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true });
+      if (!result.url) throw Object.assign(new Error('图片任务完成，但没有返回结果地址'), { upstreamTerminal:true });
+      await completeGenerationResult(userId, task, result);
+    } catch (error) {
+      if (error.upstreamTerminal) await failGeneration(userId, task, error);
+      else {
+        task.status = 'running';
+        task.error = `图片任务恢复暂时中断，将在服务重启后继续：${error.message}`;
+        task.creditStatus = 'charged';
+        console.error('[image] Duomi recovery paused without refund', { generationId:task.id, providerTaskId:task.providerTaskId, message:error.message });
+      }
+    } finally {
+      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      try { await saveGenerationWithRetry(userId, task, 'duomi-image-recovery-final'); }
+      finally { activeGenerations.delete(task.id); }
     }
   })();
   activeGenerations.set(task.id, promise);
@@ -2089,6 +2255,7 @@ function resumeGenerationArchive(userId, task) {
       await archiveGenerationWithRetry(userId, task);
       task.creditStatus = 'charged';
     } finally {
+      Object.assign(task, findGeneration(userId, task.id) || task);
       task.finishedAt = task.status === 'completed' ? now() : null;
       try { await saveGenerationWithRetry(userId, task, 'archive-recovery-final'); }
       finally { activeGenerations.delete(task.id); }
@@ -2108,11 +2275,20 @@ async function recoverPendingGenerations() {
   let awaitingReconciliation = 0;
 
   for (const { userId, task } of pending) {
-    if (task.archivePending && task.sourceUrl && !task.localReadyAt) {
+    if (task.awaitingReferences) {
+      task.awaitingReferences = false;
+      await failGeneration(userId, task, new Error('素材准备因服务重启而中断'));
+      task.finishedAt = now();
+      saveGeneration(userId, task);
+      refunded++;
+    } else if (task.archivePending && task.sourceUrl && !task.localReadyAt) {
       const deadline = Date.parse(task.localDeliveryDeadlineAt || '');
       if (Number.isFinite(deadline) && deadline > Date.now()) scheduleGenerationArchive(userId, task);
       else resumeGenerationArchive(userId, task);
       archiving++;
+    } else if (task.type === 'image' && task.provider === 'duomi' && task.providerTaskId) {
+      resumeDuomiImageGeneration(userId, task);
+      polling++;
     } else if (task.routeId && task.providerTaskId) {
       resumeRoutedGeneration(userId, task);
       polling++;
@@ -2205,7 +2381,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2826,10 +3002,13 @@ const server = http.createServer(async (req, res) => {
       const size = type === 'image' ? String(input.size || '16:9') : null;
       if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error: '不支持的图片比例' });
       const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
+      const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
+      const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
+      const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;
       let aspectRatio = null; let duration = null; let videoRequest = null;
-      if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
-      const referenceCounts = referenceAssetCounts(user.id, referenceAssetIds);
+      if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
+      const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
+      const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds);
       if (referenceCounts.image && !r2ReferenceConfigured) {
         return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用：R2 临时参考图存储尚未配置` });
       }
@@ -2898,6 +3077,7 @@ const server = http.createServer(async (req, res) => {
         creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro,
         pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue,
         creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '',
+        ...(deferredReferences ? { awaitingReferences:true, expectedReferenceCounts:referenceCounts, progressStage:'preparing_references' } : {}),
         createdAt: now(), updatedAt: now(), finishedAt: null,
       }));
       const existingTasks = tasks.map(task => findGeneration(user.id, task.id));
@@ -2931,10 +3111,48 @@ const server = http.createServer(async (req, res) => {
         dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id;
         await saveDramaProject(user.id, dramaProject);
       }
-      effectiveTasks.forEach(task => { if (task.status === 'queued') startGeneration(user.id, task); });
+      effectiveTasks.forEach(task => { if (task.status === 'queued' && !task.awaitingReferences) startGeneration(user.id, task); });
       const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
       if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(effectiveTasks[0]), balance: charged.balance, ...boundProject });
       return sendJson(res, 202, { tasks: effectiveTasks.map(publicGeneration), quantity, balance: charged.balance, ...boundProject });
+    }
+    if (url.pathname === '/api/generations/references/complete' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const input = await bodyJson(req);
+      const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
+      if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待启动生成任务无效' });
+      const tasks = taskIds.map(id => findGeneration(user.id, id));
+      if (tasks.some(task => !task || !task.awaitingReferences || task.status !== 'queued')) return sendJson(res, 409, { error:'生成任务已启动或不再等待素材' });
+      const first = tasks[0];
+      if (tasks.some(task => task.type !== first.type || task.requestId !== first.requestId)) return sendJson(res, 400, { error:'待启动生成任务不属于同一批次' });
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, first.referenceLimits);
+      const actualCounts = referenceAssetCounts(user.id, referenceAssetIds);
+      const expectedCounts = normalizeQuoteReferenceCounts(first.expectedReferenceCounts);
+      if (['image','video','audio'].some(kind => actualCounts[kind] !== expectedCounts[kind])) return sendJson(res, 409, { error:'上传后的素材类型或数量与扣费时不一致，请重新生成' });
+      for (const task of tasks) {
+        task.referenceAssetIds = referenceAssetIds;
+        task.awaitingReferences = false;
+        task.progressStage = 'submitting';
+        saveGeneration(user.id, task);
+        startGeneration(user.id, task);
+      }
+      const wallet = walletOf(user.id);
+      return sendJson(res, 202, { tasks:tasks.map(publicGeneration), balance:wallet.balance });
+    }
+    if (url.pathname === '/api/generations/references/cancel' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const input = await bodyJson(req);
+      const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
+      if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待取消生成任务无效' });
+      const tasks = taskIds.map(id => findGeneration(user.id, id)).filter(task => task?.awaitingReferences && task.status === 'queued');
+      for (const task of tasks) {
+        task.awaitingReferences = false;
+        await failGeneration(user.id, task, new Error(String(input.error || '素材准备失败').slice(0, 300)));
+        task.finishedAt = now();
+        saveGeneration(user.id, task);
+      }
+      const wallet = walletOf(user.id);
+      return sendJson(res, 200, { tasks:tasks.map(publicGeneration), balance:wallet.balance });
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {
@@ -3275,16 +3493,22 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
   // Checkpoint the WAL on the way out so the .db file is self-contained.
   let shuttingDown = false;
   for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, () => {
+    process.on(signal, async () => {
       if (shuttingDown) return;
       shuttingDown = true;
       clearInterval(sessionSweeper);
       clearInterval(uploadSweeper);
-      server.close(() => {
-        try { closeDatabase(); } catch (error) { console.error('关闭数据库失败', error); }
-        process.exit(0);
-      });
-      setTimeout(() => process.exit(0), 5000).unref();
+      server.close();
+      const forceExitTimer = setTimeout(() => process.exit(0), providerSubmissionShutdownGraceMs + 5_000);
+      try {
+        const result = await waitForProviderSubmissions();
+        if (result.timedOut) console.warn('[shutdown] 等待上游任务号落库超时', { pending:result.pending });
+      } catch (error) {
+        console.error('[shutdown] 等待上游任务号落库失败', error);
+      }
+      try { closeDatabase(); } catch (error) { console.error('关闭数据库失败', error); }
+      clearTimeout(forceExitTimer);
+      process.exit(0);
     });
   }
 }

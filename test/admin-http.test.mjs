@@ -7,7 +7,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 
-import { closeDatabase, openDatabase, resetForTests } from '../lib/db.mjs';
+import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { hashPassword } from '../lib/auth.mjs';
 import { adjustCredits, chargeGenerationMicro, refundGenerationMicro } from '../lib/ledger.mjs';
 import { insertUser } from '../lib/store.mjs';
@@ -65,6 +65,12 @@ test('admin HTTP permissions and core workflows', async t => {
   await adjustCredits(refundedUserId, 10_000_000, { actorUserId: adminId, idempotencyKey: 'seed-refund-user-balance', reasonCode: 'promotion' });
   await chargeGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
+  const paymentDoc = JSON.stringify({ source: 'admin-http-test' });
+  sql(`INSERT INTO alipay_payment_orders(out_trade_no, user_id, status, subject, total_amount_fen, credits_micro, refunded_amount_fen, alipay_trade_no, paid_at, created_at, updated_at, doc_json)
+       VALUES('ORDER-PAID-1', :userId, 'PAID', 'GuGu AI 50 积分', 500, 50000000, 0, 'ALI-PAID-1', '2026-08-20T10:00:00.000Z', '2026-08-20T09:59:00.000Z', '2026-08-20T10:00:00.000Z', :docJson),
+             ('ORDER-REFUNDED-1', :userId, 'REFUNDED', 'GuGu AI 20 积分', 200, 20000000, 200, 'ALI-REFUNDED-1', '2026-08-21T10:00:00.000Z', '2026-08-21T09:59:00.000Z', '2026-08-21T10:00:00.000Z', :docJson),
+             ('ORDER-PENDING-1', :userId, 'PENDING_PAYMENT', 'GuGu AI 10 积分', 100, 10000000, 0, NULL, NULL, '2026-08-22T09:59:00.000Z', '2026-08-22T09:59:00.000Z', :docJson)`)
+    .run({ userId: refundedUserId, docJson: paymentDoc });
   closeDatabase({ checkpoint: false });
 
   const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -90,6 +96,16 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.ok(routes.data.channels.some(item => item.id === 'diw-main'));
   const overviewAfterRefund = await admin.call('/api/admin/overview');
   assert.equal(overviewAfterRefund.data.credits.spent, 0);
+  const paidOrders = await admin.call('/api/admin/payment-orders');
+  assert.equal(paidOrders.response.status, 200);
+  assert.deepEqual(paidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1', 'ORDER-PAID-1']);
+  assert.deepEqual(paidOrders.data.summary, { payingUsers: 1, totalAmount: 7, refundedAmount: 2, netAmount: 5 });
+  assert.equal(paidOrders.data.items[1].username, 'refunded_user');
+  assert.equal(paidOrders.data.items[1].tradeNo, 'ALI-PAID-1');
+  const searchedPaidOrders = await admin.call('/api/admin/payment-orders?query=ALI-PAID-1');
+  assert.deepEqual(searchedPaidOrders.data.items.map(item => item.orderNo), ['ORDER-PAID-1']);
+  const rangedPaidOrders = await admin.call('/api/admin/payment-orders?from=2026-08-21T00%3A00%3A00.000Z');
+  assert.deepEqual(rangedPaidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1']);
   const refundedUser = await admin.call('/api/admin/users?query=refunded_user');
   assert.equal(refundedUser.data.items[0].totalSpent, 0);
   const refundedUserDetail = await admin.call(`/api/admin/users/${refundedUserId}`);

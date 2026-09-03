@@ -378,6 +378,10 @@ td b { color: var(--text); font-weight: 700; }
 .detail, .muted { color: var(--muted); font-size: 12px; }
 .pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; color: var(--muted); font-size: 12px; }
 .pagination-actions { display: flex; gap: 7px; }
+.order-summary { margin-bottom: 18px; }
+.order-summary .stat { min-height: 118px; }
+.payment-table { min-width: 1180px; }
+.order-number { font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 
 /* Repeated content blocks */
 .user-detail-grid { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 5px; }

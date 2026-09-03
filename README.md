@@ -359,7 +359,7 @@ Windows 包固定由 `.github/workflows/ci.yml` 的 `windows-latest` job 构建�
 4. 在 Actions 中等待 `quality`、Windows x64 和 macOS arm64 三个 job 成功。
 5. 下载两个 Artifact，分别测试 Windows 安装包和 macOS arm64 DMG/ZIP。
 6. 测试正式包确认无误后，调用 `$gugu-desktop-oss-publish` Skill；Skill 会再次核对版本、feed、blockmap、官网稳定别名和目标目录，并在上传前要求明确确认。
-7. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。发现新版本后会弹出版本提示并默认开始下载，下载完成后再次提示“重启更新”；确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
+7. 已安装客户端会自动检查更新；也可以点击页面左侧导航底部的「更新」。客户端刚启动或从托盘重新打开时，发现可用更新会弹窗提示；用户已经在工作台中操作时则静默下载，下载完成后只在左下角显示“重启更新”。确认后客户端会关闭并打开对应安装包，用户按系统提示重新安装覆盖。
 
 也可以在客户端离线连接页填写「自动更新地址」并重启客户端，用于覆盖安装包内置地址。`DESKTOP_UPDATE_PUBLIC_URL` 必须与用户端的 `GUGU_UPDATE_URL` 相同；OSS endpoint 本身不一定是可公开访问的下载地址，通常应使用 OSS 公网域名或 CDN 自定义域名。
 

@@ -181,8 +181,14 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   assert.equal(firstSync.status, 200);
   const firstSyncData = await firstSync.json();
   assert.deepEqual(firstSyncData.changes, [], '首个设备游标从当前检查点开始');
+  assert.ok(firstSyncData.deliveries.some(file => file.id === assetId), '尚未归档的普通上游结果应立即投递');
+  assert.ok(firstSyncData.deliveries.some(file => file.id === authenticatedAssetId), '尚未归档的鉴权上游结果应立即投递');
   assert.ok(firstSyncData.deliveries.some(file => file.id === remoteBackedAssetId));
   assert.ok(firstSyncData.nextCursor);
+
+  const targetedSync = await fetch(`${base}/api/files/sync?deviceId=device-targeted-123456&assetIds=${assetId}&limit=20`, { headers });
+  assert.equal(targetedSync.status, 200);
+  assert.ok((await targetedSync.json()).deliveries.some(file => file.id === assetId), '定向补拉也应返回尚未归档的上游结果');
 
   const single = await fetch(`${base}/api/files/${assetId}`, { headers });
   assert.equal(single.status, 200);
@@ -222,6 +228,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   assert.equal(secondSync.status, 200);
   const secondSyncData = await secondSync.json();
   assert.ok(secondSyncData.changes.some(change => change.assetId === assetId));
+  assert.equal(secondSyncData.deliveries.some(file => file.id === assetId), false, '本地确认后不应继续投递直收结果');
   assert.equal(secondSyncData.deliveries.some(file => file.id === remoteBackedAssetId), true);
 
   const acknowledgedRemote = await fetch(`${base}/api/files/${remoteBackedAssetId}/local-ready`, {

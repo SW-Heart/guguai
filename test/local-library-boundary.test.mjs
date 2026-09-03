@@ -40,7 +40,7 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=212/);
+  assert.match(index, /\/app\.js\?v=213/);
   assert.match(index, /\/styles\.css\?v=185/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=7/);
   assert.match(app, /\.\/drama-studio\.js\?v=70/);
@@ -133,6 +133,26 @@ test('remote cloud deletion removes only the matching local cloud copy', () => {
   assert.match(syncSource, /queueDesktopHydration\(deliveries, \{ forceAssetIds:requestedAssetIds \}\)/);
 });
 
+test('desktop sync consumes asset upserts and queues them for local hydration', () => {
+  const syncStart = app.indexOf('async function syncDesktopDeliveries(');
+  const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
+  const syncSource = app.slice(syncStart, syncEnd);
+  assert.match(syncSource, /change\?\.action === 'upsert' && change\.asset\?\.id/);
+  assert.match(syncSource, /\.map\(change => change\.asset\)/);
+  assert.match(syncSource, /\.\.\.changedAssets/);
+  assert.match(syncSource, /queueDesktopHydration\(deliveries/);
+});
+
+test('generation fallback archive refreshes state around network waits', () => {
+  const archiveStart = server.indexOf('async function archiveGenerationResult(');
+  const archiveEnd = server.indexOf('\nfunction progressPersistenceHooks', archiveStart);
+  const archiveSource = server.slice(archiveStart, archiveEnd);
+  assert.match(archiveSource, /const beforeUpload = findAsset\(userId, assetId\)/);
+  assert.match(archiveSource, /const latest = findAsset\(userId, assetId\)/);
+  assert.match(archiveSource, /deliveryStatus === 'local_ready'/);
+  assert.match(archiveSource, /\.\.\.\(latest \|\| beforeUpload \|\| existing \|\| \{\}\)/);
+});
+
 test('desktop file actions only reveal an existing local asset', () => {
   const actionStart = app.indexOf('async function showDesktopAssetInFolder(');
   const actionEnd = app.indexOf('\nasync function hydrateDesktopAsset', actionStart);
@@ -147,6 +167,20 @@ test('completed generation cards stay visible while requiring a saved local asse
   assert.match(app, /That gap is loading, not a missing result/);
   assert.doesNotMatch(app, /<b>成品文件未找到<\/b>/);
   assert.doesNotMatch(app, /api\/files\/\$\{encodeURIComponent\(file\.id\)\}\/download/);
+});
+
+test('failed generation details render an explanation instead of a loading spinner', () => {
+  const detailStart = app.indexOf('function openGenerationDetail(');
+  const detailEnd = app.indexOf('\nfunction copyTextFallback', detailStart);
+  const detailSource = app.slice(detailStart, detailEnd);
+  assert.match(detailSource, /const detailFailure = task\.status === 'failed' \? taskFailure\(task\) : null/);
+  assert.match(detailSource, /detailFailure[\s\S]*?role="alert"/);
+});
+
+test('Duomi image jobs persist IDs, resume polling, and drain submission checkpoints on shutdown', () => {
+  assert.match(server, /await hooks\.onSubmitted\?\.\(\{ provider:'duomi', taskId:String\(submittedTaskId\) \}\)/);
+  assert.match(server, /task\.type === 'image' && task\.provider === 'duomi' && task\.providerTaskId[\s\S]*?resumeDuomiImageGeneration/);
+  assert.match(server, /await waitForProviderSubmissions\(\)/);
 });
 
 test('task polling updates rich short-drama state independently from gallery cards', () => {

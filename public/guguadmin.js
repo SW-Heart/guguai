@@ -5,6 +5,7 @@
     admin: null,
     view: '',
     usersCursors: [''],
+    ordersCursors: [''],
     invitesCursors: [''],
     logCursors: [''],
     logCategory: 'generations',
@@ -15,7 +16,7 @@
   const money = value => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 });
   const date = value => value ? new Date(value).toLocaleString('zh-CN') : '—';
   const dateInput = value => value ? new Date(value).toISOString().slice(0, 16) : '';
-  const status = value => ({ active: '正常', disabled: '已禁用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', draft: '草稿', published: '已发布', archived: '已归档', error: '错误', warning: '警告', info: '信息', success: '成功' }[value] || value || '—');
+  const status = value => ({ active: '正常', disabled: '已禁用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', draft: '草稿', published: '已发布', archived: '已归档', error: '错误', warning: '警告', info: '信息', success: '成功', PAID: '已支付', PARTIALLY_REFUNDED: '部分退款', REFUNDED: '已退款' }[value] || value || '—');
   const badge = (value, kind = '') => `<span class="badge ${kind || (['active', 'completed', 'enabled', 'available', 'success'].includes(value) ? 'ok' : ['failed', 'disabled', 'error', 'critical'].includes(value) ? 'bad' : 'warn')}">${esc(status(value))}</span>`;
   const loadingMarkup = text => `<div class="loading-state" role="status"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
   const emptyMarkup = (title, detail = '') => `<div class="empty"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ''}</div>`;
@@ -161,11 +162,12 @@
     return data;
   }
 
-  const loaders = { overview: loadOverview, users: loadUsers, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
+  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
   function showView(name) {
     if (!loaders[name]) return;
     if (state.view !== name) {
       if (name === 'users') resetPager('users');
+      if (name === 'orders') resetPager('orders');
       if (name === 'invites') resetPager('invites');
       if (name === 'logs') resetPager('log');
     }
@@ -223,6 +225,34 @@
       table.querySelectorAll('[data-user-enable]').forEach(button => button.onclick = () => changeUser(button.dataset.userEnable, 'enable'));
       bindPageControls('users', fetchUsers, data.nextCursor);
     } catch (error) { table.innerHTML = errorMarkup(error.message, 'users'); table.querySelector('[data-retry="users"]')?.addEventListener('click', fetchUsers); }
+  }
+
+  const yuan = value => Number(value || 0).toLocaleString('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  async function loadOrders() {
+    const root = $('#view-orders');
+    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Payments</div><h2 id="ordersTitle">付费订单</h2><p class="subtitle">查看支付成功的用户、金额、支付时间与订单号</p></div><div class="view-heading-actions"><button class="small-button" data-refresh="orders" type="button">刷新数据</button></div></div><div class="panel"><form id="orderFilters" class="toolbar"><label class="control">搜索<input id="orderQuery" placeholder="用户名、用户 ID 或订单号" autocomplete="off"></label><label class="control">支付开始时间<input id="orderFrom" type="datetime-local"></label><label class="control">支付结束时间<input id="orderTo" type="datetime-local"></label><button class="small-button" type="submit">查询订单</button></form><div id="orderTable">${loadingMarkup('正在加载付费订单…')}</div></div>`;
+    $('#orderFilters').onsubmit = event => { event.preventDefault(); resetPager('orders'); fetchOrders(); };
+    root.querySelector('[data-refresh="orders"]').onclick = () => { resetPager('orders'); fetchOrders(); };
+    await fetchOrders();
+  }
+
+  async function fetchOrders() {
+    const table = $('#orderTable'); if (!table) return;
+    const params = new URLSearchParams({ limit: '50' });
+    if ($('#orderQuery')?.value.trim()) params.set('query', $('#orderQuery').value.trim());
+    if ($('#orderFrom')?.value) params.set('from', new Date($('#orderFrom').value).toISOString());
+    if ($('#orderTo')?.value) params.set('to', new Date($('#orderTo').value).toISOString());
+    if (currentCursor('orders')) params.set('cursor', currentCursor('orders'));
+    table.innerHTML = loadingMarkup('正在加载付费订单…');
+    try {
+      const data = await api(`/api/admin/payment-orders?${params}`);
+      const items = data.items || [];
+      const summary = data.summary || {};
+      const summaryMarkup = `<div class="cards order-summary"><div class="stat"><small>成功订单</small><strong>${money(data.total)}</strong><span class="muted">付费用户 ${money(summary.payingUsers)} 人</span></div><div class="stat"><small>支付总额</small><strong>${yuan(summary.totalAmount)}</strong><span class="muted">订单原始支付金额</span></div><div class="stat"><small>退款金额</small><strong>${yuan(summary.refundedAmount)}</strong><span class="muted">含部分与全额退款</span></div><div class="stat"><small>净收款</small><strong>${yuan(summary.netAmount)}</strong><span class="muted">支付总额扣除退款</span></div></div>`;
+      table.innerHTML = summaryMarkup + (items.length ? `<div class="table-wrap"><table class="payment-table" aria-label="付费订单列表"><thead><tr><th>用户</th><th>支付金额</th><th>购买积分</th><th>支付状态</th><th>支付时间</th><th>商户订单号</th><th>支付宝交易号</th></tr></thead><tbody>${items.map(order => `<tr><td><b>${esc(order.username)}</b><div class="detail">${esc(order.userId)}</div></td><td><b>${yuan(order.amount)}</b>${order.refundedAmount ? `<div class="detail">已退 ${yuan(order.refundedAmount)} · 净额 ${yuan(order.netAmount)}</div>` : ''}</td><td>${money(order.credits)}</td><td>${badge(order.status, order.status === 'PAID' ? 'ok' : 'warn')}</td><td>${date(order.paidAt)}</td><td><span class="order-number">${esc(order.orderNo)}</span></td><td><span class="order-number">${esc(order.tradeNo || '—')}</span></td></tr>`).join('')}</tbody></table></div>${pageControls('orders', data.total, data.nextCursor, items.length)}` : emptyMarkup('暂无成功支付订单', '尝试修改搜索条件或支付时间范围。'));
+      bindPageControls('orders', fetchOrders, data.nextCursor);
+    } catch (error) { table.innerHTML = errorMarkup(error.message, 'orders'); table.querySelector('[data-retry="orders"]')?.addEventListener('click', fetchOrders); }
   }
 
   function credentialDialogFields(credential = null) {

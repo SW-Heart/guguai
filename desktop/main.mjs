@@ -88,6 +88,10 @@ let currentUpdateStatus = { status: 'idle' };
 // must not stop the download, and it should become visible again on the next
 // client launch.
 let updateReminderSnoozed = false;
+// Only the first automatic check belongs to the launch experience. Updates
+// discovered by a later/manual check are surfaced through the in-app update
+// control so active work is never interrupted.
+let updatePromptOnStartup = false;
 let windowFullscreenTransition = false;
 const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
@@ -835,7 +839,13 @@ function updateFeedUrl() {
   return String(value || '').trim().replace(/\/$/, '');
 }
 function sendUpdateStatus(status, extra = {}) {
-  currentUpdateStatus = { status, currentVersion: app.getVersion(), ...extra, snoozed: updateReminderSnoozed };
+  currentUpdateStatus = {
+    status,
+    currentVersion: app.getVersion(),
+    promptOnStartup: updatePromptOnStartup,
+    ...extra,
+    snoozed: updateReminderSnoozed,
+  };
   mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
 }
 
@@ -995,16 +1005,20 @@ function configureAutoUpdater() {
         sendUpdateStatus('downloaded', { version: info.version });
       });
       autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.message }));
-      setTimeout(() => autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message })), 4_000);
+      setTimeout(() => {
+        updatePromptOnStartup = true;
+        void autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message }));
+      }, 4_000);
     } catch (error) {
       sendUpdateStatus('error', { message: error.message });
     }
   })();
   return autoUpdaterConfigPromise;
 }
-async function checkForUpdates() {
+async function checkForUpdates({ promptOnStartup = false } = {}) {
   await configureAutoUpdater();
   if (!updateConfigured) return { status: 'unconfigured' };
+  updatePromptOnStartup = Boolean(promptOnStartup);
   try { const result = await autoUpdater.checkForUpdates(); return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' }; }
   catch (error) { sendUpdateStatus('error', { message: error.message }); return { status: 'error', message: error.message }; }
 }
@@ -1145,6 +1159,11 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+  const status = currentUpdateStatus.status;
+  if (!updateReminderSnoozed && ['available', 'downloading', 'downloaded', 'error'].includes(status)) {
+    currentUpdateStatus = { ...currentUpdateStatus, promptOnOpen: true };
+    mainWindow.webContents.send('desktop:update-status', currentUpdateStatus);
+  }
 }
 
 function hideMainWindowToTray() {

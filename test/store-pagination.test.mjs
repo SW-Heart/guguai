@@ -10,7 +10,7 @@ import {
   configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject,
   saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
   parseLimit, decodeCursor, encodeCursor, InvalidCursorError,
-  findGeneration, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
+  findGeneration, findCloudAssets, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
 } from '../lib/store.mjs';
 
 let workDir;
@@ -211,6 +211,19 @@ test('store pagination', async t => {
     markAssetDeliveryReady(userId, deviceA, firstDelivery.id);
     assert.equal(listPendingAssetDeliveries(userId, deviceA, { limit: 20 }).some(item => item.id === firstDelivery.id), false);
     assert.equal(listPendingAssetDeliveries(userId, deviceB, { limit: 20 }).some(item => item.id === firstDelivery.id), true);
+
+    const directAsset = {
+      id: 'delivery-direct', kind: 'video', name: 'direct.mp4', sourceGenerationId: 'generation-direct',
+      sourceUrl: 'https://upstream.example/direct.mp4', deliveryStatus: 'awaiting_local', remoteStatus: 'pending',
+      createdAt, updatedAt: createdAt,
+    };
+    const receivedDirectAsset = { ...directAsset, id:'delivery-direct-ready', deliveryStatus:'local_ready' };
+    saveAssetRecord(userId, directAsset);
+    saveAssetRecord(userId, receivedDirectAsset);
+    assert.equal(listPendingAssetDeliveries(userId, deviceA, { limit:20 }).some(item => item.id === directAsset.id), true, '只有 sourceUrl 的生成结果也应立即投递');
+    assert.deepEqual(findCloudAssets(userId, [directAsset.id]).map(item => item.id), [directAsset.id], '定向补拉应允许尚未归档的上游结果');
+    assert.equal(listPendingAssetDeliveries(userId, deviceA, { limit:20 }).some(item => item.id === receivedDirectAsset.id), false, '已本地确认且未归档的结果不应重复投递');
+    assert.deepEqual(findCloudAssets(userId, [receivedDirectAsset.id]), []);
 
     const nextAsset = { id: 'delivery-new', kind: 'image', name: 'new', objectKey: 'assets/new.png', sourceGenerationId: 'generation-new', deliveryStatus: 'remote_backed_up', createdAt, updatedAt: createdAt };
     saveAssetRecord(userId, nextAsset);

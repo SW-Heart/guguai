@@ -6,7 +6,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let indexedFiles = null;
@@ -39,7 +39,7 @@ function taskForAsset(file) {
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
-const taskSignatureFields = ['id','type','status','progress','progressStage','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt','submittedAt','finishedAt'];
+const taskSignatureFields = ['id','type','status','progress','progressStage','awaitingReferences','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt','submittedAt','finishedAt'];
 const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','referenceSourceAvailable','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
@@ -64,6 +64,7 @@ let desktopWindowStateUnsubscribe = null;
 let desktopWorkspacePath = '';
 let desktopAccountEpoch = 0;
 let desktopUpdateReminderSnoozed = false;
+let desktopUpdateDialogDismissed = false;
 const desktopHydrationQueue = [];
 const desktopHydrationQueued = new Set();
 const desktopHydrationAttempted = new Set();
@@ -488,9 +489,13 @@ async function syncDesktopDeliveries({ assetIds = [] } = {}) {
       result = await api(`/api/files/sync?${query}`);
     }
     if (requestEpoch !== desktopAccountEpoch) return null;
-    const deletedCloudAssetIds = [...new Set((result.changes || [])
+    const changes = result.changes || [];
+    const deletedCloudAssetIds = [...new Set(changes
       .filter(change => change?.action === 'delete' && change.assetId)
       .map(change => String(change.assetId)))];
+    const changedAssets = changes
+      .filter(change => change?.action === 'upsert' && change.asset?.id)
+      .map(change => change.asset);
     // Apply deletions before advancing the cursor. If local cleanup fails, a
     // later sync retries the same change instead of permanently skipping it.
     if (deletedCloudAssetIds.length) {
@@ -501,7 +506,10 @@ async function syncDesktopDeliveries({ assetIds = [] } = {}) {
       desktopSyncInfo.cursor = result.nextCursor;
       await bridge.sync.setCursor(result.nextCursor);
     }
-    const deliveries = (result.deliveries || []).filter(file => file?.id);
+    const deliveries = [...new Map([
+      ...changedAssets,
+      ...(result.deliveries || []),
+    ].filter(file => file?.id).map(file => [file.id, file])).values()];
     if (deliveries.length) {
       // Keep the cloud record in the UI before starting the download. Until a
       // local copy is ready, completed generations remain in recovery; only
@@ -875,6 +883,11 @@ function videoProgressMarkup(task) {
   const progress = taskProgress(task);
   if (progress === null) return '';
   return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="视频生成进度 ${progress}%"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${esc(videoProgressLabel(task))}</span><b>${progress}%</b></div><div class="skeleton-progress-track" aria-hidden="true"><i style="--progress:${progress}%"></i></div></div>`;
+}
+function generationPreparationMarkup(task) {
+  if (!task?.localPreparation && !task?.awaitingReferences) return '';
+  const label = ({ preparing_references:'正在准备素材…', confirming_price:'正在确认价格…', submitting:'正在提交生成…' })[task.progressStage] || '正在准备生成…';
+  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
 }
 const taskFailure = task => {
   if (task?.failure && typeof task.failure === 'object') return {
@@ -1454,15 +1467,16 @@ function updateFullscreenState(state) {
   const settledFullscreen = Boolean(payload.fullscreen) && !payload.transitioning;
   document.body.classList.toggle('desktop-fullscreen', settledFullscreen);
 }
-function closeDesktopUpdateDialog() {
+function closeDesktopUpdateDialog({ dismiss = false } = {}) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog) return;
+  if (dismiss) desktopUpdateDialogDismissed = true;
   if (dialog.open) dialog.close();
   else dialog.hidden = true;
 }
 function openDesktopUpdateDialog() {
   const dialog = $('#desktopUpdateDialog');
-  if (!dialog || !['available', 'downloading', 'downloaded', 'installing', 'error'].includes(desktopUpdateState.status)) return;
+  if (desktopUpdateDialogDismissed || !dialog || !['available', 'downloading', 'downloaded', 'installing', 'error'].includes(desktopUpdateState.status)) return;
   dialog.hidden = false;
   if (!dialog.open) dialog.showModal();
 }
@@ -1540,7 +1554,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
 function initDesktopUpdateDialog(bridge) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog || !bridge?.updates || dialog.dataset.bound === 'true') return;
-  const close = () => closeDesktopUpdateDialog();
+  const close = () => closeDesktopUpdateDialog({ dismiss: true });
   const snooze = async () => {
     // Hide immediately even if the IPC round trip is slow. The main process
     // also keeps this state so a renderer reload cannot bring the reminder
@@ -1550,7 +1564,7 @@ function initDesktopUpdateDialog(bridge) {
     const updateButton = $('#desktopUpdateButton');
     updateButton?.classList.add('hidden');
     updateButton?.classList.remove('has-update');
-    closeDesktopUpdateDialog();
+    closeDesktopUpdateDialog({ dismiss: true });
     try { await bridge.updates.snooze?.(); }
     catch (error) { console.warn('[desktop] 稍后提醒状态保存失败', error); }
   };
@@ -1692,6 +1706,7 @@ function resetDesktopAccountState() {
   libraryFiles = [];
   state.files = [];
   state.tasks = [];
+  state.generationPreparations = [];
   state.refs = { image:[], video:[] };
   state.uploadJobs.splice(0).forEach(job => {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
@@ -1700,7 +1715,7 @@ function resetDesktopAccountState() {
   indexedTasks = null;
   tasksById = new Map();
   tasksByAssetId = new Map();
-  lastTaskRender = { route:'', filter:'', ready:null, tasks:null, files:null };
+  lastTaskRender = { route:'', filter:'', ready:null, tasks:null, preparations:null, files:null };
 }
 async function activateDesktopAccount(user) {
   const bridge = window.guguDesktop;
@@ -1777,10 +1792,23 @@ async function initDesktopBridge() {
           closeDesktopUpdateDialog();
           return;
         }
+        const shouldPrompt = payload?.promptOnStartup === true || payload?.promptOnOpen === true;
+        if (payload?.promptOnOpen) desktopUpdateDialogDismissed = false;
         if (status === 'unconfigured' || status === 'current' || status === 'idle') { hideUpdateButton(); closeDesktopUpdateDialog(); return; }
-        if (status === 'checking') { hideUpdateButton(); closeDesktopUpdateDialog(); setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; return; }
-        showUpdateButton();
-        renderDesktopUpdateDialog(payload);
+        if (status === 'checking') {
+          if (payload?.promptOnStartup) desktopUpdateDialogDismissed = false;
+          hideUpdateButton(); closeDesktopUpdateDialog(); setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; return;
+        }
+        // The first automatic check is part of the launch experience. Any
+        // update found after that is intentionally silent; the bottom-left
+        // control appears only after the download is complete.
+        if (status === 'available' || status === 'downloading') {
+          if (shouldPrompt) showUpdateButton();
+          else hideUpdateButton();
+        } else {
+          showUpdateButton();
+        }
+        renderDesktopUpdateDialog(payload, { open: shouldPrompt });
         if (status === 'available') { setUpdateLabel('后台下载中'); setUpdateTitle(`正在后台下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
         else if (status === 'downloading') { setUpdateLabel(`后台下载 ${payload.percent || 0}%`); setUpdateTitle('正在后台下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
         else if (status === 'downloaded') { setUpdateLabel('重启更新'); setUpdateTitle('重启客户端并重新安装更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
@@ -2414,7 +2442,7 @@ function taskCard(task) {
   const localSyncing = taskLocalSyncing(task, asset);
   const localReady = Boolean(asset && asset.localStatus === 'saved' && !localSyncing);
   const displayStatus = taskDisplayStatus(task, asset);
-  const progressMarkup = localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
+  const progressMarkup = task.localPreparation || task.awaitingReferences ? generationPreparationMarkup(task) : localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
   const failure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localReady
     ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
@@ -2529,19 +2557,20 @@ function compareTasksByRecency(left, right) {
 function renderTasks() {
   if (!['image','video'].includes(state.route)) return;
   syncGenerationView();
-  const renderState = { route:state.route, filter:state.generationFilter, ready:state.initialSyncReady, tasks:state.tasks, files:state.files };
+  const renderState = { route:state.route, filter:state.generationFilter, ready:state.initialSyncReady, tasks:state.tasks, preparations:state.generationPreparations, files:state.files };
   if (lastTaskRender.route === renderState.route
     && lastTaskRender.filter === renderState.filter
     && lastTaskRender.ready === renderState.ready
     && lastTaskRender.tasks === renderState.tasks
+    && lastTaskRender.preparations === renderState.preparations
     && lastTaskRender.files === renderState.files) return;
   // Keep completed tasks with an asset ID visible until their local delivery
   // is resolved. Hiding them here made the generation page show only the
   // failed sibling versions while the drama page showed a spinner forever.
-  let tasks = state.tasks.filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId)));
+  let tasks = [...state.generationPreparations, ...state.tasks].filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId)));
   if (state.generationFilter !== 'all') tasks = tasks.filter(task => state.generationFilter === 'running' ? ['queued','running'].includes(task.status) || taskLocalSyncing(task) : task.status === state.generationFilter && !taskLocalSyncing(task));
   tasks.sort(compareTasksByRecency);
-  const hasInitialData = state.initialSyncReady || state.tasks.length > 0;
+  const hasInitialData = state.initialSyncReady || state.tasks.length > 0 || state.generationPreparations.length > 0;
   const empty = hasInitialData
     ? emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。')
     : emptyState('正在加载作品', '正在同步你的生成记录，页面可以先使用。');
@@ -2643,11 +2672,14 @@ function openGenerationDetail(id) {
   const localReady = Boolean(asset && asset.localStatus === 'saved' && !localSyncing);
   if (localSyncing && !requireDesktopLocalAsset(asset)) return; state.detailTaskId = id;
   const displayStatus = taskDisplayStatus(task, asset);
+  const detailFailure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localSyncing
     ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在同步到本地…</span></div>'
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
-    : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
+    : detailFailure
+      ? `<div class="detail-missing-file" role="alert"><b>${esc(detailFailure.message || '生成失败')}</b><span>${esc(detailFailure.suggestion || '请调整内容后重试')}</span></div>`
+      : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
   $('#generationDetailMedia').innerHTML = media;
   $('#generationDetailTitle').textContent = '文件详情';
   const status = $('#generationDetailStatus'); status.className = `detail-status ${displayStatus}`; status.textContent = statusText(displayStatus);
@@ -3413,36 +3445,51 @@ async function resolveReferenceAssetIds(ids) {
   renderReferences();
   return [...new Set(resolved)];
 }
-function cloudReferenceIds(ids) { return [...new Set((Array.isArray(ids) ? ids : []).filter(id => { const file = state.files.find(item => item.id === id); return file && !file.localOnly; }))]; }
 function hasUnresolvedReference(ids=currentVideoReferenceIds()) { return ids.some(id => { const file=state.files.find(item => item.id === id); return Boolean(pendingReferenceJob(id) || needsReferenceUpload(file)); }); }
+function referenceCountsForIds(ids) {
+  const files = [...new Set(Array.isArray(ids) ? ids : [])].map(referenceFileById).filter(Boolean);
+  return Object.fromEntries(['image','video','audio'].map(kind => [kind, files.filter(file => file.kind === kind).length]));
+}
 async function submitGeneration(type, form, payload) {
   if (generationSubmissionForms.has(form)) return;
   generationSubmissionForms.add(form);
-  const button = form.querySelector('.generate');
-  const original = button.innerHTML;
   const requestedReferenceIds = type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type];
-  const videoParameterControls = type === 'video' ? ['videoModel', 'videoAspect', 'videoDuration', 'videoResolution'] : [];
-  button.disabled = true;
-  videoParameterControls.forEach(id => setProductSelectEnabled(id, false));
-  button.innerHTML = '<span class="button-spinner"></span><span>准备参考素材</span>';
+  const referenceCounts = referenceCountsForIds(requestedReferenceIds);
+  const deferredReferences = hasUnresolvedReference(requestedReferenceIds);
+  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(payload.modelId);
+  const quoteInput = type === 'video' ? { modelId:payload.modelId, aspectRatio:payload.aspectRatio, duration:payload.duration, quality:payload.quality, generationType:payload.generationType, referenceAssetIds:[], referenceCounts } : null;
+  const quoteSignature = quoteInput ? JSON.stringify(quoteInput) : '';
+  const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
+  const preparationGroupId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const initialStage = routedVideo && state.modelQuote?.signature !== quoteSignature ? 'confirming_price' : 'submitting';
+  const preparations = Array.from({ length:preparationCount }, (_, index) => ({ id:`local-preparation-${preparationGroupId}-${index + 1}`, type, status:'running', progressStage:initialStage, prompt:payload.prompt, createdAt, localPreparation:true }));
+  const preparationIds = new Set(preparations.map(item => item.id));
+  const setPreparationStage = progressStage => {
+    state.generationPreparations = state.generationPreparations.map(item => preparationIds.has(item.id) ? { ...item, progressStage } : item);
+    renderTasks();
+  };
+  state.generationPreparations = [...preparations, ...state.generationPreparations];
+  renderTasks();
+  let chargedTasks = [];
   try {
-    const referenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
     let expectedPriceVersion = '';
-    if (type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes($('#videoModel').value)) {
-      const quoteInput=currentVideoQuoteInput();
-      if (!quoteInput) throw new Error('当前视频参数无效，请重新选择后重试');
-      const quoteSignature=JSON.stringify(quoteInput);
+    if (routedVideo) {
       if (state.modelQuote?.signature !== quoteSignature) {
-        button.innerHTML = '<span class="button-spinner"></span><span>正在确认价格</span>';
         const quote=await api('/api/model-quote', { method:'POST', body:JSON.stringify(quoteInput) });
         state.modelQuote={ ...quote, signature:quoteSignature };
       }
       expectedPriceVersion=state.modelQuote.priceVersion || '';
     }
-    button.innerHTML = '<span class="button-spinner"></span><span>正在提交</span>';
+    setPreparationStage('submitting');
     const requestId = crypto.randomUUID();
-    const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    const referenceAssetIds = deferredReferences ? [] : requestedReferenceIds;
+    const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(deferredReferences ? { deferReferenceUpload:true, referenceCounts } : {}), ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
+    chargedTasks = tasks;
+    state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
+    state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
+    renderTasks();
     setCreditBalance(result.balance);
     if (type === 'video') setVideoPromptText(''); else form.querySelector('textarea').value = '';
     (type === 'video' ? videoPromptEditor() : form.querySelector('textarea')).dispatchEvent(new Event('input', { bubbles:true }));
@@ -3451,9 +3498,27 @@ async function submitGeneration(type, form, payload) {
     renderReferences();
     const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0);
     toast(tasks.length > 1 ? `已提交 ${tasks.length} 个图像任务，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
+    if (deferredReferences) {
+      const uploadedReferenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
+      const completed = await api('/api/generations/references/complete', { method:'POST', body:JSON.stringify({ taskIds:tasks.map(task => task.id), referenceAssetIds:uploadedReferenceAssetIds }) });
+      const startedTasks = Array.isArray(completed.tasks) ? completed.tasks : [];
+      state.tasks = [...startedTasks, ...state.tasks.filter(item => !startedTasks.some(task => task.id === item.id))];
+      renderTasks();
+    }
     await loadTasks();
-  } catch (error) { renderReferences(); toast(error.message); await loadCredits(); }
-  finally { generationSubmissionForms.delete(form); button.innerHTML = original; videoParameterControls.forEach(id => setProductSelectEnabled(id, true)); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } button.disabled = false; }
+  } catch (error) {
+    state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
+    if (chargedTasks.length) {
+      try {
+        const cancelled = await api('/api/generations/references/cancel', { method:'POST', body:JSON.stringify({ taskIds:chargedTasks.map(task => task.id), error:`素材准备失败：${error.message}` }) });
+        const failedTasks = Array.isArray(cancelled.tasks) ? cancelled.tasks : [];
+        state.tasks = [...failedTasks, ...state.tasks.filter(item => !failedTasks.some(task => task.id === item.id))];
+        setCreditBalance(cancelled.balance);
+      } catch (cancelError) { console.warn('[generation] 素材准备失败后的退款请求未完成', cancelError); }
+    }
+    renderTasks(); renderReferences(); toast(error.message); await loadCredits();
+  }
+  finally { generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
 $('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
@@ -3504,7 +3569,8 @@ function currentVideoFormInput() {
 }
 function currentVideoQuoteInput() {
   const input = currentVideoFormInput();
-  return input ? { ...input, referenceAssetIds:cloudReferenceIds(currentVideoReferenceIds()) } : null;
+  const referenceIds = currentVideoReferenceIds();
+  return input ? { ...input, referenceAssetIds:[], referenceCounts:referenceCountsForIds(referenceIds) } : null;
 }
 function updateVideoCost() {
   const cost = $('#videoCost'); const duration = $('#videoDuration'); if (!cost || !duration) return;
@@ -3514,7 +3580,6 @@ function updateVideoCost() {
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
   const routed = ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(input.modelId);
   if (routed) {
-    if (hasUnresolvedReference()) { state.modelQuote = null; cost.textContent = '提交时计算'; return; }
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }
     cost.textContent = '…';
@@ -3611,7 +3676,16 @@ async function openModelPriceDialog({ auto = false } = {}) {
   if (auto) markModelPricesAutoOpened();
   renderModelPrices();
   dialog.showModal();
-  try { const config = await api('/api/config'); state.config = { ...state.config, ...config }; renderModelPrices(config.modelPrices || []); }
+  try {
+    const config = await api('/api/config');
+    state.config = { ...state.config, ...config };
+    // The price dialog refreshes the catalog after the initial workspace load.
+    // Rebuild model controls too, otherwise a model disabled in admin remains
+    // as a stale option and leaves its dependent parameters unusable.
+    syncVideoModelOptions();
+    if (state.route === 'drama' && dramaController?.project) dramaController.render(true, { focus: false });
+    renderModelPrices(config.modelPrices || []);
+  }
   catch { if (!(state.config?.modelPrices || []).length) $('#modelPriceBody').innerHTML = '<div class="price-catalog-empty">价格获取失败，请稍后重试。</div>'; }
 }
 // Tier chips swap the headline price in place; the dialog body is a stable

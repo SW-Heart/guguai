@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#070b11">
   <meta name="color-scheme" content="dark">
   <title>GuGu 管理后台</title>
-  <link rel="stylesheet" href="/guguadmin.css?v=9">
+  <link rel="stylesheet" href="/guguadmin.css?v=10">
   <link rel="stylesheet" href="/guguadmin-routes.css?v=4">
 </head>
 <body>
@@ -44,6 +44,7 @@
         <div class="sidebar-label">工作区</div>
         <button class="nav active" data-view="overview" aria-current="page" aria-controls="view-overview"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 10 8-6 8 6v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z"/><path d="M9 20v-6h6v6"/></svg></span>总览</button>
         <button class="nav" data-view="users" aria-controls="view-users"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M15 5.5a3 3 0 0 1 0 5.8M16 14.5a5 5 0 0 1 4.5 4.5"/></svg></span>用户管理</button>
+        <button class="nav" data-view="orders" aria-controls="view-orders"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z"/><path d="M4 10h16M8 15h4"/></svg></span>付费订单</button>
         <button class="nav" data-view="models" aria-controls="view-models"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9Z"/><path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12.1V21"/></svg></span>模型与价格</button>
         <button class="nav" data-view="credentials" aria-controls="view-credentials"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 4l4 4M14 9l2 2"/></svg></span>渠道与 Key</button>
         <button class="nav" data-view="invites" aria-controls="view-invites"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="8.5"/></svg></span>邀请码</button>
@@ -55,6 +56,7 @@
         <div id="toast" class="toast" role="status" aria-live="polite"></div>
         <section id="view-overview" class="view" aria-labelledby="overviewTitle"></section>
         <section id="view-users" class="view hidden" aria-labelledby="usersTitle"></section>
+        <section id="view-orders" class="view hidden" aria-labelledby="ordersTitle"></section>
         <section id="view-models" class="view hidden" aria-labelledby="modelsTitle"></section>
         <section id="view-credentials" class="view hidden" aria-labelledby="credentialsTitle"></section>
         <section id="view-invites" class="view hidden" aria-labelledby="invitesTitle"></section>
@@ -72,6 +74,6 @@
       <footer class="admin-dialog-footer"><button id="adminDialogCancel" class="ghost" type="button">取消</button><button id="adminDialogSubmit" class="primary" type="submit">保存</button></footer>
     </form>
   </dialog>
-  <script src="/guguadmin.js?v=9" defer></script>
+  <script src="/guguadmin.js?v=10" defer></script>
 </body>
 </html>
