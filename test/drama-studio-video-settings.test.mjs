@@ -127,7 +127,7 @@ test('video preview stays in generation state until the local asset is ready', (
   assert.equal(videoPreviewVersionState({ status:'queued' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'running' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'completed' }, { syncing:true }), 'syncing');
-  assert.equal(videoPreviewVersionState({ status:'completed', assetId:'asset-1' }), 'missing');
+  assert.equal(videoPreviewVersionState({ status:'completed', assetId:'asset-1' }), 'syncing');
   assert.equal(videoPreviewVersionState({ status:'failed' }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'failed' }, { ready:true, syncing:true }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'completed' }), 'missing');
@@ -135,9 +135,9 @@ test('video preview stays in generation state until the local asset is ready', (
   assert.equal(videoPreviewVersionState({ status:'completed' }, { ready:true }), 'ready');
 });
 
-test('completed generation only remains syncing while its local asset is actively downloading', () => {
+test('completed generation remains syncing while its local asset is being recovered', () => {
   const task = { status:'completed', assetId:'asset-1' };
-  assert.equal(generationNeedsLocalAssetSync(task, undefined), false);
+  assert.equal(generationNeedsLocalAssetSync(task, undefined), true);
   assert.equal(generationNeedsLocalAssetSync(task, { id:'asset-1' }, () => true), true);
   assert.equal(generationNeedsLocalAssetSync(task, { id:'asset-1' }, () => false), false);
   assert.equal(generationNeedsLocalAssetSync({ status:'completed', assetId:'' }, undefined), false);

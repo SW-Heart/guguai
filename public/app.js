@@ -503,9 +503,9 @@ async function syncDesktopDeliveries({ assetIds = [] } = {}) {
     }
     const deliveries = (result.deliveries || []).filter(file => file?.id);
     if (deliveries.length) {
-      // Keep the cloud record in the UI before starting the download. If the
-      // download later fails, the generation can be rendered as a terminal
-      // missing-file state instead of looking like it is still syncing.
+      // Keep the cloud record in the UI before starting the download. Until a
+      // local copy is ready, completed generations remain in recovery; only
+      // an explicit generation failure is rendered as an error.
       mergeStateFiles(deliveries);
       queueDesktopHydration(deliveries, { forceAssetIds:requestedAssetIds });
       renderAfterDesktopAssetHydration();
@@ -547,7 +547,11 @@ function isDesktopAssetSyncing(file) {
   return Boolean(window.guguDesktop && desktopHydrationActive.has(file?.id) && !String(file.url || '').startsWith('gugu-media://'));
 }
 function taskLocalSyncing(task, file = fileById(task?.assetId)) {
-  return task?.status === 'completed' && isDesktopAssetSyncing(file);
+  if (!window.guguDesktop || task?.status !== 'completed' || !task.assetId) return false;
+  const localReady = Boolean(file && file.localStatus === 'saved' && !isDesktopAssetSyncing(file));
+  // A completed cloud task can be rendered before startup recovery has found
+  // or downloaded its local copy. That gap is loading, not a missing result.
+  return !localReady;
 }
 function taskDisplayStatus(task, file = fileById(task?.assetId)) {
   return taskLocalSyncing(task, file) ? 'running' : task?.status;
@@ -2118,7 +2122,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=69').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=70').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
       return dramaController;
     });
@@ -2416,12 +2420,10 @@ function taskCard(task) {
     ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
     : task.status === 'failed'
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
-      : task.assetId && !localSyncing
-        ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 1.7 3h15.4a2 2 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>成品文件未找到</b><p>任务已完成，但文件库中没有对应文件</p></div>`
-        : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
+      : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
   const completedActions = localReady ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
   const failedAction = task.status === 'failed' && !['wait','contact_support'].includes(failure?.action) ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>${esc(taskFailureActionLabel(failure))}</button>` : '';
-  const openButton = localReady || task.status === 'failed' || (task.assetId && !localSyncing) ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>` : '';
+  const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>` : '';
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedAction}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
@@ -2645,15 +2647,13 @@ function openGenerationDetail(id) {
     ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在同步到本地…</span></div>'
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
-    : task.assetId
-      ? `<div class="detail-missing-file"><b>成品文件未找到</b><span>任务已完成，但文件库中没有对应文件</span></div>`
-      : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
+    : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
   $('#generationDetailMedia').innerHTML = media;
   $('#generationDetailTitle').textContent = '文件详情';
   const status = $('#generationDetailStatus'); status.className = `detail-status ${displayStatus}`; status.textContent = statusText(displayStatus);
   $('#generationDetailPrompt').textContent = task.prompt;
   const promptElement = $('#generationDetailPrompt'); const promptToggle = $('#generationDetailPromptToggle'); promptElement.classList.remove('expanded'); promptToggle.classList.add('hidden'); promptToggle.setAttribute('aria-expanded', 'false'); promptToggle.textContent = '展开全部'; requestAnimationFrame(() => { const overflowing = promptElement.scrollHeight > promptElement.clientHeight + 1; promptToggle.classList.toggle('hidden', !overflowing); });
-  const fileText = localSyncing ? '正在同步到本地' : localReady ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : task.assetId ? '成品文件未保存到本机' : '暂无成品文件';
+  const fileText = localSyncing ? '正在加载并恢复到本机' : localReady ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : '暂无成品文件';
   $('#generationCoreMeta').innerHTML = generationParameterRows(task);
   $('#generationDetailMeta').innerHTML = generationSupplementalRows(task, fileText);
   const error = $('#generationDetailError'); const failure = taskFailure(task); error.textContent = taskErrorText(task); error.classList.toggle('hidden', !failure);

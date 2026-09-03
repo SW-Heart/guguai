@@ -66,18 +66,18 @@ export function videoPreviewVersionState(task, { ready = false, syncing = false 
   if (ready) return 'ready';
   if (syncing) return 'syncing';
   if (['queued', 'running'].includes(task?.status)) return 'pending';
+  // Desktop startup can observe the completed task before its local library
+  // recovery has materialized the asset. Keep that interval non-terminal.
+  if (task?.status === 'completed' && task.assetId) return 'syncing';
   return 'missing';
 }
 
 export function generationNeedsLocalAssetSync(task, file, isAssetSyncing = () => false) {
   return task?.status === 'completed'
     && Boolean(task.assetId)
-    // A missing file is not proof that a desktop transfer is in progress. It
-    // can also mean that the transfer already failed or that the asset was
-    // removed. The delivery layer first inserts the remote asset metadata and
-    // only then marks it as actively syncing, so keep this state precise.
-    && Boolean(file)
-    && isAssetSyncing(file);
+    // The cloud task may arrive before its local file metadata during startup.
+    // Treat both that gap and an active transfer as recovery in progress.
+    && (!file || isAssetSyncing(file));
 }
 
 function shotPreviewRenderSignatureFromMaps(shot, taskById, fileById, isAssetSyncing = () => false) {

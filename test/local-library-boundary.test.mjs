@@ -40,10 +40,10 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=211/);
+  assert.match(index, /\/app\.js\?v=212/);
   assert.match(index, /\/styles\.css\?v=185/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=7/);
-  assert.match(app, /\.\/drama-studio\.js\?v=69/);
+  assert.match(app, /\.\/drama-studio\.js\?v=70/);
 });
 
 test('pending video references always insert a real mention node', () => {
@@ -144,7 +144,8 @@ test('desktop file actions only reveal an existing local asset', () => {
 test('completed generation cards stay visible while requiring a saved local asset for preview', () => {
   assert.match(app, /task\.status !== 'completed' \|\| Boolean\(task\.assetId\)/);
   assert.match(app, /const localReady = Boolean\(asset && asset\.localStatus === 'saved' && !localSyncing\)/);
-  assert.match(app, /task\.assetId && !localSyncing/);
+  assert.match(app, /That gap is loading, not a missing result/);
+  assert.doesNotMatch(app, /<b>成品文件未找到<\/b>/);
   assert.doesNotMatch(app, /api\/files\/\$\{encodeURIComponent\(file\.id\)\}\/download/);
 });
 
