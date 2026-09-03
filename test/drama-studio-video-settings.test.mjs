@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, mergeDramaProjectList, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [
@@ -9,6 +9,18 @@ test('renamed drama projects update the library immediately and move to the top'
   ];
   const next = mergeDramaProjectList(previous, { id: 'current', title: '新名称', updatedAt: '3' });
   assert.deepEqual(next.map(project => [project.id, project.title]), [['current', '新名称'], ['old', '旧项目']]);
+});
+
+test('an older save response cannot overwrite fields edited while the request was in flight', () => {
+  const serverProject = { id:'project-1', revision:8, title:'服务端旧标题', shots:[{ id:'server-shot' }], settings:{ aspectRatio:'9:16' } };
+  const localProject = { id:'project-1', revision:7, title:'本地新标题', shots:[{ id:'local-shot' }], settings:{ aspectRatio:'21:9' } };
+  const requestVersions = new Map([['title', 1], ['shots', 3], ['settings', 2]]);
+  const currentVersions = new Map([['title', 2], ['shots', 3], ['settings', 4]]);
+
+  assert.deepEqual(
+    mergeProjectResponseWithNewerKeys(serverProject, localProject, requestVersions, currentVersions),
+    { id:'project-1', revision:8, title:'本地新标题', shots:[{ id:'server-shot' }], settings:{ aspectRatio:'21:9' } },
+  );
 });
 
 test('switching video model replaces only parameters unsupported by the selected model', () => {
@@ -115,7 +127,7 @@ test('video preview stays in generation state until the local asset is ready', (
   assert.equal(videoPreviewVersionState({ status:'queued' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'running' }), 'pending');
   assert.equal(videoPreviewVersionState({ status:'completed' }, { syncing:true }), 'syncing');
-  assert.equal(videoPreviewVersionState({ status:'completed', assetId:'asset-1' }), 'pending');
+  assert.equal(videoPreviewVersionState({ status:'completed', assetId:'asset-1' }), 'missing');
   assert.equal(videoPreviewVersionState({ status:'failed' }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'failed' }, { ready:true, syncing:true }), 'failed');
   assert.equal(videoPreviewVersionState({ status:'completed' }), 'missing');

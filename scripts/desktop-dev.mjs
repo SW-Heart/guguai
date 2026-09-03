@@ -36,10 +36,16 @@ let server = null;
 let ownsServer = false;
 
 try {
+  let serverAvailable = false;
   try {
     const response = await fetch(`${apiBase}/healthz`, { signal: AbortSignal.timeout(800) });
-    if (!response.ok) throw new Error(`服务返回 ${response.status}`);
-  } catch {
+    serverAvailable = response.ok;
+  } catch {}
+  if (serverAvailable) {
+    if (!apiBaseArgument) {
+      throw new Error(`本地端口 4317 已被其他进程占用；请先停止该进程，或显式使用 --api-base=${apiBase}`);
+    }
+  } else {
     if (apiBase !== defaultApiBase) throw new Error(`无法连接指定服务：${apiBase}`);
     server = start(node, ['--env-file=.env', 'server.mjs'], { env: { NODE_ENV: 'development' } });
     ownsServer = true;

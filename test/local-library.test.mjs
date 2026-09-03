@@ -90,7 +90,7 @@ test('local library migrates once and paginates without loading the whole index'
   }
 });
 
-test('downloading duplicated cloud assets reuses the local record that owns the workspace file', () => {
+test('a local path can be adopted only when it is not bound to another cloud asset', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'local-library-claim-'));
   try {
     openLocalLibrary(root);
@@ -100,11 +100,11 @@ test('downloading duplicated cloud assets reuses the local record that owns the 
     // 直接插入同路径的新记录会撞 relative_path 唯一约束。
     assert.throws(() => upsertLocalAsset({ ...asset(2), relativePath: stored.relativePath }), /UNIQUE constraint failed/);
 
-    // 占位记录已绑定别的云端 ID 时保留原绑定，只刷新本地状态。
+    // 已绑定其他云端 ID 的记录不能被第二个任务复用，否则第二个任务永远无法按 cloudAssetId 找回。
     const shared = claimLocalAssetByPath({ relativePath: stored.relativePath, cloudAssetId: 'cloud-2', sha256: stored.sha256, size: stored.size });
-    assert.equal(shared.id, stored.id);
-    assert.equal(shared.cloudAssetId, 'cloud-1');
-    assert.equal(shared.localStatus, 'saved');
+    assert.equal(shared, null);
+    assert.equal(findLocalAssetByCloudId('cloud-1').id, stored.id);
+    assert.equal(findLocalAssetByCloudId('cloud-2'), null);
     assert.equal(countLocalAssets(), 1);
 
     // 未绑定云端 ID 的本地导入文件可以被认领，并顶掉指向失效文件的旧记录。

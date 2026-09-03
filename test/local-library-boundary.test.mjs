@@ -5,6 +5,8 @@ import test from 'node:test';
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const dramaStudio = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
 const index = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+const desktopMain = await readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
+const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
 
 test('desktop file library reads only the local workspace', () => {
   assert.doesNotMatch(app, /function listRemoteFilesPage/);
@@ -38,8 +40,43 @@ test('each login activates its account workspace before historical receive', () 
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=203/);
-  assert.match(app, /\.\/drama-studio\.js\?v=67/);
+  assert.match(index, /\/app\.js\?v=211/);
+  assert.match(index, /\/styles\.css\?v=185/);
+  assert.match(app, /\.\/desktop-media-sync\.js\?v=7/);
+  assert.match(app, /\.\/drama-studio\.js\?v=69/);
+});
+
+test('pending video references always insert a real mention node', () => {
+  const insertStart = app.indexOf('function insertVideoPromptMentions(');
+  const insertEnd = app.indexOf('\nconst formatBytes', insertStart);
+  const insertSource = app.slice(insertStart, insertEnd);
+  assert.match(insertSource, /videoPromptMentionMarkup\(mention, file\)/);
+  assert.match(insertSource, /if \(!chip\) \{/);
+  assert.ok(insertSource.indexOf('if (!chip) {') < insertSource.indexOf('range.insertNode(chip)'));
+});
+
+test('desktop updater uses single-range differential downloads for Aliyun OSS', () => {
+  assert.match(desktopMain, /setFeedURL\(\{ provider: 'generic', url: `\$\{url\}\/`, useMultipleRangeRequest:false \}\)/);
+  assert.match(desktopMain, /disableDifferentialDownload = false/);
+});
+
+test('byte-identical outputs from different cloud assets keep separate local indexes', () => {
+  assert.match(desktopMain, /pathOwner\.cloudAssetId !== cloudAssetId/);
+  assert.match(desktopMain, /createHash\('sha256'\)\.update\(cloudAssetId\)/);
+  assert.match(desktopMain, /targetName = `\$\{sha256\.slice\(0, 16\)\}-\$\{cloudSuffix\}-\$\{normalizedName\}`/);
+});
+
+test('generation submission is idempotent across duplicate form and HTTP events', () => {
+  const submitStart = app.indexOf('async function submitGeneration(');
+  const submitEnd = app.indexOf("\n$('#imageForm').onsubmit", submitStart);
+  const submitSource = app.slice(submitStart, submitEnd);
+  assert.match(app, /const generationSubmissionForms = new WeakSet\(\)/);
+  assert.match(submitSource, /generationSubmissionForms\.has\(form\)/);
+  assert.match(submitSource, /const requestId = crypto\.randomUUID\(\)/);
+  assert.match(submitSource, /referenceAssetIds, requestId/);
+  assert.match(server, /id: taskIds\[index\]/);
+  assert.match(server, /const existingTasks = tasks\.map\(task => findGeneration\(user\.id, task\.id\)\)/);
+  assert.match(server, /if \(activeGenerations\.has\(task\.id\)\) return activeGenerations\.get\(task\.id\)/);
 });
 
 test('historical receive resumes from a per-page checkpoint and acknowledges in batches', () => {
@@ -77,12 +114,23 @@ test('generation polling resolves completed media from the local index only', ()
   assert.doesNotMatch(loadTasksSource, /queueDesktopHydration/);
 });
 
-test('remote change deletion cannot remove a local library asset', () => {
+test('targeted missing-file repairs bypass stale local-ready delivery state', () => {
   const syncStart = app.indexOf('async function syncDesktopDeliveries(');
   const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
   const syncSource = app.slice(syncStart, syncEnd);
-  assert.doesNotMatch(syncSource, /removeLocal|change\.action|deletedCloudAssetIds/);
-  assert.match(syncSource, /queueDesktopHydration\(deliveries\)/);
+  assert.match(syncSource, /await desktopSyncRequest/);
+  assert.match(syncSource, /queueDesktopHydration\(deliveries, \{ forceAssetIds:requestedAssetIds \}\)/);
+  assert.match(app, /shouldHydrateDesktopAsset\(file, \{ force:forced \}\)/);
+});
+
+test('remote cloud deletion removes only the matching local cloud copy', () => {
+  const syncStart = app.indexOf('async function syncDesktopDeliveries(');
+  const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
+  const syncSource = app.slice(syncStart, syncEnd);
+  assert.match(syncSource, /change\?\.action === 'delete'/);
+  assert.match(syncSource, /removeDesktopCloudAssets\(deletedCloudAssetIds\)/);
+  assert.match(app, /removeLocalByCloudIds/);
+  assert.match(syncSource, /queueDesktopHydration\(deliveries, \{ forceAssetIds:requestedAssetIds \}\)/);
 });
 
 test('desktop file actions only reveal an existing local asset', () => {

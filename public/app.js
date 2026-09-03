@@ -1,6 +1,6 @@
 import { listSignature, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from './list-sync.js?v=2';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=6';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=7';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -63,13 +63,16 @@ let desktopUpdateUnsubscribe = null;
 let desktopWindowStateUnsubscribe = null;
 let desktopWorkspacePath = '';
 let desktopAccountEpoch = 0;
+let desktopUpdateReminderSnoozed = false;
 const desktopHydrationQueue = [];
 const desktopHydrationQueued = new Set();
 const desktopHydrationAttempted = new Set();
 const desktopHydrationActive = new Set();
+const desktopHydrationForced = new Set();
 const desktopHydrationFailureCounts = new Map();
 const desktopHydrationRetryTimers = new Map();
 let desktopHydrationRunning = false;
+const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
 
@@ -113,7 +116,7 @@ async function runWithConcurrency(items, worker, concurrency = 3) {
   }));
 }
 function historicalSyncMarker(userId) {
-  return `gugu:history-local-v1:${desktopSyncInfo.deviceId}:${userId}:${desktopWorkspacePath}`;
+  return `gugu:history-local-v2:${desktopSyncInfo.deviceId}:${userId}:${desktopWorkspacePath}`;
 }
 // 历史接收是可恢复的：每处理完一整页且该页没有可重试的失败，就把游标写回本地。
 // 早先只有「全程零失败」才写完成标记，素材一多几乎必然遇到一次网络抖动，
@@ -177,6 +180,73 @@ function applyDesktopLocalAsset(remoteFile, localAsset) {
   }
   renderAfterDesktopAssetHydration();
 }
+async function removeDesktopCloudAssets(assetIds) {
+  const ids = [...new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(value => String(value || '')).filter(Boolean))];
+  if (!ids.length) return;
+  const bridge = window.guguDesktop;
+  const localFiles = state.files.filter(file => ids.includes(String(file.cloudAssetId || file.id || '')) && !file.localOnly);
+  if (bridge?.media?.removeLocalByCloudIds) {
+    await bridge.media.removeLocalByCloudIds(ids);
+  } else if (bridge?.media?.removeLocal) {
+    // Older clients do not have the bulk bridge yet. Best-effort cleanup is
+    // still safe here because this path only receives server-confirmed cloud
+    // deletions; local-only imports are never included.
+    for (const file of localFiles) {
+      try { await bridge.media.removeLocal(file.localId || file.id); }
+      catch (error) { console.warn('[desktop] 清理已删除云端素材失败', { assetId:file.id, message:error.message }); }
+    }
+  }
+  const removed = new Set(ids);
+  const matches = file => removed.has(String(file.cloudAssetId || file.id || ''));
+  const removedLibraryCount = libraryFiles.filter(matches).length;
+  state.files = state.files.filter(file => !matches(file));
+  libraryFiles = libraryFiles.filter(file => !matches(file));
+  ids.forEach(id => {
+    desktopHydrationQueued.delete(id);
+    desktopHydrationAttempted.delete(id);
+    desktopHydrationActive.delete(id);
+    desktopHydrationFailureCounts.delete(id);
+    const retryTimer = desktopHydrationRetryTimers.get(id);
+    if (retryTimer) window.clearTimeout(retryTimer);
+    desktopHydrationRetryTimers.delete(id);
+  });
+  clearFileReferencesForIds(ids);
+  indexedFiles = null;
+  localFileTotal = Math.max(0, localFileTotal - removedLibraryCount);
+  renderAfterDesktopAssetHydration();
+}
+function clearFileReferencesForIds(assetIds) {
+  const ids = new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(value => String(value || '')).filter(Boolean));
+  for (const id of ids) {
+    clearFileReferences(id);
+    state.refs.image = state.refs.image.filter(value => !ids.has(String(value || '')));
+    state.refs.video = state.refs.video.filter(value => !ids.has(String(value || '')));
+    if (ids.has(String(state.videoFrames.first || ''))) state.videoFrames.first = '';
+    if (ids.has(String(state.videoFrames.last || ''))) state.videoFrames.last = '';
+  }
+}
+async function confirmGenerationDeletion(task, { title = '确认删除作品' } = {}) {
+  const failed = task?.status === 'failed';
+  if (!await confirmDelete({
+    title,
+    message: failed ? '失败作品删除后无法恢复。' : '作品、关联云端文件、本机副本及短剧引用都会删除，且无法恢复。',
+  })) return false;
+  if (failed) return true;
+  return confirmDelete({
+    title:'再次确认永久删除',
+    message:'这是已生成的内容。确认继续删除作品、云端文件、本机副本及所有短剧引用吗？',
+  });
+}
+async function confirmFileDeletion(file) {
+  const task = taskForAsset(file);
+  if (file?.sourceGenerationId) {
+    // A task can be outside the current paginated list. The presence of a
+    // sourceGenerationId still means this is generated content, so keep the
+    // stronger two-step confirmation even when its status is not hydrated.
+    return confirmGenerationDeletion(task || { status:'completed' });
+  }
+  return confirmDelete({ title:'确认删除素材', message:'素材一旦删除，无法恢复。' });
+}
 async function showDesktopAssetInFolder(file, control = null) {
   const bridge = window.guguDesktop;
   if (!bridge?.media || !file) return null;
@@ -216,12 +286,14 @@ async function syncHistoricalCloudAssets(user) {
     setBootProgress(58, '历史素材已就绪');
     return { skipped:true, received:0, unavailable:0 };
   }
+  const fullCloudScan = !checkpoint.cursor && !checkpoint.scanned;
   let cursor = checkpoint.cursor;
   let scanned = checkpoint.scanned;
   let total = 0;
   let pageNumber = 0;
   let received = 0;
   let unavailable = 0;
+  const seenCloudAssetIds = new Set();
   // 一旦某页出现可重试的失败，后续页即便成功也不再前移本地游标，
   // 否则下次启动会跳过那页里没接收到的素材。
   let checkpointClean = true;
@@ -241,6 +313,7 @@ async function syncHistoricalCloudAssets(user) {
     // 只有本次运行的第一次请求需要总数，续传时也要拿到它才能显示确定的进度。
     const page = await listHistoricalCloudAssetsPage(cursor, { includeTotal:pageNumber === 0 });
     total = total || page.total;
+    page.items.forEach(file => { if (file?.id) seenCloudAssetIds.add(String(file.id)); });
     const pageStart = scanned;
     const candidates = page.items.filter(file => file?.id && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
     const localAssets = await bridge.media.listLocalByCloudIds(candidates.map(file => file.id));
@@ -292,6 +365,22 @@ async function syncHistoricalCloudAssets(user) {
     if (pageFailures) checkpointClean = false;
     if (checkpointClean) writeHistoricalSyncCheckpoint(marker, cursor ? { cursor, scanned } : { complete:true });
   } while (cursor);
+  if (fullCloudScan && checkpointClean && !transientFailures.length && bridge.media.removeLocalByCloudIds && bridge.media.listLocal) {
+    // Reconcile once after the complete cloud scan. This repairs clients that
+    // advanced their old cursor before the deletion-change handler existed.
+    const localCloudAssetIds = [];
+    let localCursor = '';
+    do {
+      const page = await bridge.media.listLocal({ limit:200, cursor:localCursor });
+      for (const file of page?.items || []) if (file?.cloudAssetId) localCloudAssetIds.push(String(file.cloudAssetId));
+      localCursor = String(page?.nextCursor || '');
+    } while (localCursor);
+    const staleCloudAssetIds = [...new Set(localCloudAssetIds)].filter(id => !seenCloudAssetIds.has(id));
+    if (staleCloudAssetIds.length) {
+      await bridge.media.removeLocalByCloudIds(staleCloudAssetIds);
+      console.info('[desktop] 已清理云端不存在的本地素材', { count:staleCloudAssetIds.length });
+    }
+  }
   if (!transientFailures.length) localStorage.setItem(marker, 'complete');
   else console.warn('[desktop] 历史素材仍有待重试项', transientFailures);
   setBootProgress(historyEnd, '历史素材已就绪');
@@ -311,6 +400,7 @@ async function runDesktopHydrationQueue() {
         // retain the attempt marker so a later missing-local-file check can
         // repair the copy in the same client session.
         desktopHydrationAttempted.delete(file?.id);
+        desktopHydrationForced.delete(file?.id);
         desktopHydrationFailureCounts.delete(file?.id);
         const retryTimer = desktopHydrationRetryTimers.get(file?.id);
         if (retryTimer) window.clearTimeout(retryTimer);
@@ -324,6 +414,7 @@ async function runDesktopHydrationQueue() {
         desktopHydrationFailureCounts.set(assetId, failureCount);
         const retryDelay = desktopHydrationRetryDelay(failureCount);
         console.warn('[desktop] 自动同步素材失败', { assetId, message:error.message, failureCount, retryDelay });
+        if (!retryDelay) desktopHydrationForced.delete(assetId);
         if (assetId && retryDelay && !desktopHydrationRetryTimers.has(assetId)) {
           const timer = window.setTimeout(() => {
             desktopHydrationRetryTimers.delete(assetId);
@@ -347,11 +438,15 @@ async function runDesktopHydrationQueue() {
     }
   }
 }
-function queueDesktopHydration(files) {
+function queueDesktopHydration(files, { forceAssetIds = [] } = {}) {
   if (!window.guguDesktop) return;
+  const forcedIds = new Set((Array.isArray(forceAssetIds) ? forceAssetIds : []).map(value => String(value || '')).filter(Boolean));
   let queued = false;
   for (const file of files) {
-    if (!shouldHydrateDesktopAsset(file) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
+    const assetId = String(file?.id || '');
+    if (forcedIds.has(assetId)) desktopHydrationForced.add(assetId);
+    const forced = desktopHydrationForced.has(assetId);
+    if (!shouldHydrateDesktopAsset(file, { force:forced }) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
     desktopHydrationAttempted.add(file.id);
     desktopHydrationQueued.add(file.id);
     desktopHydrationActive.add(file.id);
@@ -361,14 +456,23 @@ function queueDesktopHydration(files) {
   if (queued) renderAfterDesktopAssetHydration();
   if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
 }
-async function syncDesktopDeliveries() {
+async function syncDesktopDeliveries({ assetIds = [] } = {}) {
   const bridge = window.guguDesktop;
   if (!bridge?.sync || !desktopSyncInfo.deviceId) return null;
   const requestEpoch = desktopAccountEpoch;
-  if (desktopSyncRequest && desktopSyncRequestEpoch === requestEpoch) return desktopSyncRequest;
+  const requestedAssetIds = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(value => String(value || '')).filter(Boolean))].slice(0, 500);
+  if (desktopSyncRequest && desktopSyncRequestEpoch === requestEpoch) {
+    if (!requestedAssetIds.length) return desktopSyncRequest;
+    // A background cursor sync may already be running when task polling finds
+    // a missing local row. Wait for it, then issue the targeted repair; never
+    // let request coalescing silently discard the requested asset IDs.
+    try { await desktopSyncRequest; } catch {}
+    if (requestEpoch !== desktopAccountEpoch) return null;
+  }
   const request = (async () => {
     const query = new URLSearchParams({ deviceId:desktopSyncInfo.deviceId, limit:'100' });
     if (desktopSyncInfo.cursor) query.set('cursor', desktopSyncInfo.cursor);
+    if (requestedAssetIds.length) query.set('assetIds', requestedAssetIds.join(','));
     let result;
     try {
       result = await api(`/api/files/sync?${query}`);
@@ -384,6 +488,15 @@ async function syncDesktopDeliveries() {
       result = await api(`/api/files/sync?${query}`);
     }
     if (requestEpoch !== desktopAccountEpoch) return null;
+    const deletedCloudAssetIds = [...new Set((result.changes || [])
+      .filter(change => change?.action === 'delete' && change.assetId)
+      .map(change => String(change.assetId)))];
+    // Apply deletions before advancing the cursor. If local cleanup fails, a
+    // later sync retries the same change instead of permanently skipping it.
+    if (deletedCloudAssetIds.length) {
+      await removeDesktopCloudAssets(deletedCloudAssetIds);
+      await dramaController?.refreshProject?.({ quiet:true });
+    }
     if (result.nextCursor) {
       desktopSyncInfo.cursor = result.nextCursor;
       await bridge.sync.setCursor(result.nextCursor);
@@ -394,7 +507,7 @@ async function syncDesktopDeliveries() {
       // download later fails, the generation can be rendered as a terminal
       // missing-file state instead of looking like it is still syncing.
       mergeStateFiles(deliveries);
-      queueDesktopHydration(deliveries);
+      queueDesktopHydration(deliveries, { forceAssetIds:requestedAssetIds });
       renderAfterDesktopAssetHydration();
     }
     return result;
@@ -510,8 +623,8 @@ let videoPromptCompositionFrame = 0;
 function videoPromptEditor() { return $('#videoPrompt'); }
 function videoPromptMentionLabel(mention, file) { return String(mention?.label || file?.name || '未命名素材').replace(/^@/, '').trim() || '未命名素材'; }
 function videoPromptMentionKindLabel(kind) { return ({ image:'图片', video:'视频', audio:'音频' }[kind] || '素材'); }
-function videoPromptMentionMarkup(mention) {
-  const file = state.files.find(item => item.id === mention?.id);
+function videoPromptMentionMarkup(mention, resolvedFile = null) {
+  const file = resolvedFile || state.files.find(item => item.id === mention?.id);
   const label = videoPromptMentionLabel(mention, file);
   if (!file) return esc(`@${label}`);
   const preview = file.kind === 'image'
@@ -700,8 +813,23 @@ function insertVideoPromptMentions(assetIds, request = videoPromptMentionRequest
   removeVideoPromptTrigger(range);
   files.forEach(file => {
     const holder = document.createElement('span');
-    holder.innerHTML = videoPromptMentionMarkup({ id:file.id, label:file.name, kind:file.kind });
-    const chip = holder.firstElementChild;
+    const mention = { id:file.id, label:file.name, kind:file.kind };
+    holder.innerHTML = videoPromptMentionMarkup(mention, file);
+    let chip = holder.firstElementChild;
+    if (!chip) {
+      // A pending local reference may not be present in state.files yet. Never
+      // pass null to Range.insertNode; preserve a valid mention chip even when
+      // preview markup cannot be produced.
+      const label = videoPromptMentionLabel(mention, file);
+      chip = document.createElement('span');
+      chip.className = 'video-prompt-mention';
+      chip.dataset.videoPromptMentionId = String(file.id);
+      chip.dataset.videoPromptMentionLabel = label;
+      chip.dataset.videoPromptMentionKind = file.kind;
+      chip.contentEditable = 'false';
+      chip.setAttribute('aria-label', `引用${label}，${videoPromptMentionKindLabel(file.kind)}`);
+      chip.textContent = `@${label}`;
+    }
     range.insertNode(chip);
     const spacer = document.createTextNode(' ');
     chip.after(spacer);
@@ -1334,7 +1462,7 @@ function openDesktopUpdateDialog() {
   dialog.hidden = false;
   if (!dialog.open) dialog.showModal();
 }
-function renderDesktopUpdateDialog(payload, { open = true } = {}) {
+function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog) return;
   desktopUpdateState = { ...desktopUpdateState, ...(payload || {}) };
@@ -1409,8 +1537,21 @@ function initDesktopUpdateDialog(bridge) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog || !bridge?.updates || dialog.dataset.bound === 'true') return;
   const close = () => closeDesktopUpdateDialog();
+  const snooze = async () => {
+    // Hide immediately even if the IPC round trip is slow. The main process
+    // also keeps this state so a renderer reload cannot bring the reminder
+    // back during the same client session.
+    desktopUpdateReminderSnoozed = true;
+    desktopUpdateState = { ...desktopUpdateState, snoozed: true };
+    const updateButton = $('#desktopUpdateButton');
+    updateButton?.classList.add('hidden');
+    updateButton?.classList.remove('has-update');
+    closeDesktopUpdateDialog();
+    try { await bridge.updates.snooze?.(); }
+    catch (error) { console.warn('[desktop] 稍后提醒状态保存失败', error); }
+  };
   $('#closeDesktopUpdate').onclick = close;
-  $('#laterDesktopUpdate').onclick = close;
+  $('#laterDesktopUpdate').onclick = () => void snooze();
   $('#desktopUpdateAction').onclick = async () => {
     if (desktopUpdateState.status === 'error') {
       close();
@@ -1536,6 +1677,7 @@ function resetDesktopAccountState() {
   desktopHydrationQueued.clear();
   desktopHydrationAttempted.clear();
   desktopHydrationActive.clear();
+  desktopHydrationForced.clear();
   desktopHydrationFailureCounts.clear();
   desktopHydrationRunning = false;
   localFileCursor = '';
@@ -1625,12 +1767,18 @@ async function initDesktopBridge() {
       const applyUpdateStatus = payload => {
         const status = payload?.status;
         desktopUpdateState = { ...desktopUpdateState, ...(payload || {}) };
+        if (desktopUpdateReminderSnoozed || payload?.snoozed) {
+          desktopUpdateReminderSnoozed = true;
+          hideUpdateButton();
+          closeDesktopUpdateDialog();
+          return;
+        }
         if (status === 'unconfigured' || status === 'current' || status === 'idle') { hideUpdateButton(); closeDesktopUpdateDialog(); return; }
+        if (status === 'checking') { hideUpdateButton(); closeDesktopUpdateDialog(); setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; return; }
         showUpdateButton();
-        renderDesktopUpdateDialog(payload, { open: ['available', 'downloading', 'downloaded', 'error'].includes(status) });
-        if (status === 'checking') { setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; }
-        else if (status === 'available') { setUpdateLabel('下载更新'); setUpdateTitle(`正在下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'downloading') { setUpdateLabel(`更新 ${payload.percent || 0}%`); setUpdateTitle('正在下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        renderDesktopUpdateDialog(payload);
+        if (status === 'available') { setUpdateLabel('后台下载中'); setUpdateTitle(`正在后台下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        else if (status === 'downloading') { setUpdateLabel(`后台下载 ${payload.percent || 0}%`); setUpdateTitle('正在后台下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
         else if (status === 'downloaded') { setUpdateLabel('重启更新'); setUpdateTitle('重启客户端并重新安装更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
         else if (status === 'installing') { setUpdateLabel('正在退出…'); setUpdateTitle('退出后将打开安装程序'); updateButton.disabled = true; }
         else if (status === 'error') { setUpdateLabel('检查更新'); setUpdateTitle('更新暂不可用'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
@@ -1970,8 +2118,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=67').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder });
+    dramaControllerPromise = import('./drama-studio.js?v=69').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
       return dramaController;
     });
   }
@@ -2213,6 +2361,17 @@ async function loadTasks({ background=false }={}) {
         }
         mergeStateFiles(localAssets);
         assetsChanged = localAssets.length > 0;
+      }
+      if (missingAssetIds.length && window.guguDesktop?.sync && desktopSyncInfo.deviceId) {
+        try {
+          // A local database row can be gone even though the cloud asset still
+          // exists. Ask the delivery endpoint for these exact assets so the
+          // normal hydration queue can repair the file instead of leaving a
+          // completed task stuck at “视频文件未找到”.
+          await syncDesktopDeliveries({ assetIds:missingAssetIds });
+        } catch (error) {
+          console.warn('[tasks] failed to re-request missing local assets', error);
+        }
       }
       if (state.route === 'drama') {
         if (stateChanged || assetsChanged) dramaController?.refreshTasks?.();
@@ -2525,7 +2684,7 @@ $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generati
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
 $('#useGenerationReference').onclick = () => continueFromTask(state.tasks.find(item => item.id === state.detailTaskId), 'image', true);
 $('#deriveGeneration').onclick = () => { const task = state.tasks.find(item => item.id === state.detailTaskId); continueFromTask(task, 'video', true); };
-$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmDelete({ title:'确认删除作品', message:'作品一旦删除，无法恢复。' })) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (task.assetId) clearFileReferences(task.assetId); closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
+$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmGenerationDeletion(task)) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { const result = await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (result.deletedAssetId || task.assetId) await removeDesktopCloudAssets([result.deletedAssetId || task.assetId]); else clearFileReferences(task.assetId); if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error)); closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
 
 async function loadFiles({ background=false, loadMore=false }={}) {
   const search = $('#fileSearch').value.trim();
@@ -2671,8 +2830,17 @@ function clearFileReferences(fileId) {
   removeVideoPromptMentionNodes(fileId);
 }
 async function removeFile(file) {
-  if (!window.guguDesktop?.media?.removeLocal) throw new Error('桌面文件能力尚未就绪，请重启客户端后再试');
-  await window.guguDesktop.media.removeLocal(file.localId || file.id);
+  const media = window.guguDesktop?.media;
+  const cloudAssetId = file?.localOnly ? '' : String(file?.cloudAssetId || file?.id || '');
+  if (cloudAssetId) {
+    const result = await api(`/api/files/${encodeURIComponent(cloudAssetId)}`, { method:'DELETE', body:'{}' });
+    await removeDesktopCloudAssets([result.deletedAssetId || cloudAssetId]);
+    if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error));
+    await Promise.all([loadTasks(), loadFiles()]);
+    return;
+  }
+  if (!media?.removeLocal) throw new Error('桌面文件能力尚未就绪，请重启客户端后再试');
+  await media.removeLocal(file.localId || file.id);
   clearFileReferences(file.id);
   state.files = state.files.filter(item => item.id !== file.id);
   libraryFiles = libraryFiles.filter(item => item.id !== file.id);
@@ -2685,7 +2853,7 @@ function bindFileActions(root) {
   root.querySelector('.more-button')?.addEventListener('click', event => { event.stopPropagation(); const button = event.currentTarget; $$('[data-menu]').forEach(menu => menu.classList.toggle('hidden', menu.dataset.menu !== button.dataset.id || !menu.classList.contains('hidden'))); });
   root.querySelector('.show-in-folder')?.addEventListener('click', async event => { event.stopPropagation(); await showDesktopAssetInFolder(fileById(event.currentTarget.dataset.assetId), event.currentTarget); });
   root.querySelector('.rename-file')?.addEventListener('click', event => { event.stopPropagation(); const file = state.files.find(x => x.id === event.currentTarget.dataset.id); openRenameFileDialog(file); });
-  root.querySelector('.delete-file')?.addEventListener('click', async event => { const file = state.files.find(x => x.id === event.currentTarget.dataset.id); if (!file || !await confirmDelete({ title:'确认删除素材', message:'素材一旦删除，无法恢复。' })) return; try { await removeFile(file); toast('文件已删除'); } catch (error) { toast(error.message); } });
+  root.querySelector('.delete-file')?.addEventListener('click', async event => { const file = state.files.find(x => x.id === event.currentTarget.dataset.id); if (!file || !await confirmFileDeletion(file)) return; try { await removeFile(file); toast(file.sourceGenerationId ? '作品及关联文件已删除' : '文件已删除'); } catch (error) { toast(error.message); } });
 }
 document.addEventListener('click', () => $$('[data-menu]').forEach(menu => menu.classList.add('hidden')));
 
@@ -3248,6 +3416,8 @@ async function resolveReferenceAssetIds(ids) {
 function cloudReferenceIds(ids) { return [...new Set((Array.isArray(ids) ? ids : []).filter(id => { const file = state.files.find(item => item.id === id); return file && !file.localOnly; }))]; }
 function hasUnresolvedReference(ids=currentVideoReferenceIds()) { return ids.some(id => { const file=state.files.find(item => item.id === id); return Boolean(pendingReferenceJob(id) || needsReferenceUpload(file)); }); }
 async function submitGeneration(type, form, payload) {
+  if (generationSubmissionForms.has(form)) return;
+  generationSubmissionForms.add(form);
   const button = form.querySelector('.generate');
   const original = button.innerHTML;
   const requestedReferenceIds = type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type];
@@ -3270,7 +3440,8 @@ async function submitGeneration(type, form, payload) {
       expectedPriceVersion=state.modelQuote.priceVersion || '';
     }
     button.innerHTML = '<span class="button-spinner"></span><span>正在提交</span>';
-    const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    const requestId = crypto.randomUUID();
+    const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
     setCreditBalance(result.balance);
     if (type === 'video') setVideoPromptText(''); else form.querySelector('textarea').value = '';
@@ -3282,7 +3453,7 @@ async function submitGeneration(type, form, payload) {
     toast(tasks.length > 1 ? `已提交 ${tasks.length} 个图像任务，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
     await loadTasks();
   } catch (error) { renderReferences(); toast(error.message); await loadCredits(); }
-  finally { button.innerHTML = original; videoParameterControls.forEach(id => setProductSelectEnabled(id, true)); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } button.disabled = false; }
+  finally { generationSubmissionForms.delete(form); button.innerHTML = original; videoParameterControls.forEach(id => setProductSelectEnabled(id, true)); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } button.disabled = false; }
 }
 $('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptState(); if (Array.from($('#imagePrompt').value).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:$('#imagePrompt').value, size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
@@ -3578,7 +3749,7 @@ $('#editPreviewName').onclick = event => { event.stopPropagation(); if (previewN
 $('#previewNameInput').addEventListener('click', event => event.stopPropagation());
 $('#previewNameInput').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); void savePreviewName(); } else if (event.key === 'Escape') { event.stopPropagation(); resetPreviewNameEditing(); } });
 $('#closePreview').onclick = () => { if (previewNameEditing) void savePreviewName({ close:true }); else $('#previewDialog').close(); };
-$('#deletePreview').onclick = async () => { if ($('#deletePreview').disabled) return; const file = state.files.find(item => item.id === state.previewFileId); if (!file || !await confirmDelete({ title:'确认删除素材', message:'素材一旦删除，无法恢复。' })) return; const button = $('#deletePreview'); button.disabled = true; try { await removeFile(file); $('#previewDialog').close(); toast('文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
+$('#deletePreview').onclick = async () => { if ($('#deletePreview').disabled) return; const file = state.files.find(item => item.id === state.previewFileId); if (!file || !await confirmFileDeletion(file)) return; const button = $('#deletePreview'); button.disabled = true; try { await removeFile(file); $('#previewDialog').close(); toast(file.sourceGenerationId ? '作品及关联文件已删除' : '文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
 
 
 $('#previewDialog').addEventListener('click', event => {

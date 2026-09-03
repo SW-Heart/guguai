@@ -79,4 +79,6 @@ test('desktop auto hydration selects generated results awaiting local delivery o
   assert.equal(shouldHydrateDesktopAsset({ id:'history', remoteStatus:'ready' }), false);
   assert.equal(shouldHydrateDesktopAsset({ id:'uploaded', remoteStatus:'ready' }), false);
   assert.equal(shouldHydrateDesktopAsset({ id:'inconsistent', deliveryStatus:'remote_backed_up', remoteStatus:'pending' }), false);
+  assert.equal(shouldHydrateDesktopAsset({ id:'repair', deliveryStatus:'local_ready', remoteStatus:'ready' }, { force:true }), true);
+  assert.equal(shouldHydrateDesktopAsset({ id:'already-local', deliveryStatus:'local_ready', remoteStatus:'ready', localStatus:'saved' }, { force:true }), false);
 });

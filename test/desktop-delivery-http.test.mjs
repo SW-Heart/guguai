@@ -9,7 +9,7 @@ import path from 'node:path';
 
 import { closeDatabase, openDatabase, resetForTests } from '../lib/db.mjs';
 import { hashPassword } from '../lib/auth.mjs';
-import { insertUser, saveAssetRecord, saveGenerationRecord } from '../lib/store.mjs';
+import { insertUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord } from '../lib/store.mjs';
 
 async function listen(server) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -64,6 +64,13 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const authenticatedTaskId = 'authenticated-delivery-task';
   const remoteBackedAssetId = 'remote-backed-delivery-asset';
   const localAssetId = 'local-delivery-asset';
+  const dramaAssetId = 'drama-delete-asset';
+  const dramaTaskId = 'drama-delete-task';
+  const dramaProjectId = 'drama-delete-project';
+  const dramaShotId = 'drama-delete-shot';
+  const wholeShotAssetId = 'drama-whole-shot-asset';
+  const wholeShotTaskId = 'drama-whole-shot-task';
+  const wholeShotId = 'drama-whole-shot';
   const localPayload = Buffer.from('local-video-payload');
   const createdAt = new Date().toISOString();
   const sourceUrl = `${upstreamBase}/result.mp4`;
@@ -104,6 +111,40 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   saveGenerationRecord(userId, {
     id: authenticatedTaskId, ownerId: userId, type: 'video', status: 'completed', provider: 'oai', providerTaskId: 'auth-task',
     assetId: authenticatedAssetId, sourceUrl: authenticatedSourceUrl, sourceRequiresAuth: true, archivePending: true, localDeliveryDeadlineAt, creditStatus: 'charged', creditCost: 0,
+    createdAt, updatedAt: createdAt,
+  });
+  saveAssetRecord(userId, {
+    id: dramaAssetId, ownerId: userId, name: '短剧版本.mp4', kind: 'video', mimeType: 'video/mp4', size: 0,
+    storageName: `${dramaAssetId}.mp4`, source: 'generation', sourceGenerationId: dramaTaskId,
+    remoteStatus: 'pending', deliveryStatus: 'awaiting_local', createdAt, updatedAt: createdAt,
+  });
+  saveGenerationRecord(userId, {
+    id: dramaTaskId, ownerId: userId, type: 'video', status: 'completed', provider: 'duomi', providerTaskId: 'drama-delete-provider-task',
+    assetId: dramaAssetId, dramaProjectId, dramaShotId, archivePending: false, creditStatus: 'charged', creditCost: 0,
+    createdAt, updatedAt: createdAt,
+  });
+  saveAssetRecord(userId, {
+    id: wholeShotAssetId, ownerId: userId, name: '整镜删除版本.mp4', kind: 'video', mimeType: 'video/mp4', size: 0,
+    storageName: `${wholeShotAssetId}.mp4`, source: 'generation', sourceGenerationId: wholeShotTaskId,
+    remoteStatus: 'pending', deliveryStatus: 'awaiting_local', createdAt, updatedAt: createdAt,
+  });
+  saveGenerationRecord(userId, {
+    id: wholeShotTaskId, ownerId: userId, type: 'video', status: 'completed', provider: 'duomi', providerTaskId: 'drama-whole-shot-provider-task',
+    assetId: wholeShotAssetId, dramaProjectId, dramaShotId: wholeShotId, archivePending: false, creditStatus: 'charged', creditCost: 0,
+    createdAt, updatedAt: createdAt,
+  });
+  saveDramaProjectRecord(userId, {
+    id: dramaProjectId, ownerId: userId, title: '删除同步测试项目', mode: 'professional', step: 'video', maxStep: 'video', status: 'active',
+    input: '', synopsis: '', script: '', scenes: [], resources: [],
+    settings: { shotCount: 2, totalDuration: 40, shotDuration: 20, aspectRatio: '9:16' },
+    shots: [
+      { id: dramaShotId, title: '删除同步测试镜头', script: '测试', prompt: '测试', sceneId: '', resourceIds: [], referenceAssetIds: [],
+        generation: { type: 'TEXT', modelId: '', firstFrameAssetId: '', lastFrameAssetId: '', referenceAssetIds: [], quality: '720p', count: 1 },
+        lifecycle: { status: 'generated', revision: 1, staleReasons: [] }, videoVersions: [dramaTaskId], selectedVideoTaskId: dramaTaskId, tailFrameAssetId: '' },
+      { id: wholeShotId, title: '整镜删除测试', script: '测试整镜删除', prompt: '测试', sceneId: '', resourceIds: [], referenceAssetIds: [],
+        generation: { type: 'TEXT', modelId: '', firstFrameAssetId: '', lastFrameAssetId: '', referenceAssetIds: [], quality: '720p', count: 1 },
+        lifecycle: { status: 'generated', revision: 1, staleReasons: [] }, videoVersions: [wholeShotTaskId], selectedVideoTaskId: wholeShotTaskId, tailFrameAssetId: '' },
+    ],
     createdAt, updatedAt: createdAt,
   });
   closeDatabase({ checkpoint: false });
@@ -190,7 +231,47 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   assert.equal(acknowledgedRemote.status, 200);
   const thirdSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(secondSyncData.nextCursor)}&limit=20`, { headers });
   assert.equal(thirdSync.status, 200);
-  assert.equal((await thirdSync.json()).deliveries.some(file => file.id === remoteBackedAssetId), false, '同一设备确认后不应重复投递');
+  const thirdSyncData = await thirdSync.json();
+  assert.equal(thirdSyncData.deliveries.some(file => file.id === remoteBackedAssetId), false, '同一设备确认后不应重复投递');
+
+  const deletedDramaVersion = await fetch(`${base}/api/drama/projects/${dramaProjectId}/shots/${dramaShotId}/videos/${dramaTaskId}`, {
+    method: 'DELETE', headers,
+  });
+  assert.equal(deletedDramaVersion.status, 200);
+  const deletedDramaData = await deletedDramaVersion.json();
+  assert.deepEqual(deletedDramaData.project.shots[0].videoVersions, []);
+  assert.equal(deletedDramaData.project.shots[0].selectedVideoTaskId, '');
+  const dramaAssetAfterDelete = await fetch(`${base}/api/files/${dramaAssetId}`, { headers });
+  assert.equal(dramaAssetAfterDelete.status, 404);
+  const dramaTaskAfterDelete = await fetch(`${base}/api/generations?ids=${dramaTaskId}`, { headers });
+  assert.deepEqual(await dramaTaskAfterDelete.json(), []);
+
+  const deletedWholeShot = await fetch(`${base}/api/drama/projects/${dramaProjectId}/shots/${wholeShotId}`, {
+    method: 'DELETE', headers,
+  });
+  assert.equal(deletedWholeShot.status, 200);
+  const deletedWholeShotData = await deletedWholeShot.json();
+  assert.deepEqual(deletedWholeShotData.project.shots.map(shot => shot.id), [dramaShotId]);
+  assert.deepEqual(deletedWholeShotData.deletedTaskIds, [wholeShotTaskId]);
+  assert.deepEqual(deletedWholeShotData.deletedAssetIds, [wholeShotAssetId]);
+  const wholeShotAssetAfterDelete = await fetch(`${base}/api/files/${wholeShotAssetId}`, { headers });
+  assert.equal(wholeShotAssetAfterDelete.status, 404);
+  const wholeShotTaskAfterDelete = await fetch(`${base}/api/generations?ids=${wholeShotTaskId}`, { headers });
+  assert.deepEqual(await wholeShotTaskAfterDelete.json(), []);
+
+  const staleProjectSave = await fetch(`${base}/api/drama/projects/${dramaProjectId}`, {
+    method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision: deletedWholeShotData.project.revision - 1, title: '不应覆盖的新标题' }),
+  });
+  assert.equal(staleProjectSave.status, 409);
+  const staleProjectSaveData = await staleProjectSave.json();
+  assert.equal(staleProjectSaveData.code, 'PROJECT_VERSION_CONFLICT');
+  assert.notEqual(staleProjectSaveData.project.title, '不应覆盖的新标题');
+
+  const deletionSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(thirdSyncData.nextCursor)}&limit=20`, { headers });
+  assert.equal(deletionSync.status, 200);
+  const deletionSyncData = await deletionSync.json();
+  assert.ok(deletionSyncData.changes.some(change => change.action === 'delete' && change.assetId === dramaAssetId));
 
   // 批量确认：客户端启动对账一次提交一页，单条被拒绝不能让整批失败。
   const authenticatedDigest = createHash('sha256').update(authenticatedPayload).digest('hex');

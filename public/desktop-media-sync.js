@@ -31,8 +31,8 @@ export function isAwaitingDesktopDelivery(file) {
   );
 }
 
-export function shouldHydrateDesktopAsset(file) {
-  return Boolean(file?.id && isAwaitingDesktopDelivery(file) && !file.localOnly && file.localStatus !== 'saved');
+export function shouldHydrateDesktopAsset(file, { force = false } = {}) {
+  return Boolean(file?.id && (force || isAwaitingDesktopDelivery(file)) && !file.localOnly && file.localStatus !== 'saved');
 }
 
 export function desktopHydrationRetryDelay(failureCount, { baseDelay = 750, maxFailures = 3 } = {}) {

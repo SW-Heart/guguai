@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -43,6 +43,7 @@ import {
 
 const scrypt = promisify(scryptCallback);
 const here = path.dirname(fileURLToPath(import.meta.url));
+const isMainModule = path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url);
 const publicDir = path.join(here, 'public');
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(here, 'data');
 const userDataDir = path.join(dataDir, 'users');
@@ -160,7 +161,11 @@ const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/flac']);
 const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm', '.flac':'audio/flac' });
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
-const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9']);
+// This is the persistence envelope shared by every configured video model.
+// Model-specific validation still happens in validateVideoRequest; keeping the
+// union here prevents a valid professional-workbench choice from being silently
+// rewritten while the drama project is saved.
+const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9', '21:9', '4:3', '3:4']);
 const videoDurations = new Set([8, 10, 15, 20, 30]);
 // Short-drama shots are model-specific. GuGu 2.0 accepts every integer
 // duration from 1 to 15 seconds, so the project persistence layer must not
@@ -182,7 +187,7 @@ for (const entry of await fs.readdir(mediaTmpDir, { withFileTypes: true })) {
 }
 
 // Metadata lives in SQLite; media binaries use local caches and private R2 objects.
-openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' ? ':memory:' : null });
+openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' || !isMainModule ? ':memory:' : null });
 ensureDefaultModelRoutes();
 
 configureLedger({ llmRates, llmProtocol: llmConfig.protocol, llmModel: llmConfig.model });
@@ -1060,11 +1065,15 @@ async function saveGenerationWithRetry(userId, task, phase = 'update') {
     }
   }
 }
-function saveDramaProject(userId, project) { project.updatedAt = now(); return saveDramaProjectRecord(userId, project); }
+function saveDramaProject(userId, project) {
+  project.revision = Math.max(0, Number(project.revision) || 0) + 1;
+  project.updatedAt = now();
+  return saveDramaProjectRecord(userId, project);
+}
 function publicDramaProject(project) { const { ownerId, ...value } = project; return value; }
 function normalizeDramaProject(project) {
   const legacyMaxStep = !dramaStepOrder.includes(project.maxStep);
-  project.schemaVersion = 5; project.workflowVersion = Number(project.workflowVersion) || 1; project.mode ||= 'smart';
+  project.schemaVersion = 5; project.revision = Math.max(1, Number(project.revision) || 1); project.workflowVersion = Number(project.workflowVersion) || 1; project.mode ||= 'smart';
   if (project.mode === 'professional' && project.workflowVersion < 2) project.workflowVersion = 2;
   project.step ||= project.storyboard ? 'storyboard' : 'script'; project.input ||= project.script || '';
   project.synopsis ||= project.analysis?.logline || '';
@@ -1118,7 +1127,7 @@ function normalizeDramaProject(project) {
           referenceAssetIds:Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.map(String).slice(0, 7) : [],
         }))
       : [];
-    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), assetMentions, prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:canonicalVideoModelId(shot.generation?.modelId), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p', count:[1,2,4].includes(Number(shot.generation?.count)) ? Number(shot.generation.count) : 1 }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
+    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), assetMentions, prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:canonicalVideoModelId(shot.generation?.modelId), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','2k','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p', count:[1,2,4].includes(Number(shot.generation?.count)) ? Number(shot.generation.count) : 1 }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
   });
   project.shots.forEach((shot,index) => { shot.promptOverride = dramaPromptOverrides[index] || ''; });
   project.productionQuality = productionQualitySummary({scenes:project.scenes,shots:project.shots}, project.settings);
@@ -1130,7 +1139,32 @@ function normalizeDramaProject(project) {
   if (legacyMaxStep && dramaStepOrder.indexOf(project.step) < dramaStepOrder.indexOf(project.maxStep)) project.step = project.maxStep;
   return project;
 }
-async function loadDramaProject(userId, id) { const project = findDramaProject(userId, id); return project ? normalizeDramaProject(project) : null; }
+function dramaProjectGenerationIds(project) {
+  return [...new Set([
+    ...(project?.resources || []).flatMap(resource => [resource.selectedTaskId, ...(resource.versions || [])]),
+    ...(project?.shots || []).flatMap(shot => [shot.selectedVideoTaskId, ...(shot.videoVersions || []), ...(shot.pendingImageGenerations || []).map(item => item?.taskId)]),
+    ...(project?.storyboard?.shots || []).flatMap(shot => [shot.keyframeTaskId, shot.videoTaskId]),
+  ].map(value => String(value || '')).filter(Boolean))];
+}
+async function loadDramaProject(userId, id) {
+  const project = findDramaProject(userId, id);
+  if (!project) return null;
+  normalizeDramaProject(project);
+  // Projects outlive generation records. Repair references while loading so a
+  // deleted work can never leave the short-drama page pointing at a phantom
+  // task and showing “任务记录不可用” forever.
+  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId));
+  if (staleIds.length) {
+    staleIds.forEach(taskId => removeGenerationFromDramaProject(project, taskId));
+    await saveDramaProject(userId, project);
+  }
+  return project;
+}
+function reconcileDramaProjectGenerationReferences(userId, project) {
+  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId));
+  staleIds.forEach(taskId => removeGenerationFromDramaProject(project, taskId));
+  return staleIds.length > 0;
+}
 async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
 function removeGenerationFromDramaProject(project, taskId) {
   const id=String(taskId||'');
@@ -1182,6 +1216,22 @@ async function removeGenerationFromDramaProjects(userId, task) {
     }while(cursor);
   }
   for(const project of projects)if(removeGenerationFromDramaProject(project,id))await saveDramaProject(userId,project);
+}
+async function deleteGenerationRecord(userId, task, { project = null } = {}) {
+  const id = String(task?.id || '');
+  if (!id) throw new Error('生成记录不存在');
+  const retryTimer = generationRetryTimers.get(id);
+  if (retryTimer) { clearTimeout(retryTimer); generationRetryTimers.delete(id); }
+  clearProviderTaskIdTimeout(id);
+  const asset = task.assetId ? findAsset(userId, task.assetId) : null;
+  // Mutate the supplied project in memory so the short-drama endpoint can
+  // return the exact post-delete selection in the same response.
+  if (project) removeGenerationFromDramaProject(project, id);
+  await deleteAssetRecord(userId, asset);
+  deleteGeneration(userId, id);
+  if (project) await saveDramaProject(userId, project);
+  else await removeGenerationFromDramaProjects(userId, task);
+  return { deletedAssetId: asset?.id || null };
 }
 // 单条与批量的本地接收确认共用同一套校验和副作用：写回素材元数据、标记该设备投递完成、
 // 结束对应生成任务的归档重试。返回 { error, status } 表示这一条被拒绝，调用方决定是整个
@@ -1873,6 +1923,7 @@ function scheduleProviderTaskIdTimeout(userId, task) {
   providerTaskIdTimeoutTimers.set(task.id, timer);
 }
 function startGeneration(userId, task) {
+  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
     try {
       task.status = 'running';
@@ -2387,6 +2438,9 @@ const server = http.createServer(async (req, res) => {
     if (dramaProjectMatch && req.method === 'GET') { const user = await requireUser(req, res); if (!user) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1]); return project ? sendJson(res, 200, { project:publicDramaProject(project) }) : sendJson(res, 404, { error:'短剧项目不存在' }); }
     if (dramaProjectMatch && req.method === 'PATCH') {
       const user = await requireUser(req, res); if (!user) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1]); if (!project) return sendJson(res, 404, { error:'短剧项目不存在' }); const input = await bodyJson(req);
+      if (input.revision !== undefined && Number(input.revision) !== Number(project.revision)) {
+        return sendJson(res, 409, { error:'项目已在其他操作中更新，正在合并最新内容', code:'PROJECT_VERSION_CONFLICT', project:publicDramaProject(project) });
+      }
       if (input.title !== undefined) project.title = String(input.title).trim().slice(0,80) || project.title;
       if (input.mode !== undefined) project.mode = input.mode === 'professional' ? 'professional' : 'smart';
       if (dramaStepOrder.includes(input.step)) { project.step = input.step; project.maxStep = dramaStepOrder[Math.max(dramaStepOrder.indexOf(project.maxStep || 'script'), dramaStepOrder.indexOf(input.step))]; }
@@ -2397,7 +2451,11 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(input.shots)) project.shots = input.shots;
       if (Array.isArray(input.projectAssetIds)) project.projectAssetIds = input.projectAssetIds;
       if (input.projectAssetCategories && typeof input.projectAssetCategories === 'object' && !Array.isArray(input.projectAssetCategories)) project.projectAssetCategories = input.projectAssetCategories;
-      normalizeDramaProject(project); await saveDramaProject(user.id, project); return sendJson(res, 200, { project:publicDramaProject(project) });
+      normalizeDramaProject(project);
+      // A deletion can race a debounced editor save. Never let that older
+      // payload resurrect task ids which no longer exist.
+      reconcileDramaProjectGenerationReferences(user.id, project);
+      await saveDramaProject(user.id, project); return sendJson(res, 200, { project:publicDramaProject(project) });
     }
     const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);
     if (directorMatch && req.method === 'POST') {
@@ -2612,18 +2670,34 @@ const server = http.createServer(async (req, res) => {
       if(!shot.videoVersions.includes(id))return sendJson(res,404,{error:'视频版本不存在'});
       const task=findGeneration(user.id,id);
       if(!task||task.type!=='video')return sendJson(res,404,{error:'视频任务不存在'});
-      if(task.status!=='failed')return sendJson(res,409,{error:'只有失败的视频版本可以删除'});
-      if(activeGenerations.has(id))return sendJson(res,409,{error:'任务正在生成中，完成后才能删除'});
-      const retryTimer=generationRetryTimers.get(id); if(retryTimer){clearTimeout(retryTimer);generationRetryTimers.delete(id);}
-      clearProviderTaskIdTimeout(id);
-      const asset=task.assetId?findAsset(user.id,task.assetId):null;
-      shot.videoVersions=shot.videoVersions.filter(value=>value!==id);
-      if(shot.selectedVideoTaskId===id)shot.selectedVideoTaskId=shot.videoVersions.at(-1)||'';
+      if(activeGenerations.has(id)||['queued','running'].includes(task.status))return sendJson(res,409,{error:'任务正在生成中，完成后才能删除'});
+      const deleted=await deleteGenerationRecord(user.id,task,{project});
+      return sendJson(res,200,{project:publicDramaProject(project),...deleted});
+    }
+    const professionalShotDeleteMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)$/);
+    if (professionalShotDeleteMatch && req.method === 'DELETE') {
+      const user=await requireUser(req,res); if(!user)return;
+      const project=await loadDramaProject(user.id,professionalShotDeleteMatch[1]);
+      const shot=project?.shots.find(item=>item.id===professionalShotDeleteMatch[2]);
+      if(!project||!shot)return sendJson(res,404,{error:'分镜不存在'});
+      if(project.mode!=='professional')return sendJson(res,409,{error:'该删除接口仅用于专业编辑模式'});
+      const generationIds=[...new Set([
+        ...(shot.videoVersions||[]),
+        shot.selectedVideoTaskId,
+        ...(shot.pendingImageGenerations||[]).map(item=>item?.taskId),
+      ].map(value=>String(value||'')).filter(Boolean))];
+      const tasks=generationIds.map(id=>findGeneration(user.id,id)).filter(Boolean);
+      if(tasks.some(task=>activeGenerations.has(task.id)||['queued','running'].includes(task.status)))return sendJson(res,409,{error:'分镜仍有任务正在生成，请等待完成后再删除'});
+      project.shots=project.shots.filter(item=>item.id!==shot.id);
       normalizeDramaProject(project);
       await saveDramaProject(user.id,project);
-      await deleteAssetRecord(user.id,asset);
-      deleteGeneration(user.id,id);
-      return sendJson(res,200,{project:publicDramaProject(project),deletedAssetId:asset?.id||null});
+      const deletedAssetIds=[];
+      for(const task of tasks){
+        const deleted=await deleteGenerationRecord(user.id,task);
+        if(deleted.deletedAssetId)deletedAssetIds.push(deleted.deletedAssetId);
+      }
+      const latest=await loadDramaProject(user.id,project.id);
+      return sendJson(res,200,{project:publicDramaProject(latest||project),deletedTaskIds:tasks.map(task=>task.id),deletedAssetIds});
     }
     if (url.pathname === '/api/drama/analyze-script' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
@@ -2733,10 +2807,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/generations' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req); const type = input.type;
+      const generationRequestId = String(input.requestId || '').trim();
+      if (generationRequestId && !/^[a-zA-Z0-9_-]{8,80}$/.test(generationRequestId)) return sendJson(res, 400, { error: '生成请求 ID 无效' });
       if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt ?? '');
       await ensureUserDirs(user.id);
-      let dramaProjectId = ''; let dramaShotId = ''; let dramaShot = null;
-      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);const dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
+      let dramaProjectId = ''; let dramaShotId = ''; let dramaProject = null; let dramaShot = null;
+      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
       if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
       const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
       const promptMaxLength = type === 'image' ? 5000 : [VIDEO_MODEL_IDS.MINIMAX_H3_15S, LEGACY_VIDEO_MODEL_IDS.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
@@ -2790,8 +2866,15 @@ const server = http.createServer(async (req, res) => {
       const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
         ? { ...pricing, videoPerSecondMicro: creditsToMicro(videoRequest.pricing.amount) }
         : pricing;
-      const quantity = type === 'image' ? (input.quantity === undefined ? 1 : input.quantity) : 1;
-      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10) return sendJson(res, 400, { error: '图片生成数量需为 1–10 的整数' });
+      const quantity = input.quantity === undefined ? 1 : Number(input.quantity);
+      const maxQuantity = type === 'image' ? 10 : 4;
+      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantity) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}生成数量需为 1–${maxQuantity} 的整数` });
+      const taskIds = generationRequestId
+        ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`)
+        : Array.from({ length:quantity }, () => randomUUID());
+      // Professional editing submits an explicit quantity, including for one
+      // video. Keep the legacy smart-director submit/bind flow untouched.
+      const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
       const pricingSnapshotValue = routeSelection ? {
         version: pricing.version, contentType: type, billingUnit: 'request', quantity: 1,
         unitPriceMicro: routeSelection.salePriceMicro, totalMicro: routeSelection.salePriceMicro,
@@ -2804,18 +2887,32 @@ const server = http.createServer(async (req, res) => {
       if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error: '调用线路或价格已变化，请确认最新价格后重试', code: 'PRICE_CHANGED', price: { credits: pricingSnapshotValue.total, yuan: pricingSnapshotValue.salePriceYuan, priceVersion: pricingSnapshotValue.priceVersion } });
       const batchId = quantity > 1 ? randomUUID() : '';
       const tasks = Array.from({ length: quantity }, (_, index) => ({
-        id: randomUUID(), ownerId: user.id, type, prompt, referenceAssetIds, provider,
+        id: taskIds[index], ownerId: user.id, type, prompt, referenceAssetIds, provider,
         model: type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : fixedModels.image, modelId, size,
         quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality,
         aspectRatio, duration,
         ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits: routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
         ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
-        ...(quantity > 1 ? { batchId, batchIndex: index + 1, batchSize: quantity } : {}),
+        ...(generationRequestId ? { requestId:generationRequestId } : {}),
+        ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex: index + 1, batchSize: quantity } : {}),
         creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro,
         pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue,
         creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '',
         createdAt: now(), updatedAt: now(), finishedAt: null,
       }));
+      const existingTasks = tasks.map(task => findGeneration(user.id, task.id));
+      if (existingTasks.some(Boolean)) {
+        if (!existingTasks.every(Boolean)) return sendJson(res, 409, { error: '重复生成请求的任务记录不完整，请联系支持' });
+        if (bindDramaTasks) {
+          for (const task of existingTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id);
+          dramaShot.selectedVideoTaskId = existingTasks.at(-1).id;
+          await saveDramaProject(user.id, dramaProject);
+        }
+        const wallet = walletOf(user.id);
+        const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
+        if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(existingTasks[0]), balance:wallet.balance, ...boundProject });
+        return sendJson(res, 202, { tasks:existingTasks.map(publicGeneration), quantity, balance:wallet.balance, ...boundProject });
+      }
       const chargeItems = tasks.map(task => ({
         generationId: task.id,
         costMicro: task.creditCostMicro,
@@ -2825,22 +2922,27 @@ const server = http.createServer(async (req, res) => {
         ? await chargeGenerationMicro(user.id, tasks[0].id, tasks[0].creditCostMicro, chargeItems[0].metadata)
         : await chargeGenerationBatchMicro(user.id, chargeItems);
       if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
-      tasks.forEach(task => startGeneration(user.id, task));
-      if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(tasks[0]), balance: charged.balance });
-      return sendJson(res, 202, { tasks: tasks.map(publicGeneration), quantity, balance: charged.balance });
+      // Another identical request can finish charging while this request waits
+      // for the per-user ledger lock. Always continue with the persisted rows;
+      // startGeneration itself also coalesces the same task ID in this process.
+      const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id) || task);
+      if (bindDramaTasks) {
+        for (const task of effectiveTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id);
+        dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id;
+        await saveDramaProject(user.id, dramaProject);
+      }
+      effectiveTasks.forEach(task => { if (task.status === 'queued') startGeneration(user.id, task); });
+      const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
+      if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(effectiveTasks[0]), balance: charged.balance, ...boundProject });
+      return sendJson(res, 202, { tasks: effectiveTasks.map(publicGeneration), quantity, balance: charged.balance, ...boundProject });
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {
       const user = await requireUser(req, res); if (!user) return; const id = safeId(generationMatch[1]);
-      if (activeGenerations.has(id)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
       const task = findGeneration(user.id, id); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
-      const retryTimer = generationRetryTimers.get(id); if (retryTimer) { clearTimeout(retryTimer); generationRetryTimers.delete(id); }
-      clearProviderTaskIdTimeout(id);
-      const asset = task.assetId ? findAsset(user.id, task.assetId) : null;
-      await removeGenerationFromDramaProjects(user.id, task);
-      await deleteAssetRecord(user.id, asset);
-      deleteGeneration(user.id, id);
-      return sendJson(res, 200, { ok: true, deletedAssetId: asset?.id || null });
+      if (activeGenerations.has(id)||['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
+      const deleted=await deleteGenerationRecord(user.id,task);
+      return sendJson(res, 200, { ok: true, ...deleted });
     }
 
     if (url.pathname === '/api/files/sync' && req.method === 'GET') {
@@ -2851,7 +2953,10 @@ const server = http.createServer(async (req, res) => {
         cursor: url.searchParams.get('cursor'),
         limit: parseLimit(url.searchParams.get('limit')),
       });
-      const deliveries = listPendingAssetDeliveries(user.id, deviceId, { limit: parseLimit(url.searchParams.get('limit')) });
+      const requestedAssetIds=[...new Set(String(url.searchParams.get('assetIds')||'').split(',').map(safeId).filter(Boolean))].slice(0,500);
+      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { limit: parseLimit(url.searchParams.get('limit')) });
+      const requestedDeliveries = requestedAssetIds.length ? findCloudAssets(user.id, requestedAssetIds) : [];
+      const deliveries=[...new Map([...pendingDeliveries,...requestedDeliveries].map(asset=>[asset.id,asset])).values()];
       deliveries.forEach(asset => markAssetDeliveryPending(user.id, deviceId, asset.id));
       return sendJson(res, 200, {
         deviceId,
@@ -3116,7 +3221,34 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content))?$/);
-    if (fileMatch) { const user = await requireUser(req, res); if (!user) return; const asset = findAsset(user.id, fileMatch[1]); if (!asset) return sendJson(res, 404, { error: '文件不存在' }); if (req.method === 'GET' && fileMatch[2]) { const localFile = path.join(assetFilesDir(user.id), asset.storageName); if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType); if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); return res.end(); } if (await servePendingGenerationSource(res, asset)) return; return sendJson(res, 404, { error:'文件内容不存在' }); } if (req.method === 'PATCH' && !fileMatch[2]) { const input = await bodyJson(req); const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160); if (!name) return sendJson(res, 400, { error: '文件名不能为空' }); asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset)); } if (req.method === 'DELETE' && !fileMatch[2]) { await deleteAssetRecord(user.id, asset); return sendJson(res, 200, { ok: true }); } }
+    if (fileMatch) {
+      const user = await requireUser(req, res); if (!user) return;
+      const asset = findAsset(user.id, fileMatch[1]);
+      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
+      if (req.method === 'GET' && fileMatch[2]) {
+        const localFile = path.join(assetFilesDir(user.id), asset.storageName);
+        if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType);
+        if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); return res.end(); }
+        if (await servePendingGenerationSource(res, asset)) return;
+        return sendJson(res, 404, { error:'文件内容不存在' });
+      }
+      if (req.method === 'PATCH' && !fileMatch[2]) {
+        const input = await bodyJson(req);
+        const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160);
+        if (!name) return sendJson(res, 400, { error: '文件名不能为空' });
+        asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset));
+      }
+      if (req.method === 'DELETE' && !fileMatch[2]) {
+        const task = asset.sourceGenerationId ? findGeneration(user.id, asset.sourceGenerationId) : null;
+        if (task) {
+          if (activeGenerations.has(task.id) || ['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
+          const deleted = await deleteGenerationRecord(user.id, task);
+          return sendJson(res, 200, { ok: true, ...deleted });
+        }
+        await deleteAssetRecord(user.id, asset);
+        return sendJson(res, 200, { ok: true, deletedAssetId: asset.id });
+      }
+    }
 
     const downloadMatch = url.pathname.match(/^\/downloads\/(mac|windows)$/);
     if (downloadMatch && req.method === 'GET') {
@@ -3129,7 +3261,10 @@ const server = http.createServer(async (req, res) => {
   } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
 });
 
-if (process.env.NODE_ENV !== 'test') {
+// Importing server helpers from a test must never open the production port.
+// NODE_ENV is a deployment setting, not a reliable main-module check: running
+// `node --test test/auth.test.mjs` directly does not set it automatically.
+if (isMainModule && process.env.NODE_ENV !== 'test') {
   server.listen(port, '127.0.0.1', () => {
     console.log(`GuGu AI: http://127.0.0.1:${port}`);
     // Recovery runs after the port is open so a backlog never delays startup.

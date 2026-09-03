@@ -4,14 +4,18 @@ import { fetchRemoteMedia } from '../desktop/media-download.mjs';
 
 test('desktop media downloads authenticate only same-origin hops and follow signed-storage redirects', async () => {
   const expectedResponse = { ok: true, status: 200 };
-  const calls = [];
+  const sessionCalls = [];
+  const sameOriginCalls = [];
+  const sameOriginFetch = (url, options) => {
+    sameOriginCalls.push({ url, options });
+    return Promise.resolve({
+      status: 302,
+      headers: { get: name => name.toLowerCase() === 'location' ? 'https://storage.example.com/signed.mp4' : null },
+    });
+  };
   const electronSession = {
     fetch(url, options) {
-      calls.push({ url, options });
-      if (calls.length === 1) return Promise.resolve({
-        status: 302,
-        headers: { get: name => name.toLowerCase() === 'location' ? 'https://storage.example.com/signed.mp4' : null },
-      });
+      sessionCalls.push({ url, options });
       return Promise.resolve(expectedResponse);
     },
   };
@@ -19,11 +23,11 @@ test('desktop media downloads authenticate only same-origin hops and follow sign
   const response = await fetchRemoteMedia(
     electronSession,
     'https://studio.example.com/api/files/asset-1/direct',
-    { sameOriginHeaders:{ Cookie:'studio_session=secret' } },
+    { sameOriginHeaders:{ Cookie:'studio_session=secret' }, sameOriginFetch },
   );
 
   assert.equal(response, expectedResponse);
-  assert.deepEqual(calls, [
+  assert.deepEqual(sameOriginCalls, [
     {
       url: 'https://studio.example.com/api/files/asset-1/direct',
       options: {
@@ -33,12 +37,14 @@ test('desktop media downloads authenticate only same-origin hops and follow sign
         headers: { 'X-GuGu-Desktop':'1', Cookie:'studio_session=secret' },
       },
     },
+  ]);
+  assert.deepEqual(sessionCalls, [
     {
       url: 'https://storage.example.com/signed.mp4',
       options: {
         cache: 'no-store',
         credentials: 'omit',
-        redirect: 'manual',
+        redirect: 'follow',
         headers: {},
       },
     },

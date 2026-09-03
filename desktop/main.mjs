@@ -16,6 +16,7 @@ import {
   deleteLocalAsset,
   findLocalAssetByCloudId,
   findLocalAssetByDigest,
+  findLocalAssetByRelativePath,
   getLocalAsset,
   listLocalAssets as queryLocalAssets,
   listLocalAssetsByCloudIds,
@@ -83,6 +84,10 @@ let downloadedUpdatePath = '';
 let downloadedUpdateVersion = '';
 let updateInstallStarted = false;
 let currentUpdateStatus = { status: 'idle' };
+// The reminder is intentionally scoped to this client process. Snoozing it
+// must not stop the download, and it should become visible again on the next
+// client launch.
+let updateReminderSnoozed = false;
 let windowFullscreenTransition = false;
 const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
@@ -619,13 +624,25 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
   try {
     await pipeline(Readable.fromWeb(response.body), digestTransform, createWriteStream(temporary, { mode: 0o600 }));
     const sha256 = hash.digest('hex');
-    const targetName = `${sha256.slice(0, 16)}-${originalName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')}${extension && !path.extname(originalName) ? extension : ''}`;
-    const relativePath = path.join('library', targetName);
+    const normalizedName = `${originalName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')}${extension && !path.extname(originalName) ? extension : ''}`;
+    let targetName = `${sha256.slice(0, 16)}-${normalizedName}`;
+    let relativePath = path.join('library', targetName);
+    const pathOwner = findLocalAssetByRelativePath(relativePath);
+    if (pathOwner && pathOwner.id !== existing?.id && pathOwner.cloudAssetId && pathOwner.cloudAssetId !== cloudAssetId) {
+      // Different generations can legitimately produce byte-identical output
+      // with the same display name. They still need separate rows because the
+      // renderer resolves completed tasks by cloud_asset_id. Give the second
+      // cloud asset a deterministic path instead of returning the first row
+      // and falsely acknowledging the second asset as locally ready.
+      const cloudSuffix = createHash('sha256').update(cloudAssetId).digest('hex').slice(0, 10);
+      targetName = `${sha256.slice(0, 16)}-${cloudSuffix}-${normalizedName}`;
+      relativePath = path.join('library', targetName);
+    }
     const target = path.join(targetWorkspace, relativePath);
     assertActiveWorkspace(targetWorkspace, targetEpoch);
     await fs.rename(temporary, target);
-    // 同内容同名的云端素材会算出同一个 relativePath；若已被别的本地记录占用，复用那条记录，
-    // 否则插入新行会撞 assets.relative_path 唯一约束，导致该素材永远无法接收。
+    // 未绑定云端 ID 的本地导入记录可以直接认领；已归属其他云端素材的
+    // 路径已在上面分流到独立文件，不得复用它的 cloudAssetId。
     assertActiveWorkspace(targetWorkspace, targetEpoch);
     const claimed = claimLocalAssetByPath({ relativePath, cloudAssetId, sha256, size, previousId: existing?.id || '' });
     if (claimed) return { ...claimed, url: localMediaUrl(claimed.id), reused: true };
@@ -686,6 +703,22 @@ async function removeLocalAsset(assetId) {
   assertActiveWorkspace(targetWorkspace, targetEpoch);
   deleteLocalAsset(asset.id);
   return true;
+}
+
+async function removeLocalAssetsByCloudIds(cloudAssetIds = []) {
+  const targetWorkspace = workspace;
+  const targetEpoch = workspaceEpoch;
+  const ids = [...new Set((Array.isArray(cloudAssetIds) ? cloudAssetIds : []).map(value => String(value || '').trim()).filter(Boolean))].slice(0, 500);
+  if (!targetWorkspace || !ids.length) return { removedCloudAssetIds:[] };
+  const assets = listLocalAssetsByCloudIds(ids);
+  const removedCloudAssetIds = [];
+  for (const asset of assets) {
+    const target = localAssetPath(asset, targetWorkspace);
+    await fs.unlink(target).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
+    if (deleteLocalAsset(asset.id)) removedCloudAssetIds.push(String(asset.cloudAssetId || ''));
+  }
+  return { removedCloudAssetIds:removedCloudAssetIds.filter(Boolean) };
 }
 
 function localMediaUrl(assetId) {
@@ -802,8 +835,15 @@ function updateFeedUrl() {
   return String(value || '').trim().replace(/\/$/, '');
 }
 function sendUpdateStatus(status, extra = {}) {
-  currentUpdateStatus = { status, currentVersion: app.getVersion(), ...extra };
+  currentUpdateStatus = { status, currentVersion: app.getVersion(), ...extra, snoozed: updateReminderSnoozed };
   mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
+}
+
+function snoozeUpdateReminder() {
+  updateReminderSnoozed = true;
+  currentUpdateStatus = { ...currentUpdateStatus, snoozed: true };
+  mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
+  return currentUpdateStatus;
 }
 
 async function macUpdateDigest(filePath) {
@@ -935,7 +975,11 @@ function configureAutoUpdater() {
       // differential download cannot be assembled, electron-updater falls back
       // to the complete package automatically.
       autoUpdater.disableDifferentialDownload = false;
-      autoUpdater.setFeedURL({ provider: 'generic', url: `${url}/` });
+      // Aliyun OSS supports byte ranges but does not return multipart/byteranges
+      // for electron-updater's combined multi-range request. Single-range mode
+      // still performs a differential download without falling back to the
+      // complete installer.
+      autoUpdater.setFeedURL({ provider: 'generic', url: `${url}/`, useMultipleRangeRequest:false });
       updateConfigured = true;
       autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
       autoUpdater.on('update-available', info => {
@@ -1323,6 +1367,10 @@ function registerIpc() {
     return closeMainWindow();
   });
   ipcMain.handle('updates:check', () => checkForUpdates());
+  ipcMain.handle('updates:snooze', event => {
+    if (!isMainWindowEvent(event)) return false;
+    return snoozeUpdateReminder();
+  });
   ipcMain.handle('updates:get-status', () => currentUpdateStatus);
   ipcMain.handle('updates:install', async () => {
     if (!updateConfigured) return false;
@@ -1374,6 +1422,7 @@ function registerIpc() {
   ipcMain.handle('media:assemble-videos', (_event, payload) => assembleLocalVideos(payload || {}));
   ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
   ipcMain.handle('media:remove-local', (_event, assetId) => removeLocalAsset(assetId));
+  ipcMain.handle('media:remove-local-by-cloud-ids', (_event, cloudAssetIds) => removeLocalAssetsByCloudIds(cloudAssetIds));
   ipcMain.handle('media:url', (_event, assetId) => localMediaUrl(String(assetId || '')));
   ipcMain.handle('media:show-in-folder', async (_event, assetId) => {
     const targetWorkspace = workspace;
@@ -1443,15 +1492,11 @@ async function createWindow({ loadStudioAfter = true } = {}) {
   mainWindow.on('closed', () => { mainWindow = null; });
   // 页面自身的异常与崩溃只在渲染进程里可见，转录一份到日志文件，
   // 否则用户上传的日志会缺掉最关键的那一段。
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    // Electron 新版把细节收在事件对象上，旧版走位置参数，两种都兼容。
-    const detail = event && typeof event === 'object' && 'message' in event
-      ? { level: event.level, message: event.message, line: event.lineNumber, sourceId: event.sourceId }
-      : { level, message, line, sourceId };
-    const normalized = typeof detail.level === 'number' ? ['info', 'warn', 'error', 'debug'][detail.level] || 'info' : detail.level;
+  mainWindow.webContents.on('console-message', detail => {
+    const normalized = detail.level;
     if (!['warn', 'warning', 'error'].includes(String(normalized))) return;
     if (!rendererLogAllowed()) return;
-    appendDesktopLog({ level: normalized, scope: 'page', message: `${detail.message} (${detail.sourceId || '未知来源'}:${detail.line || 0})` });
+    appendDesktopLog({ level: normalized, scope: 'page', message: `${detail.message} (${detail.sourceId || '未知来源'}:${detail.lineNumber || 0})` });
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[desktop] 渲染进程退出', details);

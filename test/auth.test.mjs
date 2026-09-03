@@ -138,7 +138,7 @@ test('media object keys are scoped per user and prefix', () => {
 
 test('generation option enums match provider contracts', () => {
   assert.deepEqual([...__test.imageSizes], ['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
-  assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9']);
+  assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9', '21:9', '4:3', '3:4']);
   assert.deepEqual([...__test.videoDurations], [8, 10, 15, 20, 30]);
 });
 
@@ -154,6 +154,18 @@ test('legacy projects recover their furthest completed drama step', () => {
   });
   assert.equal(project.maxStep, 'storyboard');
   assert.equal(project.step, 'storyboard');
+});
+
+test('professional projects preserve supported wide ratios and MiniMax 2k quality', () => {
+  const project = __test.normalizeDramaProject({
+    mode:'professional', settings:{ aspectRatio:'21:9', shotDuration:10 }, scenes:[], resources:[],
+    shots:[{ id:'shot-1', title:'宽银幕镜头', aspectRatio:'21:9', duration:10, generation:{ quality:'2k' } }],
+  });
+
+  assert.equal(project.settings.aspectRatio, '21:9');
+  assert.equal(project.shots[0].aspectRatio, '21:9');
+  assert.equal(project.shots[0].generation.quality, '2k');
+  assert.equal(project.revision, 1);
 });
 
 test('manual video prompt overrides survive project normalization', () => {

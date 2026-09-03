@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   updates: Object.freeze({
     check: () => invoke('updates:check'),
     getStatus: () => invoke('updates:get-status'),
+    snooze: () => invoke('updates:snooze'),
     install: () => invoke('updates:install'),
     onStatus: callback => {
       const listener = (_event, payload) => callback(payload);
@@ -61,6 +62,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     assembleVideos: payload => invoke('media:assemble-videos', payload),
     renameLocal: payload => invoke('media:rename-local', payload),
     removeLocal: assetId => invoke('media:remove-local', assetId),
+    removeLocalByCloudIds: cloudAssetIds => invoke('media:remove-local-by-cloud-ids', cloudAssetIds || []),
     url: assetId => invoke('media:url', assetId),
     showInFolder: assetId => invoke('media:show-in-folder', assetId),
   }),
