@@ -85,6 +85,9 @@ let desktopHydrationRunning = false;
 const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
+let routeRenderFrame = 0;
+let routeRenderTimer = 0;
+let routeRenderEpoch = 0;
 
 function desktopScopeHeaders() {
   if (!window.guguDesktop || !desktopSyncInfo.deviceId || !desktopSyncInfo.workspaceId) return {};
@@ -128,9 +131,11 @@ async function acknowledgeDesktopAsset(file, localAsset) {
   });
 }
 function renderAfterDesktopAssetHydration() {
-  if (state.route === 'files') renderFiles();
+  if (state.route === 'files') {
+    if (state.initialSyncReady) scheduleRouteContentRender('files', false);
+  }
   renderReferences();
-  if (['image', 'video'].includes(state.route)) renderTasks();
+  if (['image', 'video'].includes(state.route) && state.initialSyncReady) scheduleRouteContentRender(state.route, false);
   else if (state.route === 'drama') dramaController?.refreshTasks?.();
 }
 function mergeStateFiles(files) {
@@ -1956,9 +1961,7 @@ function updateAccountIdentity(user = state.user) {
 }
 function finishInitialWorkspaceSync() {
   state.initialSyncReady = true;
-  if (state.route === 'files') renderFiles();
-  else if (['image', 'video'].includes(state.route)) renderTasks();
-  else if (state.route === 'drama') dramaController?.refreshTasks?.();
+  scheduleRouteContentRender(state.route, false);
 }
 async function enterApp(user) {
   const returnDestination = loginReturnDestination();
@@ -2240,7 +2243,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=71').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=78').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
       return dramaController;
     });
@@ -2248,7 +2251,103 @@ function ensureDramaController() {
   return dramaControllerPromise;
 }
 
-function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; const routeChanged = state.route !== nextRoute; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; toggleClass($('#appView'), 'library-mode', files); toggleClass($('#appView'), 'wide-mode', drama); toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject)); toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional'); toggleClass($('#creatorPanel'), 'hidden', wide); toggleClass($('#generationView'), 'hidden', wide); toggleClass($('#filesView'), 'hidden', !files); toggleClass($('#dramaView'), 'hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute)); renderTasks(); if (state.generationTab === 'history') void loadGenerationHistory({ reset:routeChanged }); } else if (files) renderFiles(); else { void ensureDramaController().then(controller => { if (state.route !== 'drama') return; controller.modelState(); return controller.load(); }).catch(error => toast(`短剧模块加载失败：${error.message}`)); } }
+function renderRouteLoadingShell(route) {
+  if (route === 'files') {
+    const count = libraryFiles.length ? `${localFileTotal} 个文件` : '正在加载…';
+    $('#fileCount').textContent = count;
+    const grid = $('#fileGrid');
+    if (grid) grid.innerHTML = emptyState('正在加载文件库', '正在准备文件预览，请稍候。');
+    $('#loadMoreFiles')?.classList.add('hidden');
+    return;
+  }
+  if (['image', 'video'].includes(route)) {
+    lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:null, files:null };
+    syncGenerationTab();
+    if (state.generationTab === 'history') {
+      const history = $('#generationHistory');
+      if (history) history.innerHTML = emptyState('正在加载历史记录', '正在准备生成记录，请稍候。');
+      $('#loadMoreGenerationHistory')?.classList.add('hidden');
+    } else {
+      const grid = $('#generationGrid');
+      if (grid) grid.innerHTML = emptyState('正在加载作品', '正在准备生成记录，请稍候。');
+    }
+    return;
+  }
+  if (route === 'drama') {
+    const projects = $('#dramaProjects');
+    if (projects && !projects.children.length) projects.innerHTML = emptyState('正在加载短剧工作区', '正在准备项目与创作内容，请稍候。');
+  }
+}
+
+function cancelRouteContentRender() {
+  if (routeRenderFrame) cancelAnimationFrame(routeRenderFrame);
+  if (routeRenderTimer) window.clearTimeout(routeRenderTimer);
+  routeRenderFrame = 0;
+  routeRenderTimer = 0;
+  routeRenderEpoch += 1;
+}
+function scheduleRouteContentRender(route, routeChanged) {
+  cancelRouteContentRender();
+  const epoch = routeRenderEpoch;
+  // Let the route shell paint first. The second task is intentional: doing the
+  // heavy card/media render directly inside requestAnimationFrame would still
+  // delay the first frame after a navigation click.
+  routeRenderFrame = requestAnimationFrame(() => {
+    routeRenderFrame = 0;
+    routeRenderTimer = window.setTimeout(() => {
+      routeRenderTimer = 0;
+      if (epoch !== routeRenderEpoch || state.route !== route) return;
+      if (route === 'files') {
+        renderFiles();
+        return;
+      }
+      if (route === 'drama') {
+        void ensureDramaController().then(controller => {
+          if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
+          controller.modelState();
+          return controller.load();
+        }).catch(error => toast(`短剧模块加载失败：${error.message}`));
+        return;
+      }
+      renderTasks();
+      if (state.generationTab === 'history') void loadGenerationHistory({ reset:routeChanged });
+    }, 0);
+  });
+}
+function navigate(route, { historyMode = 'push' } = {}) {
+  const nextRoute = routePaths[route] ? route : 'image';
+  const routeChanged = state.route !== nextRoute;
+  if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
+  if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) {
+    window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]);
+  }
+  state.route = nextRoute;
+  const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' };
+  $('#routeTitle').textContent = routeTitles[nextRoute];
+  document.title = `${routeTitles[nextRoute]} · GuGu AI`;
+  $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute));
+  const files = nextRoute === 'files';
+  const drama = nextRoute === 'drama';
+  const wide = files || drama;
+  toggleClass($('#appView'), 'library-mode', files);
+  toggleClass($('#appView'), 'wide-mode', drama);
+  toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject));
+  toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional');
+  toggleClass($('#creatorPanel'), 'hidden', wide);
+  toggleClass($('#generationView'), 'hidden', wide);
+  toggleClass($('#filesView'), 'hidden', !files);
+  toggleClass($('#dramaView'), 'hidden', !drama);
+  cancelRouteContentRender();
+  if (!wide) {
+    $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute));
+    renderRouteLoadingShell(nextRoute);
+  } else if (files) {
+    renderRouteLoadingShell('files');
+  } else {
+    renderRouteLoadingShell('drama');
+  }
+  scheduleRouteContentRender(nextRoute, routeChanged);
+}
 $$('.rail-button[data-route]').forEach(button => button.onclick = () => navigate(button.dataset.route));
 window.addEventListener('popstate', () => { if (state.user) navigate(routeFromPath(window.location.pathname), { historyMode:'none' }); });
 
@@ -2409,23 +2508,32 @@ function dramaProjectGenerationIds(project) {
   ].map(value => String(value || '')).filter(Boolean));
 }
 
-async function loadTasks({ background=false, activeOnly=false }={}) {
-  if (tasksRequest) { const pending = tasksRequest; return background ? pending : pending.then(() => loadTasks({ background:true, activeOnly })); }
+async function loadTasks({ background=false, activeOnly=false, projectOnly=false }={}) {
+  if (tasksRequest) {
+    const pending = tasksRequest;
+    if (background) return projectOnly ? pending.then(() => loadTasks({ background:true, projectOnly:true })) : pending;
+    return pending.then(() => loadTasks({ background:true, activeOnly, projectOnly }));
+  }
   const requestSnapshot = state.tasks;
   const activeIds = activeOnly ? activeGenerationIds() : [];
   if (activeOnly && !activeIds.length) return state.tasks;
   tasksRequest = (async () => {
     try {
-      const responseTasks = activeOnly
-        ? (await Promise.all(Array.from({ length:Math.ceil(activeIds.length / 200) }, (_, index) => api(`/api/generations?ids=${encodeURIComponent(activeIds.slice(index * 200, index * 200 + 200).join(','))}`)))).flat()
+      const projectTaskIds = projectOnly
+        ? dramaProjectGenerationIds(state.dramaProject)
+        : !activeOnly && state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
+      const targetedIds = projectOnly ? [...projectTaskIds] : activeIds;
+      const responseTasks = activeOnly || projectOnly
+        ? (targetedIds.length
+          ? (await Promise.all(Array.from({ length:Math.ceil(targetedIds.length / 200) }, (_, index) => api(`/api/generations?ids=${encodeURIComponent(targetedIds.slice(index * 200, index * 200 + 200).join(','))}`)))).flat()
+          : [])
         : await api('/api/generations?view=works&limit=200');
-      const projectTaskIds = !activeOnly && state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
       // The global list is ordered/paginated for the gallery. A project must
       // never use that list as the authority for one of its versions: the
       // gallery request can already be in flight when a task reaches terminal
       // failure. Re-read every task referenced by the open drama project by ID
       // and let those records win.
-      const projectTaskIdsToHydrate = [...projectTaskIds];
+      const projectTaskIdsToHydrate = projectOnly ? [] : [...projectTaskIds];
       const projectTasks = [];
       try {
         for (let index = 0; index < projectTaskIdsToHydrate.length; index += 100) {
@@ -2465,10 +2573,10 @@ async function loadTasks({ background=false, activeOnly=false }={}) {
       // request is in flight. Keep the last active snapshot long enough for
       // the task-targeted poll to observe that terminal event; otherwise the
       // works query would remove the ID before the failure can be scheduled.
-      const activeTasks = !activeOnly ? state.tasks.filter(task => ['queued', 'running'].includes(task.status)
+      const activeTasks = !activeOnly && !projectOnly ? state.tasks.filter(task => ['queued', 'running'].includes(task.status)
         && !hydratedTasks.some(item => item.id === task.id)) : [];
-      const tasks = activeOnly
-        ? mergeActiveRecords(state.tasks, hydratedTasks, activeIds)
+      const tasks = activeOnly || projectOnly
+        ? mergeActiveRecords(state.tasks, hydratedTasks, activeOnly ? activeIds : [...projectTaskIds])
         : mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, [...hydratedTasks, ...transientFailures, ...activeTasks]);
       const previousTasks = new Map(state.tasks.map(task => [task.id, task]));
       for (const task of tasks) observeTaskFailure(task, previousTasks.get(task.id));
@@ -2486,7 +2594,8 @@ async function loadTasks({ background=false, activeOnly=false }={}) {
         if (previewFile) renderPreviewMeta(previewFile);
       }
       if (refundedTask) await loadCredits();
-      const missingAssetIds = [...new Set(tasks.map(task => task.assetId).filter(assetId => assetId && !state.files.some(file => file.id === assetId)))];
+      const assetTasks = projectOnly ? hydratedTasks : tasks;
+      const missingAssetIds = [...new Set(assetTasks.map(task => task.assetId).filter(assetId => assetId && !state.files.some(file => file.id === assetId)))];
       let assetsChanged = false;
       if (missingAssetIds.length && window.guguDesktop?.media?.listLocalByCloudIds) {
         const localAssets = [];
@@ -2500,20 +2609,16 @@ async function loadTasks({ background=false, activeOnly=false }={}) {
         assetsChanged = localAssets.length > 0;
       }
       if (missingAssetIds.length && window.guguDesktop?.sync && desktopSyncInfo.deviceId && desktopSyncInfo.workspaceId) {
-        try {
-          // A local database row can be gone even though the cloud asset still
-          // exists. Ask the delivery endpoint for these exact assets so the
-          // normal hydration queue can repair the file instead of leaving a
-          // completed task stuck at “视频文件未找到”.
-          await syncDesktopDeliveries({ assetIds:missingAssetIds });
-        } catch (error) {
-          console.warn('[tasks] failed to re-request missing local assets', error);
-        }
+        // A local database row can be gone even though the cloud asset still
+        // exists. Ask the delivery endpoint for these exact assets so the
+        // normal hydration queue can repair the file instead of leaving a
+        // completed task stuck at “视频文件未找到”.
+        void syncDesktopDeliveries({ assetIds:missingAssetIds }).catch(error => console.warn('[tasks] failed to re-request missing local assets', error));
       }
       if (state.route === 'drama') {
         if (stateChanged || assetsChanged) dramaController?.refreshTasks?.();
-      } else if (cardsChanged || assetsChanged) {
-        renderTasks();
+      } else if ((cardsChanged || assetsChanged) && state.initialSyncReady) {
+        scheduleRouteContentRender(state.route, false);
       }
       if (state.user && !document.hidden) scheduleTaskPoll();
       return state.tasks;
@@ -3015,9 +3120,9 @@ async function loadFiles({ background=false, loadMore=false }={}) {
         indexedFiles = null;
       }
     } else mergeStateFiles(page.items);
-    renderFiles();
+    if (state.route === 'files' && state.initialSyncReady) scheduleRouteContentRender('files', false);
     renderReferences();
-    if (['image','video'].includes(state.route)) renderTasks();
+    if (['image','video'].includes(state.route) && state.initialSyncReady) scheduleRouteContentRender(state.route, false);
     else if (state.route === 'drama') dramaController?.refreshTasks?.();
     return state.files;
   } catch (error) {

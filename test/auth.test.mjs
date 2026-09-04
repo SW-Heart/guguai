@@ -156,6 +156,29 @@ test('legacy projects recover their furthest completed drama step', () => {
   assert.equal(project.step, 'storyboard');
 });
 
+test('new drama projects start with one editable storyboard shot', () => {
+  const project = __test.normalizeDramaProject({
+    mode:'professional', settings:{}, resources:[], shots:[__test.createDefaultDramaShot()],
+  });
+  assert.equal(project.shots.length, 1);
+  assert.equal(project.shots[0].title, '分镜 1');
+  assert.equal(project.shots[0].lifecycle.status, 'draft');
+  assert.equal(project.shots[0].generation.type, 'TEXT');
+});
+
+test('projects preserve multiple assembled video history records', () => {
+  const project = __test.normalizeDramaProject({
+    mode:'professional', settings:{}, resources:[], shots:[{title:'镜头', videoVersions:[]}],
+    assemblyVideos:[
+      { id:'assembly-1', assetId:'assembly-1', name:'第一版', createdAt:'2026-09-04T10:00:00.000Z', shotCount:2, shotIds:['shot-a','shot-a'] },
+      { id:'assembly-2', assetId:'assembly-2', name:'第二版', createdAt:'2026-09-04T11:00:00.000Z', shotCount:3, shotIds:['shot-b'] },
+    ],
+  });
+  assert.deepEqual(project.assemblyVideos.map(item => item.assetId), ['assembly-1', 'assembly-2']);
+  assert.deepEqual(project.assemblyVideos[0].shotIds, ['shot-a']);
+  assert.equal(project.assemblyVideos[1].shotCount, 3);
+});
+
 test('professional projects preserve supported wide ratios and MiniMax 2k quality', () => {
   const project = __test.normalizeDramaProject({
     mode:'professional', settings:{ aspectRatio:'21:9', shotDuration:10 }, scenes:[], resources:[],

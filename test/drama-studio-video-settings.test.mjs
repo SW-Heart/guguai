@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDramaVideoQuoteInput, calculateVirtualShotRange, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, clampVirtualScrollOffset, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, isMountedVirtualShotScroll, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [
@@ -151,4 +151,20 @@ test('virtual shot range keeps an overscanned window across variable card height
   assert.deepEqual(calculateVirtualShotRange(heights, 600, 350, { overscan:1 }), { start:2, end:5 });
   assert.deepEqual(calculateVirtualShotRange(heights, 99999, 350, { overscan:1 }), { start:9, end:10 });
   assert.deepEqual(calculateVirtualShotRange([100, 0, 100], 100, 1, { overscan:0, estimatedHeight:50 }), { start:1, end:2 });
+});
+
+test('virtual shot rendering only accepts the mounted storyboard scroller', () => {
+  const shotScroll = { matches: selector => selector === '.wb-shot-scroll' };
+  const workspaceMain = { matches: () => false };
+  const root = { contains: node => node === shotScroll };
+
+  assert.equal(isMountedVirtualShotScroll(root, shotScroll), true);
+  assert.equal(isMountedVirtualShotScroll(root, workspaceMain), false);
+  assert.equal(isMountedVirtualShotScroll(root, null), false);
+});
+
+test('virtual shot scroll offsets are clamped after shots are deleted', () => {
+  assert.equal(clampVirtualScrollOffset(3000, 1200, 1000), 200);
+  assert.equal(clampVirtualScrollOffset(900, 800, 1000), 0);
+  assert.equal(clampVirtualScrollOffset(-20, 1200, 1000), 0);
 });

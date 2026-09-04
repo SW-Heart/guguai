@@ -435,14 +435,18 @@ async function assembleLocalVideos({ assetIds = [], name = '完整成片', proje
   try {
     await runFfmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', concatFile, '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-c:a', 'aac', '-movflags', '+faststart', output], { cwd: targetWorkspace });
     assertActiveWorkspace(targetWorkspace, targetEpoch);
-    const imported = await importFile(output);
+    // A generated assembly is a new deliverable even when the selected shots
+    // and the resulting bytes are identical to an earlier assembly. Keep
+    // ordinary imports content-deduplicated, but give every assembly its own
+    // local asset row so the project can retain multiple history entries.
+    const imported = await importFile(output, { dedupe: false });
     return localAssetResult(imported, { name: `${name} · 完整成片.mp4`, source: 'drama_final', projectId });
   } finally {
     await Promise.all([fs.unlink(concatFile).catch(() => {}), fs.unlink(output).catch(() => {})]);
   }
 }
 
-async function importFile(filePath) {
+async function importFile(filePath, { dedupe = true } = {}) {
   if (!workspace) throw new Error('工作区尚未初始化');
   const targetWorkspace = workspace;
   const targetEpoch = workspaceEpoch;
@@ -450,8 +454,10 @@ async function importFile(filePath) {
   if (!stat.isFile()) throw new Error('选择的路径不是文件');
   const digest = await hashFile(filePath);
   assertActiveWorkspace(targetWorkspace, targetEpoch);
-  const existing = findLocalAssetByDigest(digest.sha256, digest.size);
-  if (existing) return { ...existing, reused: true };
+  if (dedupe) {
+    const existing = findLocalAssetByDigest(digest.sha256, digest.size);
+    if (existing) return { ...existing, reused: true };
+  }
 
   const originalName = safeName(path.basename(filePath));
   const extension = path.extname(originalName).toLowerCase();

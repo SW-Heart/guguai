@@ -1289,7 +1289,7 @@ function saveDramaProject(userId, project) {
 const publicDramaProjectFields = Object.freeze([
   'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings',
   'analysis', 'analysisUsage', 'storyboard', 'storyboardUsage', 'resources', 'scenes', 'shots',
-  'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'workflowVersion',
+  'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'assemblyVideos', 'workflowVersion',
   'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
 ]);
 function publicDramaProject(project) {
@@ -1298,6 +1298,28 @@ function publicDramaProject(project) {
   return Object.fromEntries(publicDramaProjectFields
     .filter(field => Object.hasOwn(project, field))
     .map(field => [field, ['analysisUsage', 'storyboardUsage'].includes(field) ? publicLlmUsage(project[field]) : project[field]]));
+}
+function createDefaultDramaShot() {
+  return { id:randomUUID(), title:'分镜 1' };
+}
+function normalizeDramaAssemblyVideos(project) {
+  const source = Array.isArray(project.assemblyVideos) ? [...project.assemblyVideos] : [];
+  const legacyId = String(project.finalAssetId || '').trim();
+  if (legacyId && !source.some(item => String(item?.assetId || item?.id || '') === legacyId)) {
+    source.unshift({ id:legacyId, assetId:legacyId, name:'完整成片', createdAt:project.updatedAt || now(), shotCount:project.shots?.length || 0, shotIds:[] });
+  }
+  project.assemblyVideos = source.map(item => {
+    const assetId = String(item?.assetId || item?.id || '').trim().slice(0, 200);
+    if (!assetId) return null;
+    return {
+      id:String(item?.id || assetId).trim().slice(0, 200) || assetId,
+      assetId,
+      name:String(item?.name || '完整成片').trim().slice(0, 120) || '完整成片',
+      createdAt:String(item?.createdAt || project.updatedAt || now()).slice(0, 80),
+      shotCount:Math.max(0, Math.min(120, Number(item?.shotCount) || 0)),
+      shotIds:[...new Set((Array.isArray(item?.shotIds) ? item.shotIds : []).map(String).filter(Boolean))].slice(0, 120),
+    };
+  }).filter(Boolean).slice(0, 50);
 }
 function normalizeDramaProject(project) {
   const legacyMaxStep = !dramaStepOrder.includes(project.maxStep);
@@ -1365,6 +1387,7 @@ function normalizeDramaProject(project) {
   else if (project.shots.some(shot => shot.lifecycle.status === 'reviewed' || shot.lifecycle.revision > 1 || shot.referenceAssetIds.length)) inferredStep = dramaStepOrder[Math.max(dramaStepOrder.indexOf(inferredStep), 2)];
   project.maxStep = legacyMaxStep ? inferredStep : dramaStepOrder[Math.max(dramaStepOrder.indexOf(project.maxStep), dramaStepOrder.indexOf(inferredStep))];
   if (legacyMaxStep && dramaStepOrder.indexOf(project.step) < dramaStepOrder.indexOf(project.maxStep)) project.step = project.maxStep;
+  normalizeDramaAssemblyVideos(project);
   return project;
 }
 function dramaProjectGenerationIds(project) {
@@ -2553,7 +2576,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2789,7 +2812,7 @@ const server = http.createServer(async (req, res) => {
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const input = await bodyJson(req);
       const mode = input.mode === 'professional' ? 'professional' : 'smart'; const title = String(input.title || '未命名短剧').trim().slice(0, 80);
-      const project = normalizeDramaProject({ id:randomUUID(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[], finalAssetId:'', createdAt:now(), updatedAt:now() });
+      const project = normalizeDramaProject({ id:randomUUID(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
       await saveDramaProject(user.id, project); return sendJson(res, 201, { project:publicDramaProject(project) });
     }
     // Must precede the /:id route below, otherwise "latest" is captured as a
@@ -2817,6 +2840,7 @@ const server = http.createServer(async (req, res) => {
       if (Array.isArray(input.shots)) project.shots = input.shots;
       if (Array.isArray(input.projectAssetIds)) project.projectAssetIds = input.projectAssetIds;
       if (input.projectAssetCategories && typeof input.projectAssetCategories === 'object' && !Array.isArray(input.projectAssetCategories)) project.projectAssetCategories = input.projectAssetCategories;
+      if (Array.isArray(input.assemblyVideos)) project.assemblyVideos = input.assemblyVideos;
       normalizeDramaProject(project);
       // A deletion can race a debounced editor save. Never let that older
       // payload resurrect task ids which no longer exist.

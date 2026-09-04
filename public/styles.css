@@ -331,7 +331,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .prompt-box textarea:focus { outline: 0; }
 .prompt-box textarea::placeholder { color: var(--faint); }
 .prompt-box .rich-prompt-editor { width: 100%; height: 88px; min-height: 88px; max-height: 200px; padding: 11px 11px 42px; border: 0; outline: 0; overflow-y: auto; display: block; color: var(--ink); background: transparent; font: inherit; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
-.prompt-box .rich-prompt-editor[data-empty="true"]::before, .prompt-box .rich-prompt-editor:empty::before { content: attr(data-placeholder); color: var(--faint); pointer-events: none; }
+.prompt-box .rich-prompt-editor:not([data-composing="true"]):empty::before { content: attr(data-placeholder); color: var(--faint); pointer-events: none; }
 .prompt-box .rich-prompt-editor:focus { outline: 0; }
 .prompt-box .rich-prompt-editor[aria-invalid="true"] { box-shadow: inset 0 -2px 0 var(--danger); }
 .prompt-box > .prompt-box-meta { position: absolute; left: 0; right: 0; bottom: 0; min-height: 31px; padding: 6px 12px 8px; border-radius: 0 0 7px 7px; display: flex; justify-content: space-between; gap: 10px; color: var(--faint); background: var(--panel); font-size: 9px; }
@@ -1054,7 +1054,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .desktop-update-versions { gap: 9px; padding-inline: 9px; }
   .desktop-update-versions span { min-width: 82px; }
 }
-.toast { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(380px, calc(100% - 36px)); padding: 11px 14px; border: 1px solid #3f3f46; border-radius: 8px; color: white; background: #202023; box-shadow: var(--shadow-float); opacity: 0; transform: translateY(10px); transition: opacity var(--ease), transform var(--ease); font-size: 11px; }
+.toast { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(380px, calc(100% - 36px)); padding: 11px 14px; border: 1px solid #3f3f46; border-radius: 8px; color: white; background: #202023; box-shadow: var(--shadow-float); opacity: 0; pointer-events: none; transform: translateY(10px); transition: opacity var(--ease), transform var(--ease); font-size: 11px; }
 .toast.show { opacity: 1; transform: none; }
 
 /* Short drama script desk */
@@ -2615,6 +2615,341 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
     padding: 0 clamp(20px, 3vw, 42px) 58px;
   }
 }
+
+/* Multiple assembly outputs: keep the two primary actions equal while the
+   history entry stays a compact utility beside the assembly action. */
+.storyboard-workbench .wb-action-bar.has-assemble .wb-add-shot,
+.storyboard-workbench .wb-action-bar.has-assemble .wb-assemble-actions {
+  width: 100%;
+  min-width: 0;
+}
+
+.storyboard-workbench .wb-assemble-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  order: 2;
+  min-width: 0;
+}
+
+.storyboard-workbench .wb-assemble-actions.has-history {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.storyboard-workbench .wb-assemble-actions .wb-assemble {
+  order: 1;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.storyboard-workbench .wb-assembly-library {
+  order: 2;
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  position: relative;
+  border: 1px solid rgba(88, 84, 202, .24);
+  border-radius: 10px;
+  color: #504bb5;
+  background: #f7f7ff;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.storyboard-workbench .wb-assembly-library svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.45;
+}
+
+.storyboard-workbench .wb-assembly-library b {
+  display: grid;
+  min-width: 16px;
+  height: 16px;
+  align-items: center;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  padding: 0 4px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #fff;
+  background: #5b55cf;
+  font: 9px var(--mono);
+}
+
+.storyboard-workbench .wb-assembly-library:hover,
+.storyboard-workbench .wb-assembly-library:focus-visible {
+  border-color: #716cf0;
+  background: #eeefff;
+  transform: translateY(-1px);
+}
+
+.storyboard-workbench .wb-assembly-library:focus-visible {
+  outline: 3px solid rgba(103, 99, 237, .2);
+  outline-offset: 2px;
+}
+
+.professional-assembly-library-dialog {
+  width: min(980px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 32px));
+  padding: 0;
+  border: 1px solid #dfe1eb;
+  border-radius: 18px;
+  overflow: hidden;
+  color: #30323b;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(26, 30, 52, .24);
+}
+
+.professional-assembly-library-dialog::backdrop {
+  background: rgba(20, 23, 34, .52);
+  backdrop-filter: blur(4px);
+}
+
+.professional-assembly-library-dialog .dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 21px 24px 17px;
+  border-bottom: 1px solid #e8e9ef;
+}
+
+.professional-assembly-library-dialog .dialog-head h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+}
+
+.professional-assembly-library-dialog .dialog-head p {
+  max-width: 650px;
+  margin: 7px 0 0;
+  color: #7f828e;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.professional-assembly-library-dialog .dialog-kicker {
+  color: #5963e9;
+  font: 9px var(--mono);
+  letter-spacing: .14em;
+}
+
+.professional-assembly-library-dialog .dialog-head > button {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border: 0;
+  border-radius: 8px;
+  color: #747782;
+  background: #f2f3f6;
+  font-size: 21px;
+}
+
+.assembly-library-body {
+  max-height: 590px;
+  padding: 18px 24px 24px;
+  overflow: auto;
+  background: #f7f8fb;
+}
+
+.assembly-library-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 13px;
+}
+
+.assembly-library-summary b {
+  color: #3b3d49;
+  font-size: 12px;
+}
+
+.assembly-library-summary span {
+  color: #9699a5;
+  font-size: 9px;
+}
+
+.assembly-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.assembly-history-card {
+  min-width: 0;
+  border: 1px solid #e0e2ea;
+  border-radius: 13px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(42, 45, 75, .05);
+}
+
+.assembly-history-media {
+  display: grid;
+  min-height: 164px;
+  place-items: center;
+  background: #15161c;
+}
+
+.assembly-history-media video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #15161c;
+}
+
+.assembly-history-missing {
+  display: grid;
+  min-height: 164px;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 20px;
+  color: #b9bbc5;
+  text-align: center;
+}
+
+.assembly-history-missing span {
+  color: #777be4;
+  font-size: 24px;
+}
+
+.assembly-history-missing b {
+  color: #e1e2e8;
+  font-size: 11px;
+}
+
+.assembly-history-missing small {
+  color: #898c98;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.assembly-history-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border-top: 1px solid #ececf1;
+}
+
+.assembly-history-card > footer > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.assembly-history-card > footer b,
+.assembly-history-card > footer span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-history-card > footer b {
+  color: #454752;
+  font-size: 10px;
+}
+
+.assembly-history-card > footer span {
+  color: #9598a4;
+  font-size: 8px;
+}
+
+.assembly-history-card > footer .secondary-button {
+  min-height: 31px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  font-size: 9px;
+}
+
+.assembly-library-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: #8a8d99;
+  text-align: center;
+}
+
+.assembly-library-empty > span {
+  color: #6569de;
+  font-size: 26px;
+}
+
+.assembly-library-empty b {
+  color: #4a4d59;
+  font-size: 13px;
+}
+
+.assembly-library-empty p {
+  max-width: 360px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.professional-assembly-library-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 24px;
+  border-top: 1px solid #e8e9ef;
+}
+
+.professional-assembly-library-dialog > footer > span {
+  color: #858895;
+  font-size: 9px;
+}
+
+.professional-assembly-library-dialog > footer .secondary-button {
+  min-height: 36px;
+}
+
+@media (max-width: 760px) {
+  .assembly-library-body {
+    max-height: calc(100dvh - 220px);
+  }
+
+  .professional-assembly-library-dialog > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .professional-assembly-library-dialog > footer .secondary-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .storyboard-workbench .wb-assemble-actions.has-history {
+    grid-template-columns: minmax(0, 1fr) 42px;
+  }
+
+  .storyboard-workbench .wb-assembly-library {
+    width: 42px;
+  }
+
+  .assembly-library-body {
+    padding-inline: 14px;
+  }
+
+  .professional-assembly-library-dialog .dialog-head,
+  .professional-assembly-library-dialog > footer {
+    padding-inline: 16px;
+  }
+}
 .upload-job-card { position: relative; overflow: hidden; }
 .upload-job-file-card { border-color: var(--brand-line); box-shadow: 0 0 0 1px var(--brand-soft); }
 .upload-job-card .upload-job-visual { position: relative; overflow: hidden; }
@@ -2702,7 +3037,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .wb-shot-edit-column{min-width:0;padding:30px 18px 15px}.wb-shot-preview{min-width:0;padding:30px 18px 15px;border-left:1px solid #eceef2}
 .wb-prompt-label{margin-bottom:8px;color:#3c3f4b;font-size:11px;font-weight:600}
 .wb-rich-input{min-height:196px;max-height:360px;padding:11px 12px;border-color:#aeb1bb;border-radius:10px;font-size:11px;line-height:1.75}
-.wb-rich-input[data-empty="true"]:after{content:attr(data-placeholder);display:inline;color:#a5a8b1;pointer-events:none}
+.wb-rich-input[data-empty="true"]:not([data-composing="true"]):after{content:attr(data-placeholder);display:inline;color:#a5a8b1;pointer-events:none}
 .wb-rich-input[data-empty="false"]:after{display:none}.wb-rich-input:empty::before{display:none}
 .wb-rich-input:focus{border-color:#8790ff;box-shadow:0 0 0 3px #eef0ff}
 .wb-input-reference-row{display:flex;align-items:flex-start;gap:8px;min-height:58px;margin:0 0 12px;padding:0 0 10px;border-bottom:1px solid #eef0f3;overflow:auto;white-space:normal}
@@ -2734,6 +3069,143 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .professional-assembly-list{min-height:0;margin:0;padding:0;display:grid;align-content:start;gap:7px;overflow:auto;list-style:none}.professional-assembly-list button{width:100%;min-height:58px;padding:8px;border:1px solid #dfe2e9;border-radius:10px;color:#4a4d58;background:#fff;display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:center;gap:8px;text-align:left}.professional-assembly-list button:hover,.professional-assembly-list button.active{border-color:#8992ff;background:#eef0ff}.professional-assembly-list button>span{width:28px;height:28px;border-radius:7px;color:#5c64d9;background:#eef0ff;display:grid;place-items:center;font:9px var(--mono)}.professional-assembly-list button>div{min-width:0;display:grid;gap:3px}.professional-assembly-list b,.professional-assembly-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.professional-assembly-list b{font-size:10px}.professional-assembly-list small{color:#9598a4;font-size:8px}.professional-assembly-list i{color:#6972e8;font-size:9px;font-style:normal}
 .professional-assembly-dialog>footer{padding:13px 22px;border-top:1px solid #e7e8ed;display:flex;align-items:center;justify-content:space-between;gap:14px}.professional-assembly-dialog>footer>span{color:#858895;font-size:9px}.professional-assembly-dialog>footer>div{display:flex;gap:8px}.professional-assembly-dialog>footer button{min-height:39px}
 @media (max-width:760px){.professional-assembly-body{display:block;max-height:calc(100dvh - 210px);overflow:auto}.professional-assembly-preview video{height:38vh}.professional-assembly-list{max-height:260px;margin-top:12px}.professional-assembly-dialog>footer{align-items:stretch;flex-direction:column}.professional-assembly-dialog>footer>div{display:grid;grid-template-columns:1fr 1fr}}
+
+/* Assembly picker: one optional row per shot, with one version choice inside
+   each row. The list stays calm and dense enough for long storyboard projects,
+   while the purple state is reserved for the actual selected edit. */
+.professional-assembly-list.assembly-selection-list > li {
+  padding: 9px;
+  border: 1px solid #e0e2ea;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.assembly-shot-selection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.assembly-shot-toggle {
+  display: flex;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.assembly-shot-toggle input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  margin: 0;
+  accent-color: #5b55cf;
+}
+
+.assembly-shot-toggle > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.assembly-shot-toggle b,
+.assembly-shot-toggle small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-shot-toggle b {
+  color: #424552;
+  font-size: 10px;
+}
+
+.assembly-shot-toggle small,
+.assembly-shot-selection-status {
+  color: #9699a5;
+  font-size: 8px;
+}
+
+.assembly-shot-selection-status {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.assembly-version-options {
+  display: grid;
+  gap: 6px;
+  margin: 7px 0 0 25px;
+}
+
+.assembly-version-options button {
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.assembly-version-options button.active {
+  border-color: #8992ff;
+  background: #eef0ff;
+  box-shadow: inset 0 0 0 1px rgba(137, 146, 255, .12);
+}
+
+.assembly-version-options button.active > span {
+  color: #fff;
+  background: #5c62d9;
+}
+
+.assembly-version-options button:focus-visible {
+  outline: 3px solid rgba(103, 99, 237, .2);
+  outline-offset: 2px;
+}
+
+.assembly-selection-list > li.is-excluded {
+  border-color: #e6e7ec;
+  background: #fafafd;
+}
+
+.assembly-selection-list > li.is-excluded .assembly-version-options {
+  opacity: .62;
+}
+
+.assembly-preview-empty {
+  display: grid !important;
+  min-height: min(450px, 52vh);
+  place-items: center;
+  align-content: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 20px;
+  color: #b7bac5 !important;
+  text-align: center;
+  background: #15161c !important;
+}
+
+.assembly-preview-empty span {
+  color: #767be2;
+  font-size: 28px;
+}
+
+.assembly-preview-empty b {
+  color: #e1e2e8;
+  font-size: 11px;
+}
+
+.assembly-preview-empty small {
+  color: #9699a5;
+  font-size: 9px;
+}
+
+@media (max-width:760px) {
+  .assembly-preview-empty {
+    min-height: 38vh;
+  }
+
+  .assembly-shot-selection-head {
+    align-items: flex-start;
+  }
+}
 .wb-action-bar{min-height:65px;padding:10px 22px}.wb-action-bar .wb-add-shot{min-height:41px}.wb-action-bar .stage-next{min-height:41px}
 .storyboard-workbench.is-locked .wb-shot-delete{display:none}
 
@@ -3738,5 +4210,209 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
   .library-toolbar > .type-tabs button,
   .library-toolbar > .search-box input {
     font-size: 12px;
+  }
+}
+
+/* Storyboard empty state and full-width creation rail. */
+.storyboard-workbench .wb-shot-scroll.is-empty {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: clamp(32px, 8vh, 88px) clamp(24px, 7vw, 108px);
+  overflow: auto;
+  background: #f7f8fb;
+}
+
+.storyboard-workbench .wb-empty-shot-state {
+  position: static;
+  display: flex;
+  width: min(320px, 100%);
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  text-align: center;
+}
+
+.storyboard-workbench .wb-empty-shot-icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  margin: 0 0 16px;
+  color: #5a54c8;
+}
+
+.storyboard-workbench .wb-empty-shot-icon svg {
+  width: 43px;
+  height: 43px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.storyboard-workbench .wb-empty-shot-state p {
+  margin: 0;
+  color: #5f6274;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.storyboard-workbench .wb-empty-shot-action {
+  display: inline-flex;
+  width: min(248px, 100%);
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+  border: 1px solid #423ca7;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #4a45bb, #5c50c8);
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(67, 60, 167, .26), inset 0 1px rgba(255, 255, 255, .18);
+  font-size: 14px;
+  font-weight: 650;
+  transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
+}
+
+.storyboard-workbench .wb-empty-shot-action svg {
+  width: 17px;
+  height: 17px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+.storyboard-workbench .wb-empty-shot-action:hover:not(:disabled),
+.storyboard-workbench .wb-empty-shot-action:focus-visible {
+  filter: brightness(1.03);
+  box-shadow: 0 13px 24px rgba(67, 60, 167, .34), inset 0 1px rgba(255, 255, 255, .22);
+  transform: translateY(-1px);
+}
+
+.storyboard-workbench .wb-empty-shot-action:focus-visible {
+  outline: 3px solid rgba(103, 99, 237, .2);
+  outline-offset: 3px;
+}
+
+.storyboard-workbench .wb-empty-shot-action:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.storyboard-workbench .wb-action-bar {
+  position: relative;
+  z-index: 100;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px 22px 14px;
+  background: #fff;
+  pointer-events: auto;
+  isolation: isolate;
+}
+
+.storyboard-workbench .wb-action-bar button {
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.storyboard-workbench .wb-action-bar .wb-add-shot,
+.storyboard-workbench .wb-action-bar .wb-assemble,
+.storyboard-workbench .wb-action-bar .wb-assembly-library {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.storyboard-workbench .wb-action-bar .wb-assemble-actions {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.storyboard-workbench .wb-action-bar .wb-add-shot,
+.storyboard-workbench .wb-action-bar .wb-assemble {
+  width: 100%;
+  min-height: 44px;
+  justify-content: center;
+  margin: 0;
+}
+
+.storyboard-workbench .wb-action-bar .wb-add-shot {
+  order: 1;
+}
+
+.storyboard-workbench .wb-action-bar .wb-assemble {
+  order: 2;
+}
+
+.storyboard-workbench .wb-action-bar .wb-locked-note {
+  order: 3;
+  justify-self: center;
+  padding: 2px 0 0;
+  text-align: center;
+}
+
+/* Keep the creation action visually decisive against the pale workbench. */
+.storyboard-workbench .wb-action-bar .wb-add-shot {
+  border: 1px solid #423ca7;
+  color: #fff;
+  background: linear-gradient(135deg, #4a45bb, #5c50c8);
+  box-shadow: 0 10px 20px rgba(67, 60, 167, .26), inset 0 1px rgba(255, 255, 255, .18);
+}
+
+.storyboard-workbench .wb-action-bar .wb-add-shot:hover:not(:disabled),
+.storyboard-workbench .wb-action-bar .wb-add-shot:focus-visible {
+  border-color: #37318f;
+  color: #fff;
+  background: linear-gradient(135deg, #3f3aab, #5145b7);
+  box-shadow: 0 13px 24px rgba(67, 60, 167, .34), inset 0 1px rgba(255, 255, 255, .22);
+}
+
+.storyboard-workbench .wb-action-bar.has-assemble {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.storyboard-workbench .wb-action-bar.has-assemble .wb-add-shot,
+.storyboard-workbench .wb-action-bar.has-assemble .wb-assemble {
+  min-width: 0;
+  width: 100%;
+}
+
+/* The generic action order above targets the old flat button structure.
+   Once the history utility is present, keep the wide assembly CTA before the
+   compact library control inside their own grid. */
+.storyboard-workbench .wb-action-bar.has-assemble .wb-assemble-actions .wb-assemble {
+  order: 1;
+  white-space: nowrap;
+}
+
+.storyboard-workbench .wb-action-bar.has-assemble .wb-assemble-actions .wb-assembly-library {
+  order: 2;
+}
+
+@media (max-width: 640px) {
+  .storyboard-workbench .wb-shot-scroll.is-empty {
+    padding: 24px 16px;
+  }
+
+  .storyboard-workbench .wb-action-bar {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .storyboard-workbench .wb-empty-shot-action {
+    transition: none;
+  }
+
+  .storyboard-workbench .wb-empty-shot-action:hover:not(:disabled),
+  .storyboard-workbench .wb-empty-shot-action:focus-visible {
+    transform: none;
   }
 }

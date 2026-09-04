@@ -181,9 +181,22 @@ try {
     created.push(r.body.project.id);
   }
   check('创建 7 个项目', () => assert.equal(created.length, 7));
+  check('新建项目默认创建一个分镜', () => {
+    assert.equal(r.body.project.shots.length, 1);
+    assert.equal(r.body.project.shots[0].title, '分镜 1');
+  });
   await new Promise(resolve => setTimeout(resolve, 5));
   r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, { title: '最近更新项目' });
   check('更新最后一个项目', () => assert.equal(r.status, 200));
+  r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, {
+    assemblyVideos:[
+      { id:'local-assembly-1', assetId:'local-assembly-1', name:'第一版', shotCount:2, shotIds:['shot-1'] },
+      { id:'local-assembly-2', assetId:'local-assembly-2', name:'第二版', shotCount:3, shotIds:['shot-1','shot-2'] },
+    ],
+  });
+  check('项目支持保存多条合成历史', () => { assert.equal(r.status, 200); assert.equal(r.body.project.assemblyVideos.length, 2); });
+  r = await call('GET', `/api/drama/projects/${created.at(-1)}`);
+  check('合成历史可在项目重新打开后读取', () => { assert.equal(r.status, 200); assert.deepEqual(r.body.project.assemblyVideos.map(item => item.assetId), ['local-assembly-1', 'local-assembly-2']); });
 
   r = await call('GET', '/api/drama/projects');
   check('projects 包在 { projects } 里', () => { assert.ok(Array.isArray(r.body.projects)); assert.equal(r.body.projects.length, 7); });

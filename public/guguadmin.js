@@ -9,6 +9,8 @@
     invitesCursors: [''],
     logCursors: [''],
     logCategory: 'generations',
+    modelItems: [],
+    routeData: null,
   };
   const routeModelLabels = {
     'seedance-2.0': 'Seedance 2.0 · 兼容线路',
@@ -20,6 +22,11 @@
   const logLabels = { generations: '生成任务', credits: '积分流水', llm: 'LLM 用量', audit: '管理员审计', system: '系统异常', client: '客户端日志' };
   const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
   const money = value => Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 });
+  const perSecondPrice = (value, seconds) => {
+    const amount = Number(value);
+    const duration = Number(seconds);
+    return Number.isFinite(amount) && Number.isFinite(duration) && duration > 0 ? `¥${money(amount / duration)} / 秒 · 按 ${money(duration)} 秒换算` : '—';
+  };
   const date = value => value ? new Date(value).toLocaleString('zh-CN') : '—';
   const dateInput = value => value ? new Date(value).toISOString().slice(0, 16) : '';
   const status = value => ({ active: '正常', disabled: '已禁用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', draft: '草稿', published: '已发布', archived: '已归档', error: '错误', warning: '警告', info: '信息', success: '成功', PAID: '已支付', PARTIALLY_REFUNDED: '部分退款', REFUNDED: '已退款' }[value] || value || '—');
@@ -171,6 +178,7 @@
   const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
   function showView(name) {
     if (!loaders[name]) return;
+    if (state.view === name) return;
     if (state.view !== name) {
       if (name === 'users') resetPager('users');
       if (name === 'orders') resetPager('orders');
@@ -292,7 +300,12 @@
   async function checkCredential(id) {
     const button = document.querySelector(`[data-check-credential="${CSS.escape(id)}"]`);
     setButtonBusy(button, true, '检查中…');
-    try { const result = await api('/api/admin/model-route-credentials/check', { method: 'POST', body: JSON.stringify({ credentialId: id }) }); toast(`已检查 ${result.items?.length || 0} 条线路`); await loadCredentials(); await loadModels(); }
+    try {
+      const result = await api('/api/admin/model-route-credentials/check', { method: 'POST', body: JSON.stringify({ credentialId: id }) });
+      mergeCheckedRoutes(result.items, result.prices);
+      setButtonBusy(button, false);
+      toast(`已检查 ${result.items?.length || 0} 条线路`);
+    }
     catch (error) { toast(error.message); setButtonBusy(button, false); }
   }
 
@@ -354,15 +367,58 @@
     await showAdminDialog({ kicker: disabling ? '危险操作' : '用户管理', title: disabling ? '禁用用户' : '启用用户', description: disabling ? '禁用后该用户现有会话会被撤销，无法继续使用用户端。' : '启用后该用户可以重新登录并使用用户端。', submit: disabling ? '确认禁用' : '确认启用', danger: disabling, onSubmit: async () => { await api(`/api/admin/users/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' }); toast(disabling ? '用户已禁用' : '用户已启用'); await fetchUsers(); } });
   }
 
+  function routeIdsForModel(modelId, routeData = state.routeData) {
+    const legacySeedanceIds = new Set(['seedance-2.0', 'seedance-2.0-text', 'seedance-2.0-img']);
+    return (routeData?.items || [])
+      .filter(route => route.logicalModelId === modelId || (modelId === 'seedance-2.0' && legacySeedanceIds.has(route.logicalModelId)))
+      .map(route => route.id);
+  }
+
+  function modelCheckStatus(modelId, routeData = state.routeData) {
+    const routes = (routeData?.items || []).filter(route => routeIdsForModel(modelId, routeData).includes(route.id));
+    if (!routes.length) return { value: 'unknown', label: '暂无线路', kind: 'muted' };
+    const bad = routes.find(route => ['missing', 'credential_error', 'probe_error'].includes(route.catalogStatus));
+    if (bad) return { value: bad.catalogStatus, label: status(bad.catalogStatus), kind: 'bad' };
+    if (routes.every(route => route.catalogStatus === 'available')) return { value: 'available', label: '全部可用', kind: 'ok' };
+    return { value: 'unknown', label: '待检查', kind: 'warn' };
+  }
+
+  function modelCheckMarkup(model, routeData = state.routeData) {
+    const result = modelCheckStatus(model.modelId, routeData);
+    return result.kind === 'muted' ? `<span class="detail">${result.label}</span>` : badge(result.value, result.kind);
+  }
+
+  function renderModelPanel(modelItems = state.modelItems, routeData = state.routeData) {
+    const root = $('#modelPanel');
+    if (!root) return;
+    root.innerHTML = `<div class="panel-head"><div><h3>模型控制</h3><p class="detail">用户可见控制前端展示，接单状态控制服务端是否接受新任务；检查线路只更新当前模型状态。</p></div></div>${modelItems.length ? `<div class="table-wrap"><table aria-label="模型控制列表"><thead><tr><th>模型</th><th>类型</th><th>用户可见</th><th>接受新任务</th><th>线路检查</th><th>排序</th><th>操作</th></tr></thead><tbody>${modelItems.map(model => { const routeIds = routeIdsForModel(model.modelId, routeData); return `<tr><td><b>${esc(model.modelId)}</b></td><td>${esc(model.kind)}</td><td>${model.userVisible ? badge('active') : badge('disabled')}</td><td>${model.enabled ? badge('active') : badge('disabled')}</td><td>${modelCheckMarkup(model, routeData)}</td><td>${money(model.sortOrder)}</td><td class="actions"><button class="small-button" data-model="${esc(model.modelId)}" type="button">编辑</button>${routeIds.length ? `<button class="small-button" data-check-model="${esc(model.modelId)}" type="button">检查线路</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>` : emptyMarkup('暂无模型配置')}`;
+    root.querySelectorAll('[data-model]').forEach(button => button.onclick = () => editModel(modelItems.find(item => item.modelId === button.dataset.model)));
+    root.querySelectorAll('[data-check-model]').forEach(button => button.onclick = () => checkRoutes(routeIdsForModel(button.dataset.checkModel, routeData), button));
+  }
+
+  function mergeCheckedRoutes(items = [], prices = null) {
+    if (!state.routeData || !Array.isArray(items)) return;
+    const updates = new Map(items.map(item => [item.id, item]));
+    state.routeData = {
+      ...state.routeData,
+      items: state.routeData.items.map(item => updates.get(item.id) || item),
+      prices: prices || state.routeData.prices,
+    };
+    renderRoutePanel(state.routeData);
+    renderModelPanel(state.modelItems, state.routeData);
+  }
+
   async function loadModels() {
     const root = $('#view-models');
-    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Models</div><h2 id="modelsTitle">模型与价格</h2><p class="subtitle">管理用户展示、接单状态、调用线路和平台价格</p></div></div><div id="routePanel" class="panel">${loadingMarkup('正在读取模型线路…')}</div><div id="modelPanel" class="panel">${loadingMarkup('正在读取模型配置…')}</div><div id="pricingPanel" class="panel">${loadingMarkup('正在读取价格版本…')}</div>`;
+    root.innerHTML = `<div class="view-heading"><div><div class="view-kicker">Workspace / Models</div><h2 id="modelsTitle">模型与价格</h2><p class="subtitle">管理用户展示、接单状态、调用线路和平台价格</p></div><div class="view-heading-actions"><button class="small-button" data-refresh="models" type="button">刷新全部</button></div></div><div id="routePanel" class="panel">${loadingMarkup('正在读取模型线路…')}</div><div id="modelPanel" class="panel">${loadingMarkup('正在读取模型配置…')}</div><div id="pricingPanel" class="panel">${loadingMarkup('正在读取价格版本…')}</div>`;
+    root.querySelector('[data-refresh="models"]').onclick = loadModels;
     try {
       const [models, pricing, routes] = await Promise.all([api('/api/admin/models'), api('/api/admin/pricing'), api('/api/admin/model-routes')]);
-      renderRoutePanel(routes);
       const modelItems = models.items || [];
-      $('#modelPanel').innerHTML = `<div class="panel-head"><div><h3>模型控制</h3><p class="detail">用户可见控制前端展示，接单状态控制服务端是否接受新任务。</p></div></div>${modelItems.length ? `<div class="table-wrap"><table aria-label="模型控制列表"><thead><tr><th>模型</th><th>类型</th><th>用户可见</th><th>接受新任务</th><th>排序</th><th>操作</th></tr></thead><tbody>${modelItems.map(model => `<tr><td><b>${esc(model.modelId)}</b></td><td>${esc(model.kind)}</td><td>${model.userVisible ? badge('active') : badge('disabled')}</td><td>${model.enabled ? badge('active') : badge('disabled')}</td><td>${money(model.sortOrder)}</td><td><button class="small-button" data-model="${esc(model.modelId)}" type="button">编辑</button></td></tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无模型配置')}`;
-      $('#modelPanel').querySelectorAll('[data-model]').forEach(button => button.onclick = () => editModel(modelItems.find(item => item.modelId === button.dataset.model)));
+      state.modelItems = modelItems;
+      state.routeData = routes;
+      renderRoutePanel(routes);
+      renderModelPanel(modelItems, routes);
       const current = pricing.current || {};
       const history = (pricing.history || []).slice(0, 6);
       $('#pricingPanel').innerHTML = `<div class="panel-head"><div><h3>全局价格 <span class="detail">· 当前版本 ${esc(current.version)}</span></h3><p class="detail">新价格仅影响新提交的任务，历史版本只读保留。</p></div></div><form id="pricingForm" class="price-form"><label class="control">图片积分 / 次<input name="imagePerRequest" value="${esc(current.imagePerRequest)}" inputmode="decimal" required></label><label class="control">视频积分 / 秒<input name="videoPerSecond" value="${esc(current.videoPerSecond)}" inputmode="decimal" required></label><button class="primary" type="submit">发布新价格</button></form>${history.length ? `<div class="user-recent"><h3>最近价格版本</h3><div class="table-wrap"><table><thead><tr><th>版本</th><th>图片 / 次</th><th>视频 / 秒</th><th>创建时间</th></tr></thead><tbody>${history.map(item => `<tr><td>${esc(item.version)}</td><td>${money(item.imagePerRequest)}</td><td>${money(item.videoPerSecond)}</td><td>${date(item.createdAt)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
@@ -397,7 +453,7 @@
       const publicPriceModelId = modelId === 'seedance-2.0-text' || modelId === 'seedance-2.0-img' ? 'seedance-2.0' : modelId;
       const price = (data.prices || []).find(item => item.modelId === publicPriceModelId && item.quality === quality);
       const label = routeModelLabels[modelId] || modelId;
-      return `<section class="route-group"><header><div><h4>${esc(label)} · ${esc(quality)}</h4><span>${price?.available ? `当前 ¥${Number(price.yuan).toFixed(2)} / ${money(price.credits)} 积分` : '当前无可用线路'}</span>${modelId === 'seedance-2.0-fast' ? '<p class="detail">固定 15 秒 · 9 图 / 3 视频 / 3 音频</p>' : modelId === 'seedance-2.0-text' ? '<p class="detail">无图片时自动进入此线路池</p>' : modelId === 'seedance-2.0-img' ? '<p class="detail">上传 1～9 张图片时自动进入此线路池</p>' : ''}</div><div class="route-header-actions"><button class="route-add-button" data-add-route="${esc(key)}" type="button">新增模型</button><label>选择策略<select data-route-policy="${esc(key)}" data-version="${policy?.version || 1}"><option value="">自动按优先级</option>${routes.map(route => `<option value="${esc(route.id)}" ${policy?.forcedRouteId === route.id ? 'selected' : ''}>手动 · ${esc(route.displayName)}</option>`).join('')}</select></label></div></header><div class="table-wrap"><table class="route-table" aria-label="${esc(label)} ${esc(quality)} 调用线路"><thead><tr><th>优先级</th><th>线路 / 上游模型 ID</th><th>状态</th><th>成本</th><th>用户价</th><th>检查时间</th><th>操作</th></tr></thead><tbody>${routes.map(route => `<tr class="${(policy?.forcedRouteId === route.id || (modelId !== 'seedance-2.0-text' && modelId !== 'seedance-2.0-img' && price?.selectedRouteId === route.id)) ? 'is-selected' : ''}"><td><b>${route.priority}</b></td><td><b>${esc(route.displayName)}</b><div class="detail">${esc(route.upstreamModelId)}</div></td><td>${routeStatusBadge(route)}${route.catalogMessage ? `<div class="route-message" title="${esc(route.catalogMessage)}">${esc(route.catalogMessage)}</div>` : ''}</td><td>¥${Number(route.costYuan).toFixed(2)}</td><td>¥${Number(route.salePriceYuan).toFixed(2)}<div class="detail">${money(route.salePriceCredits)} 积分${route.salePriceConfigured ? '' : ' · 自动价'}</div></td><td>${date(route.catalogCheckedAt)}</td><td class="actions"><button class="small-button" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="small-button" data-check-route="${esc(route.id)}" type="button">检查</button></td></tr>`).join('')}</tbody></table></div></section>`;
+      return `<section class="route-group"><header><div><h4>${esc(label)} · ${esc(quality)}</h4><span>${price?.available ? `当前 ¥${Number(price.yuan).toFixed(2)} / ${money(price.credits)} 积分` : '当前无可用线路'}</span>${modelId === 'seedance-2.0-fast' ? '<p class="detail">固定 15 秒 · 9 图 / 3 视频 / 3 音频</p>' : modelId === 'seedance-2.0-text' ? '<p class="detail">无图片时自动进入此线路池</p>' : modelId === 'seedance-2.0-img' ? '<p class="detail">上传 1～9 张图片时自动进入此线路池</p>' : ''}</div><div class="route-header-actions"><button class="route-add-button" data-add-route="${esc(key)}" type="button">新增模型</button><label>选择策略<select data-route-policy="${esc(key)}" data-version="${policy?.version || 1}"><option value="">自动按优先级</option>${routes.map(route => `<option value="${esc(route.id)}" ${policy?.forcedRouteId === route.id ? 'selected' : ''}>手动 · ${esc(route.displayName)}</option>`).join('')}</select></label></div></header><div class="table-wrap"><table class="route-table" aria-label="${esc(label)} ${esc(quality)} 调用线路"><thead><tr><th>优先级</th><th>线路 / 上游模型 ID</th><th>状态</th><th>成本</th><th>用户价</th><th>检查时间</th><th>操作</th></tr></thead><tbody>${routes.map(route => `<tr class="${(policy?.forcedRouteId === route.id || (modelId !== 'seedance-2.0-text' && modelId !== 'seedance-2.0-img' && price?.selectedRouteId === route.id)) ? 'is-selected' : ''}"><td><b>${route.priority}</b></td><td><b>${esc(route.displayName)}</b><div class="detail">${esc(route.upstreamModelId)}</div></td><td>${routeStatusBadge(route)}${route.catalogMessage ? `<div class="route-message" title="${esc(route.catalogMessage)}">${esc(route.catalogMessage)}</div>` : ''}</td><td><b>¥${Number(route.costYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.costYuan, route.durationSeconds)}</div></td><td><b>¥${Number(route.salePriceYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.salePriceYuan, route.durationSeconds)}${route.salePriceConfigured ? '' : ' · 自动价'}</div></td><td>${date(route.catalogCheckedAt)}</td><td class="actions"><button class="small-button" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="small-button" data-check-route="${esc(route.id)}" type="button">检查</button></td></tr>`).join('')}</tbody></table></div></section>`;
     }).join('')}</div>` : emptyMarkup('暂无调用线路', '请先新增渠道模型，平台才会有可用的上游线路。')}`;
     $('#checkAllRoutes')?.addEventListener('click', () => checkRoutes());
     root.querySelectorAll('[data-add-route]').forEach(button => button.onclick = () => { const [modelId, quality] = button.dataset.addRoute.split(':'); addModelRoute(modelId, quality, data); });
@@ -406,17 +462,30 @@
     root.querySelectorAll('[data-route-policy]').forEach(select => select.onchange = () => changeRoutePolicy(select));
   }
 
-  async function checkRoutes(routeIds = null) {
-    const button = routeIds ? document.querySelector(`[data-check-route="${CSS.escape(routeIds[0])}"]`) : $('#checkAllRoutes');
+  async function checkRoutes(routeIds = null, sourceButton = null) {
+    const button = sourceButton || (routeIds ? document.querySelector(`[data-check-route="${CSS.escape(routeIds[0])}"]`) : $('#checkAllRoutes'));
     setButtonBusy(button, true, '检查中…');
-    try { await api('/api/admin/model-routes/check', { method: 'POST', body: JSON.stringify(routeIds ? { routeIds } : {}) }); toast('模型目录检查完成'); await loadModels(); }
+    try {
+      const result = await api('/api/admin/model-routes/check', { method: 'POST', body: JSON.stringify(routeIds ? { routeIds } : {}) });
+      mergeCheckedRoutes(result.items, result.prices);
+      if (!state.routeData) setButtonBusy(button, false);
+      toast(`模型目录检查完成 · 已更新 ${result.items?.length || 0} 条线路`);
+    }
     catch (error) { toast(error.message); setButtonBusy(button, false); }
   }
 
   async function changeRoutePolicy(select) {
     const [logicalModelId, quality] = select.dataset.routePolicy.split(':');
     select.disabled = true;
-    try { await api('/api/admin/model-route-policy', { method: 'PATCH', body: JSON.stringify({ logicalModelId, quality, forcedRouteId: select.value, expectedVersion: Number(select.dataset.version) }) }); toast(select.value ? '已切换为手动优先线路' : '已恢复自动优先级'); await loadModels(); }
+    try {
+      const result = await api('/api/admin/model-route-policy', { method: 'PATCH', body: JSON.stringify({ logicalModelId, quality, forcedRouteId: select.value, expectedVersion: Number(select.dataset.version) }) });
+      if (state.routeData) {
+        state.routeData = { ...state.routeData, policies: state.routeData.policies.map(policy => policy.logicalModelId === logicalModelId && policy.quality === quality ? result.policy : policy), prices: result.prices || state.routeData.prices };
+        renderRoutePanel(state.routeData);
+        renderModelPanel(state.modelItems, state.routeData);
+      }
+      toast(select.value ? '已切换为手动优先线路' : '已恢复自动优先级');
+    }
     catch (error) { toast(error.message); select.disabled = false; }
   }
 
@@ -452,7 +521,7 @@
   }
   async function editModel(model) {
     if (!model) return;
-    await showAdminDialog({ kicker: '模型控制', title: `编辑 ${model.modelId}`, description: '用户可见控制前端展示，接单状态控制服务端是否接受新任务。', submit: '保存模型配置', fields: [{ name: 'userVisible', type: 'checkbox', label: '用户可见', checked: model.userVisible, help: '关闭后不会出现在用户端模型列表。' }, { name: 'enabled', type: 'checkbox', label: '接受新任务', checked: model.enabled, help: '关闭后服务端会拒绝该模型的新生成请求。' }, { name: 'sortOrder', label: '排序值', type: 'number', value: String(model.sortOrder), min: 0, max: 100000, step: 1, inputmode: 'numeric', required: true, help: '请输入 0–100000 的整数，数字越小越靠前。' }], validate: values => { const order = Number(values.sortOrder); return Number.isSafeInteger(order) && order >= 0 && order <= 100000 ? null : '排序值必须是 0–100000 的整数。'; }, onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); toast('模型配置已更新'); await loadModels(); } });
+    await showAdminDialog({ kicker: '模型控制', title: `编辑 ${model.modelId}`, description: '用户可见控制前端展示，接单状态控制服务端是否接受新任务。', submit: '保存模型配置', fields: [{ name: 'userVisible', type: 'checkbox', label: '用户可见', checked: model.userVisible, help: '关闭后不会出现在用户端模型列表。' }, { name: 'enabled', type: 'checkbox', label: '接受新任务', checked: model.enabled, help: '关闭后服务端会拒绝该模型的新生成请求。' }, { name: 'sortOrder', label: '排序值', type: 'number', value: String(model.sortOrder), min: 0, max: 100000, step: 1, inputmode: 'numeric', required: true, help: '请输入 0–100000 的整数，数字越小越靠前。' }], validate: values => { const order = Number(values.sortOrder); return Number.isSafeInteger(order) && order >= 0 && order <= 100000 ? null : '排序值必须是 0–100000 的整数。'; }, onSubmit: async values => { const result = await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); state.modelItems = state.modelItems.map(item => item.modelId === model.modelId ? { ...item, ...result.model } : item); renderModelPanel(state.modelItems, state.routeData); toast('模型配置已更新'); } });
   }
 
   async function loadInvites() {

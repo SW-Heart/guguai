@@ -42,10 +42,25 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=219/);
-  assert.match(index, /\/styles\.css\?v=198/);
+  assert.match(index, /\/app\.js\?v=226/);
+  assert.match(index, /\/styles\.css\?v=203/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=8/);
-  assert.match(app, /\.\/drama-studio\.js\?v=71/);
+  assert.match(app, /\.\/drama-studio\.js\?v=78/);
+});
+
+test('short-drama project opening does not wait for the full local library or gallery works', () => {
+  const openStart = dramaStudio.indexOf('async function openProject(');
+  const openEnd = dramaStudio.indexOf('\n  async function closeProject', openStart);
+  const openSource = dramaStudio.slice(openStart, openEnd);
+  assert.doesNotMatch(openSource, /await loadFiles\(/);
+  assert.match(openSource, /loadTasks\(\{background:true,projectOnly:true\}\)/);
+  const loadTasksStart = app.indexOf('async function loadTasks(');
+  const loadTasksEnd = app.indexOf('\nfunction localFileAction', loadTasksStart);
+  const loadTasksSource = app.slice(loadTasksStart, loadTasksEnd);
+  assert.match(loadTasksSource, /projectOnly=false/);
+  assert.match(loadTasksSource, /activeOnly \? activeIds : \[\.\.\.projectTaskIds\]/);
+  assert.match(loadTasksSource, /const assetTasks = projectOnly \? hydratedTasks : tasks/);
+  assert.match(loadTasksSource, /void syncDesktopDeliveries\(\{ assetIds:missingAssetIds \}\)/);
 });
 
 test('generation workspace separates works from paginated history', () => {
@@ -230,7 +245,7 @@ test('project-bound generation statuses override the paginated gallery snapshot'
   const loadTasksStart = app.indexOf('async function loadTasks(');
   const loadTasksEnd = app.indexOf('\nfunction localFileAction', loadTasksStart);
   const loadTasksSource = app.slice(loadTasksStart, loadTasksEnd);
-  assert.match(loadTasksSource, /const projectTaskIdsToHydrate = \[\.\.\.projectTaskIds\];/);
+  assert.match(loadTasksSource, /const projectTaskIdsToHydrate = projectOnly \? \[\] : \[\.\.\.projectTaskIds\];/);
   assert.match(loadTasksSource, /\/api\/generations\?ids=\$\{encodeURIComponent\(ids\.join\(','\)\)\}/);
   assert.match(loadTasksSource, /hydratedTasks\[index\] = task/);
 });
@@ -248,4 +263,28 @@ test('short-drama task refresh deferred during editing is replayed after blur', 
   const refreshEnd = dramaStudio.indexOf('\n  function renderProfessionalShotWindow', refreshStart);
   const refreshSource = dramaStudio.slice(refreshStart, refreshEnd);
   assert.match(refreshSource, /deferProfessionalRender\(\);\s*active\.addEventListener\('blur',scheduleFlushDeferredProfessionalRender,\{once:true\}\)/);
+});
+
+test('repeated storyboard assembly keeps independent outputs and protects footer clicks', () => {
+  assert.match(desktopMain, /async function importFile\(filePath, \{ dedupe = true \} = \{\}\)/);
+  assert.match(desktopMain, /const imported = await importFile\(output, \{ dedupe: false \}\);/);
+  assert.match(dramaStudio, /id:`assembly_\$\{crypto\.randomUUID\(\)\}`, assetId:result\.id/);
+  assert.doesNotMatch(dramaStudio, /project\.assemblyVideos = \[record, \.\.\.\(project\.assemblyVideos \|\| \[\]\)\.filter\(item => item\.assetId !== result\.id\)\]/);
+  assert.match(dramaStudio, /if\(changed\)scheduleFlushDeferredProfessionalRender\(\);/);
+  assert.match(dramaStudio, /if\(actionBar\)\{deferredProfessionalRender=false;return;\}/);
+  assert.match(dramaStudio, /actionBar\.addEventListener\('pointerdown'/);
+  assert.match(dramaStudio, /actionBar\.addEventListener\('click'/);
+  assert.match(styles, /\.storyboard-workbench \.wb-action-bar \{[\s\S]*?z-index: 100;/);
+  assert.match(styles, /\.storyboard-workbench \.wb-action-bar \.wb-assembly-library \{[\s\S]*?cursor: pointer;/);
+  assert.match(styles, /\.toast \{[^\n]*pointer-events: none;/);
+});
+
+test('storyboard assembly can select any ready shot subset and version combination', () => {
+  assert.match(dramaStudio, /function professionalAssemblyCandidates\(\)/);
+  assert.match(dramaStudio, /function assemblySelectionItems\(candidates,selection\)/);
+  assert.match(dramaStudio, /async function assembleDramaLocally\(selectedItems=null\)/);
+  assert.match(dramaStudio, /data-assembly-include/);
+  assert.match(dramaStudio, /data-assembly-version/);
+  assert.match(dramaStudio, /performProfessionalAssembly\(event\.currentTarget,selectedItems\)/);
+  assert.match(dramaStudio, /confirm\.disabled=items\.length<2/);
 });
