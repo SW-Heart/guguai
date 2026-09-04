@@ -110,6 +110,21 @@ test('store pagination', async t => {
     assert.deepEqual(pagedVideos.map(i => i.id), videos.items.map(i => i.id));
   });
 
+  await t.test('works view excludes failures and assetless completed rows while history keeps every record', () => {
+    const userId = makeUser();
+    saveGenerationRecord(userId, { id:'works-completed', type:'image', status:'completed', assetId:'asset-1', createdAt:'2026-01-03', updatedAt:'2026-01-03' });
+    saveGenerationRecord(userId, { id:'works-running', type:'image', status:'running', createdAt:'2026-01-02', updatedAt:'2026-01-02' });
+    saveGenerationRecord(userId, { id:'history-failed', type:'image', status:'failed', createdAt:'2026-01-04', updatedAt:'2026-01-04' });
+    saveGenerationRecord(userId, { id:'assetless-completed', type:'image', status:'completed', createdAt:'2026-01-01', updatedAt:'2026-01-01' });
+
+    const works = listGenerations(userId, { view:'works', limit:20 });
+    const history = listGenerations(userId, { view:'history', limit:20 });
+    assert.deepEqual(works.items.map(item => item.id), ['works-completed', 'works-running']);
+    assert.equal(works.total, 2);
+    assert.deepEqual(history.items.map(item => item.id), ['history-failed', 'works-completed', 'works-running', 'assetless-completed']);
+    assert.equal(history.total, 4);
+  });
+
   await t.test('users cannot see each other rows', () => {
     const a = makeUser('alice');
     const b = makeUser('bob');

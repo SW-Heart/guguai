@@ -5,6 +5,7 @@ import test from 'node:test';
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const dramaStudio = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
 const index = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
 const desktopMain = await readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
 const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
 
@@ -41,10 +42,29 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=216/);
-  assert.match(index, /\/styles\.css\?v=186/);
+  assert.match(index, /\/app\.js\?v=219/);
+  assert.match(index, /\/styles\.css\?v=198/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=8/);
-  assert.match(app, /\.\/drama-studio\.js\?v=70/);
+  assert.match(app, /\.\/drama-studio\.js\?v=71/);
+});
+
+test('generation workspace separates works from paginated history', () => {
+  assert.match(index, /data-generation-view="works"/);
+  assert.match(index, /data-generation-view="history"/);
+  assert.doesNotMatch(index, /data-status="(?:all|completed|running)"/);
+  assert.doesNotMatch(index, /class="view-toggle/);
+  assert.match(app, /api\('\/api\/generations\?view=works&limit=200'/);
+  assert.match(app, /URLSearchParams\(\{ view:'history', type:kind, limit:'50' \}\)/);
+  assert.match(app, /failedWorkRetentionMs = 5 \* 60 \* 1000/);
+  assert.match(app, /setTimeout\(\(\) => expireTransientFailure/);
+  assert.match(app, /activeOnly:true/);
+});
+
+test('history rows keep status, time, credit, and actions in shared columns', () => {
+  assert.match(styles, /\.generation-history-row \{ --history-actions-width: 120px;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) var\(--history-actions-width\)/);
+  assert.match(styles, /\.history-open \{ width: 100%;[\s\S]*?grid-template-columns: 56px minmax\(120px, 1fr\) 88px 150px 88px/);
+  assert.match(styles, /\.history-actions \{ width: var\(--history-actions-width\); min-width: var\(--history-actions-width\)/);
+  assert.match(app, /const creditMarkup = `.*history-credit/s);
 });
 
 test('pending video references always insert a real mention node', () => {

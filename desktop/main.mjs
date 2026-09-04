@@ -515,14 +515,24 @@ async function cloudCookies(url) {
   return cookies.length ? { Cookie: cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ') } : {};
 }
 
+// Same-origin media downloads use Node's fetch so redirects to private object
+// storage can be handled without leaking session headers. Keep the desktop
+// scope headers here as well because that fetch does not pass through
+// Electron's webRequest header hook.
+async function cloudScopedHeaders(url) {
+  return {
+    ...(await cloudCookies(url)),
+    ...(settings?.deviceId ? { 'X-GuGu-Device-Id': settings.deviceId } : {}),
+    ...(workspaceId ? { 'X-GuGu-Workspace-Id': workspaceId } : {}),
+  };
+}
+
 async function cloudRequest(pathname, options = {}) {
   if (!trustedOrigin) throw new Error('云端服务尚未连接');
   const url = new URL(pathname, `${trustedOrigin}/`).toString();
   return net.fetch(url, { ...options, headers: {
-    ...(await cloudCookies(url)),
+    ...(await cloudScopedHeaders(url)),
     'X-GuGu-Desktop': '1',
-    ...(settings?.deviceId ? { 'X-GuGu-Device-Id': settings.deviceId } : {}),
-    ...(workspaceId ? { 'X-GuGu-Workspace-Id': workspaceId } : {}),
     ...(options.headers || {}),
   } });
 }
@@ -629,7 +639,7 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
     }
   }
   const targetUrl = trustedMediaDownloadUrl(url);
-  const response = await fetchRemoteMedia(session.defaultSession, targetUrl, { sameOriginHeaders:await cloudCookies(targetUrl) });
+  const response = await fetchRemoteMedia(session.defaultSession, targetUrl, { sameOriginHeaders:await cloudScopedHeaders(targetUrl) });
   if (response.status === 404) {
     return { unavailable: true, status: 404, cloudAssetId };
   }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changedRecordIds, listSignature, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from '../public/list-sync.js';
+import { changedRecordIds, listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from '../public/list-sync.js';
 
 const taskFields = ['id','status','assetId','updatedAt'];
 
@@ -54,4 +54,30 @@ test('server refresh preserves records added while the request was in flight', (
     { id:'new-1', status:'running' },
     { id:'existing', status:'completed' },
   ]);
+});
+
+test('targeted generation refresh updates active records without dropping works', () => {
+  const current = [
+    { id:'completed', status:'completed', assetId:'asset-1' },
+    { id:'running', status:'running' },
+    { id:'failed', status:'failed' },
+  ];
+  const refreshed = [
+    { id:'running', status:'completed', assetId:'asset-2' },
+    { id:'history-only', status:'running' },
+  ];
+
+  assert.deepEqual(mergeActiveRecords(current, refreshed, ['running', 'history-only']), [
+    { id:'completed', status:'completed', assetId:'asset-1' },
+    { id:'running', status:'completed', assetId:'asset-2' },
+    { id:'failed', status:'failed' },
+    { id:'history-only', status:'running' },
+  ]);
+});
+
+test('targeted generation refresh removes an active record missing from the response', () => {
+  assert.deepEqual(mergeActiveRecords([
+    { id:'keep', status:'completed' },
+    { id:'gone', status:'running' },
+  ], [], ['gone']), [{ id:'keep', status:'completed' }]);
 });

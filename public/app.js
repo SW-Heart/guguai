@@ -1,4 +1,4 @@
-import { listSignature, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from './list-sync.js?v=2';
+import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
 import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, mergeDesktopAssetRecord, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=8';
 
@@ -6,7 +6,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, generationFilter:'all', generationView:'large', fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], generationTab:'works', generationHistory:{ image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } }, files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let indexedFiles = null;
@@ -14,7 +14,10 @@ let filesById = new Map();
 let indexedTasks = null;
 let tasksById = new Map();
 let tasksByAssetId = new Map();
-let lastTaskRender = { route:'', filter:'', ready:null, tasks:null, files:null };
+let lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:null, files:null };
+const failedWorkRetentionMs = 5 * 60 * 1000;
+const transientFailureDeadlines = new Map();
+const transientFailureTimers = new Map();
 function ensureFileIndex() {
   if (indexedFiles === state.files) return;
   indexedFiles = state.files;
@@ -31,10 +34,16 @@ function ensureTaskIndex() {
     if (task.assetId && !tasksByAssetId.has(task.assetId)) tasksByAssetId.set(task.assetId, task);
   });
 }
-function taskById(id) { ensureTaskIndex(); return tasksById.get(id); }
+function taskById(id) {
+  ensureTaskIndex();
+  const task = tasksById.get(id);
+  if (task) return task;
+  return Object.values(state.generationHistory || {}).flatMap(entry => entry?.items || []).find(item => item.id === id) || null;
+}
 function taskForAsset(file) {
   ensureTaskIndex();
-  return tasksById.get(file?.sourceGenerationId) || tasksByAssetId.get(file?.id);
+  return taskById(file?.sourceGenerationId) || tasksByAssetId.get(file?.id)
+    || Object.values(state.generationHistory || {}).flatMap(entry => entry?.items || []).find(item => item.assetId === file?.id) || null;
 }
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
@@ -55,9 +64,10 @@ let desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'' };
 let desktopSyncRequest = null;
 let desktopSyncRequestEpoch = 0;
 let pollTimer = 0;
+let notificationPollTimer = 0;
 let notificationPanelCloseTimer = 0;
 const activePollDelay = 6000;
-const idlePollDelay = 60000;
+const notificationPollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
 let desktopWindowStateUnsubscribe = null;
 let desktopWorkspacePath = '';
@@ -89,6 +99,12 @@ async function api(url, options = {}) {
   let data = {}; try { data = await response.json(); } catch {}
   if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
   return data;
+}
+async function apiPage(url, options = {}) {
+  const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...desktopScopeHeaders(), ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
+  let data = {}; try { data = await response.json(); } catch {}
+  if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
+  return { items:Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [], nextCursor:response.headers.get('X-Next-Cursor') || '', total:Number(response.headers.get('X-Total-Count') || data.total) || 0 };
 }
 function desktopLocalClientAsset(item) {
   const cloudAssetId = String(item?.cloudAssetId || '');
@@ -426,6 +442,61 @@ function taskLocalSyncing(task, file = fileById(task?.assetId)) {
 }
 function taskDisplayStatus(task, file = fileById(task?.assetId)) {
   return taskLocalSyncing(task, file) ? 'running' : task?.status;
+}
+function failureDeadline(task, observedAt = Date.now()) {
+  const source = Date.parse(task?.finishedAt || task?.updatedAt || task?.createdAt || '');
+  return (Number.isFinite(source) ? source : observedAt) + failedWorkRetentionMs;
+}
+function clearTransientFailureTimer(id) {
+  const timer = transientFailureTimers.get(id);
+  if (timer) window.clearTimeout(timer);
+  transientFailureTimers.delete(id);
+}
+function transientFailureVisible(task, now = Date.now()) {
+  if (task?.status !== 'failed' || !task?.id) return false;
+  const deadline = transientFailureDeadlines.get(task.id);
+  return Number.isFinite(deadline) && deadline > now;
+}
+function expireTransientFailure(id) {
+  clearTransientFailureTimer(id);
+  transientFailureDeadlines.delete(id);
+  // The task array is deliberately retained for history and is therefore not
+  // replaced when the works-only deadline elapses. Invalidate the gallery
+  // render snapshot so the failed card is actually removed at the deadline.
+  lastTaskRender.tasks = null;
+  if (['image', 'video'].includes(state.route)) renderTasks();
+}
+function observeTaskFailure(task, previous = null, { force=false } = {}) {
+  if (!task?.id || task.status !== 'failed') return;
+  if (previous?.status === 'failed' && transientFailureDeadlines.has(task.id)) return;
+  // A failed row read from history or a project during startup is not a new
+  // failure event. Only a status transition observed from an in-session
+  // task (or an explicit local cancellation) may start works retention.
+  if (!force && (!previous || previous.status === 'failed')) return;
+  clearTransientFailureTimer(task.id);
+  const deadline = failureDeadline(task);
+  if (deadline <= Date.now()) {
+    transientFailureDeadlines.delete(task.id);
+    return;
+  }
+  transientFailureDeadlines.set(task.id, deadline);
+  transientFailureTimers.set(task.id, window.setTimeout(() => expireTransientFailure(task.id), Math.max(0, deadline - Date.now())));
+}
+function pruneExpiredTransientFailures(now = Date.now()) {
+  for (const [id, deadline] of transientFailureDeadlines) if (deadline <= now) expireTransientFailure(id);
+}
+function clearTransientFailures() {
+  for (const timer of transientFailureTimers.values()) window.clearTimeout(timer);
+  transientFailureTimers.clear();
+  transientFailureDeadlines.clear();
+}
+function mergeTasksIntoLoadedHistory(tasks = []) {
+  for (const task of Array.isArray(tasks) ? tasks : [tasks]) {
+    const entry = state.generationHistory[task?.type];
+    if (!entry?.loaded || !task?.id) continue;
+    entry.items = [task, ...entry.items.filter(item => item.id !== task.id)];
+  }
+  if (state.generationTab === 'history') renderGenerationHistory();
 }
 function desktopSyncMarkup(task) {
   const label = task?.type === 'image' ? '图片' : '视频';
@@ -1691,6 +1762,11 @@ function showBoot(title = '正在连接服务…', message = '', { retry = false
 }
 function resetDesktopAccountState() {
   desktopAccountEpoch += 1;
+  clearTransientFailures();
+  clearTimeout(pollTimer);
+  clearTimeout(notificationPollTimer);
+  pollTimer = 0;
+  notificationPollTimer = 0;
   for (const timer of desktopHydrationRetryTimers.values()) window.clearTimeout(timer);
   desktopHydrationRetryTimers.clear();
   desktopHydrationQueue.length = 0;
@@ -1719,7 +1795,9 @@ function resetDesktopAccountState() {
   indexedTasks = null;
   tasksById = new Map();
   tasksByAssetId = new Map();
-  lastTaskRender = { route:'', filter:'', ready:null, tasks:null, preparations:null, files:null };
+  state.generationTab = 'works';
+  state.generationHistory = { image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } };
+  lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:null, files:null };
 }
 async function activateDesktopAccount(user) {
   const bridge = window.guguDesktop;
@@ -1727,7 +1805,10 @@ async function activateDesktopAccount(user) {
   const info = await bridge.workspace.activateAccount(String(user.id));
   resetDesktopAccountState();
   desktopWorkspacePath = String(info.path || '');
-  $$('[data-workspace-open]').forEach(button => { button.title = `本地工作区：${desktopWorkspacePath || '未设置'}`; });
+  // Keep the workspace path out of the native `title` tooltip. The button sits
+  // in the page chrome, and a long native tooltip can appear to belong to the
+  // adjacent works area while the pointer is resting there.
+  $$('[data-workspace-open]').forEach(button => { button.removeAttribute('title'); });
   desktopSyncInfo = {
     deviceId: String(info.deviceId || desktopSyncInfo.deviceId || ''),
     workspaceId: String(info.workspaceId || desktopSyncInfo.workspaceId || ''),
@@ -1764,7 +1845,7 @@ async function initDesktopBridge() {
     initRendererLogForwarding(bridge);
     buttons.forEach(button => {
       button.classList.remove('hidden');
-      button.title = `本地工作区：${info.workspacePath || '未设置'}`;
+      button.removeAttribute('title');
       button.onclick = async () => {
         try {
           const opened = await bridge.workspace.open();
@@ -2159,15 +2240,15 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=70').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
+    dramaControllerPromise = import('./drama-studio.js?v=71').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
       return dramaController;
     });
   }
   return dramaControllerPromise;
 }
 
-function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; toggleClass($('#appView'), 'library-mode', files); toggleClass($('#appView'), 'wide-mode', drama); toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject)); toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional'); toggleClass($('#creatorPanel'), 'hidden', wide); toggleClass($('#generationView'), 'hidden', wide); toggleClass($('#filesView'), 'hidden', !files); toggleClass($('#dramaView'), 'hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute)); renderTasks(); } else if (files) renderFiles(); else { void ensureDramaController().then(controller => { if (state.route !== 'drama') return; controller.modelState(); return controller.load(); }).catch(error => toast(`短剧模块加载失败：${error.message}`)); } }
+function navigate(route, { historyMode = 'push' } = {}) { const nextRoute = routePaths[route] ? route : 'image'; const routeChanged = state.route !== nextRoute; if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) { window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]); } state.route = nextRoute; const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' }; $('#routeTitle').textContent = routeTitles[nextRoute]; document.title = `${routeTitles[nextRoute]} · GuGu AI`; $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute)); const files = nextRoute === 'files'; const drama = nextRoute === 'drama'; const wide = files || drama; toggleClass($('#appView'), 'library-mode', files); toggleClass($('#appView'), 'wide-mode', drama); toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject)); toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional'); toggleClass($('#creatorPanel'), 'hidden', wide); toggleClass($('#generationView'), 'hidden', wide); toggleClass($('#filesView'), 'hidden', !files); toggleClass($('#dramaView'), 'hidden', !drama); if (!wide) { $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute)); renderTasks(); if (state.generationTab === 'history') void loadGenerationHistory({ reset:routeChanged }); } else if (files) renderFiles(); else { void ensureDramaController().then(controller => { if (state.route !== 'drama') return; controller.modelState(); return controller.load(); }).catch(error => toast(`短剧模块加载失败：${error.message}`)); } }
 $$('.rail-button[data-route]').forEach(button => button.onclick = () => navigate(button.dataset.route));
 window.addEventListener('popstate', () => { if (state.user) navigate(routeFromPath(window.location.pathname), { historyMode:'none' }); });
 
@@ -2286,6 +2367,8 @@ function renderStoryboard(project=state.dramaProject) {
 
 async function bindShotTask(shotId, kind, task) {
   state.tasks = [task, ...state.tasks.filter(item => item.id !== task.id)];
+  mergeTasksIntoLoadedHistory(task);
+  scheduleTaskPoll();
   const result = await api(`/api/drama/projects/${state.dramaProject.id}/shots/${shotId}`, { method:'PATCH', body:JSON.stringify({ kind, taskId:task.id }) });
   state.dramaProject = result.project; renderStoryboard();
 }
@@ -2326,13 +2409,17 @@ function dramaProjectGenerationIds(project) {
   ].map(value => String(value || '')).filter(Boolean));
 }
 
-async function loadTasks({ background=false }={}) {
-  if (tasksRequest) { const pending = tasksRequest; return background ? pending : pending.then(() => loadTasks({ background:true })); }
+async function loadTasks({ background=false, activeOnly=false }={}) {
+  if (tasksRequest) { const pending = tasksRequest; return background ? pending : pending.then(() => loadTasks({ background:true, activeOnly })); }
   const requestSnapshot = state.tasks;
+  const activeIds = activeOnly ? activeGenerationIds() : [];
+  if (activeOnly && !activeIds.length) return state.tasks;
   tasksRequest = (async () => {
     try {
-      const responseTasks = await api('/api/generations');
-      const projectTaskIds = state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
+      const responseTasks = activeOnly
+        ? (await Promise.all(Array.from({ length:Math.ceil(activeIds.length / 200) }, (_, index) => api(`/api/generations?ids=${encodeURIComponent(activeIds.slice(index * 200, index * 200 + 200).join(','))}`)))).flat()
+        : await api('/api/generations?view=works&limit=200');
+      const projectTaskIds = !activeOnly && state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
       // The global list is ordered/paginated for the gallery. A project must
       // never use that list as the authority for one of its versions: the
       // gallery request can already be in flight when a task reaches terminal
@@ -2370,7 +2457,21 @@ async function loadTasks({ background=false }={}) {
       }
       // A local submission may finish while this GET is in flight. Do not let
       // its older response erase tasks that are already visible in memory.
-      const tasks = mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, hydratedTasks);
+      // The works query intentionally omits failures, so keep failures that
+      // were observed during this session until their task-local deadline.
+      const transientFailures = state.tasks.filter(task => transientFailureVisible(task)
+        && !hydratedTasks.some(item => item.id === task.id));
+      // A task can change from queued/running to failed while this works
+      // request is in flight. Keep the last active snapshot long enough for
+      // the task-targeted poll to observe that terminal event; otherwise the
+      // works query would remove the ID before the failure can be scheduled.
+      const activeTasks = !activeOnly ? state.tasks.filter(task => ['queued', 'running'].includes(task.status)
+        && !hydratedTasks.some(item => item.id === task.id)) : [];
+      const tasks = activeOnly
+        ? mergeActiveRecords(state.tasks, hydratedTasks, activeIds)
+        : mergeRecordsAddedDuringRequest(requestSnapshot, state.tasks, [...hydratedTasks, ...transientFailures, ...activeTasks]);
+      const previousTasks = new Map(state.tasks.map(task => [task.id, task]));
+      for (const task of tasks) observeTaskFailure(task, previousTasks.get(task.id));
       const previousCreditStatus = new Map(state.tasks.map(task => [task.id, task.creditStatus]));
       const refundedTask = tasks.some(task => ['refunded', 'refund_failed'].includes(task.creditStatus) && previousCreditStatus.get(task.id) !== task.creditStatus);
       // updatedAt is useful metadata but is not rendered on a task card. Do
@@ -2379,6 +2480,7 @@ async function loadTasks({ background=false }={}) {
       const stateChanged = listSignature(state.tasks, taskSignatureFields) !== listSignature(tasks, taskSignatureFields);
       const cardsChanged = listSignature(state.tasks, taskCardSignatureFields) !== listSignature(tasks, taskCardSignatureFields);
       if (stateChanged) state.tasks = tasks;
+      mergeTasksIntoLoadedHistory(tasks);
       if (cardsChanged && $('#previewDialog')?.open && state.previewFileId) {
         const previewFile = fileById(state.previewFileId);
         if (previewFile) renderPreviewMeta(previewFile);
@@ -2541,15 +2643,21 @@ function taskRenderSignature(task) {
   const asset = fileById(task.assetId);
   return `${recordSignature(task, taskCardSignatureFields)}|asset:${asset ? recordSignature(asset, fileCardSignatureFields) : ''}`;
 }
-function syncGenerationView() {
-  const small = state.generationView === 'small';
-  $('#generationGrid').classList.toggle('small-view', small);
-  $$('.view-toggle').forEach(button => {
-    const active = button.dataset.view === state.generationView;
+function syncGenerationTab() {
+  const history = state.generationTab === 'history';
+  const worksPanel = $('#generationWorksPanel');
+  const historyPanel = $('#generationHistoryPanel');
+  toggleClass(worksPanel, 'hidden', history);
+  toggleClass(historyPanel, 'hidden', !history);
+  if (worksPanel) worksPanel.hidden = history;
+  if (historyPanel) historyPanel.hidden = !history;
+  $$('.generation-tab').forEach(button => {
+    const active = button.dataset.generationView === state.generationTab;
     button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', String(active));
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
   });
-  scheduleGenerationLayout();
+  if (!history) scheduleGenerationLayout();
 }
 window.addEventListener('resize', scheduleGenerationLayout, { passive:true });
 function taskRecency(task) { return String(task.finishedAt || task.updatedAt || task.createdAt || ''); }
@@ -2557,12 +2665,114 @@ function compareTasksByRecency(left, right) {
   const timeOrder = taskRecency(right).localeCompare(taskRecency(left));
   return timeOrder || String(right.id || '').localeCompare(String(left.id || ''));
 }
+function historyTaskThumbnail(task) {
+  const asset = fileById(task.assetId);
+  const localReady = Boolean(asset && asset.localStatus === 'saved' && !taskLocalSyncing(task, asset));
+  if (localReady) return task.type === 'image' ? assetImageMarkup(asset, assetDisplayName(asset)) : videoPreviewMarkup(asset, 'history-video-placeholder');
+  if (task.status === 'failed') return '<span class="history-failure-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7 3 2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg></span>';
+  return '<span class="history-loading-mark" aria-hidden="true"><i></i><i></i><i></i></span>';
+}
+function historyTaskSummary(task) {
+  const prompt = String(task.prompt || '').replace(/\s+/g, ' ').trim();
+  return prompt ? prompt.slice(0, 90) + (prompt.length > 90 ? '…' : '') : `未命名${task.type === 'image' ? '图像' : '视频'}任务`;
+}
+function historyTaskMeta(task) {
+  const type = task.type === 'image' ? '图像' : '视频';
+  const parameter = task.type === 'image' ? task.size || '—' : `${task.aspectRatio || '—'} · ${task.duration || '—'} 秒`;
+  return `${type} · ${generationModelName(task)} · ${parameter}`;
+}
+function historyTaskCredit(task) {
+  const cost = Number(task.creditCost);
+  if (!Number.isFinite(cost)) return '';
+  if (task.creditStatus === 'refunded') return `${cost} 积分 · 已退回`;
+  if (task.creditStatus === 'refund_failed') return `${cost} 积分 · 退款异常`;
+  return `${cost} 积分`;
+}
+function historyTaskRow(task) {
+  const status = taskDisplayStatus(task);
+  const summary = historyTaskSummary(task);
+  const credit = historyTaskCredit(task);
+  const canContinue = ['completed', 'failed'].includes(task.status);
+  const action = task.status === 'failed' ? `<button class="history-action" type="button" data-action="retry" data-task-id="${esc(task.id)}">重试</button>` : canContinue ? `<button class="history-action" type="button" data-action="continue" data-task-id="${esc(task.id)}">再创作</button>` : '';
+  const deletable = !taskLocalSyncing(task) && !['queued', 'running'].includes(task.status);
+  const creditMarkup = `<em class="history-credit${credit ? '' : ' is-empty'}"${credit ? '' : ' aria-hidden="true"'}>${esc(credit)}</em>`;
+  return `<article class="generation-history-row" data-record-id="${esc(task.id)}"><button class="history-open" type="button" data-task-id="${esc(task.id)}" aria-label="查看${esc(summary)}"><span class="history-thumb ${status}">${historyTaskThumbnail(task)}</span><span class="history-copy"><b title="${esc(summary)}">${esc(summary)}</b><small>${esc(historyTaskMeta(task))}</small></span><span class="history-status ${status}"><i aria-hidden="true"></i>${esc(statusText(status))}</span><time datetime="${esc(taskRecency(task))}">${esc(fullDateText(taskRecency(task)))}</time>${creditMarkup}</button><span class="history-actions">${action}${deletable ? `<button class="history-action history-delete" type="button" data-action="delete" data-task-id="${esc(task.id)}">删除</button>` : ''}</span></article>`;
+}
+function bindHistoryRow(row) {
+  row.querySelector('.history-open')?.addEventListener('click', event => openGenerationDetail(event.currentTarget.dataset.taskId));
+  row.querySelectorAll('.history-action[data-action]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); void handleTaskAction(button.dataset.action, button.dataset.taskId, button); }));
+}
+function renderGenerationHistory() {
+  if (!['image', 'video'].includes(state.route) || state.generationTab !== 'history') return;
+  const entry = state.generationHistory[state.route];
+  const container = $('#generationHistory');
+  if (!container || !entry) return;
+  const tasks = [...entry.items].sort(compareTasksByRecency);
+  const empty = entry.error
+    ? emptyState('历史记录加载失败', entry.error, '<button class="secondary-button history-retry" type="button">重试</button>')
+    : entry.loaded
+      ? emptyState(`还没有${state.route === 'image' ? '图像' : '视频'}历史记录`, '完成一次生成后，任务会出现在这里。')
+      : emptyState('正在加载历史记录', '正在读取全部生成记录，请稍候。');
+  reconcileCards(container, tasks, { card:historyTaskRow, signature:taskRenderSignature, bind:bindHistoryRow, empty });
+  container.querySelector('.history-retry')?.addEventListener('click', () => void loadGenerationHistory({ reset:true }), { once:true });
+  const loadMore = $('#loadMoreGenerationHistory');
+  if (loadMore) {
+    loadMore.classList.toggle('hidden', !entry.hasMore || !entry.loaded);
+    loadMore.disabled = entry.loading;
+    loadMore.textContent = entry.loading ? '正在加载…' : entry.hasMore ? '加载更多历史记录' : '已加载全部历史记录';
+  }
+}
+async function loadGenerationHistory({ reset=false, background=false } = {}) {
+  if (!['image', 'video'].includes(state.route)) return;
+  const kind = state.route;
+  const entry = state.generationHistory[kind];
+  if (!entry || entry.loading || (!reset && entry.loaded && !entry.hasMore)) return;
+  if (reset) {
+    entry.items = [];
+    entry.cursor = '';
+    entry.hasMore = true;
+    entry.loaded = false;
+    entry.error = '';
+  }
+  entry.loading = true;
+  renderGenerationHistory();
+  try {
+    const query = new URLSearchParams({ view:'history', type:kind, limit:'50' });
+    if (entry.cursor) query.set('cursor', entry.cursor);
+    if (entry.cursor) query.set('includeTotal', '0');
+    const page = await apiPage(`/api/generations?${query}`);
+    const ids = new Set(entry.items.map(task => task.id));
+    entry.items = [...entry.items, ...page.items.filter(task => !ids.has(task.id))];
+    entry.cursor = page.nextCursor || '';
+    entry.hasMore = Boolean(entry.cursor);
+    entry.loaded = true;
+    entry.error = '';
+  } catch (error) {
+    entry.error = error.message || '请稍后重试';
+    if (!background) toast(`历史记录加载失败：${error.message}`);
+  } finally {
+    entry.loading = false;
+    renderGenerationHistory();
+  }
+}
+function setGenerationTab(tab) {
+  const next = tab === 'history' ? 'history' : 'works';
+  if (state.generationTab === next && document.querySelector('.generation-tab.active')) return;
+  state.generationTab = next;
+  syncGenerationTab();
+  renderTasks();
+  if (next === 'history') void loadGenerationHistory();
+}
 function renderTasks() {
   if (!['image','video'].includes(state.route)) return;
-  syncGenerationView();
-  const renderState = { route:state.route, filter:state.generationFilter, ready:state.initialSyncReady, tasks:state.tasks, preparations:state.generationPreparations, files:state.files };
+  syncGenerationTab();
+  if (state.generationTab === 'history') {
+    renderGenerationHistory();
+    return;
+  }
+  const renderState = { route:state.route, tab:state.generationTab, ready:state.initialSyncReady, tasks:state.tasks, preparations:state.generationPreparations, files:state.files };
   if (lastTaskRender.route === renderState.route
-    && lastTaskRender.filter === renderState.filter
+    && lastTaskRender.tab === renderState.tab
     && lastTaskRender.ready === renderState.ready
     && lastTaskRender.tasks === renderState.tasks
     && lastTaskRender.preparations === renderState.preparations
@@ -2570,8 +2780,9 @@ function renderTasks() {
   // Keep completed tasks with an asset ID visible until their local delivery
   // is resolved. Hiding them here made the generation page show only the
   // failed sibling versions while the drama page showed a spinner forever.
-  let tasks = [...state.generationPreparations, ...state.tasks].filter(task => task.type === state.route && (task.status !== 'completed' || Boolean(task.assetId)));
-  if (state.generationFilter !== 'all') tasks = tasks.filter(task => state.generationFilter === 'running' ? ['queued','running'].includes(task.status) || taskLocalSyncing(task) : task.status === state.generationFilter && !taskLocalSyncing(task));
+  let tasks = [...state.generationPreparations, ...state.tasks].filter(task => task.type === state.route
+    && (task.status !== 'completed' || Boolean(task.assetId))
+    && (task.status !== 'failed' || transientFailureVisible(task)));
   tasks.sort(compareTasksByRecency);
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0 || state.generationPreparations.length > 0;
   const empty = hasInitialData
@@ -2581,8 +2792,15 @@ function renderTasks() {
   scheduleGenerationLayout();
   lastTaskRender = renderState;
 }
-$$('.filter').forEach(button => button.onclick = () => { state.generationFilter = button.dataset.status; $$('.filter').forEach(x => x.classList.toggle('active', x === button)); renderTasks(); });
-$$('.view-toggle').forEach(button => button.onclick = () => { state.generationView = button.dataset.view; syncGenerationView(); });
+$$('.generation-tab').forEach(button => {
+  button.onclick = () => setGenerationTab(button.dataset.generationView);
+  button.onkeydown = event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); setGenerationTab(button.dataset.generationView === 'works' ? 'history' : 'works'); document.querySelector('.generation-tab.active')?.focus(); } };
+});
+$('#loadMoreGenerationHistory')?.addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await loadGenerationHistory(); } finally { button.disabled = false; }
+});
 
 function detailRow(label, value, id='') { return `<div><dt>${esc(label)}</dt><dd${id ? ` id="${id}"` : ''}>${esc(value)}</dd></div>`; }
 const imageQualityLabels = Object.freeze({ low:'低', medium:'中', high:'高' });
@@ -2683,6 +2901,10 @@ async function deleteGenerationTask(task, button = null) {
     if (result.deletedAssetId || task.assetId) await removeDesktopCloudAssets([result.deletedAssetId || task.assetId]);
     else if (task.assetId) clearFileReferences(task.assetId);
     if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error));
+    for (const entry of Object.values(state.generationHistory)) entry.items = entry.items.filter(item => item.id !== id);
+    if (state.generationTab === 'history') renderGenerationHistory();
+    clearTransientFailureTimer(id);
+    transientFailureDeadlines.delete(id);
     if ($('#generationDetailDialog')?.open && state.detailTaskId === id) closeGenerationDetail();
     await Promise.all([loadTasks(), loadFiles()]);
     toast(task.status === 'failed' ? '失败任务已删除' : '作品及关联文件已删除');
@@ -2746,15 +2968,15 @@ function openGenerationDetail(id) {
   }
 }
 function copyTextFallback(text) { const textarea = document.createElement('textarea'); textarea.value = text; textarea.setAttribute('readonly', ''); textarea.style.position = 'fixed'; textarea.style.opacity = '0'; document.body.append(textarea); textarea.select(); const copied = document.execCommand('copy'); textarea.remove(); return copied; }
-async function copyGenerationPrompt() { const task = state.tasks.find(item => item.id === state.detailTaskId); const prompt = task?.prompt || ''; if (!prompt) return toast('暂无可复制的创作描述'); try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(prompt); else if (!copyTextFallback(prompt)) throw new Error('copy failed'); toast('创作描述已复制'); } catch { toast('复制失败，请手动选择文字复制'); const text = $('#generationDetailPrompt'); const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(text); selection.removeAllRanges(); selection.addRange(range); } }
+async function copyGenerationPrompt() { const task = taskById(state.detailTaskId); const prompt = task?.prompt || ''; if (!prompt) return toast('暂无可复制的创作描述'); try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(prompt); else if (!copyTextFallback(prompt)) throw new Error('copy failed'); toast('创作描述已复制'); } catch { toast('复制失败，请手动选择文字复制'); const text = $('#generationDetailPrompt'); const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(text); selection.removeAllRanges(); selection.addRange(range); } }
 $('#closeGenerationDetail').onclick = closeGenerationDetail;
 $('#generationDetailDialog').addEventListener('click', event => { if (event.target === event.currentTarget) closeGenerationDetail(); });
 $('#generationDetailDialog').addEventListener('close', () => { $('#generationDetailMedia').innerHTML = ''; $('#generationDetailPrompt').classList.remove('expanded'); $('#generationDetailPromptToggle').classList.add('hidden'); state.detailTaskId = null; });
 $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generationDetailPrompt'); const toggle = $('#generationDetailPromptToggle'); const expanded = prompt.classList.toggle('expanded'); toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? '收起描述' : '展开全部'; };
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
-$('#useGenerationReference').onclick = () => continueFromTask(state.tasks.find(item => item.id === state.detailTaskId), 'image', true);
-$('#deriveGeneration').onclick = () => { const task = state.tasks.find(item => item.id === state.detailTaskId); continueFromTask(task, 'video', true); };
-$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task) return; await deleteGenerationTask(task, $('#deleteGeneration')); };
+$('#useGenerationReference').onclick = () => continueFromTask(taskById(state.detailTaskId), 'image', true);
+$('#deriveGeneration').onclick = () => { const task = taskById(state.detailTaskId); continueFromTask(task, 'video', true); };
+$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = taskById(state.detailTaskId); if (!task) return; await deleteGenerationTask(task, $('#deleteGeneration')); };
 
 async function loadFiles({ background=false, loadMore=false }={}) {
   const search = $('#fileSearch').value.trim();
@@ -2891,7 +3113,11 @@ $('#fileSearch').oninput = () => {
 };
 $$('.type-tabs button').forEach(button => button.onclick = () => {
   state.fileKind = button.dataset.kind;
-  $$('.type-tabs button').forEach(x => x.classList.toggle('active', x === button));
+  $$('.type-tabs button').forEach(x => {
+    const active = x === button;
+    x.classList.toggle('active', active);
+    x.setAttribute('aria-selected', String(active));
+  });
   renderFiles();
   void loadFiles({ background:true });
 });
@@ -3287,7 +3513,7 @@ function renderReferenceDialog() {
 }
 
 $$('.segmented').forEach(group => group.querySelectorAll('button').forEach(button => button.onclick = () => { group.querySelectorAll('button').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
-$$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { group.querySelectorAll('button[data-value]').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
+$$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { group.querySelectorAll('button[data-value]').forEach(x => { const active = x === button; x.classList.toggle('selected', active); x.setAttribute('aria-selected', String(active)); }); $(`#${group.dataset.select}`).value = button.dataset.value; }));
 $('#moreRatios').onclick = () => { const opening = $('#moreRatios').getAttribute('aria-expanded') !== 'true'; $('#moreRatios').setAttribute('aria-expanded', String(opening)); $$('.ratio-extra').forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
 function ratioIcon(value) { const [width, height] = value.split(':').map(Number); const scale = Math.min(27 / width, 22 / height); return `<span class="select-ratio-icon" aria-hidden="true"><i style="width:${Math.round(width*scale)}px;height:${Math.round(height*scale)}px"></i></span>`; }
 function resolutionIcon(value) {
@@ -3394,14 +3620,6 @@ function closeProductSelects(except=null) { $$('.product-select').forEach(widget
 $$('.product-select').forEach(widget => { const select = $(`#${widget.dataset.for}`); const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); if (!select || !trigger || !menu) return; const renderTrigger = () => { const option = select.selectedOptions[0]; if (!option) return; trigger.innerHTML = `${productSelectIcon(widget, option)}<span>${modelTitleMarkup(widget, option)}${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5-5 5"/></svg>`; }; menu.innerHTML = productSelectMarkup(widget, select); const choose = value => { select.value = value; menu.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', item.dataset.value === value)); renderTrigger(); closeProductSelects(); select.dispatchEvent(new Event('change', { bubbles:true })); }; menu.querySelectorAll('[role="option"]').forEach(item => item.onclick = () => choose(item.dataset.value)); trigger.onclick = event => { event.stopPropagation(); const opening = menu.classList.contains('hidden'); closeProductSelects(opening ? widget : null); menu.classList.toggle('hidden', !opening); trigger.setAttribute('aria-expanded', String(opening)); if (opening) menu.querySelector(`[data-value="${CSS.escape(select.value)}"]`)?.focus(); }; trigger.onkeydown = event => { if (['ArrowDown','ArrowUp'].includes(event.key)) { event.preventDefault(); menu.classList.remove('hidden'); trigger.setAttribute('aria-expanded', 'true'); const options = [...menu.querySelectorAll('button')]; (event.key === 'ArrowDown' ? options[0] : options.at(-1))?.focus(); } }; menu.onkeydown = event => { const options = [...menu.querySelectorAll('button')]; const index = options.indexOf(document.activeElement); if (event.key === 'Escape') { closeProductSelects(); trigger.focus(); } if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus(); } }; renderTrigger(); });
 document.addEventListener('click', event => { if (!event.target.closest('.product-select')) closeProductSelects(); });
 document.addEventListener('click', event => { const option = event.target.closest('.product-select[data-dynamic-options="true"] .product-select-menu [role="option"]'); if (!option || option.disabled) return; const widget = option.closest('.product-select'); const select = $(`#${widget.dataset.for}`); if (!select) return; select.value = option.dataset.value; refreshProductSelect(widget.dataset.for); closeProductSelects(); select.dispatchEvent(new Event('change', { bubbles:true })); });
-$$('.prompt-presets button').forEach(button => button.onclick = () => {
-  const form = button.closest('form');
-  const prompt = form.querySelector('[contenteditable="true"], textarea');
-  if (form.dataset.panel === 'video') setVideoPromptText(button.dataset.preset);
-  else setImagePromptText(button.dataset.preset);
-  prompt.dispatchEvent(new Event('input', { bubbles:true }));
-  prompt.focus();
-});
 const imagePromptMaxLength = 5000;
 const videoPromptMaxLength = 4096;
 function videoPromptLimit(modelId=$('#videoModel')?.value) { return modelId === 'minimax-h3-15s' ? 10000 : videoPromptMaxLength; }
@@ -3569,6 +3787,7 @@ async function submitGeneration(type, form, payload) {
     chargedTasks = tasks;
     state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
     state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
+    mergeTasksIntoLoadedHistory(tasks);
     renderTasks();
     setCreditBalance(result.balance);
     if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
@@ -3583,6 +3802,7 @@ async function submitGeneration(type, form, payload) {
       const completed = await api('/api/generations/references/complete', { method:'POST', body:JSON.stringify({ taskIds:tasks.map(task => task.id), referenceAssetIds:uploadedReferenceAssetIds }) });
       const startedTasks = Array.isArray(completed.tasks) ? completed.tasks : [];
       state.tasks = [...startedTasks, ...state.tasks.filter(item => !startedTasks.some(task => task.id === item.id))];
+      mergeTasksIntoLoadedHistory(startedTasks);
       renderTasks();
     }
     await loadTasks();
@@ -3592,7 +3812,9 @@ async function submitGeneration(type, form, payload) {
       try {
         const cancelled = await api('/api/generations/references/cancel', { method:'POST', body:JSON.stringify({ taskIds:chargedTasks.map(task => task.id), error:`素材准备失败：${error.message}` }) });
         const failedTasks = Array.isArray(cancelled.tasks) ? cancelled.tasks : [];
+        failedTasks.forEach(task => observeTaskFailure(task, state.tasks.find(item => item.id === task.id) || null, { force:true }));
         state.tasks = [...failedTasks, ...state.tasks.filter(item => !failedTasks.some(task => task.id === item.id))];
+        mergeTasksIntoLoadedHistory(failedTasks);
         setCreditBalance(cancelled.balance);
       } catch (cancelError) { console.warn('[generation] 素材准备失败后的退款请求未完成', cancelError); }
     }
@@ -3938,15 +4160,44 @@ async function bootstrap() {
   renderReferences();
 }
 $('#bootRetry').onclick = () => bootstrap();
-function nextPollDelay() { return state.tasks.some(task => ['queued','running'].includes(task.status)) ? activePollDelay : idlePollDelay; }
-function scheduleTaskPoll(delay=nextPollDelay()) {
+function activeGenerationIds() {
+  const historyTasks = Object.values(state.generationHistory || {}).flatMap(entry => entry?.loaded ? entry.items : []);
+  return [...new Set([...state.tasks, ...historyTasks].filter(task => ['queued', 'running'].includes(task.status)).map(task => String(task.id || '')).filter(Boolean))];
+}
+function scheduleTaskPoll(delay=activePollDelay) {
   clearTimeout(pollTimer);
+  pollTimer = 0;
+  if (!state.user || document.hidden || !activeGenerationIds().length) return;
+  pollTimer = window.setTimeout(async () => {
+    await loadTasks({ background:true, activeOnly:true });
+    scheduleTaskPoll();
+  }, Math.max(0, Number(delay) || activePollDelay));
+}
+function scheduleNotificationPoll(delay=notificationPollDelay) {
+  clearTimeout(notificationPollTimer);
+  notificationPollTimer = 0;
   if (!state.user || document.hidden) return;
-  pollTimer = setTimeout(async () => { await Promise.all([loadTasks({ background:true }), loadNotifications()]); scheduleTaskPoll(); }, delay);
+  notificationPollTimer = window.setTimeout(async () => {
+    await loadNotifications();
+    scheduleNotificationPoll();
+  }, Math.max(0, Number(delay) || notificationPollDelay));
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) clearTimeout(pollTimer);
-  else if (state.user) { Promise.all([loadTasks({ background:true }), loadNotifications()]).finally(() => scheduleTaskPoll()); }
+  if (document.hidden) {
+    clearTimeout(pollTimer);
+    clearTimeout(notificationPollTimer);
+    pollTimer = 0;
+    notificationPollTimer = 0;
+    return;
+  }
+  if (state.user) {
+    pruneExpiredTransientFailures();
+    Promise.all([loadTasks({ background:true, activeOnly:true }), loadNotifications()]).finally(() => {
+      scheduleTaskPoll();
+      scheduleNotificationPoll();
+    });
+  }
 });
 await bootstrap();
 scheduleTaskPoll();
+scheduleNotificationPoll();

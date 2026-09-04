@@ -1824,6 +1824,18 @@ function normalizeQuoteReferenceCounts(value) {
   if (Object.values(counts).reduce((sum, count) => sum + count, 0) > 100) throw Object.assign(new Error('参考素材数量过多'), { statusCode:400 });
   return counts;
 }
+function assertReferenceCountsWithinLimits(counts, limits) {
+  if (!limits) return;
+  const normalized = counts || {};
+  const total = ['image', 'video', 'audio'].reduce((sum, kind) => sum + Number(normalized[kind] || 0), 0);
+  if (total > Number(limits.total || 0)) throw Object.assign(new Error(`参考素材最多支持 ${limits.total} 个`), { statusCode: 400 });
+  for (const kind of ['image', 'video', 'audio']) {
+    if (Number(normalized[kind] || 0) > Number(limits[kind] || 0)) {
+      const label = kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频';
+      throw Object.assign(new Error(`参考${label}最多支持 ${limits[kind] || 0} 个`), { statusCode: 400 });
+    }
+  }
+}
 async function referenceAssetHasReadableSource(userId, asset) {
   if (!asset?.storageName) return false;
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
@@ -2541,7 +2553,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -3145,12 +3157,20 @@ const server = http.createServer(async (req, res) => {
       const request = validateVideoRequest(input, quoteReferenceCount);
       const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false, scope });
       const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds, scope) : suppliedReferenceCounts;
-      if (request.referenceLimits) {
-        for (const kind of Object.keys(quotedReferenceCounts)) if (quotedReferenceCounts[kind] > Number(request.referenceLimits[kind] || 0)) throw Object.assign(new Error(`参考${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}最多支持 ${request.referenceLimits[kind] || 0} 个`), { statusCode:400 });
-      }
+      assertReferenceCountsWithinLimits(quotedReferenceCounts, request.referenceLimits);
       const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: quotedReferenceCounts }) : null;
       if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前模型暂不可用，请稍后重试' });
-      if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:publicRoutePriceVersion(route) });
+      if (route) {
+        // Keep the customer-facing quote stable across text/image input. The
+        // price token still belongs to the actually selected route, so the
+        // submit endpoint can charge the configured image-route price when
+        // the two pools are accidentally configured differently.
+        const displayRoute = request.modelId === VIDEO_MODEL_IDS.SEEDANCE_2
+          ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: {} })
+          : route;
+        const visiblePrice = displayRoute || route;
+        return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:visiblePrice.salePriceCredits, yuan:visiblePrice.salePriceYuan, priceVersion:publicRoutePriceVersion(route) });
+      }
       const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
       const credits = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) * request.duration : currentPricing().videoPerSecond * request.duration;
       return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:`v1-${createHash('sha256').update(`gugu-price:static:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}` });
@@ -3163,7 +3183,10 @@ const server = http.createServer(async (req, res) => {
         const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(safeId).filter(Boolean))].slice(0, 200);
         return sendJson(res, 200, ids.map(id => findGeneration(user.id, id, scope)).filter(Boolean).map(publicGeneration));
       }
-      const page = listGenerations(user.id, { type: url.searchParams.get('type'), deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
+      const view = String(url.searchParams.get('view') || 'all').trim().toLowerCase();
+      if (!['all', 'works', 'history'].includes(view)) return sendJson(res, 400, { error: '生成记录视图无效' });
+      const cursor = url.searchParams.get('cursor');
+      const page = listGenerations(user.id, { type: url.searchParams.get('type'), view, deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor, includeTotal: !cursor || url.searchParams.get('includeTotal') === '1' });
       setPageHeaders(res, page);
       return sendJson(res, 200, page.items.map(publicGeneration));
     }
@@ -3197,6 +3220,7 @@ const server = http.createServer(async (req, res) => {
       if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
       const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope });
       const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
+      assertReferenceCountsWithinLimits(referenceCounts, videoRequest?.referenceLimits);
       if (referenceCounts.image && !r2ReferenceConfigured) {
         return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` });
       }

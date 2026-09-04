@@ -12,6 +12,7 @@ import {
   listModelRoutes,
   publicModelPrices,
   routeCredential,
+  SEEDANCE_ROUTE_MODEL_IDS,
   selectModelRoute,
   updateModelRoute,
   updateRoutePolicy,
@@ -73,6 +74,26 @@ test('Seedance route selection, pricing and catalog health', async t => {
       label: 'Seedance 2.0 Fast', duration: 15, available: true, credits: 18, yuan: 1.8,
       selectedRouteId: 'sd20-fast-720-diw-ed',
     });
+  });
+
+  await t.test('Seedance 2.0 selects independent text and image pools while displaying text pricing', () => {
+    const text = createModelRoute({
+      logicalModelId: SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality: '720p', credentialId: 'diw-main', upstreamModelId: 'seedance-text-test',
+      priority: 1, costYuan: 1, salePriceYuan: 2,
+    });
+    const image = createModelRoute({
+      logicalModelId: 'seedance2.0_img', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'seedance-image-test',
+      priority: 1, costYuan: 1.5, salePriceYuan: 3,
+    });
+    assert.equal(text.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.TEXT);
+    assert.equal(image.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.IMAGE);
+    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 0 } }).id, text.id);
+    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 1 } }).id, image.id);
+    assert.notEqual(selectModelRoute({ logicalModelId: SEEDANCE_ROUTE_MODEL_IDS.IMAGE, quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 0 } })?.id, image.id);
+    const publicPrice = publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '720p');
+    assert.equal(publicPrice.selectedRouteId, text.id);
+    assert.equal(publicPrice.yuan, 2);
+    assert.equal(publicPrice.credits, 20);
   });
 
   await t.test('manual choice is preferred but still falls back after it is disabled', () => {

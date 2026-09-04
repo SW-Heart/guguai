@@ -34,3 +34,40 @@ export function mergeRecordsAddedDuringRequest(requestSnapshot, current, respons
   const added = current.filter(record => record?.id != null && !requestedIds.has(record.id) && !responseIds.has(record.id));
   return [...added, ...response];
 }
+
+// Targeted generation polling returns only the requested active records. Keep
+// every non-active record already rendered in the gallery while replacing the
+// active snapshots with their latest server state. A missing requested ID is
+// treated as removed, while records returned for an active task that was only
+// present in the history list are appended to the in-memory gallery.
+export function mergeActiveRecords(current = [], refreshed = [], activeIds = []) {
+  const active = new Set(activeIds.map(value => String(value ?? '')).filter(Boolean));
+  const refreshedById = new Map(refreshed
+    .filter(record => record?.id != null)
+    .map(record => [String(record.id), record]));
+  const merged = [];
+  const seen = new Set();
+  for (const record of current) {
+    const id = String(record?.id ?? '');
+    if (!id) {
+      merged.push(record);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    if (active.has(id)) {
+      const latest = refreshedById.get(id);
+      if (!latest) continue;
+      merged.push(latest);
+    } else {
+      merged.push(record);
+    }
+    seen.add(id);
+  }
+  for (const record of refreshed) {
+    const id = String(record?.id ?? '');
+    if (!id || seen.has(id)) continue;
+    merged.push(record);
+    seen.add(id);
+  }
+  return merged;
+}

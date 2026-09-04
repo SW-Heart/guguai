@@ -23,7 +23,14 @@ test('desktop media downloads authenticate only same-origin hops and follow sign
   const response = await fetchRemoteMedia(
     electronSession,
     'https://studio.example.com/api/files/asset-1/direct',
-    { sameOriginHeaders:{ Cookie:'studio_session=secret' }, sameOriginFetch },
+    {
+      sameOriginHeaders: {
+        Cookie:'studio_session=secret',
+        'X-GuGu-Device-Id':'device-a-123456',
+        'X-GuGu-Workspace-Id':'workspace-a-123456',
+      },
+      sameOriginFetch,
+    },
   );
 
   assert.equal(response, expectedResponse);
@@ -34,7 +41,12 @@ test('desktop media downloads authenticate only same-origin hops and follow sign
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'manual',
-        headers: { 'X-GuGu-Desktop':'1', Cookie:'studio_session=secret' },
+        headers: {
+          'X-GuGu-Desktop':'1',
+          Cookie:'studio_session=secret',
+          'X-GuGu-Device-Id':'device-a-123456',
+          'X-GuGu-Workspace-Id':'workspace-a-123456',
+        },
       },
     },
   ]);

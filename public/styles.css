@@ -345,11 +345,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .video-prompt-mention-thumb i, .image-prompt-mention-thumb i { position: absolute; inset: 0; color: #fff; background: rgba(20,22,34,.32); display: grid; place-items: center; font-size: 9px; font-style: normal; }
 .video-prompt-mention-thumb b, .image-prompt-mention-thumb b { color: #6368d7; font-size: 13px; font-weight: 650; }
 .video-prompt-mention-name, .image-prompt-mention-name { overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
-.prompt-presets { display: flex; gap: 5px; margin-bottom: 15px; overflow: auto; scrollbar-width: none; }
-.prompt-presets button { white-space: nowrap; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: var(--canvas); font-size: 10px; transition: color var(--ease), border-color var(--ease), background var(--ease); }
-.prompt-presets button:hover { color: #4338ca; border-color: var(--brand-line); background: var(--brand-soft); }
 .reference-head { display: block; }
-.reference-head .field-label { margin-bottom: 0; }
+#imageForm .reference-head .field-label { margin-bottom: 8px; }
 .reference-title { min-width: 0; flex: 1 1 auto; }
 .reference-label-row { display: flex; align-items: center; gap: 8px; min-height: 22px; }
 .reference-capability-hint { display: block; margin-top: 4px; color: var(--faint); font: 9px/1.35 var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -466,17 +463,49 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .content-head { position: sticky; z-index: 10; top: 0; height: 64px; padding: 0 20px; border-bottom: 1px solid var(--line); background: rgba(247,247,248,.94); backdrop-filter: blur(12px); display: flex; align-items: center; justify-content: flex-start; }
 .content-head > .desktop-workspace-button { margin-left: auto; }
-.head-actions { display: flex; align-items: center; gap: 3px; padding: 3px; border-radius: 7px; background: var(--surface); }
-.filter, .type-tabs button { min-height: 32px; padding: 5px 10px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 11px; }
-.filter:hover, .type-tabs button:hover { color: var(--ink); }
-.filter.active, .type-tabs button.active { color: var(--ink); background: var(--panel); box-shadow: 0 1px 3px rgba(24,24,27,.08); }
-.view-switch { display: flex; align-items: center; gap: 2px; margin-left: 3px; padding-left: 4px; border-left: 1px solid var(--line); }
-.view-toggle { width: 30px; height: 32px; padding: 5px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; display: grid; place-items: center; }
-.view-toggle:hover, .view-toggle.active { color: var(--ink); background: var(--panel); box-shadow: 0 1px 3px rgba(24,24,27,.08); }
-.view-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.generation-tabs { display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.generation-tab { min-height: 34px; padding: 6px 15px; border: 1px solid transparent; border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; cursor: pointer; transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease); }
+.generation-tab:hover { color: var(--brand); background: rgba(255,255,255,.65); }
+.generation-tab.active { border-color: rgba(99,102,241,.2); color: #4c4eb1; background: var(--panel); box-shadow: 0 2px 7px rgba(91,92,232,.08); }
+.generation-tab:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .creation-grid { --generation-columns: 4; position: relative; display: block; min-height: 0; padding: 14px; column-gap: 14px; }
-.creation-grid.small-view { --generation-columns: 5; }
 .creation-grid.masonry-ready > .task-card { position: absolute; margin: 0; }
+.generation-history-panel { min-height: calc(100dvh - 64px); padding: 14px 20px 28px; }
+.generation-history { display: grid; gap: 8px; max-width: 1180px; margin: 0 auto; }
+.generation-history-row { --history-actions-width: 120px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--history-actions-width); align-items: stretch; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); transition: border-color var(--ease), box-shadow var(--ease), transform var(--ease); }
+.generation-history-row:hover, .generation-history-row:focus-within { border-color: var(--line-strong); box-shadow: 0 5px 16px rgba(24,24,27,.06); }
+.history-open { width: 100%; min-width: 0; padding: 9px 12px; border: 0; color: var(--ink); background: transparent; display: grid; grid-template-columns: 56px minmax(120px, 1fr) 88px 150px 88px; align-items: center; gap: 12px; text-align: left; cursor: pointer; }
+.history-open:hover { background: rgba(247,247,255,.5); }
+.history-open:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; border-radius: 8px; }
+.history-thumb { position: relative; width: 56px; height: 56px; overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); display: grid; place-items: center; }
+.history-thumb img, .history-thumb video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.history-thumb .video-placeholder { min-height: 0; width: 100%; height: 100%; }
+.history-thumb .play-mark { width: 24px; height: 24px; }
+.history-thumb .play-mark svg { width: 11px; }
+.history-failure-mark { color: var(--danger); display: grid; place-items: center; }
+.history-failure-mark svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.history-loading-mark { display: inline-flex; gap: 3px; align-items: center; }
+.history-loading-mark i { width: 5px; height: 5px; border-radius: 50%; background: var(--brand); animation: progress-pulse 1.2s ease-in-out infinite; }
+.history-loading-mark i:nth-child(2) { animation-delay: .15s; }
+.history-loading-mark i:nth-child(3) { animation-delay: .3s; }
+.history-copy { min-width: 0; display: grid; gap: 5px; }
+.history-copy b { overflow: hidden; color: var(--ink-soft); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.history-copy small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.history-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.history-status i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--faint); }
+.history-status.running i, .history-status.queued i { background: var(--brand); }
+.history-status.failed { color: var(--danger); }
+.history-status.failed i { background: var(--danger); }
+.history-status.completed { color: var(--success); }
+.history-status.completed i { background: var(--success); }
+.history-open time, .history-open em { color: var(--muted); font: 9px var(--mono); white-space: nowrap; }
+.history-open em { color: var(--ink-soft); font-style: normal; text-align: right; }
+.history-credit.is-empty { visibility: hidden; }
+.history-actions { width: var(--history-actions-width); min-width: var(--history-actions-width); display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 8px 0 4px; }
+.history-action { min-width: 48px; min-height: 34px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; color: var(--muted); background: transparent; font-size: 9px; cursor: pointer; }
+.history-action:hover, .history-action:focus-visible { border-color: var(--line-strong); color: var(--brand); background: var(--surface); outline: 0; }
+.history-delete:hover, .history-delete:focus-visible { border-color: rgba(178,77,85,.25); color: var(--danger); background: var(--danger-soft); }
+#loadMoreGenerationHistory { display: block; min-width: 180px; margin: 16px auto 0; }
 .task-card { position: relative; overflow: hidden; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); transition: border-color var(--ease), box-shadow var(--ease); }
 .task-card:hover, .task-card:focus-within { border-color: var(--line-strong); box-shadow: 0 3px 12px rgba(24,24,27,.06); }
 .card-visual { position: relative; overflow: hidden; }
@@ -573,6 +602,241 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .file-menu button, .file-menu a { display: block; width: 100%; padding: 8px; border: 0; border-radius: 5px; color: var(--ink-soft); background: transparent; text-align: left; text-decoration: none; font-size: 11px; }
 .file-menu button:hover, .file-menu a:hover { background: var(--surface); }
 .file-menu .danger { color: var(--danger); }
+
+/* Keep the image batch control in the same glass control family as the ratio
+   and quality choices above it. The center value stays quiet while the two
+   actions carry the interactive state. */
+.image-quantity-control {
+  padding: 13px 0 2px;
+  border-top-color: var(--line);
+}
+.image-quantity-stepper {
+  height: 42px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  border-color: var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass-soft);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(7px) saturate(1.06);
+  -webkit-backdrop-filter: blur(7px) saturate(1.06);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.image-quantity-stepper:focus-within {
+  border-color: rgba(99,102,241,.38);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.1), var(--glass-shadow);
+}
+.image-quantity-stepper-button {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  color: var(--brand);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--ease), background var(--ease), transform var(--ease);
+}
+.image-quantity-stepper-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.65;
+}
+.image-quantity-stepper-button:first-child {
+  border-right: 1px solid rgba(99,102,241,.1);
+}
+.image-quantity-stepper-button:last-child {
+  border-left: 1px solid rgba(99,102,241,.1);
+}
+.image-quantity-stepper-button:hover:not(:disabled) {
+  color: var(--brand-hover);
+  background: rgba(255,255,255,.58);
+}
+.image-quantity-stepper-button:active:not(:disabled) {
+  transform: scale(.94);
+}
+.image-quantity-stepper-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--brand);
+  outline-offset: -3px;
+}
+.image-quantity-stepper-button:disabled {
+  color: var(--faint);
+  background: transparent;
+  opacity: .72;
+}
+.image-quantity-stepper input {
+  height: 40px;
+  color: var(--ink);
+  background: rgba(255,255,255,.48);
+}
+.image-quantity-stepper input:focus {
+  background: rgba(255,255,255,.82);
+}
+
+/* The library toolbar uses one shared control language: upload and filtering
+   stay together on the left, the search field is centered in the workspace,
+   and utility metadata remains on the right. */
+.library-toolbar {
+  position: relative;
+  min-height: 66px;
+  padding: 12px 24px;
+  gap: 8px;
+}
+.library-toolbar > .upload-button,
+.library-toolbar > .type-tabs {
+  position: relative;
+  z-index: 1;
+}
+.library-toolbar > .upload-button {
+  height: 42px;
+  min-height: 42px;
+  padding-inline: 13px;
+}
+.library-toolbar > .upload-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.65;
+}
+.library-toolbar > .type-tabs {
+  height: 42px;
+  min-height: 42px;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 8px;
+}
+.library-toolbar > .search-box {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  width: min(360px, 32vw);
+  min-width: 230px;
+  height: 42px;
+  transform: translateX(-50%);
+  border-color: var(--glass-line);
+  border-radius: 8px;
+  background: var(--glass-soft);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
+}
+.library-toolbar > .search-box:focus-within {
+  border-color: rgba(99,102,241,.38);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.1), var(--glass-shadow);
+}
+.library-toolbar > .search-box svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  stroke-width: 1.65;
+}
+.library-toolbar > .type-tabs button {
+  min-width: 58px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  color: var(--muted);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.library-toolbar > .type-tabs button:hover:not(.active) {
+  color: var(--brand);
+  background: rgba(255,255,255,.54);
+}
+.library-toolbar > .type-tabs button.active {
+  border-color: rgba(99,102,241,.2);
+  color: #4c4eb1;
+  background: var(--glass-soft-hover);
+  box-shadow: 0 3px 9px rgba(91,92,232,.09), inset 0 1px rgba(255,255,255,.9);
+}
+.library-toolbar > .type-tabs button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.library-toolbar > .type-tabs button:active:not(:disabled) {
+  transform: scale(.98);
+}
+.library-toolbar > span {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  padding-left: 12px;
+}
+.library-toolbar > .desktop-workspace-button {
+  position: relative;
+  z-index: 1;
+}
+
+@media (max-width: 920px) and (min-width: 781px) {
+  .library-toolbar {
+    padding-inline: 16px;
+  }
+  .library-toolbar > .search-box {
+    width: min(280px, 31vw);
+    min-width: 190px;
+  }
+  .library-toolbar > .type-tabs button {
+    min-width: 50px;
+    padding-inline: 7px;
+  }
+}
+
+@media (max-width: 780px) {
+  .library-toolbar {
+    min-height: 0;
+    padding: 10px 12px;
+    align-items: center;
+  }
+  .library-toolbar > .upload-button {
+    height: 44px;
+    min-height: 44px;
+  }
+  .library-toolbar > .type-tabs {
+    height: 44px;
+    min-width: 0;
+    min-height: 44px;
+    flex: 1 1 auto;
+  }
+  .library-toolbar > .type-tabs button {
+    min-width: 0;
+    height: 34px;
+    min-height: 34px;
+    flex: 1 1 0;
+    padding-inline: 5px;
+  }
+  .library-toolbar > .search-box {
+    position: relative;
+    left: auto;
+    order: 3;
+    flex: 1 0 100%;
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    transform: none;
+  }
+  .library-toolbar > span {
+    order: 4;
+    margin-left: 0;
+    padding-left: 0;
+  }
+  .library-toolbar > .desktop-workspace-button {
+    order: 5;
+    margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-quantity-stepper,
+  .image-quantity-stepper-button { transition: none; }
+}
 
 /* Dialogs */
 dialog { padding: 0; border: 1px solid var(--line); border-radius: 11px; color: var(--ink); background: var(--panel-raised); box-shadow: 0 28px 90px rgba(24,24,27,.22); }
@@ -1014,13 +1278,20 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .app-shell.wide-mode { grid-template-columns: var(--rail-width) minmax(0, 1fr); }
   .topbar { grid-template-columns: var(--rail-width) var(--creator-width) 1fr; }
   .creation-grid { --generation-columns: 4; }
-  .creation-grid.small-view { --generation-columns: 5; }
   .account-button b { display: none; }
   .account-button .avatar-notification-badge { display: grid; }
   .ratio-grid { grid-template-columns: repeat(6, 1fr); }
 }
 @media (min-width: 781px) and (max-width: 1100px) {
   body.desktop-runtime.desktop-darwin .topbar { padding-left: 68px; }
+  .generation-history-row { display: block; }
+  .history-open { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 9px; padding: 9px; }
+  .history-thumb { width: 52px; height: 52px; }
+  .history-open time { grid-column: 2 / -1; grid-row: 2; margin-top: -5px; font-size: 8px; }
+  .history-open em { display: none; }
+  .history-status { justify-self: end; }
+  .history-actions { width: auto; min-width: 0; justify-content: flex-end; padding: 0 8px 8px; border-top: 1px solid var(--line); }
+  .history-action { min-height: 40px; flex: 1; }
 }
 
 @media (max-width: 780px) {
@@ -1063,11 +1334,12 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .rail-spacer, .rail-button.quiet { display: none; }
   .creator-panel { overflow: visible; padding: 20px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .creator-panel .generate { position: static; width: 100%; margin-top: 10px; }
-  .prompt-presets button, .text-button, .filter, .type-tabs button { min-height: 44px; }
+  .text-button, .generation-tab, .type-tabs button { min-height: 44px; }
   .content-panel { overflow: visible; }
   .content-head { position: static; }
+  .generation-tabs { width: max-content; max-width: 100%; }
+  .generation-tab { padding-inline: 13px; }
   .creation-grid { --generation-columns: 2; padding: 10px; column-gap: 10px; }
-  .creation-grid.small-view { --generation-columns: 3; }
   .auth-card input, .prompt-box textarea, .prompt-box .rich-prompt-editor, .search-box input { font-size: 16px; }
   .library-toolbar { flex-wrap: wrap; }
   .search-box { width: 100%; }
@@ -1080,6 +1352,15 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .generation-detail-layout { grid-template-columns: 1fr; grid-template-rows: minmax(250px, 44dvh) minmax(0, 1fr); }
   .asset-detail-layout { grid-template-columns: 1fr; grid-template-rows: minmax(250px, 44dvh) minmax(0, 1fr); }
   .generation-detail-media { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.5); }
+  .generation-history-panel { min-height: 0; padding: 10px 10px 88px; }
+  .generation-history-row { display: block; }
+  .history-open { grid-template-columns: 52px minmax(0, 1fr) auto; gap: 9px; padding: 9px; }
+  .history-thumb { width: 52px; height: 52px; }
+  .history-open time { grid-column: 2 / -1; grid-row: 2; margin-top: -5px; font-size: 8px; }
+  .history-open em { display: none; }
+  .history-status { justify-self: end; }
+  .history-actions { width: auto; min-width: 0; justify-content: flex-end; padding: 0 8px 8px; border-top: 1px solid var(--line); }
+  .history-action { min-height: 40px; flex: 1; }
   .asset-detail-media { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.5); }
   .generation-detail-panel { padding: 21px 17px; }
   .asset-detail-panel { padding: 21px 17px; }
@@ -1101,9 +1382,10 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .auth-copy h2 { font-size: 25px; }
   .workspace-name small { display: none; }
   .creation-grid { --generation-columns: 1; }
-  .creation-grid.small-view { --generation-columns: 1; }
   .content-head { padding-inline: 14px; }
-  .head-actions .filter:nth-child(3) { display: none; }
+  .generation-tabs { width: auto; min-width: 0; flex: 1; }
+  .generation-tab { min-width: 0; flex: 1; padding-inline: 8px; }
+  .history-copy small { font-size: 8px; }
   .file-grid { grid-template-columns: 1fr 1fr; }
   .reference-grid { grid-template-columns: repeat(2, 1fr); }
   .preview-info { align-items: flex-start; gap: 10px; }
@@ -2041,7 +2323,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .desktop-workspace-button svg,
 .drama-back svg { width: 15px; height: 15px; stroke-width: 1.65; }
 
-.prompt-presets button,
 .ratio-grid button,
 .product-select-trigger,
 .video-frame-slot:not(.filled),
@@ -2060,7 +2341,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   -webkit-backdrop-filter: blur(7px) saturate(1.06);
   transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease), transform var(--ease);
 }
-.prompt-presets button:hover,
 .ratio-grid button:hover,
 .product-select-trigger:hover,
 .product-select-trigger[aria-expanded="true"],
@@ -2077,7 +2357,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   box-shadow: 0 7px 16px rgba(91,92,232,.1), inset 0 1px rgba(255,255,255,.9);
   transform: translateY(-1px);
 }
-.prompt-presets button:active,
 .ratio-grid button:active,
 .product-select-trigger:active,
 .video-frame-slot:not(.filled):active,
@@ -2092,6 +2371,11 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .video-shot > header > button:disabled,
 .add-video-reference:disabled { cursor: not-allowed; opacity: .48; transform: none; }
 
+/* Keep the creator-page upload tile inside its reference strip. The shared
+   hover lift makes the tile overlap the surrounding divider by one pixel. */
+#imageForm .add-reference:hover:not(:disabled),
+#videoForm .add-reference:hover:not(:disabled) { transform: none; }
+
 .shot-generate { border-color: var(--glass-line); border-radius: 8px; color: var(--brand); background: var(--glass-soft); box-shadow: var(--glass-shadow); transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease), transform var(--ease); }
 .shot-generate:hover { border-color: rgba(99,102,241,.27); background: var(--glass-soft-hover); box-shadow: 0 7px 16px rgba(91,92,232,.1), inset 0 1px rgba(255,255,255,.9); transform: translateY(-1px); }
 .shot-generate:active { transform: translateY(0) scale(.985); }
@@ -2103,7 +2387,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .failure-retry:hover:not(:disabled),
 .failure-retry:focus-visible { border-color: rgba(178,77,85,.3); color: #9d3f49; background: linear-gradient(145deg, rgba(255,255,255,.92), rgba(255,235,237,.86)); box-shadow: 0 8px 18px rgba(178,77,85,.1), inset 0 1px rgba(255,255,255,.92); }
 
-.head-actions,
+.generation-tabs,
 .type-tabs,
 .segmented,
 .mode-switch,
@@ -2114,10 +2398,9 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   backdrop-filter: blur(9px) saturate(1.08);
   -webkit-backdrop-filter: blur(9px) saturate(1.08);
 }
-.filter,
+.generation-tab,
 .type-tabs button,
 .segmented button,
-.view-toggle,
 .mode-switch button,
 .resource-tabs button,
 .professional-mode-grid button,
@@ -2125,18 +2408,16 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   border: 1px solid transparent;
   transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease), transform var(--ease);
 }
-.filter:hover,
+.generation-tab:hover,
 .type-tabs button:hover,
 .segmented button:hover,
-.view-toggle:hover,
 .mode-switch button:hover,
 .resource-tabs button:hover,
 .professional-mode-grid button:hover,
 .generation-mode-switch button:hover { color: var(--brand); background: rgba(255,255,255,.52); }
-.filter.active,
+.generation-tab.active,
 .type-tabs button.active,
 .segmented button.selected,
-.view-toggle.active,
 .mode-switch button.active,
 .resource-tabs button.active,
 .professional-mode-grid button.active,
@@ -2229,7 +2510,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .upload-button,
   .desktop-workspace-button,
   .drama-back,
-  .prompt-presets button,
   .ratio-grid button,
   .product-select-trigger,
   .video-frame-slot:not(.filled),
@@ -3253,3 +3533,210 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
 /* Ratio picker previews use explicit bounded dimensions so every outline keeps its true aspect ratio. */
 .wb-spec-popover .wb-mini-ratio { box-sizing: border-box; max-height: none; display: block; }
 .video-version-wrap{position:relative;flex:0 0 220px}.video-version-wrap .video-version{width:100%}.video-version-delete{position:absolute;z-index:2;top:7px;right:7px;width:22px;height:22px;padding:0;border:1px solid rgba(255,255,255,.75);border-radius:50%;color:#fff;background:rgba(43,34,39,.82);font-size:17px;line-height:18px;opacity:0;pointer-events:none;transform:scale(.88);transition:opacity .15s ease,transform .15s ease,background .15s ease}.video-version-wrap:not(.is-pending):hover .video-version-delete,.video-version-wrap:not(.is-pending):focus-within .video-version-delete,.video-version-delete:focus-visible{opacity:1;pointer-events:auto;transform:scale(1)}.video-version-delete:hover{background:#c9535d}
+
+/* Component-only polish for the two generation forms. Typography stays on
+   the existing project rules; this layer only aligns surfaces and states. */
+.generator-form {
+  --control-border: rgba(99,102,241,.15);
+  --control-border-hover: rgba(99,102,241,.28);
+  --control-surface: rgba(255,255,255,.78);
+  --control-surface-hover: rgba(247,248,255,.9);
+  --control-surface-selected: rgba(238,240,255,.9);
+  --control-shadow: 0 4px 14px rgba(91,92,232,.055), inset 0 1px rgba(255,255,255,.84);
+}
+.generator-form .prompt-box,
+.generator-form .product-select-trigger,
+.generator-form .image-quantity-stepper {
+  border-color: var(--control-border);
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+}
+.generator-form .prompt-box:focus-within,
+.generator-form .product-select-trigger[aria-expanded="true"],
+.generator-form .image-quantity-stepper:focus-within {
+  border-color: var(--control-border-hover);
+  background: var(--control-surface-hover);
+  box-shadow: 0 0 0 2px rgba(99,102,241,.09), var(--control-shadow);
+}
+.generator-form .prompt-box > .prompt-box-meta {
+  background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,.68) 50%);
+}
+.generator-form .reference-capability-hint {
+  color: var(--faint);
+}
+.generator-form .add-reference {
+  border: 1px dashed var(--control-border);
+  border-radius: 9px;
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+}
+.generator-form .add-reference:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--control-surface-hover);
+  box-shadow: 0 7px 16px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.9);
+}
+.generator-form .add-reference svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.45;
+}
+.generator-form .ratio-grid {
+  gap: 5px;
+}
+.generator-form .ratio-grid button {
+  border-color: var(--control-border);
+  border-radius: 8px;
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+}
+.generator-form .ratio-grid button:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--control-surface-hover);
+  box-shadow: 0 6px 14px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.9);
+}
+.generator-form .ratio-grid button.selected {
+  border-color: rgba(99,102,241,.34);
+  background: var(--control-surface-selected);
+  box-shadow: inset 0 0 0 1px rgba(99,102,241,.16), 0 4px 12px rgba(91,92,232,.08);
+}
+.generator-form .ratio-frame i {
+  border-width: 1px;
+  border-radius: 1px;
+}
+.generator-form .segmented {
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(247,248,255,.78);
+  box-shadow: inset 0 1px rgba(255,255,255,.88), 0 3px 10px rgba(91,92,232,.045);
+}
+.generator-form .segmented button {
+  border-radius: 6px;
+}
+.generator-form .segmented button:hover:not(:disabled) {
+  background: rgba(255,255,255,.62);
+}
+.generator-form .segmented button.selected {
+  border-color: rgba(99,102,241,.22);
+  background: var(--control-surface-selected);
+  box-shadow: 0 2px 7px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.9);
+}
+.generator-form .product-select {
+  margin-bottom: 12px;
+}
+.generator-form .product-select-trigger {
+  border-radius: 8px;
+  box-shadow: var(--control-shadow);
+}
+.generator-form .product-select-trigger:hover,
+.generator-form .product-select-trigger[aria-expanded="true"] {
+  border-color: var(--control-border-hover);
+  background: var(--control-surface-hover);
+  box-shadow: 0 0 0 2px rgba(99,102,241,.09), 0 6px 14px rgba(91,92,232,.07), inset 0 1px rgba(255,255,255,.9);
+}
+.generator-form .select-ratio-icon,
+.generator-form .select-clock,
+.generator-form .select-mode-icon,
+.generator-form .select-resolution-icon {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border: 1px solid rgba(99,102,241,.13);
+  border-radius: 7px;
+  background: rgba(238,240,255,.62);
+}
+.generator-form .select-ratio-icon i {
+  border-width: 1px;
+}
+.generator-form .select-clock svg,
+.generator-form .select-mode-icon svg,
+.generator-form .select-resolution-icon svg {
+  stroke-width: 1.5;
+}
+.generator-form .product-select-trigger > svg {
+  stroke-width: 1.5;
+}
+.generator-form .product-select-menu {
+  padding: 4px;
+  border-color: var(--control-border);
+  border-radius: 9px;
+  background: rgba(255,255,255,.94);
+  box-shadow: 0 12px 28px rgba(91,92,232,.1), inset 0 1px rgba(255,255,255,.9);
+}
+.generator-form .product-select-menu button {
+  min-height: 40px;
+  border-radius: 6px;
+}
+.generator-form .product-select-menu button:hover:not(:disabled),
+.generator-form .product-select-menu button:focus-visible {
+  border-color: rgba(99,102,241,.14);
+  background: rgba(247,248,255,.88);
+  box-shadow: none;
+}
+.generator-form .product-select-menu button[aria-selected="true"] {
+  border-color: rgba(99,102,241,.2);
+  background: var(--control-surface-selected);
+  box-shadow: inset 2px 0 var(--brand), inset 0 1px rgba(255,255,255,.82);
+}
+.generator-form .product-select-menu button > i {
+  color: var(--brand);
+}
+.generator-form .image-quantity-stepper {
+  border-radius: 8px;
+}
+.generator-form .image-quantity-stepper-button svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generator-form .ratio-grid button:hover:not(:disabled),
+  .generator-form .add-reference:hover:not(:disabled) { transform: none; }
+}
+
+/* Small corrective states: keep focus quiet, selection immediate, and icons
+   unboxed where the control already supplies the visual boundary. */
+.generator-form .prompt-box:focus-within {
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+}
+.generator-form .prompt-box {
+  cursor: text;
+}
+.generator-form .prompt-box > .prompt-box-meta {
+  pointer-events: none;
+  background: var(--control-surface);
+}
+.generator-form .image-quantity-stepper input {
+  color: var(--muted);
+  font-weight: 400;
+}
+.generator-form .ratio-grid button.selected,
+.generator-form .ratio-grid button.selected:hover:not(:disabled) {
+  border-color: rgba(99,102,241,.22);
+  color: #4c4eb1;
+  background: var(--control-surface-selected);
+  box-shadow: 0 2px 7px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.9);
+  transform: none;
+}
+.generator-form .product-select-menu button[aria-selected="true"] {
+  box-shadow: inset 0 1px rgba(255,255,255,.82);
+}
+.generator-form .select-ratio-icon,
+.generator-form .select-clock,
+.generator-form .select-mode-icon,
+.generator-form .select-resolution-icon {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Keep the library toolbar typography at the upload control's existing size;
+   family and weight continue to come from the shared button/input rules. */
+@media (min-width: 781px) {
+  .library-toolbar > .type-tabs button,
+  .library-toolbar > .search-box input {
+    font-size: 12px;
+  }
+}
