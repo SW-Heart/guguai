@@ -71,6 +71,7 @@ let settings;
 let workspace;
 let workspaceRoot;
 let workspaceAccountId = '';
+let workspaceId = '';
 let workspaceEpoch = 0;
 let trustedOrigin;
 let packageMetadata = {};
@@ -202,6 +203,7 @@ function activeWorkspaceInfo() {
     path: workspace || workspaceRoot || '',
     rootPath: workspaceRoot || '',
     accountId: workspaceAccountId,
+    workspaceId,
     cursor: syncCursor(),
     deviceId: settings?.deviceId || '',
   };
@@ -217,6 +219,7 @@ async function setWorkspaceRoot(root, { persist = true } = {}) {
     remoteDownloadLocks.clear();
     closeLocalLibrary();
     workspace = '';
+    workspaceId = '';
   }
   if (persist) {
     settings.workspaceRootPath = workspaceRoot;
@@ -237,6 +240,17 @@ async function activateWorkspaceAccount(accountId, { persist = true } = {}) {
   closeLocalLibrary();
   workspace = await ensureWorkspace(accountRoot);
   workspaceAccountId = normalizedAccountId;
+  // Keep a stable identity inside the workspace itself. The application-level
+  // settings file can be reset on reinstall, but a moved/copied workspace must
+  // continue to refer to the same local data set.
+  const metadataPath = path.join(workspace, '.gugu', 'workspace.json');
+  const metadata = await readJson(metadataPath, {});
+  workspaceId = /^[a-zA-Z0-9_-]{8,128}$/.test(String(metadata?.workspaceId || ''))
+    ? String(metadata.workspaceId)
+    : randomUUID();
+  if (metadata?.workspaceId !== workspaceId) {
+    await writeJson(metadataPath, { ...metadata, workspaceId, version:1, createdAt:metadata?.createdAt || new Date().toISOString() });
+  }
   openLocalLibrary(workspace);
   if (persist) {
     settings.workspaceRootPath = workspaceRoot;
@@ -253,6 +267,7 @@ async function deactivateWorkspaceAccount({ persist = true } = {}) {
   closeLocalLibrary();
   workspace = '';
   workspaceAccountId = '';
+  workspaceId = '';
   if (persist) {
     settings.workspaceRootPath ||= workspaceRoot || '';
     settings.workspacePath = workspaceRoot || '';
@@ -503,7 +518,13 @@ async function cloudCookies(url) {
 async function cloudRequest(pathname, options = {}) {
   if (!trustedOrigin) throw new Error('云端服务尚未连接');
   const url = new URL(pathname, `${trustedOrigin}/`).toString();
-  return net.fetch(url, { ...options, headers: { ...(await cloudCookies(url)), 'X-GuGu-Desktop': '1', ...(options.headers || {}) } });
+  return net.fetch(url, { ...options, headers: {
+    ...(await cloudCookies(url)),
+    'X-GuGu-Desktop': '1',
+    ...(settings?.deviceId ? { 'X-GuGu-Device-Id': settings.deviceId } : {}),
+    ...(workspaceId ? { 'X-GuGu-Workspace-Id': workspaceId } : {}),
+    ...(options.headers || {}),
+  } });
 }
 
 async function completeCloudUpload(uploadId) {
@@ -1033,7 +1054,11 @@ async function loadStudio() {
   if (!desktopRequestHeaderInstalled) {
     session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['*://*/*'] }, (details, callback) => {
       try {
-        if (trustedOrigin && new URL(details.url).origin === trustedOrigin) details.requestHeaders['X-GuGu-Desktop'] = '1';
+        if (trustedOrigin && new URL(details.url).origin === trustedOrigin) {
+          details.requestHeaders['X-GuGu-Desktop'] = '1';
+          if (settings?.deviceId) details.requestHeaders['X-GuGu-Device-Id'] = settings.deviceId;
+          if (workspaceId) details.requestHeaders['X-GuGu-Workspace-Id'] = workspaceId;
+        }
       } catch {}
       callback({ requestHeaders: details.requestHeaders });
     });
@@ -1075,6 +1100,7 @@ function desktopDiagnostics() {
     workspacePath: workspace || '',
     workspaceRootPath: workspaceRoot || '',
     workspaceAccountId,
+    workspaceId,
     deviceId: settings?.deviceId || '',
     logDirectory: desktopLogDirectory(),
   };
@@ -1321,11 +1347,12 @@ function registerIpc() {
     workspacePath: workspace || workspaceRoot || '',
     workspaceRootPath: workspaceRoot || '',
     workspaceAccountId,
+    workspaceId,
     deviceId: settings.deviceId,
     assetSyncCursor: syncCursor(),
     updateUrl: updateFeedUrl(),
   }));
-  ipcMain.handle('desktop:get-sync-state', () => ({ deviceId: settings.deviceId, cursor: syncCursor() }));
+  ipcMain.handle('desktop:get-sync-state', () => ({ deviceId: settings.deviceId, workspaceId, cursor: syncCursor() }));
   ipcMain.handle('desktop:set-sync-cursor', async (_event, value) => {
     const cursor = String(value || '');
     if (cursor.length > 1024) throw new Error('素材同步游标无效');
@@ -1337,7 +1364,7 @@ function registerIpc() {
       settings.assetSyncCursors[origin][workspaceAccountId] = cursor;
       await persistSettings();
     }
-    return { deviceId: settings.deviceId, cursor };
+    return { deviceId: settings.deviceId, workspaceId, cursor };
   });
   ipcMain.handle('desktop:set-api-base', async (_event, value) => {
     const raw = String(value || '').trim();

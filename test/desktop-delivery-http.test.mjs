@@ -166,6 +166,39 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const headers = { Cookie: cookie };
 
+  const missingScope = await fetch(`${base}/api/generations`, {
+    headers: { ...headers, 'X-GuGu-Desktop':'1', 'X-GuGu-Device-Id':'device-a-123456' },
+  });
+  assert.equal(missingScope.status, 400, '桌面请求缺少工作区标识时应被拒绝');
+  const scopeAHeaders = {
+    ...headers,
+    'X-GuGu-Desktop':'1',
+    'X-GuGu-Device-Id':'device-a-123456',
+    'X-GuGu-Workspace-Id':'workspace-a-123456',
+  };
+  const claimA = await fetch(`${base}/api/workspaces/claim-legacy`, {
+    method:'POST', headers:{ ...scopeAHeaders, 'Content-Type':'application/json' },
+    body:JSON.stringify({ assetIds:[assetId] }),
+  });
+  assert.equal(claimA.status, 200);
+  const scopedTasksA = await fetch(`${base}/api/generations`, { headers:scopeAHeaders });
+  assert.deepEqual((await scopedTasksA.json()).map(task => task.id), [taskId]);
+  const scopedFilesA = await fetch(`${base}/api/files`, { headers:scopeAHeaders });
+  assert.deepEqual((await scopedFilesA.json()).map(file => file.id), [assetId]);
+  const scopeBHeaders = {
+    ...headers,
+    'X-GuGu-Desktop':'1',
+    'X-GuGu-Device-Id':'device-b-123456',
+    'X-GuGu-Workspace-Id':'workspace-b-123456',
+  };
+  const claimB = await fetch(`${base}/api/workspaces/claim-legacy`, {
+    method:'POST', headers:{ ...scopeBHeaders, 'Content-Type':'application/json' },
+    body:JSON.stringify({ assetIds:[authenticatedAssetId] }),
+  });
+  assert.equal(claimB.status, 200);
+  const scopedTasksB = await fetch(`${base}/api/generations`, { headers:scopeBHeaders });
+  assert.deepEqual((await scopedTasksB.json()).map(task => task.id), [authenticatedTaskId]);
+
   const list = await fetch(`${base}/api/files`, { headers });
   assert.equal(list.status, 200);
   const files = await list.json();

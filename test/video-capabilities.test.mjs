@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
 
 test('video catalog exposes GuGu 2.0 as available in launch order', () => {
-  const models = publicVideoCapabilities().models;
+  const capabilities = publicVideoCapabilities();
+  const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
     'GuGu 2.0', 'GuGu 1.5', 'Seedance 2.0', 'Seedance 2.5', 'Seedance 2.0 Fast', 'MiniMax H3', 'Omni Flash', 'Veo 3.1', 'Veo 3.1 Fast',
   ]);
@@ -12,6 +13,9 @@ test('video catalog exposes GuGu 2.0 as available in launch order', () => {
   assert.equal(minimaxH315s?.description, '支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成');
   assert.equal(minimaxH315s?.modes.find(mode => mode.generationType === 'TEXT')?.pricing.amount, 0.5);
   assert.deepEqual(minimaxH315s?.modes.find(mode => mode.generationType === 'REFERENCE')?.referenceLimits, { image: 9, video: 0, audio: 3, total: 12 });
+  assert.ok(capabilities.routing.length > 0);
+  assert.equal(Object.hasOwn(capabilities.routing[0], 'model'), false);
+  assert.doesNotMatch(JSON.stringify(capabilities.routing), /grok-imagine|workflow|veo-fast|firefly-veo|autodl/i);
   const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MINIMAX_H3_15S, generationType: 'TEXT', aspectRatio: '16:9', duration: 5, quality: '768p' });
   assert.equal(request.modelId, VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(request.profileKey, 'minimax-h3-15s');

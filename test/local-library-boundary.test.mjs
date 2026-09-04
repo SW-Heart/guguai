@@ -15,7 +15,7 @@ test('desktop file library reads only the local workspace', () => {
   assert.match(app, /function libraryFileMatches\(/);
 });
 
-test('history is received before the local-only file library becomes visible', () => {
+test('desktop startup stays local and does not receive cross-device history', () => {
   const loadFilesStart = app.indexOf('async function loadFiles(');
   const loadFilesEnd = app.indexOf('\nfunction assetDisplayName', loadFilesStart);
   const loadFilesSource = app.slice(loadFilesStart, loadFilesEnd);
@@ -23,24 +23,25 @@ test('history is received before the local-only file library becomes visible', (
   const enterAppStart = app.indexOf('async function enterApp(');
   const enterAppEnd = app.indexOf('\nlet accountSettingsRestoreFocus', enterAppStart);
   const enterAppSource = app.slice(enterAppStart, enterAppEnd);
-  assert.ok(enterAppSource.indexOf('await syncHistoricalCloudAssets(user)') < enterAppSource.indexOf('showApp()'));
-  assert.match(app, /async function listHistoricalCloudAssetsPage\(cursor = ''/);
-  assert.match(app, /localStorage\.setItem\(marker, 'complete'\)/);
-  assert.match(app, /async function runDesktopAssetSyncWorker\(\)/);
-  assert.match(app, /scheduleDesktopAssetSync\(0\)/);
+  assert.doesNotMatch(enterAppSource, /syncHistoricalCloudAssets|scheduleDesktopAssetSync/);
+  assert.match(app, /async function claimLegacyWorkspace\(user\)/);
+  assert.match(server, /\/api\/workspaces\/claim-legacy/);
+  assert.match(app, /'X-GuGu-Desktop': '1'/);
+  assert.match(desktopMain, /details\.requestHeaders\['X-GuGu-Workspace-Id'\] = workspaceId/);
+  assert.doesNotMatch(app, /async function syncHistoricalCloudAssets\(/);
 });
 
-test('each login activates its account workspace before historical receive', () => {
+test('each login activates its account workspace before the legacy claim', () => {
   const enterAppStart = app.indexOf('async function enterApp(');
   const enterAppEnd = app.indexOf('\nlet accountSettingsRestoreFocus', enterAppStart);
   const enterAppSource = app.slice(enterAppStart, enterAppEnd);
-  assert.ok(enterAppSource.indexOf('await activateDesktopAccount(user)') < enterAppSource.indexOf('await syncHistoricalCloudAssets(user)'));
+  assert.ok(enterAppSource.indexOf('await activateDesktopAccount(user)') < enterAppSource.indexOf('await claimLegacyWorkspace(user)'));
   assert.match(app, /workspace\.activateAccount\(String\(user\.id\)\)/);
   assert.match(app, /workspace\?\.deactivateAccount\?\.\(\)/);
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=215/);
+  assert.match(index, /\/app\.js\?v=216/);
   assert.match(index, /\/styles\.css\?v=186/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=8/);
   assert.match(app, /\.\/drama-studio\.js\?v=70/);
@@ -84,26 +85,18 @@ test('generation submission is idempotent across duplicate form and HTTP events'
   assert.match(submitSource, /const requestId = crypto\.randomUUID\(\)/);
   assert.match(submitSource, /referenceAssetIds, requestId/);
   assert.match(server, /id: taskIds\[index\]/);
-  assert.match(server, /const existingTasks = tasks\.map\(task => findGeneration\(user\.id, task\.id\)\)/);
+  assert.match(server, /const existingTasks = tasks\.map\(task => findGeneration\(user\.id, task\.id, scope\)\)/);
   assert.match(server, /if \(activeGenerations\.has\(task\.id\)\) return activeGenerations\.get\(task\.id\)/);
 });
 
-test('historical receive resumes from a per-page checkpoint and acknowledges in batches', () => {
-  assert.match(app, /function readHistoricalSyncCheckpoint\(marker\)/);
-  assert.match(app, /function writeHistoricalSyncCheckpoint\(marker/);
-  assert.match(app, /async function acknowledgeDesktopAssets\(entries\)/);
-  const syncStart = app.indexOf('async function syncHistoricalCloudAssets(');
-  const syncEnd = app.indexOf('\nasync function runDesktopHydrationQueue', syncStart);
-  const syncSource = app.slice(syncStart, syncEnd);
-  // 断点必须从已持久化的游标续传，而不是每次都从头扫描。
-  assert.match(syncSource, /let cursor = checkpoint\.cursor;/);
-  assert.match(syncSource, /let scanned = checkpoint\.scanned;/);
-  // 已在本地的素材只允许走批量确认，逐条确认会退化成上万次 HTTP 往返。
-  assert.match(syncSource, /await acknowledgeDesktopAssets\(present\)/);
-  assert.doesNotMatch(syncSource, /await acknowledgeDesktopAsset\(/);
-  // 出现可重试失败的那一页之后不得再前移游标。
-  assert.match(syncSource, /if \(pageFailures\) checkpointClean = false;/);
-  assert.match(syncSource, /if \(checkpointClean\) writeHistoricalSyncCheckpoint\(marker/);
+test('legacy workspace claim uses only the local index and runs once per workspace', () => {
+  const claimStart = app.indexOf('async function claimLegacyWorkspace(');
+  const claimEnd = app.indexOf('\nasync function runDesktopHydrationQueue', claimStart);
+  const claimSource = app.slice(claimStart, claimEnd);
+  assert.match(claimSource, /listDesktopFiles\(\{ limit:200, cursor \}\)/);
+  assert.match(claimSource, /\/api\/workspaces\/claim-legacy/);
+  assert.match(claimSource, /localStorage\.setItem\(marker, 'complete'\)/);
+  assert.doesNotMatch(claimSource, /listHistoricalCloudAssetsPage|hydrateDesktopAsset/);
 });
 
 test('workspace boot exposes progress for the initial load', () => {
@@ -111,7 +104,8 @@ test('workspace boot exposes progress for the initial load', () => {
   assert.match(index, /role="progressbar"/);
   assert.match(app, /function setBootProgress\(/);
   assert.match(app, /const initialLoadSteps = \[/);
-  assert.match(app, /updateHistoryProgress\(scanned, scanned \? '正在继续接收历史素材' : '正在扫描历史素材'\)/);
+  assert.doesNotMatch(app, /updateHistoryProgress\(scanned/);
+  assert.match(app, /progress:8, progressLabel:'准备本地工作区'/);
 });
 
 test('generation polling resolves completed media from the local index only', () => {
@@ -138,7 +132,7 @@ test('a completed desktop hydration invalidates older local-library snapshots', 
 
 test('targeted missing-file repairs bypass stale local-ready delivery state', () => {
   const syncStart = app.indexOf('async function syncDesktopDeliveries(');
-  const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
+  const syncEnd = app.indexOf('\nconst esc', syncStart);
   const syncSource = app.slice(syncStart, syncEnd);
   assert.match(syncSource, /await desktopSyncRequest/);
   assert.match(syncSource, /queueDesktopHydration\(deliveries, \{ forceAssetIds:requestedAssetIds \}\)/);
@@ -147,7 +141,7 @@ test('targeted missing-file repairs bypass stale local-ready delivery state', ()
 
 test('remote cloud deletion removes only the matching local cloud copy', () => {
   const syncStart = app.indexOf('async function syncDesktopDeliveries(');
-  const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
+  const syncEnd = app.indexOf('\nconst esc', syncStart);
   const syncSource = app.slice(syncStart, syncEnd);
   assert.match(syncSource, /change\?\.action === 'delete'/);
   assert.match(syncSource, /removeDesktopCloudAssets\(deletedCloudAssetIds\)/);
@@ -157,7 +151,7 @@ test('remote cloud deletion removes only the matching local cloud copy', () => {
 
 test('desktop sync consumes asset upserts and queues them for local hydration', () => {
   const syncStart = app.indexOf('async function syncDesktopDeliveries(');
-  const syncEnd = app.indexOf('\nfunction scheduleDesktopAssetSync', syncStart);
+  const syncEnd = app.indexOf('\nconst esc', syncStart);
   const syncSource = app.slice(syncStart, syncEnd);
   assert.match(syncSource, /change\?\.action === 'upsert' && change\.asset\?\.id/);
   assert.match(syncSource, /\.map\(change => change\.asset\)/);

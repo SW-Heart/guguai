@@ -10,7 +10,7 @@ import {
   configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject,
   saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
   parseLimit, decodeCursor, encodeCursor, InvalidCursorError,
-  findGeneration, findCloudAssets, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
+  findGeneration, findCloudAssets, claimLegacyWorkspace, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
 } from '../lib/store.mjs';
 
 let workDir;
@@ -120,6 +120,40 @@ test('store pagination', async t => {
     assert.equal(listGenerations(a, { limit: 10 }).total, 1);
     assert.equal(listGenerations(a, { limit: 10 }).items[0].id, 'a-1');
     assert.equal(findGeneration(a, 'b-1'), null, '跨用户读取应为空');
+  });
+
+  await t.test('desktop workspace scope isolates records and claims only local legacy assets', () => {
+    const userId = makeUser();
+    const scopeA = { deviceId: 'device-a-123456', workspaceId: 'workspace-a-123456' };
+    const scopeB = { deviceId: 'device-b-123456', workspaceId: 'workspace-b-123456' };
+    const originA = { originDeviceId:scopeA.deviceId, originWorkspaceId:scopeA.workspaceId };
+    const originB = { originDeviceId:scopeB.deviceId, originWorkspaceId:scopeB.workspaceId };
+    const createdAt = '2026-01-01T00:00:00.000Z';
+    saveGenerationRecord(userId, { id:'gen-a', type:'image', status:'completed', assetId:'asset-a', ...originA, createdAt, updatedAt:createdAt });
+    saveGenerationRecord(userId, { id:'gen-b', type:'image', status:'completed', assetId:'asset-b', ...originB, createdAt, updatedAt:createdAt });
+    saveAssetRecord(userId, { id:'asset-a', kind:'image', name:'A.png', sourceGenerationId:'gen-a', objectKey:'a.png', deliveryStatus:'remote_backed_up', remoteStatus:'ready', ...originA, createdAt, updatedAt:createdAt });
+    saveAssetRecord(userId, { id:'asset-b', kind:'image', name:'B.png', sourceGenerationId:'gen-b', objectKey:'b.png', deliveryStatus:'remote_backed_up', remoteStatus:'ready', ...originB, createdAt, updatedAt:createdAt });
+    saveDramaProjectRecord(userId, { id:'project-a', title:'A', step:'script', status:'draft', ...originA, resources:[{ versions:['gen-a'] }], createdAt, updatedAt:createdAt });
+    saveDramaProjectRecord(userId, { id:'project-b', title:'B', step:'script', status:'draft', ...originB, resources:[{ versions:['gen-b'] }], createdAt, updatedAt:createdAt });
+
+    assert.deepEqual(listGenerations(userId, scopeA).items.map(item => item.id), ['gen-a']);
+    assert.deepEqual(listGenerations(userId, scopeB).items.map(item => item.id), ['gen-b']);
+    assert.equal(findGeneration(userId, 'gen-b', scopeA), null);
+    assert.deepEqual(listAssets(userId, scopeA).items.map(item => item.id), ['asset-a']);
+    assert.equal(findCloudAssets(userId, ['asset-b'], scopeA).length, 0);
+    assert.deepEqual(listDramaProjects(userId, scopeA).items.map(item => item.id), ['project-a']);
+    assert.equal(latestDramaProject(userId, scopeB).id, 'project-b');
+    assert.deepEqual(listPendingAssetDeliveries(userId, 'device-a-123456', { workspaceId:scopeA.workspaceId }).map(item => item.id), ['asset-a']);
+
+    saveGenerationRecord(userId, { id:'legacy-generation', type:'image', status:'completed', assetId:'legacy-asset', createdAt, updatedAt:createdAt });
+    saveAssetRecord(userId, { id:'legacy-asset', kind:'image', name:'legacy.png', sourceGenerationId:'legacy-generation', objectKey:'legacy.png', createdAt, updatedAt:createdAt });
+    saveDramaProjectRecord(userId, { id:'legacy-project', title:'Legacy', step:'script', status:'draft', resources:[{ versions:['legacy-generation'] }], createdAt, updatedAt:createdAt });
+    const claimed = claimLegacyWorkspace(userId, { ...scopeA, assetIds:['legacy-asset'] });
+    assert.deepEqual(claimed, { generations:1, assets:1, projects:1 });
+    assert.equal(findGeneration(userId, 'legacy-generation', scopeA).originWorkspaceId, scopeA.workspaceId);
+    assert.equal(findGeneration(userId, 'legacy-generation', scopeB), null);
+    assert.equal(listAssets(userId, scopeA).items.some(item => item.id === 'legacy-asset'), true);
+    assert.equal(claimLegacyWorkspace(userId, { ...scopeA, assetIds:['legacy-asset'] }).generations, 0, '归属迁移应可重复调用且不重复更新');
   });
 
   await t.test('a cursor from another scope or a tampered cursor is rejected', () => {

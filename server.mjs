@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -22,7 +22,7 @@ import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendL
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
-import { ensureDefaultModelRoutes, publicModelPrices, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
+import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
@@ -239,6 +239,24 @@ const normalizeDeviceId = value => {
   const deviceId = String(value || '').trim();
   return /^[a-zA-Z0-9_-]{8,128}$/.test(deviceId) ? deviceId : '';
 };
+const normalizeWorkspaceId = value => {
+  const workspaceId = String(value || '').trim();
+  return /^[a-zA-Z0-9_-]{8,128}$/.test(workspaceId) ? workspaceId : '';
+};
+function desktopWorkspaceScope(req) {
+  const desktop = String(req.headers['x-gugu-desktop'] || '') === '1';
+  const deviceId = normalizeDeviceId(req.headers['x-gugu-device-id']);
+  const workspaceId = normalizeWorkspaceId(req.headers['x-gugu-workspace-id']);
+  return { desktop, deviceId, workspaceId, valid:!desktop || Boolean(deviceId && workspaceId) };
+}
+function requireDesktopWorkspaceScope(req, res) {
+  const scope = desktopWorkspaceScope(req);
+  if (!scope.valid) {
+    sendJson(res, 400, { error:'桌面工作区标识缺失，请重启客户端后重试', code:'WORKSPACE_SCOPE_REQUIRED' });
+    return null;
+  }
+  return scope;
+}
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
 const profileNicknamePattern = /^[\p{L}\p{N}_-]{2,24}$/u;
@@ -274,13 +292,23 @@ const uploadSweeper = setInterval(() => {
 uploadSweeper.unref();
 const generationFailureCatalog = Object.freeze({
   CONTENT_REJECTED: Object.freeze({ message: '内容未通过生成检查', suggestion: '请调整可能涉及敏感、侵权或高风险的描述及参考图片后重试。', action: 'edit_input' }),
+  REFERENCE_REQUIRED: Object.freeze({ message: '当前视频服务要求参考图片', suggestion: '请添加符合要求的参考图片，或切换到支持纯文本生成的视频服务后重试。', action: 'edit_input' }),
   INVALID_REFERENCE: Object.freeze({ message: '参考图片不符合生成要求', suggestion: '请检查图片格式、大小和数量，移除异常图片后重新生成。', action: 'edit_input' }),
+  REFERENCE_UPLOAD_FAILED: Object.freeze({ message: '参考图片上传失败', suggestion: '请重新上传或更换参考图片后重试。', action: 'edit_input' }),
+  REFERENCE_UNAVAILABLE: Object.freeze({ message: '参考图片暂时无法读取', suggestion: '请重新上传参考图片，确认素材已同步后再试。', action: 'edit_input' }),
+  PORTRAIT_RESTRICTED: Object.freeze({ message: '参考图片未通过真人肖像检查', suggestion: '当前服务不接受这张真人参考图片，请更换图片或切换支持该类素材的模型后重试。', action: 'edit_input' }),
   INVALID_REQUEST: Object.freeze({ message: '生成参数不符合要求', suggestion: '请检查提示词、画幅、时长和生成模式后重试。', action: 'edit_input' }),
+  PROMPT_TOO_LONG: Object.freeze({ message: '创作描述过长', suggestion: '请精简创作描述后重试。', action: 'edit_input' }),
+  UNSUPPORTED_ASPECT_RATIO: Object.freeze({ message: '当前视频服务不支持所选画幅', suggestion: '请更换画幅后重试。', action: 'edit_input' }),
   RATE_LIMITED: Object.freeze({ message: '当前生成请求较多', suggestion: '请稍等几分钟再试，不要连续重复提交。', action: 'retry_later' }),
   TIMEOUT: Object.freeze({ message: '生成等待超时', suggestion: '本次任务已停止，可重新生成；若持续发生，请稍后再试。', action: 'retry' }),
-  MODEL_UNRESPONSIVE: Object.freeze({ message: '模型无响应', suggestion: '上游未在规定时间内返回任务编号，本次任务已停止，请稍后重试。', action: 'retry_later' }),
+  MODEL_UNRESPONSIVE: Object.freeze({ message: '模型无响应', suggestion: '生成服务未在规定时间内返回任务编号，本次任务已停止，请稍后重试。', action: 'retry_later' }),
+  MODEL_UNAVAILABLE: Object.freeze({ message: '当前生成服务不支持所选模型', suggestion: '请稍后重试；若持续出现，请联系支持检查模型配置。', action: 'retry_later' }),
   SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
-  UPSTREAM_BILLING: Object.freeze({ message: '视频供应商账户余额不足', suggestion: '请为当前视频供应商账户充值，或切换到已开通且有余额的渠道后再试。', action: 'contact_support' }),
+  SERVICE_NOT_CONFIGURED: Object.freeze({ message: '生成服务尚未配置', suggestion: '请联系支持处理当前生成服务配置后再试。', action: 'contact_support' }),
+  NETWORK_ERROR: Object.freeze({ message: '生成服务连接失败', suggestion: '请检查网络后稍后重试；若持续失败，请联系支持。', action: 'retry_later' }),
+  UPSTREAM_BILLING: Object.freeze({ message: '生成服务额度不足', suggestion: '当前服务暂时无法提交本次任务，请稍后重试或联系支持。', action: 'contact_support' }),
+  UPSTREAM_REJECTED: Object.freeze({ message: '生成服务拒绝了本次任务', suggestion: '请调整提示词或参考素材后重试；若仍失败，请联系支持并提供本平台任务编号。', action: 'edit_input' }),
   RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
   ARCHIVE_FAILED: Object.freeze({ message: '成品归档暂未完成', suggestion: '模型已完成生成，请稍后刷新，不要重复提交；持续未恢复时请联系支持。', action: 'wait' }),
   INTERRUPTED: Object.freeze({ message: '任务处理被中断', suggestion: '任务未能继续执行，请确认积分状态后重新生成。', action: 'retry' }),
@@ -293,27 +321,92 @@ function generationFailureCode(task) {
   if (task.sourceUrl && (task.providerTaskId || task.archivePending)) return 'ARCHIVE_FAILED';
   if (/服务重启|任务.*中断|interrupted|cancelled|canceled/.test(raw)) return 'INTERRUPTED';
   if (/模型无响应|未获得上游任务\s*id|未返回上游任务编号/.test(raw)) return 'MODEL_UNRESPONSIVE';
-  if (/content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情|rejected/.test(raw)) return 'CONTENT_REJECTED';
+  if (/insufficient[_ -]?credits|insufficient balance|insufficient funds|account balance|余额不足|账户余额|余额不够/.test(raw)) return 'UPSTREAM_BILLING';
+  if (/may contain real person|real person|肖像保护|本人肖像/.test(raw)) return 'PORTRAIT_RESTRICTED';
+  if (/content[_ ]policy|content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情/.test(raw)) return 'CONTENT_REJECTED';
+  if (/requires?\s+\d+\s+to\s+\d+\s+reference images?|reference images?\s+(?:is|are)?\s*required|参考图.*必需|必须.*参考图/.test(raw)) return 'REFERENCE_REQUIRED';
+  if (/image upload failed|upload failed.*image|图片上传失败/.test(raw)) return 'REFERENCE_UPLOAD_FAILED';
+  if (/(?:reference|参考).*(?:\b(?:404|403)\b|链接.*(?:过期|失效)|download.*failed)|(?:\b(?:404|403)\b).*(?:reference|参考图|图片)/.test(raw)) return 'REFERENCE_UNAVAILABLE';
   if (/unmarshal.*images|image.*\[\]string|参考图|参考素材.*(本地|同步|读取|云端|源地址)|文件本地缓存缺失|没有可用的云端归档|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
+  if (/prompt length exceeds|prompt.*(?:too long|maximum allowed length)|提示词.*过长|创作描述.*过长/.test(raw)) return 'PROMPT_TOO_LONG';
+  if (/aspect ratio.*(?:not supported|unsupported)|不支持画幅|画幅.*不支持/.test(raw)) return 'UNSUPPORTED_ASPECT_RATIO';
+  if (/模型不存在|模型.*未开放|model.*(?:does not exist|not found|not available|not enabled|not open)/.test(raw)) return 'MODEL_UNAVAILABLE';
+  if (/\bupstream[_ -]?rejected\b/.test(raw)) return 'UPSTREAM_REJECTED';
   if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
   if (/timeout|timed out|超时|等待超时/.test(raw)) return 'TIMEOUT';
-  if (/account balance|insufficient balance|insufficient funds|余额不足|账户余额|余额不够/.test(raw)) return 'UPSTREAM_BILLING';
   if (/没有返回任务 id|没有返回结果|没有返回.*url|missing.*(task|result|url)|invalid response|结果地址/.test(raw)) return 'RESULT_INVALID';
+  if (/服务.*(尚未配置|未配置)|尚未配置/.test(raw)) return 'SERVICE_NOT_CONFIGURED';
+  if (/service(?:\s+is)?\s+unavailable|服务.*不可用/.test(raw)) return 'SERVICE_UNAVAILABLE';
+  if (/fetch failed|network|econn|socket/.test(raw)) return 'NETWORK_ERROR';
   if (/\b400\b|\b409\b|\b422\b|invalid (parameter|argument|request)|bad request|参数|不支持.*(画幅|时长|模式)/.test(raw)) return 'INVALID_REQUEST';
   if (/\b(401|403|404|500|502|503|504)\b|fetch failed|network|econn|socket|service unavailable|服务.*(未配置|不可用)|任务没有返回任务 id/.test(raw)) return 'SERVICE_UNAVAILABLE';
   return 'UNKNOWN';
 }
+function referenceNumber(raw) {
+  const match = String(raw || '').match(/(?:reference\s+(?:image\s+)?|image\s+reference\s+|参考(?:图片|图)\s*)#?(\d+)/i);
+  return match ? Number(match[1]) : 0;
+}
+function generationFailure(task) {
+  const code = generationFailureCode(task);
+  const base = { code, ...(generationFailureCatalog[code] || generationFailureCatalog.UNKNOWN) };
+  const raw = String(task.error || '');
+  if (code === 'REFERENCE_REQUIRED') {
+    const range = raw.match(/requires?\s+(\d+)\s+to\s+(\d+)\s+reference images?/i);
+    const requirement = range ? `${range[1]}～${range[2]} 张` : '至少 1 张';
+    return { ...base, message: '当前视频服务要求参考图片', suggestion: `本次要求 ${requirement}参考图片，请添加后重试；如果要纯文本生成，请切换到支持纯文本的视频服务。` };
+  }
+  if (code === 'REFERENCE_UPLOAD_FAILED') {
+    return { ...base, suggestion: '参考图片未能上传到生成服务，请重新上传或更换图片后重试。' };
+  }
+  if (code === 'REFERENCE_UNAVAILABLE') {
+    const number = referenceNumber(raw);
+    const label = number ? `第 ${number} 张参考图` : '参考图';
+    return { ...base, message: `${label}暂时无法读取`, suggestion: `请重新上传${label}，确认素材已同步后再试。` };
+  }
+  if (code === 'PORTRAIT_RESTRICTED') {
+    const requiresOwnerPortrait = /only supports.*(?:本人|real person)|包含本人肖像/.test(raw.toLowerCase());
+    return requiresOwnerPortrait
+      ? { ...base, suggestion: '当前模型只接受包含本人肖像的参考图，请使用已获本人授权且符合当前服务规则的素材，或移除参考图改用纯文本生成。' }
+      : { ...base, suggestion: '当前服务不接受这张真人参考图；如果当前服务规则允许，可先转换为彩铅或插画风格，或按要求增加面部网格/标记后重试。请确保素材已获授权并符合服务规则；也可以改用虚构角色或非真人素材，或切换到明确支持真人肖像的模型。' };
+  }
+  if (code === 'CONTENT_REJECTED' && /reference|image reference|参考图|图片/.test(raw.toLowerCase())) {
+    const number = referenceNumber(raw);
+    const label = number ? `第 ${number} 张参考图` : '参考图片';
+    return { ...base, message: `${label}未通过内容安全检查`, suggestion: `请更换或移除触发检查的${label}后重试。` };
+  }
+  if (code === 'PROMPT_TOO_LONG') {
+    const limit = raw.match(/maximum allowed length of\s*(\d+)/i)?.[1] || '允许上限';
+    return { ...base, suggestion: `请将创作描述压缩到 ${limit} 个字符以内后重试。` };
+  }
+  if (code === 'UNSUPPORTED_ASPECT_RATIO') {
+    const requested = task.aspectRatio || '当前';
+    const supported = raw.match(/可选[：:]\s*([^。]+)/i)?.[1]?.trim();
+    return { ...base, message: `当前视频服务不支持 ${requested} 画幅`, suggestion: supported ? `请改用 ${supported} 后重试。` : '请改用支持的画幅后重试。' };
+  }
+  if (code === 'RATE_LIMITED' && /系统繁忙|overloaded|capacity/.test(raw.toLowerCase())) {
+    return { ...base, message: '当前视频生成服务暂时繁忙', suggestion: '请稍后重试，或切换其他可用模型。' };
+  }
+  if (code === 'UPSTREAM_BILLING') {
+    return { ...base, message: task.type === 'image' ? '当前图像生成服务额度不足' : '当前视频生成服务额度不足', suggestion: '当前服务暂时无法提交本次任务，请稍后重试或联系支持。' };
+  }
+  if (code === 'INTERRUPTED' && /服务重启/.test(raw)) {
+    return { ...base, message: '任务在提交前被服务重启中断', suggestion: '本次任务没有提交到模型服务，可以直接重新生成。' };
+  }
+  return base;
+}
+const publicGenerationFields = Object.freeze([
+  'id', 'type', 'status', 'prompt', 'referenceAssetIds', 'modelId', 'size', 'quality', 'aspectRatio', 'duration',
+  'videoModelId', 'generationType', 'assetId', 'creditCost', 'creditStatus', 'createdAt', 'updatedAt', 'submittedAt',
+  'finishedAt', 'progress', 'awaitingReferences', 'batchSize',
+]);
 function publicGeneration(task) {
-  const {
-    ownerId, provider, providerTaskId, sourceUrl, error: internalError, internalError: storedInternalError,
-    rawResponse, requestUrl, lastPollError, lastPollErrorAt, lastArchiveError, lastArchiveErrorAt,
-    lastSubmissionError, lastSubmissionErrorAt, pollFailureCount, archiveFailureCount,
-    submissionUncertain, submissionUncertainAt, submissionTimedOut, archivePending, sourceRequiresAuth, localReadyAt, localDeliveryDeadlineAt,
-    routeBaseUrl, routeCredentialId, routeAdapter, routeVersion, ...value
-  } = task;
-  const failure = task.status === 'failed'
-    ? { code: generationFailureCode(task), ...generationFailureCatalog[generationFailureCode(task)] }
-    : null;
+  // Keep this response allow-listed. Generation records also contain provider
+  // credentials, endpoints, provider task IDs, upstream model IDs and raw
+  // diagnostics that must never cross the customer API boundary.
+  const value = Object.fromEntries(publicGenerationFields
+    .filter(field => Object.hasOwn(task, field))
+    .map(field => [field, task[field]]));
+  const failure = task.status === 'failed' ? generationFailure(task) : null;
   const progressStage = task.awaitingReferences ? 'preparing_references'
     : task.status !== 'running' ? task.status
     : task.submissionUncertain ? 'awaiting_reconciliation'
@@ -370,6 +463,49 @@ async function bodyBuffer(req, limit, tooLargeMessage = '请求体过大') { con
 async function bodyForm(req, limit = 1_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } return Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))); }
 function sendJson(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
 function sendText(res, status, value, contentType = 'text/plain; charset=utf-8') { res.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(String(value)); }
+function publicHttpErrorMessage(error) {
+  if (error?.publicMessage) return String(error.publicMessage);
+  if (error?.upstreamError) return '模型服务暂时不可用，请稍后重试';
+  const message = String(error?.message || '').trim();
+  const hasInternalMetadata = Boolean(error?.provider || error?.providerTaskId || error?.routeId || error?.routeDisplayName || error?.routeAdapter || error?.routeBaseUrl || error?.routeCredentialId || error?.upstreamStatus || error?.upstreamMessage || error?.providerResponse || error?.submissionUncertain);
+  const containsInternalDetail = hasInternalMetadata || /上游|供应商|凭证|线路|渠道|接口地址|原始响应|请求地址|API\s*Key|Bearer|https?:\/\/|\b(?:provider|upstream|credential|route|request[_ -]?url|raw[_ -]?response)\b|\bsd(?:20|25)-|\b(?:WJ|DIW|CNTCN|TTAPI|AutoDL|Duomi)\b/i.test(message);
+  if (containsInternalDetail) return Number(error?.statusCode) >= 500 ? '生成服务暂时不可用，请稍后重试' : '请求无法处理，请稍后重试或联系支持';
+  return message || '服务错误';
+}
+const publicCreditModelIds = new Set([
+  fixedModels.image,
+  ...Object.values(VIDEO_MODEL_IDS),
+  ...Object.values(LEGACY_VIDEO_MODEL_IDS),
+]);
+function publicCreditEntry(entry) {
+  const value = {
+    type: entry?.type || 'credit_entry',
+    amount: Number(entry?.amount) || 0,
+    createdAt: entry?.createdAt || '',
+  };
+  if (['image', 'video'].includes(entry?.contentType)) value.contentType = entry.contentType;
+  if (publicCreditModelIds.has(entry?.modelId)) value.modelId = entry.modelId;
+  return value;
+}
+const publicLlmUsageFields = Object.freeze([
+  'inputTokens', 'outputTokens', 'chargedCredits', 'attemptCount', 'maxAttemptCount',
+  'recoveryAttempts', 'maxRecoveryRounds', 'initialReturnedCount', 'recoveredShotCount',
+  'completionCount', 'recoveryMode', 'correctedProblemCount', 'autoCompleted',
+  'autoRegenerated', 'autoCorrected',
+]);
+function publicLlmUsage(usage) {
+  const value = Object.fromEntries(publicLlmUsageFields
+    .filter(field => Object.hasOwn(usage || {}, field))
+    .map(field => [field, usage[field]]));
+  if (Array.isArray(usage?.attempts)) {
+    value.attempts = usage.attempts.map(attempt => Object.fromEntries(
+      ['type', 'inputTokens', 'outputTokens', 'chargedCredits']
+        .filter(field => Object.hasOwn(attempt || {}, field))
+        .map(field => [field, attempt[field]]),
+    ));
+  }
+  return value;
+}
 /**
  * Pagination travels in headers so the response bodies keep their original
  * shape. The front end consumes /api/generations and /api/files as bare arrays,
@@ -397,7 +533,8 @@ function publicPlatformPrices(pricing, videoCapabilities) {
       for (const item of routeItems) {
         if (!item.available || item.credits === null || item.yuan === null) continue;
         const seconds = Math.max(1, Number(item.duration) || 1);
-        items.push({ ...item, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits, totalYuan: item.yuan, credits: item.credits / seconds, yuan: item.yuan / seconds });
+        const { selectedRouteId, selectedRouteName, ...safeItem } = item;
+        items.push({ ...safeItem, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits, totalYuan: item.yuan, credits: item.credits / seconds, yuan: item.yuan / seconds });
       }
       continue;
     }
@@ -406,10 +543,10 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     for (const quality of mode.qualityOptions?.length ? mode.qualityOptions : ['标准']) {
       const price = mode.pricingByQuality?.[quality] || mode.pricing || { currency: 'credit', amount: pricing.videoPerSecond, unit: 'second' };
       const credits = Number(price.amount || 0);
-      items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`platform:${pricing.version}:${model.id}:${quality}` });
+      items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
-  if (isModelEnabled(fixedModels.image)) items.push({ modelId: fixedModels.image, label: 'GuGu 图像', quality: '标准', duration: null, available: true, enabled: true, availability: 'available', credits: pricing.imagePerRequest, yuan: pricing.imagePerRequest * 0.1, unit: 'request', priceVersion: `platform:${pricing.version}:image` });
+  if (isModelEnabled(fixedModels.image)) items.push({ modelId: fixedModels.image, label: 'GuGu 图像', quality: '标准', duration: null, available: true, enabled: true, availability: 'available', credits: pricing.imagePerRequest, yuan: pricing.imagePerRequest * 0.1, unit: 'request', priceVersion: `v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:image`).digest('hex').slice(0, 32)}` });
   return items;
 }
 
@@ -848,7 +985,7 @@ async function createRoutedVideo(task, refs, hooks = {}) {
     if (error.upstreamTerminal) throw error;
     if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: task.provider, upstreamTerminal: true });
     if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: task.provider, providerTaskId: taskId });
-    throw Object.assign(new Error(`${task.routeDisplayName || '视频线路'}提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: task.provider, submissionUncertain: true, cause: error });
+    throw Object.assign(new Error(`视频提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: task.provider, submissionUncertain: true, cause: error });
   }
 }
 function autodlStatus(value) {
@@ -1149,7 +1286,19 @@ function saveDramaProject(userId, project) {
   project.updatedAt = now();
   return saveDramaProjectRecord(userId, project);
 }
-function publicDramaProject(project) { const { ownerId, ...value } = project; return value; }
+const publicDramaProjectFields = Object.freeze([
+  'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings',
+  'analysis', 'analysisUsage', 'storyboard', 'storyboardUsage', 'resources', 'scenes', 'shots',
+  'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'workflowVersion',
+  'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
+]);
+function publicDramaProject(project) {
+  // Project records may contain legacy or future server-only fields. Never
+  // serialize the whole persistence object to a customer response.
+  return Object.fromEntries(publicDramaProjectFields
+    .filter(field => Object.hasOwn(project, field))
+    .map(field => [field, ['analysisUsage', 'storyboardUsage'].includes(field) ? publicLlmUsage(project[field]) : project[field]]));
+}
 function normalizeDramaProject(project) {
   const legacyMaxStep = !dramaStepOrder.includes(project.maxStep);
   project.schemaVersion = 5; project.revision = Math.max(1, Number(project.revision) || 1); project.workflowVersion = Number(project.workflowVersion) || 1; project.mode ||= 'smart';
@@ -1225,22 +1374,22 @@ function dramaProjectGenerationIds(project) {
     ...(project?.storyboard?.shots || []).flatMap(shot => [shot.keyframeTaskId, shot.videoTaskId]),
   ].map(value => String(value || '')).filter(Boolean))];
 }
-async function loadDramaProject(userId, id) {
-  const project = findDramaProject(userId, id);
+async function loadDramaProject(userId, id, scope = {}) {
+  const project = findDramaProject(userId, id, scope);
   if (!project) return null;
   normalizeDramaProject(project);
   // Projects outlive generation records. Repair references while loading so a
   // deleted work can never leave the short-drama page pointing at a phantom
   // task and showing “任务记录不可用” forever.
-  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId));
+  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId, scope));
   if (staleIds.length) {
     staleIds.forEach(taskId => removeGenerationFromDramaProject(project, taskId));
     await saveDramaProject(userId, project);
   }
   return project;
 }
-function reconcileDramaProjectGenerationReferences(userId, project) {
-  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId));
+function reconcileDramaProjectGenerationReferences(userId, project, scope = {}) {
+  const staleIds = dramaProjectGenerationIds(project).filter(taskId => !findGeneration(userId, taskId, scope));
   staleIds.forEach(taskId => removeGenerationFromDramaProject(project, taskId));
   return staleIds.length > 0;
 }
@@ -1332,7 +1481,7 @@ async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mim
   await saveAsset(userId, asset);
   if (deviceId) markAssetDeliveryReady(userId, deviceId, asset.id);
   if (asset.sourceGenerationId) {
-    const task = findGeneration(userId, asset.sourceGenerationId);
+    const task = findGeneration(userId, asset.sourceGenerationId, { deviceId:asset.originDeviceId, workspaceId:asset.originWorkspaceId });
     if (task?.assetId === asset.id) {
       task.archivePending = false;
       task.localReadyAt = asset.localReadyAt;
@@ -1350,8 +1499,13 @@ async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mim
   return { asset };
 }
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.objectKey) await deleteObject(asset.objectKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+const publicAssetFields = Object.freeze([
+  'id', 'name', 'kind', 'mimeType', 'size', 'sha256', 'width', 'height', 'source', 'createdAt', 'updatedAt', 'deliveryStatus', 'remoteStatus', 'sourceGenerationId',
+]);
 function publicAsset(asset) {
-  const { ownerId, storageName, sourceUrl, sourceRequiresAuth, objectKey, objectUploadedAt, ...value } = asset;
+  const value = Object.fromEntries(publicAssetFields
+    .filter(field => Object.hasOwn(asset, field))
+    .map(field => [field, asset[field]]));
   const url = `/api/files/${encodeURIComponent(asset.id)}/content`;
   return {
     ...value,
@@ -1594,6 +1748,7 @@ async function stageImageReference(userId, task, asset, targetDir) {
 }
 async function resolveImageRefs(userId, ids, task = {}) {
   const referenceIds = ids.slice(0, task.referenceLimits?.image || 7);
+  const scope = { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId };
   if (!referenceIds.length) return [];
   if (!r2Reference) throw storageUnavailable('r2-reference');
   // Image providers may fetch the reference after submission. Always stage a
@@ -1601,7 +1756,7 @@ async function resolveImageRefs(userId, ids, task = {}) {
   return withMediaTempDir(`image-reference-${task.id}`, async jobDir => {
     const refs = [];
     for (const id of referenceIds) {
-      const asset = findAsset(userId, id);
+      const asset = findAsset(userId, id, scope);
       if (!asset || asset.kind !== 'image') continue;
       refs.push(await stageImageReference(userId, task, asset, jobDir));
     }
@@ -1610,12 +1765,13 @@ async function resolveImageRefs(userId, ids, task = {}) {
 }
 async function resolveRefs(userId, ids, task = {}) {
   const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
+  const scope = { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId };
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   // Image references use the dedicated reference bucket; video and audio
   // references use longer-lived signed URLs from the private media bucket.
   return withMediaTempDir(`video-reference-${task.id}`, async jobDir => {
     for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
-      const asset = findAsset(userId, id);
+      const asset = findAsset(userId, id, scope);
       if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
       if (!mixed && asset.kind !== 'image') continue;
       let url;
@@ -1631,14 +1787,14 @@ async function resolveRefs(userId, ids, task = {}) {
     return refs;
   });
 }
-async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true } = {}) {
+async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true, scope = {} } = {}) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
   const ids = [...new Set((value || []).map(safeId).filter(Boolean))];
   const referenceLimits = limits || { image: 7, video: 0, audio: 0, total: 7 };
   if (ids.length > referenceLimits.total) throw Object.assign(new Error(`参考素材最多支持 ${referenceLimits.total} 个（图片 ${referenceLimits.image} / 视频 ${referenceLimits.video} / 音频 ${referenceLimits.audio}）`), { statusCode: 400 });
   const counts = { image: 0, video: 0, audio: 0 };
   for (const id of ids) {
-    const asset = findAsset(userId, id);
+    const asset = findAsset(userId, id, scope);
     if (!asset || !Object.hasOwn(counts, asset.kind)) throw Object.assign(new Error('参考素材不存在或类型不受当前模型支持'), { statusCode: 400 });
     counts[asset.kind]++;
     if (counts[asset.kind] > Number(referenceLimits[asset.kind] || 0)) throw Object.assign(new Error(`参考${asset.kind === 'image' ? '图片' : asset.kind === 'video' ? '视频' : '音频'}最多支持 ${referenceLimits[asset.kind]} 个`), { statusCode: 400 });
@@ -1648,10 +1804,10 @@ async function validateReferenceAssets(userId, value, limits = null, { requireRe
   }
   return ids;
 }
-function referenceAssetCounts(userId, ids) {
+function referenceAssetCounts(userId, ids, scope = {}) {
   const counts = { image: 0, video: 0, audio: 0 };
   for (const id of ids || []) {
-    const asset = findAsset(userId, id);
+    const asset = findAsset(userId, id, scope);
     if (asset && Object.hasOwn(counts, asset.kind)) counts[asset.kind]++;
   }
   return counts;
@@ -1704,6 +1860,8 @@ async function prepareGenerationAsset(userId, task, result) {
     storageName: existing?.storageName || `${assetId}${extension}`,
     source: 'generation',
     sourceGenerationId: task.id,
+    originDeviceId: String(task.originDeviceId || ''),
+    originWorkspaceId: String(task.originWorkspaceId || ''),
     sourceUrl: result.url,
     sourceRequiresAuth: Boolean(result.requiresAuth),
     deliveryStatus: existing?.deliveryStatus === 'local_ready' ? 'local_ready' : 'awaiting_local',
@@ -1726,7 +1884,7 @@ async function servePendingGenerationSource(res, asset) {
   const task = asset.sourceGenerationId ? findGeneration(asset.ownerId, asset.sourceGenerationId) : null;
   const response = await fetch(sourceUrl, { headers: generationSourceHeaders(task, sourceUrl.toString()), signal: AbortSignal.timeout(180_000) });
   if (!response.ok || !response.body) {
-    sendJson(res, response.status || 502, { error: `上游成品下载失败（${response.status || '无响应'}）` });
+    sendJson(res, response.status || 502, { error: `成品下载暂时失败（${response.status || '无响应'}）` });
     return true;
   }
   const contentType = response.headers.get('content-type')?.split(';')[0] || asset.mimeType || 'application/octet-stream';
@@ -1779,6 +1937,8 @@ async function archiveGenerationResult(userId, task, resultUrl) {
       sourceGenerationId: task.id,
       sourceUrl: resultUrl,
       sourceRequiresAuth: Boolean(task.sourceRequiresAuth),
+      originDeviceId: String(task.originDeviceId || ''),
+      originWorkspaceId: String(task.originWorkspaceId || ''),
       deliveryStatus: 'remote_backed_up',
       remoteStatus: 'ready',
       objectKey,
@@ -2381,7 +2541,7 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, publicGeneration, publicAsset, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -2556,7 +2716,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') { const token = parseCookies(req.headers.cookie).studio_session; if (token) deleteSession(tokenHash(token)); clearSessionCookie(res); return sendJson(res, 200, { ok: true }); }
     if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }
     if (url.pathname === '/api/config' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, configState()); }
-    if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
+    if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000).map(publicCreditEntry); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
     if (url.pathname === '/api/payments/alipay/orders' && req.method === 'POST') {
       const user = requireUser(req, res); if (!user) return;
       const input = await bodyJson(req);
@@ -2591,29 +2751,47 @@ const server = http.createServer(async (req, res) => {
     if (notificationReadMatch && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markNotificationRead(user.id, notificationReadMatch[1]); return sendJson(res, 200, listNotifications(user.id)); }
     if (url.pathname === '/api/notifications/read-all' && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markAllNotificationsRead(user.id); return sendJson(res, 200, listNotifications(user.id)); }
 
+    // Older desktop clients did not record a workspace origin on server
+    // metadata. Claim only records whose asset IDs are already present in the
+    // current local library; this does not download or move any file.
+    if (url.pathname === '/api/workspaces/claim-legacy' && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const input = await bodyJson(req, 200_000);
+      const assetIds = [...new Set((Array.isArray(input.assetIds) ? input.assetIds : [])
+        .map(value => String(value || '').trim().slice(0, 200))
+        .filter(Boolean))].slice(0, 5000);
+      const result = claimLegacyWorkspace(user.id, { deviceId:scope.deviceId, workspaceId:scope.workspaceId, assetIds });
+      return sendJson(res, 200, { ok:true, ...result });
+    }
+
     if (url.pathname === '/api/drama/projects' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
-      const page = listDramaProjects(user.id, { limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const page = listDramaProjects(user.id, { deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
       setPageHeaders(res, page);
       return sendJson(res, 200, { projects: page.items.map(project => publicDramaProject(normalizeDramaProject(project))) });
     }
     if (url.pathname === '/api/drama/projects' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req);
+      const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const input = await bodyJson(req);
       const mode = input.mode === 'professional' ? 'professional' : 'smart'; const title = String(input.title || '未命名短剧').trim().slice(0, 80);
-      const project = normalizeDramaProject({ id:randomUUID(), ownerId:user.id, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[], finalAssetId:'', createdAt:now(), updatedAt:now() });
+      const project = normalizeDramaProject({ id:randomUUID(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[], finalAssetId:'', createdAt:now(), updatedAt:now() });
       await saveDramaProject(user.id, project); return sendJson(res, 201, { project:publicDramaProject(project) });
     }
     // Must precede the /:id route below, otherwise "latest" is captured as a
     // project id and always resolves to 404.
     if (url.pathname === '/api/drama/projects/latest' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
-      const project = latestDramaProject(user.id);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const project = latestDramaProject(user.id, { deviceId:scope.deviceId, workspaceId:scope.workspaceId });
       return project ? sendJson(res, 200, { project: publicDramaProject(normalizeDramaProject(project)) }) : sendJson(res, 404, { error: '还没有短剧项目' });
     }
     const dramaProjectMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)$/);
-    if (dramaProjectMatch && req.method === 'GET') { const user = await requireUser(req, res); if (!user) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1]); return project ? sendJson(res, 200, { project:publicDramaProject(project) }) : sendJson(res, 404, { error:'短剧项目不存在' }); }
+    if (dramaProjectMatch && req.method === 'GET') { const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1], scope); return project ? sendJson(res, 200, { project:publicDramaProject(project) }) : sendJson(res, 404, { error:'短剧项目不存在' }); }
     if (dramaProjectMatch && req.method === 'PATCH') {
-      const user = await requireUser(req, res); if (!user) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1]); if (!project) return sendJson(res, 404, { error:'短剧项目不存在' }); const input = await bodyJson(req);
+      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1], scope); if (!project) return sendJson(res, 404, { error:'短剧项目不存在' }); const input = await bodyJson(req);
       if (input.revision !== undefined && Number(input.revision) !== Number(project.revision)) {
         return sendJson(res, 409, { error:'项目已在其他操作中更新，正在合并最新内容', code:'PROJECT_VERSION_CONFLICT', project:publicDramaProject(project) });
       }
@@ -2630,12 +2808,12 @@ const server = http.createServer(async (req, res) => {
       normalizeDramaProject(project);
       // A deletion can race a debounced editor save. Never let that older
       // payload resurrect task ids which no longer exist.
-      reconcileDramaProjectGenerationReferences(user.id, project);
+      reconcileDramaProjectGenerationReferences(user.id, project, scope);
       await saveDramaProject(user.id, project); return sendJson(res, 200, { project:publicDramaProject(project) });
     }
     const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);
     if (directorMatch && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error:'导演服务尚未配置' }); const project = await loadDramaProject(user.id, directorMatch[1]); if (!project) return sendJson(res,404,{error:'短剧项目不存在'}); const input = await bodyJson(req);
+      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error:'导演服务尚未配置' }); const project = await loadDramaProject(user.id, directorMatch[1], scope); if (!project) return sendJson(res,404,{error:'短剧项目不存在'}); const input = await bodyJson(req);
       project.input = String(input.input ?? project.input).trim(); if (!project.input) return sendJson(res,400,{error:'请输入一句话创意或剧本'}); project.settings = { ...project.settings, ...(input.settings || {}) }; normalizeDramaProject(project);
       const inputIsScript = project.input.length >= 200 || /(?:^|\n)\s*(?:#{1,3}\s*)?(?:\d+[-–—]\d+秒|场景|第[一二三四五六七八九十\d]+场|[A-Z]+\s*[：:])/m.test(project.input);
       const prompt = `制作参数：${JSON.stringify(project.settings)}\n生产协议版本：${STORYBOARD_ENGINE_VERSION}\n输入类型：${inputIsScript?'完整剧本，必须保留原稿，不需要在结果中重复 script':'故事创意，需要生成完整 script'}\n用户输入：\n${project.input}`;
@@ -2657,7 +2835,7 @@ const server = http.createServer(async (req, res) => {
       let failureBalance;
       const recoveryHistory = [];
       const settlements = [];
-      const usageSummary = () => ({
+      const usageSummary = () => publicLlmUsage({
         inputTokens:settlements.reduce((sum,item)=>sum+item.inputTokens,0),
         outputTokens:settlements.reduce((sum,item)=>sum+item.outputTokens,0),
         chargedCredits:settlements.reduce((sum,item)=>sum+item.chargedCredits,0),
@@ -2673,7 +2851,8 @@ const server = http.createServer(async (req, res) => {
         autoCompleted:recoveryHistory.includes('append') && appendedShotCount > 0,
         autoRegenerated:recoveryHistory.includes('regenerate'),
         autoCorrected:recoveryHistory.includes('replace') && recoveryAttemptCount > 0,
-        attempts:settlements.map(item=>({type:item.attemptType,requestId:item.id,inputTokens:item.inputTokens,outputTokens:item.outputTokens,chargedCredits:item.chargedCredits})),
+        // Attempt ledger IDs are internal reconciliation keys, not client data.
+        attempts:settlements.map(item=>({type:item.attemptType,inputTokens:item.inputTokens,outputTokens:item.outputTokens,chargedCredits:item.chargedCredits})),
       });
       const reservedMicro = llmReservationMicro(conservativeInputTokenUpperBound(directorPackageSystemPrompt,prompt),maxOutputTokens,llmRates);
       const reserved = await reserveLlmCredits(user.id,initialRequestId,reservedMicro,{projectId:project.id,skillName:'smart-director',skillVersion:'6.0.0',attemptType:'initial'});
@@ -2831,20 +3010,21 @@ const server = http.createServer(async (req, res) => {
       }
     }
     const resourceVersionMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/resources\/([\w-]+)\/versions$/);
-    if (resourceVersionMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,resourceVersionMatch[1]); const resource=project?.resources.find(item=>item.id===resourceVersionMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId)); if(!task||task.type!=='image')return sendJson(res,400,{error:'图片任务不存在'}); if(!resource.versions.includes(task.id))resource.versions.push(task.id); if(!resource.selectedTaskId)resource.selectedTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
+    if (resourceVersionMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,resourceVersionMatch[1],scope); const resource=project?.resources.find(item=>item.id===resourceVersionMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId), scope); if(!task||task.type!=='image')return sendJson(res,400,{error:'图片任务不存在'}); if(!resource.versions.includes(task.id))resource.versions.push(task.id); if(!resource.selectedTaskId)resource.selectedTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
     const resourceSelectMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/resources\/([\w-]+)\/select$/);
-    if (resourceSelectMatch && req.method === 'PATCH') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,resourceSelectMatch[1]); const resource=project?.resources.find(item=>item.id===resourceSelectMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); if(!resource.versions.includes(input.taskId))return sendJson(res,400,{error:'该版本不属于此资源'}); if(resource.selectedTaskId!==input.taskId){resource.selectedTaskId=input.taskId;resource.lifecycle={...resource.lifecycle,status:'approved',revision:(resource.lifecycle?.revision||1)+1,approvedAt:now()};project.shots.filter(shot=>shot.resourceIds.includes(resource.id)).forEach(shot=>{shot.lifecycle.staleReasons=[...new Set([...(shot.lifecycle.staleReasons||[]),`${resource.name} 视觉版本已变更`])];});} await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
+    if (resourceSelectMatch && req.method === 'PATCH') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,resourceSelectMatch[1],scope); const resource=project?.resources.find(item=>item.id===resourceSelectMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); if(!resource.versions.includes(input.taskId))return sendJson(res,400,{error:'该版本不属于此资源'}); if(resource.selectedTaskId!==input.taskId){resource.selectedTaskId=input.taskId;resource.lifecycle={...resource.lifecycle,status:'approved',revision:(resource.lifecycle?.revision||1)+1,approvedAt:now()};project.shots.filter(shot=>shot.resourceIds.includes(resource.id)).forEach(shot=>{shot.lifecycle.staleReasons=[...new Set([...(shot.lifecycle.staleReasons||[]),`${resource.name} 视觉版本已变更`])];});} await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
     const shotVideoMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/videos$/);
-    if (shotVideoMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const project=await loadDramaProject(user.id,shotVideoMatch[1]); const shot=project?.shots.find(item=>item.id===shotVideoMatch[2]); if(!shot)return sendJson(res,404,{error:'分镜不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId)); if(!task||task.type!=='video')return sendJson(res,400,{error:'视频任务不存在'}); if(!shot.videoVersions.includes(task.id))shot.videoVersions.push(task.id); shot.selectedVideoTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
+    if (shotVideoMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,shotVideoMatch[1],scope); const shot=project?.shots.find(item=>item.id===shotVideoMatch[2]); if(!shot)return sendJson(res,404,{error:'分镜不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId), scope); if(!task||task.type!=='video')return sendJson(res,400,{error:'视频任务不存在'}); if(!shot.videoVersions.includes(task.id))shot.videoVersions.push(task.id); shot.selectedVideoTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
     const shotVideoDeleteMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/videos\/([\w-]+)$/);
     if (shotVideoDeleteMatch && req.method === 'DELETE') {
       const user=await requireUser(req,res); if(!user)return;
-      const project=await loadDramaProject(user.id,shotVideoDeleteMatch[1]);
+      const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return;
+      const project=await loadDramaProject(user.id,shotVideoDeleteMatch[1],scope);
       const shot=project?.shots.find(item=>item.id===shotVideoDeleteMatch[2]);
       if(!shot)return sendJson(res,404,{error:'分镜不存在'});
       const id=safeId(shotVideoDeleteMatch[3]);
       if(!shot.videoVersions.includes(id))return sendJson(res,404,{error:'视频版本不存在'});
-      const task=findGeneration(user.id,id);
+      const task=findGeneration(user.id,id,scope);
       if(!task||task.type!=='video')return sendJson(res,404,{error:'视频任务不存在'});
       if(activeGenerations.has(id)||['queued','running'].includes(task.status))return sendJson(res,409,{error:'任务正在生成中，完成后才能删除'});
       const deleted=await deleteGenerationRecord(user.id,task,{project});
@@ -2853,7 +3033,8 @@ const server = http.createServer(async (req, res) => {
     const professionalShotDeleteMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)$/);
     if (professionalShotDeleteMatch && req.method === 'DELETE') {
       const user=await requireUser(req,res); if(!user)return;
-      const project=await loadDramaProject(user.id,professionalShotDeleteMatch[1]);
+      const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return;
+      const project=await loadDramaProject(user.id,professionalShotDeleteMatch[1],scope);
       const shot=project?.shots.find(item=>item.id===professionalShotDeleteMatch[2]);
       if(!project||!shot)return sendJson(res,404,{error:'分镜不存在'});
       if(project.mode!=='professional')return sendJson(res,409,{error:'该删除接口仅用于专业编辑模式'});
@@ -2862,7 +3043,7 @@ const server = http.createServer(async (req, res) => {
         shot.selectedVideoTaskId,
         ...(shot.pendingImageGenerations||[]).map(item=>item?.taskId),
       ].map(value=>String(value||'')).filter(Boolean))];
-      const tasks=generationIds.map(id=>findGeneration(user.id,id)).filter(Boolean);
+      const tasks=generationIds.map(id=>findGeneration(user.id,id,scope)).filter(Boolean);
       if(tasks.some(task=>activeGenerations.has(task.id)||['queued','running'].includes(task.status)))return sendJson(res,409,{error:'分镜仍有任务正在生成，请等待完成后再删除'});
       project.shots=project.shots.filter(item=>item.id!==shot.id);
       normalizeDramaProject(project);
@@ -2872,11 +3053,12 @@ const server = http.createServer(async (req, res) => {
         const deleted=await deleteGenerationRecord(user.id,task);
         if(deleted.deletedAssetId)deletedAssetIds.push(deleted.deletedAssetId);
       }
-      const latest=await loadDramaProject(user.id,project.id);
+      const latest=await loadDramaProject(user.id,project.id,scope);
       return sendJson(res,200,{project:publicDramaProject(latest||project),deletedTaskIds:tasks.map(task=>task.id),deletedAssetIds});
     }
     if (url.pathname === '/api/drama/analyze-script' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error: 'LLM 服务尚未配置' });
       const input = await bodyJson(req); const script = String(input.script || '').trim();
       if (!script) return sendJson(res, 400, { error: '请输入剧本内容' });
@@ -2891,9 +3073,9 @@ const server = http.createServer(async (req, res) => {
         const result = await callLlm({ system: scriptAnalysisSystemPrompt, prompt: script, maxOutputTokens, jsonMode:true, config: llmConfig });
         const analysis = validateScriptAnalysis(parseJsonObject(result.text));
         const settled = await settleLlmCredits(user.id, requestId, result, { skillName: 'script-structure', skillVersion: '1.0.0' });
-        const project = { id: randomUUID(), ownerId: user.id, title: analysis.title, script, analysis, storyboard: null, status: 'analysis_complete', analysisRequestId: requestId, analysisUsage: { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits }, createdAt: now(), updatedAt: now() };
+        const project = { id: randomUUID(), ownerId: user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title: analysis.title, script, analysis, storyboard: null, status: 'analysis_complete', analysisRequestId: requestId, analysisUsage: { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits }, createdAt: now(), updatedAt: now() };
         await saveDramaProject(user.id, project);
-        return sendJson(res, 200, { requestId, project: publicDramaProject(project), analysis, usage: project.analysisUsage, balance: settled.wallet.balance, held: settled.wallet.held, available: settled.wallet.available });
+        return sendJson(res, 200, { project: publicDramaProject(project), analysis, usage: project.analysisUsage, balance: settled.wallet.balance, held: settled.wallet.held, available: settled.wallet.available });
       } catch (error) {
         if (error.billingReconcileRequired) await markLlmBillingReconcile(user.id, requestId, error);
         else await releaseLlmCredits(user.id, requestId, error.message).catch(releaseError => console.error('释放 LLM 冻结额度失败', releaseError));
@@ -2904,8 +3086,9 @@ const server = http.createServer(async (req, res) => {
     const storyboardMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/storyboard$/);
     if (storyboardMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error: '导演服务尚未配置' });
-      const project = findDramaProject(user.id, storyboardMatch[1]);
+      const project = findDramaProject(user.id, storyboardMatch[1], scope);
       if (!project) return sendJson(res, 404, { error: '短剧项目不存在' });
       const maxOutputTokens = 8_000; const requestId = randomUUID();
       const prompt = `原始剧本：\n${project.script}\n\n已确认分析：\n${JSON.stringify(project.analysis)}`;
@@ -2932,13 +3115,14 @@ const server = http.createServer(async (req, res) => {
     const shotBindingMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)$/);
     if (shotBindingMatch && req.method === 'PATCH') {
       const user = await requireUser(req, res); if (!user) return;
-      const project = findDramaProject(user.id, shotBindingMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const project = findDramaProject(user.id, shotBindingMatch[1], scope);
       if (!project?.storyboard?.shots) return sendJson(res, 404, { error: '短剧项目或分镜不存在' });
       const shot = project.storyboard.shots.find(item => item.id === shotBindingMatch[2]);
       if (!shot) return sendJson(res, 404, { error: '镜头不存在' });
       const input = await bodyJson(req); const field = input.kind === 'video' ? 'videoTaskId' : input.kind === 'keyframe' ? 'keyframeTaskId' : '';
       if (!field) return sendJson(res, 400, { error: '只支持绑定关键帧或视频任务' });
-      const taskId = safeId(input.taskId); const task = findGeneration(user.id, taskId);
+      const taskId = safeId(input.taskId); const task = findGeneration(user.id, taskId, scope);
       const expectedType = field === 'keyframeTaskId' ? 'image' : 'video';
       if (!task || task.type !== expectedType) return sendJson(res, 400, { error: '生成任务不存在或类型不匹配' });
       shot[field] = taskId; await saveDramaProject(user.id, project);
@@ -2947,6 +3131,7 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/model-quote' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const input = await bodyJson(req);
       const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
       const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
@@ -2958,37 +3143,40 @@ const server = http.createServer(async (req, res) => {
       const generationType = String(input.generationType || '').toUpperCase();
       const quoteReferenceCount = requestedReferenceCount || suppliedReferenceCount || (['REFERENCE', 'FIRST&LAST'].includes(generationType) ? 1 : 0);
       const request = validateVideoRequest(input, quoteReferenceCount);
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false });
-      const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds) : suppliedReferenceCounts;
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false, scope });
+      const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds, scope) : suppliedReferenceCounts;
       if (request.referenceLimits) {
         for (const kind of Object.keys(quotedReferenceCounts)) if (quotedReferenceCounts[kind] > Number(request.referenceLimits[kind] || 0)) throw Object.assign(new Error(`参考${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}最多支持 ${request.referenceLimits[kind] || 0} 个`), { statusCode:400 });
       }
       const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: quotedReferenceCounts }) : null;
-      if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前选项没有兼容且可用的调用线路' });
-      if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:`${route.id}:${route.version}` });
+      if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前模型暂不可用，请稍后重试' });
+      if (route) return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:route.salePriceCredits, yuan:route.salePriceYuan, priceVersion:publicRoutePriceVersion(route) });
       const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
       const credits = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) * request.duration : currentPricing().videoPerSecond * request.duration;
-      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:`static:${request.modelId}:${request.quality}:${request.duration}` });
+      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:`v1-${createHash('sha256').update(`gugu-price:static:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}` });
     }
 
     if (url.pathname === '/api/generations' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       if (url.searchParams.has('ids')) {
         const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(safeId).filter(Boolean))].slice(0, 200);
-        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id)).filter(Boolean).map(publicGeneration));
+        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id, scope)).filter(Boolean).map(publicGeneration));
       }
-      const page = listGenerations(user.id, { type: url.searchParams.get('type'), limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
+      const page = listGenerations(user.id, { type: url.searchParams.get('type'), deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
       setPageHeaders(res, page);
       return sendJson(res, 200, page.items.map(publicGeneration));
     }
     if (url.pathname === '/api/generations' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; const input = await bodyJson(req); const type = input.type;
+      const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const input = await bodyJson(req); const type = input.type;
       const generationRequestId = String(input.requestId || '').trim();
       if (generationRequestId && !/^[a-zA-Z0-9_-]{8,80}$/.test(generationRequestId)) return sendJson(res, 400, { error: '生成请求 ID 无效' });
       if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt ?? '');
       await ensureUserDirs(user.id);
       let dramaProjectId = ''; let dramaShotId = ''; let dramaProject = null; let dramaShot = null;
-      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);dramaProject=await loadDramaProject(user.id,dramaProjectId);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
+      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);dramaProject=await loadDramaProject(user.id,dramaProjectId,scope);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
       if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
       const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
       const promptMaxLength = type === 'image' ? 5000 : [VIDEO_MODEL_IDS.MINIMAX_H3_15S, LEGACY_VIDEO_MODEL_IDS.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
@@ -3007,25 +3195,25 @@ const server = http.createServer(async (req, res) => {
       const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;
       let aspectRatio = null; let duration = null; let videoRequest = null;
       if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-      const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits);
-      const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds);
+      const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope });
+      const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
       if (referenceCounts.image && !r2ReferenceConfigured) {
-        return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用：R2 临时参考图存储尚未配置` });
+        return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` });
       }
       const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
       if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
       const routeSelection = type === 'video' && videoRequest.provider === 'route'
         ? selectModelRoute({ logicalModelId: modelId, quality: videoRequest.quality, duration, aspectRatio, referenceCounts })
         : null;
-      if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error: '当前模型没有兼容且可用的调用线路，请稍后重试' });
+      if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error: '当前模型暂不可用，请稍后重试' });
       const provider = type === 'image' ? 'duomi' : routeSelection?.provider || videoRequest.provider;
       if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) {
-        return sendJson(res, 503, { error: '图生视频参考图片暂时不可用：所有视频模型都需要配置 R2_REFERENCE_PUBLIC_BASE_URL' });
+        return sendJson(res, 503, { error: '图生视频参考图片暂时不可用，请稍后重试或联系支持' });
       }
       if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
       if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
-      if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: 'CNTCN Seedance 视频服务尚未配置' });
-      if (provider === 'autodl' && !autodlConfigured) return sendJson(res, 503, { error: 'AutoDL GuGu 2.0 视频服务尚未配置' });
+      if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: `${type === 'image' ? '图片' : '视频'}生成服务尚未配置` });
+      if (provider === 'autodl' && !autodlConfigured) return sendJson(res, 503, { error: `${type === 'image' ? '图片' : '视频'}生成服务尚未配置` });
       if (provider === 'oai') {
         const configured = videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
           ? oaiVeoConfigured
@@ -3033,12 +3221,7 @@ const server = http.createServer(async (req, res) => {
             ? oaiMinimaxConfigured
             : oaiConfigured;
         if (!configured) {
-          const message = videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
-            ? 'Veo 3.1 服务尚未配置'
-            : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
-              ? 'MiniMax H3 服务尚未配置'
-              : '视频生成服务尚未配置';
-          return sendJson(res, 503, { error: message });
+          return sendJson(res, 503, { error: '视频生成服务尚未配置' });
         }
       }
       const pricing = currentPricing();
@@ -3061,12 +3244,12 @@ const server = http.createServer(async (req, res) => {
         routeId: routeSelection.id, routeVersion: routeSelection.version,
         upstreamModelId: routeSelection.upstreamModelId, costYuan: routeSelection.costYuan,
         markupPercent: 20, salePriceYuan: routeSelection.salePriceYuan,
-        priceVersion: `${routeSelection.id}:${routeSelection.version}`,
+        priceVersion: publicRoutePriceVersion(routeSelection),
       } : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
-      if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error: '调用线路或价格已变化，请确认最新价格后重试', code: 'PRICE_CHANGED', price: { credits: pricingSnapshotValue.total, yuan: pricingSnapshotValue.salePriceYuan, priceVersion: pricingSnapshotValue.priceVersion } });
+      if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error: '当前价格已变化，请刷新价格后重试', code: 'PRICE_CHANGED', price: { credits: pricingSnapshotValue.total, yuan: pricingSnapshotValue.salePriceYuan, priceVersion: pricingSnapshotValue.priceVersion } });
       const batchId = quantity > 1 ? randomUUID() : '';
       const tasks = Array.from({ length: quantity }, (_, index) => ({
-        id: taskIds[index], ownerId: user.id, type, prompt, referenceAssetIds, provider,
+        id: taskIds[index], ownerId: user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
         model: type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : fixedModels.image, modelId, size,
         quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality,
         aspectRatio, duration,
@@ -3080,7 +3263,7 @@ const server = http.createServer(async (req, res) => {
         ...(deferredReferences ? { awaitingReferences:true, expectedReferenceCounts:referenceCounts, progressStage:'preparing_references' } : {}),
         createdAt: now(), updatedAt: now(), finishedAt: null,
       }));
-      const existingTasks = tasks.map(task => findGeneration(user.id, task.id));
+      const existingTasks = tasks.map(task => findGeneration(user.id, task.id, scope));
       if (existingTasks.some(Boolean)) {
         if (!existingTasks.every(Boolean)) return sendJson(res, 409, { error: '重复生成请求的任务记录不完整，请联系支持' });
         if (bindDramaTasks) {
@@ -3105,7 +3288,7 @@ const server = http.createServer(async (req, res) => {
       // Another identical request can finish charging while this request waits
       // for the per-user ledger lock. Always continue with the persisted rows;
       // startGeneration itself also coalesces the same task ID in this process.
-      const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id) || task);
+      const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id, scope) || task);
       if (bindDramaTasks) {
         for (const task of effectiveTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id);
         dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id;
@@ -3118,15 +3301,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/generations/references/complete' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const input = await bodyJson(req);
       const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
       if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待启动生成任务无效' });
-      const tasks = taskIds.map(id => findGeneration(user.id, id));
+      const tasks = taskIds.map(id => findGeneration(user.id, id, scope));
       if (tasks.some(task => !task || !task.awaitingReferences || task.status !== 'queued')) return sendJson(res, 409, { error:'生成任务已启动或不再等待素材' });
       const first = tasks[0];
       if (tasks.some(task => task.type !== first.type || task.requestId !== first.requestId)) return sendJson(res, 400, { error:'待启动生成任务不属于同一批次' });
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, first.referenceLimits);
-      const actualCounts = referenceAssetCounts(user.id, referenceAssetIds);
+      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, first.referenceLimits, { scope });
+      const actualCounts = referenceAssetCounts(user.id, referenceAssetIds, scope);
       const expectedCounts = normalizeQuoteReferenceCounts(first.expectedReferenceCounts);
       if (['image','video','audio'].some(kind => actualCounts[kind] !== expectedCounts[kind])) return sendJson(res, 409, { error:'上传后的素材类型或数量与扣费时不一致，请重新生成' });
       for (const task of tasks) {
@@ -3141,10 +3325,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/generations/references/cancel' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const input = await bodyJson(req);
       const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
       if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待取消生成任务无效' });
-      const tasks = taskIds.map(id => findGeneration(user.id, id)).filter(task => task?.awaitingReferences && task.status === 'queued');
+      const tasks = taskIds.map(id => findGeneration(user.id, id, scope)).filter(task => task?.awaitingReferences && task.status === 'queued');
       for (const task of tasks) {
         task.awaitingReferences = false;
         await failGeneration(user.id, task, new Error(String(input.error || '素材准备失败').slice(0, 300)));
@@ -3156,8 +3341,8 @@ const server = http.createServer(async (req, res) => {
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {
-      const user = await requireUser(req, res); if (!user) return; const id = safeId(generationMatch[1]);
-      const task = findGeneration(user.id, id); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
+      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const id = safeId(generationMatch[1]);
+      const task = findGeneration(user.id, id, scope); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
       if (activeGenerations.has(id)||['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
       const deleted=await deleteGenerationRecord(user.id,task);
       return sendJson(res, 200, { ok: true, ...deleted });
@@ -3165,15 +3350,18 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/files/sync' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
-      const deviceId = normalizeDeviceId(url.searchParams.get('deviceId'));
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const deviceId = scope.deviceId || normalizeDeviceId(url.searchParams.get('deviceId'));
       if (!deviceId) return sendJson(res, 400, { error: '设备标识无效' });
       const page = listAssetChanges(user.id, {
+        deviceId,
+        workspaceId:scope.workspaceId,
         cursor: url.searchParams.get('cursor'),
         limit: parseLimit(url.searchParams.get('limit')),
       });
       const requestedAssetIds=[...new Set(String(url.searchParams.get('assetIds')||'').split(',').map(safeId).filter(Boolean))].slice(0,500);
-      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { limit: parseLimit(url.searchParams.get('limit')) });
-      const requestedDeliveries = requestedAssetIds.length ? findCloudAssets(user.id, requestedAssetIds) : [];
+      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')) });
+      const requestedDeliveries = requestedAssetIds.length ? findCloudAssets(user.id, requestedAssetIds, { deviceId, workspaceId:scope.workspaceId }) : [];
       const deliveries=[...new Map([...pendingDeliveries,...requestedDeliveries].map(asset=>[asset.id,asset])).values()];
       deliveries.forEach(asset => markAssetDeliveryPending(user.id, deviceId, asset.id));
       return sendJson(res, 200, {
@@ -3193,16 +3381,20 @@ const server = http.createServer(async (req, res) => {
     const singleAssetMatch = url.pathname.match(/^\/api\/files\/([\w-]+)$/);
     if (singleAssetMatch && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
-      const asset = findAsset(user.id, singleAssetMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const asset = findAsset(user.id, singleAssetMatch[1], scope);
       return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 404, { error: '文件不存在' });
     }
 
     if (url.pathname === '/api/files' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const cursor = url.searchParams.get('cursor');
       const page = listAssets(user.id, {
         kind: url.searchParams.get('kind'),
         search: url.searchParams.get('search'),
+        deviceId:scope.deviceId,
+        workspaceId:scope.workspaceId,
         limit: parseLimit(url.searchParams.get('limit')),
         cursor,
         includeTotal: !cursor || url.searchParams.get('includeTotal') === '1',
@@ -3246,6 +3438,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/files/uploads/init' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       if (!directUploadEnabled || !r2Configured) return sendJson(res, 503, { error: '直传暂未启用' });
       if (!uploadInitRateAllowed(user.id)) return sendJson(res, 429, { error: '上传请求过于频繁，请稍后再试' });
       if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) return sendJson(res, 429, { error: '未完成上传数量过多，请先完成或稍后重试' });
@@ -3260,7 +3453,7 @@ const server = http.createServer(async (req, res) => {
       const suppliedHash = input.sha256 === undefined || input.sha256 === null || input.sha256 === '' ? '' : String(input.sha256).trim().toLowerCase();
       if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' });
       if (suppliedHash) {
-        const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true });
+        const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true, deviceId:scope.deviceId, workspaceId:scope.workspaceId });
         if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) {
           return sendJson(res, 200, { mode: 'reuse', asset: publicAsset(existingAsset), sha256: suppliedHash });
         }
@@ -3301,20 +3494,22 @@ const server = http.createServer(async (req, res) => {
     const uploadStatusMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)$/);
     if (uploadStatusMatch && req.method === 'GET') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const intent = findUploadIntent(user.id, uploadStatusMatch[1]);
       if (!intent) return sendJson(res, 404, { error: '上传任务不存在' });
-      const asset = intent.status === 'completed' ? findAsset(user.id, intent.assetId) : null;
+      const asset = intent.status === 'completed' ? findAsset(user.id, intent.assetId, scope) : null;
       return sendJson(res, 200, { uploadId: intent.id, assetId: intent.assetId, status: intent.status, expiresAt: intent.expiresAt, asset: asset ? publicAsset(asset) : null });
     }
     const uploadCompleteMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)\/complete$/);
     if (uploadCompleteMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       if (!directUploadEnabled || !r2Configured) return sendJson(res, 503, { error: '直传暂未启用' });
       const uploadId = uploadCompleteMatch[1];
       const existing = findUploadIntent(user.id, uploadId);
       if (!existing) return sendJson(res, 404, { error: '上传任务不存在' });
       if (existing.status === 'completed') {
-        const asset = findAsset(user.id, existing.assetId);
+        const asset = findAsset(user.id, existing.assetId, scope);
         return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
       }
       if (existing.status === 'expired') return sendJson(res, 410, { error: '上传凭证已过期，请重新选择文件' });
@@ -3328,7 +3523,7 @@ const server = http.createServer(async (req, res) => {
       if (!claimUploadIntent(user.id, uploadId, nowIso)) {
         const current = findUploadIntent(user.id, uploadId);
         if (current?.status === 'completed') {
-          const asset = findAsset(user.id, current.assetId);
+          const asset = findAsset(user.id, current.assetId, scope);
           return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
         }
         return sendJson(res, 202, { uploadId, assetId: existing.assetId, status: current?.status || 'verifying' });
@@ -3353,6 +3548,7 @@ const server = http.createServer(async (req, res) => {
           sourceUrl: '',
           objectKey: intent.finalObjectKey,
           objectUploadedAt: nowIso,
+          ...(scope.desktop ? { originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId } : {}),
           ...(intent.kind === 'image' && intent.clientWidth && intent.clientHeight ? { width: intent.clientWidth, height: intent.clientHeight } : {}),
           createdAt: nowIso,
           updatedAt: nowIso,
@@ -3373,7 +3569,8 @@ const server = http.createServer(async (req, res) => {
     const assetPreviewMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/preview$/);
     if (assetPreviewMatch && req.method === 'GET') {
       const user = await requireUser(req, res); if (!user) return;
-      const asset = findAsset(user.id, assetPreviewMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const asset = findAsset(user.id, assetPreviewMatch[1], scope);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       if (asset.kind !== 'image') return sendJson(res, 415, { error: '只有图片支持缩略图预览' });
       // Serve a local image first so gallery rendering never waits on remote storage.
@@ -3388,19 +3585,20 @@ const server = http.createServer(async (req, res) => {
       }
       return sendJson(res, 404, { error: '文件内容不存在' });
     }
-    // 批量入口：客户端启动时的历史素材对账一次提交一整页，避免每条素材一次 HTTP 往返。
+    // 批量入口：客户端保存本地文件后一次提交一整页接收确认，避免每条素材一次 HTTP 往返。
     // 单条被拒绝不会让整个请求失败，逐条结果交给客户端判断哪些需要重试。
     if (url.pathname === '/api/files/local-ready' && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
       const input = await bodyJson(req);
       const items = Array.isArray(input.items) ? input.items : [];
       if (!items.length) return sendJson(res, 400, { error: '缺少本地接收确认条目' });
       if (items.length > localReadyBatchLimit) return sendJson(res, 400, { error: `单次最多确认 ${localReadyBatchLimit} 个素材` });
-      const deviceId = normalizeDeviceId(input.deviceId);
+      const deviceId = scope.deviceId || normalizeDeviceId(input.deviceId);
       const results = [];
       for (const item of items) {
         const assetId = safeId(item?.id);
-        const asset = assetId ? findAsset(user.id, assetId) : null;
+        const asset = assetId ? findAsset(user.id, assetId, scope) : null;
         if (!asset) {
           results.push({ id: String(item?.id || ''), ok: false, error: '文件不存在' });
           continue;
@@ -3413,17 +3611,19 @@ const server = http.createServer(async (req, res) => {
     const localReadyMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/local-ready$/);
     if (localReadyMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return;
-      const asset = findAsset(user.id, localReadyMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const asset = findAsset(user.id, localReadyMatch[1], scope);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       const input = await bodyJson(req);
-      const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...input, deviceId: normalizeDeviceId(input.deviceId) });
+      const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...input, deviceId: scope.deviceId || normalizeDeviceId(input.deviceId) });
       if (outcome.error) return sendJson(res, outcome.status, { error: outcome.error });
       return sendJson(res, 200, publicAsset(outcome.asset));
     }
     const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
     if (directMediaMatch && req.method === 'GET') {
       const user = await requireUser(req, res); if (!user) return;
-      const asset = findAsset(user.id, directMediaMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const asset = findAsset(user.id, directMediaMatch[1], scope);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       // Prefer a server-side local copy before issuing a private R2 redirect.
       const localFile = path.join(assetFilesDir(user.id), asset.storageName);
@@ -3441,7 +3641,8 @@ const server = http.createServer(async (req, res) => {
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content))?$/);
     if (fileMatch) {
       const user = await requireUser(req, res); if (!user) return;
-      const asset = findAsset(user.id, fileMatch[1]);
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
+      const asset = findAsset(user.id, fileMatch[1], scope);
       if (!asset) return sendJson(res, 404, { error: '文件不存在' });
       if (req.method === 'GET' && fileMatch[2]) {
         const localFile = path.join(assetFilesDir(user.id), asset.storageName);
@@ -3457,7 +3658,7 @@ const server = http.createServer(async (req, res) => {
         asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset));
       }
       if (req.method === 'DELETE' && !fileMatch[2]) {
-        const task = asset.sourceGenerationId ? findGeneration(user.id, asset.sourceGenerationId) : null;
+        const task = asset.sourceGenerationId ? findGeneration(user.id, asset.sourceGenerationId, scope) : null;
         if (task) {
           if (activeGenerations.has(task.id) || ['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
           const deleted = await deleteGenerationRecord(user.id, task);
@@ -3476,7 +3677,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     return await serveStatic(res, url.pathname, req);
-  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error(error); if (res.headersSent) return res.end(); const message = error.upstreamError ? '模型服务暂时不可用，请稍后重试' : error.message || '服务错误'; return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
+  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error(error); if (res.headersSent) return res.end(); const message = String(req.url || '').split('?')[0].startsWith('/api/admin/') ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
 });
 
 // Importing server helpers from a test must never open the production port.

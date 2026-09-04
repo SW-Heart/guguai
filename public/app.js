@@ -51,13 +51,11 @@ let localFileTotal = 0;
 let fileQueryKey = '';
 let fileLoadVersion = 0;
 let localFileStateRevision = 0;
-let desktopSyncInfo = { deviceId:'', cursor:'' };
+let desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'' };
 let desktopSyncRequest = null;
 let desktopSyncRequestEpoch = 0;
-let desktopAssetSyncTimer = 0;
 let pollTimer = 0;
 let notificationPanelCloseTimer = 0;
-let contactPanelCloseTimer = 0;
 const activePollDelay = 6000;
 const idlePollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
@@ -78,8 +76,16 @@ const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
 
+function desktopScopeHeaders() {
+  if (!window.guguDesktop || !desktopSyncInfo.deviceId || !desktopSyncInfo.workspaceId) return {};
+  return {
+    'X-GuGu-Desktop': '1',
+    'X-GuGu-Device-Id': desktopSyncInfo.deviceId,
+    'X-GuGu-Workspace-Id': desktopSyncInfo.workspaceId,
+  };
+}
 async function api(url, options = {}) {
-  const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
+  const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...desktopScopeHeaders(), ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
   let data = {}; try { data = await response.json(); } catch {}
   if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
   return data;
@@ -99,64 +105,11 @@ async function listDesktopFiles(options = {}) {
   const page = Array.isArray(local) ? { items:local, nextCursor:'' } : (local || {});
   return { items:(Array.isArray(page.items) ? page.items : []).map(desktopLocalClientAsset).filter(Boolean), total:Number(page.total) || 0, nextCursor:page.nextCursor || '' };
 }
-async function listHistoricalCloudAssetsPage(cursor = '', { includeTotal = !cursor } = {}) {
-  const query = new URLSearchParams({ limit:'200', includeTotal:includeTotal ? '1' : '0' });
-  if (cursor) query.set('cursor', cursor);
-  const response = await fetch(`/api/files?${query}`, { credentials:'same-origin' });
-  let data = []; try { data = await response.json(); } catch {}
-  if (!response.ok) { const error = Object.assign(new Error(data.error || '历史素材读取失败'), data); error.status = response.status; throw error; }
-  if (!Array.isArray(data)) throw new Error('历史素材列表格式无效');
-  return { items:data, nextCursor:response.headers.get('x-next-cursor') || '', total:Number(response.headers.get('x-total-count')) || 0 };
-}
-async function runWithConcurrency(items, worker, concurrency = 3) {
-  let nextIndex = 0;
-  await Promise.all(Array.from({ length:Math.min(Math.max(1, concurrency), items.length) }, async () => {
-    while (nextIndex < items.length) {
-      const item = items[nextIndex++];
-      await worker(item);
-    }
-  }));
-}
-function historicalSyncMarker(userId) {
-  return `gugu:history-local-v2:${desktopSyncInfo.deviceId}:${userId}:${desktopWorkspacePath}`;
-}
-// 历史接收是可恢复的：每处理完一整页且该页没有可重试的失败，就把游标写回本地。
-// 早先只有「全程零失败」才写完成标记，素材一多几乎必然遇到一次网络抖动，
-// 于是每次启动都要从头重扫整个素材库。
-function readHistoricalSyncCheckpoint(marker) {
-  const raw = localStorage.getItem(marker);
-  if (!raw) return { complete:false, cursor:'', scanned:0 };
-  if (raw === 'complete') return { complete:true, cursor:'', scanned:0 };
-  try {
-    const value = JSON.parse(raw);
-    if (value?.status === 'complete') return { complete:true, cursor:'', scanned:0 };
-    return { complete:false, cursor:String(value?.cursor || ''), scanned:Math.max(0, Number(value?.scanned) || 0) };
-  } catch { return { complete:false, cursor:'', scanned:0 }; }
-}
-function writeHistoricalSyncCheckpoint(marker, { complete=false, cursor='', scanned=0 } = {}) {
-  if (complete) { localStorage.setItem(marker, 'complete'); return; }
-  if (!cursor) return;
-  localStorage.setItem(marker, JSON.stringify({ cursor, scanned }));
-}
 async function acknowledgeDesktopAsset(file, localAsset) {
   await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
     method:'POST',
     body:JSON.stringify({ size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType, deviceId:desktopSyncInfo.deviceId }),
   });
-}
-// 一页素材一次提交。逐条确认会把上万条历史素材变成上万次并发上限只有 3 的 HTTP 往返，
-// 登录遮罩会因此挂很久。逐条结果里的错误是服务端的确定性拒绝（素材已删、元数据无效），
-// 重试也不会变好，因此只记录告警，不阻塞断点前移；网络层失败仍以异常形式抛出。
-async function acknowledgeDesktopAssets(entries) {
-  if (!entries.length) return { rejected:[] };
-  const result = await api('/api/files/local-ready', {
-    method:'POST',
-    body:JSON.stringify({
-      deviceId:desktopSyncInfo.deviceId,
-      items:entries.map(({ file, localAsset }) => ({ id:file.id, size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType })),
-    }),
-  });
-  return { rejected:(result?.results || []).filter(item => item && !item.ok).map(item => ({ assetId:item.id, message:item.error || '本地接收确认失败' })) };
 }
 function renderAfterDesktopAssetHydration() {
   if (state.route === 'files') renderFiles();
@@ -285,114 +238,34 @@ async function hydrateDesktopAsset(file, { merge = true } = {}) {
   }
   return result;
 }
-async function syncHistoricalCloudAssets(user) {
+
+// 老版本把生成记录写在账号级，但没有保存本地工作区归属。升级后的
+// 第一次启动只提交本地索引中已有的素材 ID，服务端据此补写归属；不下载
+// 历史文件，也不把当前设备没有的记录带进来。成功后按工作区记标记，后续
+// 启动不再重复检查。
+async function claimLegacyWorkspace(user) {
   const bridge = window.guguDesktop;
-  if (!bridge?.media || !user?.id) throw new Error('客户端本地工作区尚未就绪');
-  const marker = historicalSyncMarker(user.id);
-  const checkpoint = readHistoricalSyncCheckpoint(marker);
-  if (checkpoint.complete) {
-    setBootProgress(58, '历史素材已就绪');
-    return { skipped:true, received:0, unavailable:0 };
-  }
-  const fullCloudScan = !checkpoint.cursor && !checkpoint.scanned;
-  let cursor = checkpoint.cursor;
-  let scanned = checkpoint.scanned;
-  let total = 0;
-  let pageNumber = 0;
-  let received = 0;
-  let unavailable = 0;
-  const seenCloudAssetIds = new Set();
-  // 一旦某页出现可重试的失败，后续页即便成功也不再前移本地游标，
-  // 否则下次启动会跳过那页里没接收到的素材。
-  let checkpointClean = true;
-  const transientFailures = [];
-  const historyStart = 8;
-  const historyEnd = 58;
-  const updateHistoryProgress = (checked, label) => {
-    if (total > 0) {
-      const progress = historyStart + ((historyEnd - historyStart) * Math.min(1, checked / total));
-      setBootProgress(progress, label);
-    } else {
-      setBootProgress(Math.min(historyEnd - 4, historyStart + 5 + pageNumber * 5), label, { indeterminate:true });
-    }
-  };
-  updateHistoryProgress(scanned, scanned ? '正在继续接收历史素材' : '正在扫描历史素材');
+  if (!bridge?.media?.listLocal || !user?.id || !desktopSyncInfo.workspaceId) return { skipped:true };
+  const marker = `gugu:workspace-legacy-claimed-v1:${user.id}:${desktopSyncInfo.workspaceId}`;
+  if (localStorage.getItem(marker) === 'complete') return { skipped:true };
+  const assetIds = new Set();
+  let cursor = '';
   do {
-    // 只有本次运行的第一次请求需要总数，续传时也要拿到它才能显示确定的进度。
-    const page = await listHistoricalCloudAssetsPage(cursor, { includeTotal:pageNumber === 0 });
-    total = total || page.total;
-    page.items.forEach(file => { if (file?.id) seenCloudAssetIds.add(String(file.id)); });
-    const pageStart = scanned;
-    const candidates = page.items.filter(file => file?.id && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
-    const localAssets = await bridge.media.listLocalByCloudIds(candidates.map(file => file.id));
-    const localByCloudId = new Map((localAssets || []).map(item => [String(item.cloudAssetId || ''), item]));
-    const present = [];
-    const absent = [];
-    for (const file of candidates) {
-      const existing = localByCloudId.get(file.id);
-      if (existing) present.push({ file, localAsset:existing });
-      else absent.push(file);
-    }
-    let pageProcessed = 0;
-    let pageFailures = 0;
-    const reportPageProgress = () => {
-      const pageChecked = candidates.length
-        ? pageStart + (page.items.length * pageProcessed / candidates.length)
-        : pageStart + page.items.length;
-      const checked = Math.min(pageStart + page.items.length, pageChecked);
-      updateHistoryProgress(checked, `正在接收历史素材 · 已检查 ${Math.round(checked)}${total ? ` / ${total}` : ''} 个记录`);
-    };
-    // 已经在本地的素材走批量确认，只有真正缺失的才需要逐个下载。
-    if (present.length) {
-      const { rejected } = await acknowledgeDesktopAssets(present);
-      if (rejected.length) console.warn('[desktop] 部分历史素材的本地接收确认被拒绝', rejected);
-      pageProcessed += present.length;
-      reportPageProgress();
-    }
-    await runWithConcurrency(absent, async file => {
-      try {
-        await hydrateDesktopAsset(file, { merge:false });
-        received += 1;
-      } catch (error) {
-        if (error.unavailable) unavailable += 1;
-        else {
-          pageFailures += 1;
-          transientFailures.push({ assetId:file.id, message:error.message });
-        }
-      } finally {
-        pageProcessed += 1;
-        reportPageProgress();
+    const page = await listDesktopFiles({ limit:200, cursor });
+    for (const file of page.items) {
+      for (const value of [file.id, file.cloudAssetId, file.localId]) {
+        const id = String(value || '').trim();
+        if (id) assetIds.add(id);
       }
-    });
-    scanned += page.items.length;
-    const totalText = total ? ` / ${total}` : '';
-    setBootProgress(total ? historyStart + ((historyEnd - historyStart) * Math.min(1, scanned / total)) : historyEnd - 4, total ? '历史素材接收完成' : '历史素材扫描完成', { indeterminate:!total });
-    $('#bootMessage').textContent = `已检查 ${scanned}${totalText} 个记录，本次写入 ${received} 个文件。`;
-    cursor = page.nextCursor;
-    pageNumber += 1;
-    if (pageFailures) checkpointClean = false;
-    if (checkpointClean) writeHistoricalSyncCheckpoint(marker, cursor ? { cursor, scanned } : { complete:true });
-  } while (cursor);
-  if (fullCloudScan && checkpointClean && !transientFailures.length && bridge.media.removeLocalByCloudIds && bridge.media.listLocal) {
-    // Reconcile once after the complete cloud scan. This repairs clients that
-    // advanced their old cursor before the deletion-change handler existed.
-    const localCloudAssetIds = [];
-    let localCursor = '';
-    do {
-      const page = await bridge.media.listLocal({ limit:200, cursor:localCursor });
-      for (const file of page?.items || []) if (file?.cloudAssetId) localCloudAssetIds.push(String(file.cloudAssetId));
-      localCursor = String(page?.nextCursor || '');
-    } while (localCursor);
-    const staleCloudAssetIds = [...new Set(localCloudAssetIds)].filter(id => !seenCloudAssetIds.has(id));
-    if (staleCloudAssetIds.length) {
-      await bridge.media.removeLocalByCloudIds(staleCloudAssetIds);
-      console.info('[desktop] 已清理云端不存在的本地素材', { count:staleCloudAssetIds.length });
     }
-  }
-  if (!transientFailures.length) localStorage.setItem(marker, 'complete');
-  else console.warn('[desktop] 历史素材仍有待重试项', transientFailures);
-  setBootProgress(historyEnd, '历史素材已就绪');
-  return { received, unavailable, failures:transientFailures.length };
+    cursor = String(page.nextCursor || '');
+  } while (cursor);
+  const result = await api('/api/workspaces/claim-legacy', {
+    method:'POST',
+    body:JSON.stringify({ assetIds:[...assetIds].slice(0, 5000) }),
+  });
+  localStorage.setItem(marker, 'complete');
+  return result;
 }
 async function runDesktopHydrationQueue() {
   if (desktopHydrationRunning) return;
@@ -466,7 +339,7 @@ function queueDesktopHydration(files, { forceAssetIds = [] } = {}) {
 }
 async function syncDesktopDeliveries({ assetIds = [] } = {}) {
   const bridge = window.guguDesktop;
-  if (!bridge?.sync || !desktopSyncInfo.deviceId) return null;
+  if (!bridge?.sync || !desktopSyncInfo.deviceId || !desktopSyncInfo.workspaceId) return null;
   const requestEpoch = desktopAccountEpoch;
   const requestedAssetIds = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(value => String(value || '')).filter(Boolean))].slice(0, 500);
   if (desktopSyncRequest && desktopSyncRequestEpoch === requestEpoch) {
@@ -534,23 +407,6 @@ async function syncDesktopDeliveries({ assetIds = [] } = {}) {
     if (desktopSyncRequest === request) desktopSyncRequest = null;
   }
 }
-function scheduleDesktopAssetSync(delay=15000) {
-  window.clearTimeout(desktopAssetSyncTimer);
-  if (!state.user || !window.guguDesktop?.sync) return;
-  desktopAssetSyncTimer = window.setTimeout(runDesktopAssetSyncWorker, delay);
-}
-async function runDesktopAssetSyncWorker() {
-  window.clearTimeout(desktopAssetSyncTimer);
-  desktopAssetSyncTimer = 0;
-  if (!state.user || !window.guguDesktop?.sync) return;
-  try {
-    const result = await syncDesktopDeliveries();
-    scheduleDesktopAssetSync(result?.hasMore ? 250 : 15000);
-  } catch (error) {
-    if (error.status !== 401) console.warn('[desktop] 后台素材同步暂不可用', error.message);
-    scheduleDesktopAssetSync(30000);
-  }
-}
 const esc = (value='') => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
   const preview = assetPreviewUrl(file);
@@ -573,11 +429,11 @@ function taskDisplayStatus(task, file = fileById(task?.assetId)) {
 }
 function desktopSyncMarkup(task) {
   const label = task?.type === 'image' ? '图片' : '视频';
-  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}生成中"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>正在同步到本地…</span></div></div>`;
+  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}生成中"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>正在保存到本地…</span></div></div>`;
 }
 function requireDesktopLocalAsset(file) {
   if (!isDesktopAssetSyncing(file)) return true;
-  toast('素材正在同步到本地，请稍后再预览');
+  toast('素材正在保存到本地，请稍后再预览');
   return false;
 }
 // Local video cards only load metadata near the viewport. Creating hundreds of
@@ -1069,7 +925,6 @@ const taskFailure = task => {
   return task?.status === 'failed' ? { code:'UNKNOWN', message:'生成失败，服务未返回具体原因', suggestion:'请调整提示词或参考图片后重试；若持续失败，请联系支持。', action:'edit_input' } : null;
 };
 const taskErrorText = task => { const failure = taskFailure(task); return failure ? `${failure.message}\n建议：${failure.suggestion}` : ''; };
-const taskFailureActionLabel = failure => ({ retry_later:'稍后重试', retry:'重新生成', contact_support:'联系支持', wait:'稍后刷新' })[failure?.action] || '调整后重试';
 let toastTimer;
 let alipayPaymentPollTimer = 0;
 let creditPopoverCloseTimer = 0;
@@ -1438,7 +1293,6 @@ function renderNotifications() {
   list.querySelectorAll('[data-notification-id]').forEach(button => button.onclick = () => markNotificationRead(button.dataset.notificationId));
 }
 function setNotificationPanelOpen(open) {
-  if (open) setContactPanelOpen(false);
   const item = $('.notification-menu-item');
   const panel = $('#notificationPanel');
   const trigger = $('#notificationMenuButton');
@@ -1456,26 +1310,6 @@ function scheduleNotificationPanelClose() {
     notificationPanelCloseTimer = 0;
     const item = $('.notification-menu-item');
     if (!item?.matches(':hover') && !item?.matches(':focus-within')) setNotificationPanelOpen(false);
-  }, 180);
-}
-function setContactPanelOpen(open) {
-  const item = $('.contact-menu-item');
-  const panel = $('#contactPanel');
-  const trigger = $('#contactMenuButton');
-  if (!item || !panel || !trigger) return;
-  window.clearTimeout(contactPanelCloseTimer);
-  contactPanelCloseTimer = 0;
-  item.classList.toggle('is-open', open);
-  panel.setAttribute('aria-hidden', String(!open));
-  trigger.setAttribute('aria-expanded', String(open));
-  if (open) setNotificationPanelOpen(false);
-}
-function scheduleContactPanelClose() {
-  window.clearTimeout(contactPanelCloseTimer);
-  contactPanelCloseTimer = window.setTimeout(() => {
-    contactPanelCloseTimer = 0;
-    const item = $('.contact-menu-item');
-    if (!item?.matches(':hover') && !item?.matches(':focus-within')) setContactPanelOpen(false);
   }, 180);
 }
 async function loadNotifications() {
@@ -1857,8 +1691,6 @@ function showBoot(title = '正在连接服务…', message = '', { retry = false
 }
 function resetDesktopAccountState() {
   desktopAccountEpoch += 1;
-  window.clearTimeout(desktopAssetSyncTimer);
-  desktopAssetSyncTimer = 0;
   for (const timer of desktopHydrationRetryTimers.values()) window.clearTimeout(timer);
   desktopHydrationRetryTimers.clear();
   desktopHydrationQueue.length = 0;
@@ -1898,6 +1730,7 @@ async function activateDesktopAccount(user) {
   $$('[data-workspace-open]').forEach(button => { button.title = `本地工作区：${desktopWorkspacePath || '未设置'}`; });
   desktopSyncInfo = {
     deviceId: String(info.deviceId || desktopSyncInfo.deviceId || ''),
+    workspaceId: String(info.workspaceId || desktopSyncInfo.workspaceId || ''),
     cursor: String(info.cursor || ''),
     accountId: String(info.accountId || user.id),
   };
@@ -1916,11 +1749,12 @@ async function initDesktopBridge() {
     const info = await bridge.getInfo();
     desktopSyncInfo = {
       deviceId: String(info.deviceId || ''),
+      workspaceId: String(info.workspaceId || ''),
       cursor: String(info.assetSyncCursor || ''),
       accountId: String(info.workspaceAccountId || ''),
     };
     desktopWorkspacePath = String(info.workspacePath || '');
-    if (!desktopSyncInfo.deviceId && bridge.sync?.getState) desktopSyncInfo = await bridge.sync.getState();
+    if (!desktopSyncInfo.deviceId && bridge.sync?.getState) desktopSyncInfo = { ...desktopSyncInfo, ...(await bridge.sync.getState()) };
     desktopClientInfo = info;
     document.body.classList.add(`desktop-${info.platform}`);
     initWindowControls(bridge, info);
@@ -2002,8 +1836,6 @@ async function initDesktopBridge() {
 }
 function showAuth() {
   setDesktopSurface('auth');
-  window.clearTimeout(desktopAssetSyncTimer);
-  desktopAssetSyncTimer = 0;
   resetDesktopAccountState();
   void Promise.resolve(window.guguDesktop?.workspace?.deactivateAccount?.()).catch(error => console.warn('[desktop] 关闭账号工作区失败', error));
   state.user = null;
@@ -2060,11 +1892,17 @@ async function enterApp(user) {
   updateAccountIdentity(user);
   setCreditBalance(user.credits);
 
-  // Keep the workspace hidden until the one-time historical receive pass has
-  // finished. Every visible binary must already exist in the local index.
+  // The desktop workspace is local-only. Do not block startup on a cloud
+  // history scan or attempt to hydrate files created on another device.
+  try {
+    await claimLegacyWorkspace(user);
+  } catch (error) {
+    // A temporary API failure must not prevent the local editor from opening;
+    // the claim is retried on the next startup until it succeeds.
+    console.warn('[desktop] 老版本本地记录归属迁移暂不可用', error.message);
+  }
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
   const schedulePriceDialog = () => window.setTimeout(() => { void openModelPriceDialog({ auto:true }); }, 300);
-  await syncHistoricalCloudAssets(user);
   const initialLoadSteps = [
     { label:'读取创作配置', run:loadConfig },
     { label:'读取积分信息', run:loadCredits },
@@ -2077,14 +1915,13 @@ async function enterApp(user) {
   await Promise.all(initialLoadSteps.map(async step => {
     await step.run();
     completedLoadSteps += 1;
-    const progress = 58 + ((100 - 58) * completedLoadSteps / initialLoadSteps.length);
+    const progress = 8 + ((100 - 8) * completedLoadSteps / initialLoadSteps.length);
     setBootProgress(progress, completedLoadSteps === initialLoadSteps.length ? '工作区即将打开' : step.label);
     updateBootCopy('正在加载工作区', `已准备 ${completedLoadSteps} / ${initialLoadSteps.length} 项创作数据。`);
   }));
   finishInitialWorkspaceSync();
   setBootProgress(100, '工作区已准备好');
   showApp();
-  scheduleDesktopAssetSync(0);
   schedulePriceDialog();
   // The price catalog is non-essential for the first interaction. It is
   // deferred until the initial background sync settles so it cannot compete
@@ -2351,18 +2188,11 @@ notificationMenuItem?.addEventListener('mouseleave', () => { if (!notificationMe
 notificationMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setNotificationPanelOpen(true); });
 notificationMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!notificationMenuItem.matches(':focus-within') && !notificationMenuItem.matches(':hover')) scheduleNotificationPanelClose(); }));
 notificationMenuButton?.addEventListener('click', event => { event.stopPropagation(); setNotificationPanelOpen(true); });
-const contactMenuItem = $('.contact-menu-item');
-const contactMenuButton = $('#contactMenuButton');
-contactMenuItem?.addEventListener('mouseenter', () => { if (!$('#accountMenu').classList.contains('hidden')) setContactPanelOpen(true); });
-contactMenuItem?.addEventListener('mouseleave', () => { if (!contactMenuItem.matches(':focus-within')) scheduleContactPanelClose(); });
-contactMenuItem?.addEventListener('focusin', () => { if (!$('#accountMenu').classList.contains('hidden')) setContactPanelOpen(true); });
-contactMenuItem?.addEventListener('focusout', () => requestAnimationFrame(() => { if (!contactMenuItem.matches(':focus-within') && !contactMenuItem.matches(':hover')) scheduleContactPanelClose(); }));
-contactMenuButton?.addEventListener('click', event => { event.stopPropagation(); setContactPanelOpen(true); });
 $('#accountSettingsButton').onclick = event => { event.stopPropagation(); openAccountSettings(); };
-$('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) { setNotificationPanelOpen(false); setContactPanelOpen(false); } if (opening) renderNotifications(); };
+$('#accountButton').onclick = event => { event.stopPropagation(); const menu = $('#accountMenu'); const opening = menu.classList.contains('hidden'); menu.classList.toggle('hidden', !opening); $('#accountButton').setAttribute('aria-expanded', String(opening)); if (!opening) setNotificationPanelOpen(false); if (opening) renderNotifications(); };
 $('#markAllNotifications').onclick = event => { event.stopPropagation(); void markAllNotificationsRead(); };
-document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); setContactPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
+document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
 $('#logoutButton').onclick = async () => {
   try { await api('/api/auth/logout', { method:'POST', body:'{}' }); }
   finally {
@@ -2567,7 +2397,7 @@ async function loadTasks({ background=false }={}) {
         mergeStateFiles(localAssets);
         assetsChanged = localAssets.length > 0;
       }
-      if (missingAssetIds.length && window.guguDesktop?.sync && desktopSyncInfo.deviceId) {
+      if (missingAssetIds.length && window.guguDesktop?.sync && desktopSyncInfo.deviceId && desktopSyncInfo.workspaceId) {
         try {
           // A local database row can be gone even though the cloud asset still
           // exists. Ask the delivery endpoint for these exact assets so the
@@ -2623,9 +2453,9 @@ function taskCard(task) {
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
       : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
   const completedActions = localReady ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
-  const failedAction = task.status === 'failed' && !['wait','contact_support'].includes(failure?.action) ? `<button class="failure-retry task-action" type="button" data-action="continue" data-task-id="${task.id}"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>${esc(taskFailureActionLabel(failure))}</button>` : '';
+  const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败任务操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button><button class="failure-delete task-action" type="button" data-action="delete" data-task-id="${task.id}" title="删除失败任务" aria-label="删除失败任务"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div>` : '';
   const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>` : '';
-  return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedAction}</div></article>`;
+  return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedActions}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
 let generationLayoutFrame = 0;
@@ -2701,7 +2531,7 @@ function reconcileCards(container, records, { card, signature, bind, empty }) {
 }
 function bindTaskCard(card) {
   card.querySelector('.open-task')?.addEventListener('click', event => openGenerationDetail(event.currentTarget.dataset.taskId));
-  card.querySelectorAll('.task-action[data-action]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); handleTaskAction(button.dataset.action, button.dataset.taskId); }));
+  card.querySelectorAll('.task-action[data-action]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); void handleTaskAction(button.dataset.action, button.dataset.taskId, button); }));
   card.querySelector('.show-in-folder')?.addEventListener('click', async event => {
     event.stopPropagation();
     await showDesktopAssetInFolder(fileById(event.currentTarget.dataset.assetId), event.currentTarget);
@@ -2746,7 +2576,7 @@ function renderTasks() {
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0 || state.generationPreparations.length > 0;
   const empty = hasInitialData
     ? emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。')
-    : emptyState('正在加载作品', '正在同步你的生成记录，页面可以先使用。');
+    : emptyState('正在加载作品', '正在读取你的生成记录，页面可以先使用。');
   reconcileCards($('#generationGrid'), hasInitialData ? tasks : [], { card:taskCard, signature:taskRenderSignature, bind:bindTaskCard, empty });
   scheduleGenerationLayout();
   lastTaskRender = renderState;
@@ -2834,7 +2664,42 @@ function continueFromTask(task, target=task.type, includeReference=false) {
   $('#creatorPanel').scrollTo({ top:0, behavior:'smooth' }); prompt.focus();
   toast(includeReference ? '已带入参考图和创作描述' : '已带入创作描述，可调整后重新生成');
 }
-function handleTaskAction(action, id) { const task = taskById(id); if (!task) return; if (action === 'preview' || action === 'more') return openGenerationDetail(id); if (action === 'reference') { continueFromTask(task, task.type, true); return; } if (action === 'continue') continueFromTask(task); }
+async function deleteGenerationTask(task, button = null) {
+  if (!task) return false;
+  const active = taskLocalSyncing(task) || ['queued','running'].includes(task.status);
+  if (active) { toast('任务生成中，完成后才能删除'); return false; }
+  if (!await confirmGenerationDeletion(task)) return false;
+  const card = button?.closest('.task-card');
+  const originalButtonMarkup = button?.innerHTML || '';
+  if (button) {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.innerHTML = '<span>删除中…</span>';
+  }
+  card?.classList.add('is-removing');
+  try {
+    const id = task.id;
+    const result = await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' });
+    if (result.deletedAssetId || task.assetId) await removeDesktopCloudAssets([result.deletedAssetId || task.assetId]);
+    else if (task.assetId) clearFileReferences(task.assetId);
+    if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error));
+    if ($('#generationDetailDialog')?.open && state.detailTaskId === id) closeGenerationDetail();
+    await Promise.all([loadTasks(), loadFiles()]);
+    toast(task.status === 'failed' ? '失败任务已删除' : '作品及关联文件已删除');
+    return true;
+  } catch (error) {
+    toast(error.message);
+    return false;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.innerHTML = originalButtonMarkup;
+    }
+    card?.classList.remove('is-removing');
+  }
+}
+function handleTaskAction(action, id, button = null) { const task = taskById(id); if (!task) return; if (action === 'preview' || action === 'more') return openGenerationDetail(id); if (action === 'reference') { continueFromTask(task, task.type, true); return; } if (action === 'retry' || action === 'continue') { continueFromTask(task); return; } if (action === 'delete') return deleteGenerationTask(task, button); }
 function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); }
 function resetDetailFit(dialog) { dialog.classList.remove('portrait-detail'); dialog.style.removeProperty('--portrait-dialog-width'); }
 function closeGenerationDetail() { const dialog = $('#generationDetailDialog'); dialog.close(); resetDetailFit(dialog); $('#generationDetailMedia').innerHTML = ''; state.detailTaskId = null; }
@@ -2847,7 +2712,7 @@ function openGenerationDetail(id) {
   const displayStatus = taskDisplayStatus(task, asset);
   const detailFailure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localSyncing
-    ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在同步到本地…</span></div>'
+    ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在保存到本地…</span></div>'
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
     : detailFailure
@@ -2889,7 +2754,7 @@ $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generati
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
 $('#useGenerationReference').onclick = () => continueFromTask(state.tasks.find(item => item.id === state.detailTaskId), 'image', true);
 $('#deriveGeneration').onclick = () => { const task = state.tasks.find(item => item.id === state.detailTaskId); continueFromTask(task, 'video', true); };
-$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task || !await confirmGenerationDeletion(task)) return; const id = task.id; const button = $('#deleteGeneration'); button.disabled = true; try { const result = await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' }); if (result.deletedAssetId || task.assetId) await removeDesktopCloudAssets([result.deletedAssetId || task.assetId]); else clearFileReferences(task.assetId); if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error)); closeGenerationDetail(); await Promise.all([loadTasks(), loadFiles()]); toast('作品及关联文件已删除'); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
+$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = state.tasks.find(item => item.id === state.detailTaskId); if (!task) return; await deleteGenerationTask(task, $('#deleteGeneration')); };
 
 async function loadFiles({ background=false, loadMore=false }={}) {
   const search = $('#fileSearch').value.trim();

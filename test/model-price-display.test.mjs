@@ -42,4 +42,8 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
   assert.ok(Math.abs(seedance20Fast.yuan - 0.12) < 1e-9);
   assert.deepEqual(catalog.slice(0, 4).map(item => item.label), ['GuGu 2.0', 'GuGu 1.5', 'Seedance 2.0', 'Seedance 2.0']);
   assert.ok(catalog.some(item => item.label === 'Seedance 2.0 Fast'));
+  assert.equal(Object.hasOwn(seedance20Fast, 'selectedRouteId'), false);
+  assert.equal(Object.hasOwn(seedance20Fast, 'selectedRouteName'), false);
+  assert.match(seedance20Fast.priceVersion, /^v1-[0-9a-f]{32}$/);
+  assert.doesNotMatch(JSON.stringify(catalog), /sd20-|upstream|credential|WJ|DIW/);
 });

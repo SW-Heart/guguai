@@ -81,7 +81,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9' }).id, 'sd20-720-diw-ed');
     const route = listModelRoutes().find(item => item.id === 'sd20-720-diw-ed');
     updateModelRoute(route.id, { adminEnabled: false }, { expectedVersion: route.version });
-    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9' }).id, 'sd20-720-diw-cd');
+    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9' }).id, 'sd20-720-diw-md');
   });
 
   await t.test('route-specific reference limits skip the WJ image-only key', () => {
@@ -90,6 +90,13 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(imageOnly.id, 'sd20-720-wj-py900');
     const withVideo = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '1:1', referenceCounts: { image: 1, video: 1 } });
     assert.equal(withVideo.id, 'sd20-720-diw-cd');
+  });
+
+  await t.test('CD route is selected only when at least one reference image is present', () => {
+    const text = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '9:16', referenceCounts: { image: 0 } });
+    assert.notEqual(text.id, 'sd20-720-diw-cd');
+    const reference = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '9:16', referenceCounts: { image: 1 } });
+    assert.equal(reference.id, 'sd20-720-diw-cd');
   });
 
   await t.test('missing catalog models are disabled and automatically return when listed again', async () => {
