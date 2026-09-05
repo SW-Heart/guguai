@@ -1,0 +1,105 @@
+:root {
+  --canvas: #f7f7f8;
+  --panel: #ffffff;
+  --panel-raised: #ffffff;
+  --surface: #f4f4f5;
+  --surface-hover: #eeeeef;
+  --ink: #18181b;
+  --ink-soft: #3f3f46;
+  --muted: #667085;
+  --faint: #8b95a5;
+  --line: #e9e9ec;
+  --line-strong: #dcdce1;
+  --brand: #6366f1;
+  --brand-hover: #5558e8;
+  --brand-soft: #eef2ff;
+  --brand-line: #a5b4fc;
+  --success: #4d7c5a;
+  --success-soft: #edf6ef;
+  --warning: #9a6b27;
+  --warning-soft: #fff8e8;
+  --danger: #b24d55;
+  --danger-soft: #fff1f2;
+  --sans: Inter, Geist, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "SFMono-Regular", "Geist Mono", Consolas, monospace;
+  --shadow-float: 0 14px 40px rgba(24, 24, 27, .12), 0 2px 8px rgba(24, 24, 27, .05);
+  --ease: 180ms cubic-bezier(.2, .8, .2, 1);
+  --glass-primary: linear-gradient(135deg, #5c5ee9, #8062ec);
+  --glass-primary-hover: linear-gradient(135deg, #6769ef, #8a6cf1);
+  --glass-soft: linear-gradient(145deg, rgba(255,255,255,.82), rgba(238,240,255,.56));
+  --glass-soft-hover: linear-gradient(145deg, rgba(255,255,255,.9), rgba(232,234,255,.72));
+  --glass-line: rgba(99,102,241,.16);
+  --glass-shadow: 0 5px 14px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.82);
+}
+
+/* Remote videos stay unloaded until an explicit preview action. */
+.wb-mention-thumb > .wb-video-placeholder,
+.wb-mention-option-media > .wb-video-placeholder,
+.wb-mention-preview-media > .wb-video-placeholder { width: 100%; height: 100%; min-height: 0; }
+
+/* Keep placeholder media aligned with the legacy video card dimensions. */
+.video-version > .wb-video-placeholder { width: 100%; height: 125px; min-height: 0; }
+.final-cut > .wb-video-placeholder { width: 220px; min-height: 140px; border-radius: 7px; }
+.wb-asset-apply > .wb-video-placeholder { width: 100%; height: 74px; min-height: 0; }
+@media (max-width: 900px) {
+  .final-cut > .wb-video-placeholder { width: 100%; min-height: 140px; }
+}
+
+.video-route-card{margin-top:12px;padding:10px 11px;border:1px solid #d8d9eb;border-radius:7px;background:#f1f1ff;display:grid;grid-template-columns:1fr auto;align-items:center;gap:3px 8px}.video-route-card span{color:#6f7180;font:7px var(--mono);letter-spacing:.08em}.video-route-card b{grid-row:1/3;grid-column:2;color:#484bac;font-size:10px}.video-route-card small{color:#777987;font-size:7px}.video-parameter-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.generation-config select:disabled{color:#777986;background:#f1f1f3;cursor:not-allowed}
+.compiled-video-prompt{max-height:310px;padding:11px;border:1px solid #d9dae3;border-radius:7px;color:#333540!important;background:#fbfbfc;overflow:auto;white-space:pre-wrap;font:8px/1.7 var(--mono)!important}
+.editable-video-prompt{display:block;width:100%;min-height:310px;max-height:none;resize:vertical;outline:none}.editable-video-prompt:focus{border-color:#7375df;background:white;box-shadow:0 0 0 2px rgba(98,101,223,.09)}.prompt-edit-hint{display:block;margin-top:6px;color:var(--muted);font-size:8px;line-height:1.5}
+
+* { box-sizing: border-box; }
+html { color: var(--ink); background: var(--canvas); font-family: var(--sans); }
+body { margin: 0; min-height: 100vh; overflow: hidden; background: var(--canvas); font-size: 14px; }
+button, input, textarea, select { font: inherit; }
+button, a { color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.hidden { display: none !important; }
+.sr-only { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0,0,0,0) !important; white-space: nowrap !important; }
+.native-hidden { position: absolute !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none; }
+/* The parked transform is derived from the resting offset so the link is always
+   fully off-screen, whatever `--skip-link-top` the current shell uses. */
+.skip-link { --skip-link-top: 10px; position: fixed; left: 12px; top: var(--skip-link-top); z-index: 1000; transform: translateY(calc(-100% - var(--skip-link-top) - 8px)); padding: 9px 12px; border-radius: 6px; color: white; background: var(--brand); text-decoration: none; transition: transform var(--ease); -webkit-app-region: no-drag; }
+/* Explicit keyboard intent only, tracked by `keyboard-nav` in app.js. A pointer
+   click, or a focus the desktop shell restores when the window returns from the
+   tray, must not park this panel over the window chrome. */
+body.keyboard-nav .skip-link:focus-visible { transform: none; }
+
+/* Desktop chrome: the workbench topbar becomes the native-feeling titlebar. */
+/* The 56px titlebar band belongs to the native traffic lights and the Windows
+   controls overlay, so the skip link drops below it in the desktop shell. */
+body.desktop-runtime .skip-link { --skip-link-top: 64px; left: 16px; }
+.desktop-drag-region { position: fixed; z-index: 80; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; user-select: none; }
+.desktop-window-controls { position: fixed; z-index: 100; top: 0; right: 0; height: 56px; display: flex; align-items: stretch; border-left: 1px solid rgba(24,24,27,.08); background: rgba(247,247,248,.92); box-shadow: -8px 0 18px rgba(24,24,27,.035); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
+.desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: var(--muted); background: transparent; display: grid; place-items: center; -webkit-app-region: no-drag; transition: color var(--ease), background var(--ease); }
+.desktop-window-controls button:hover { color: var(--ink); background: rgba(24,24,27,.06); }
+.desktop-window-controls button:active { background: rgba(24,24,27,.1); }
+.desktop-window-controls button svg { width: 14px; height: 14px; stroke-width: 1.55; }
+.desktop-window-controls .window-close:hover { color: white; background: #d6535c; }
+.desktop-window-controls .window-close:active { background: #b63d46; }
+.desktop-window-controls .window-icon { width: 13px; height: 13px; }
+body.desktop-runtime .topbar { -webkit-app-region: drag; user-select: none; }
+body.desktop-runtime .topbar .brand,
+body.desktop-runtime .topbar .top-actions,
+body.desktop-runtime .topbar .drama-steps,
+body.desktop-runtime .topbar .account-menu,
+body.desktop-runtime .topbar button,
+body.desktop-runtime .topbar a,
+body.desktop-runtime .topbar input,
+body.desktop-runtime .topbar select,
+body.desktop-runtime .topbar textarea { -webkit-app-region: no-drag; }
+body.desktop-runtime .topbar .workspace-name { -webkit-app-region: drag; }
+body.desktop-runtime .topbar #dramaProjectTitle { -webkit-app-region: no-drag; user-select: text; }
+body.desktop-runtime.desktop-win32 .topbar { padding-right: max(144px, calc(100vw - env(titlebar-area-width, calc(100vw - 144px)))); }
+body.desktop-runtime.desktop-linux .topbar { padding-right: 144px; }
+body.desktop-runtime.desktop-darwin .topbar { padding-left: 72px; grid-template-columns: 0 var(--creator-width) 1fr; }
+body.desktop-runtime.desktop-darwin .topbar .brand { min-width: 0; overflow: hidden; }
+body.desktop-runtime.desktop-darwin .desktop-window-controls { display: none; }
+/* Windows uses Electron's native Window Controls Overlay. The old HTML
+   controls remain in the markup for fallback compatibility but must not sit
+   under the native hit area. */
+body.desktop-runtime.desktop-win32 .desktop-window-controls { display: none; }
+
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

@@ -1,3 +1,5 @@
+import { createApiClient } from './api-client.js?v=3';
+
 (() => {
   const $ = selector => document.querySelector(selector);
   const state = {
@@ -12,6 +14,7 @@
     modelItems: [],
     routeData: null,
   };
+  const { request: requestApi } = createApiClient({ scopeHeaders: () => state.csrf ? { 'X-CSRF-Token': state.csrf } : {}, responseShapeFor: () => 'object' });
   const routeModelLabels = {
     'seedance-2.0': 'Seedance 2.0 · 兼容线路',
     'seedance-2.0-text': 'Seedance 2.0 · 文生视频',
@@ -150,29 +153,12 @@
 
   async function api(path, options = {}) {
     const { timeout = 20000, skipAuthRedirect = false, ...requestOptions } = options;
-    const method = String(requestOptions.method || 'GET').toUpperCase();
-    const headers = { ...(requestOptions.headers || {}) };
-    if (requestOptions.body !== undefined) headers['Content-Type'] = 'application/json';
-    if (method !== 'GET' && state.csrf) headers['X-CSRF-Token'] = state.csrf;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-    let response;
     try {
-      response = await fetch(path, { credentials: 'same-origin', ...requestOptions, method, headers, signal: requestOptions.signal || controller.signal });
+      return await requestApi(path, { ...requestOptions, timeoutMs:timeout });
     } catch (error) {
-      if (error.name === 'AbortError') throw new Error('请求超时，请检查网络后重试');
-      throw new Error('网络连接失败，请稍后重试');
-    } finally { clearTimeout(timer); }
-    let data = {};
-    try { data = await response.json(); } catch {}
-    if (!response.ok) {
-      if (response.status === 401 && !skipAuthRedirect && path !== '/api/admin/auth/login') showLogin('管理员会话已过期，请重新登录。');
-      const error = new Error(data.error || (response.status === 401 ? '请先登录管理员账号' : '请求失败'));
-      error.status = response.status;
-      error.data = data;
+      if (error.status === 401 && !skipAuthRedirect && path !== '/api/admin/auth/login') showLogin('管理员会话已过期，请重新登录。');
       throw error;
     }
-    return data;
   }
 
   const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };

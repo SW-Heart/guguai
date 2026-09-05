@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -6,7 +6,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { fetchRemoteMedia } from './media-download.mjs';
 import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
@@ -18,13 +18,18 @@ import {
   findLocalAssetByDigest,
   findLocalAssetByRelativePath,
   getLocalAsset,
+  listLocalDeliveryTasks,
   listLocalAssets as queryLocalAssets,
   listLocalAssetsByCloudIds,
   openLocalLibrary,
+  completeLocalDeliveryTask,
+  upsertLocalDeliveryTask,
   upsertLocalAsset,
 } from './local-library.mjs';
 import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
+import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
+import { normalizeControlledUrl } from './remote-settings.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -117,18 +122,6 @@ function commandLineApiBase() {
   return value ? value.slice('--api-base='.length) : '';
 }
 
-function normalizeBaseUrl(value, fallback = defaultApiBase) {
-  const raw = String(value || '').trim();
-  if (!raw) return fallback;
-  try {
-    const parsed = new URL(raw);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return fallback;
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return fallback;
-  }
-}
-
 function isLoopbackBase(value) {
   try {
     const hostname = new URL(String(value || '')).hostname.toLowerCase();
@@ -138,12 +131,26 @@ function isLoopbackBase(value) {
   }
 }
 
+function approvedRemoteOrigin(kind) {
+  const value = kind === 'api'
+    ? packageMetadata?.guguApiBase || process.env.GUGU_API_BASE || ''
+    : packageMetadata?.guguUpdateUrl || process.env.GUGU_UPDATE_URL || '';
+  try { return new URL(value).origin; } catch { return ''; }
+}
+
 function configuredApiBase() {
   // Ignore the localhost value written by older bundled-server builds when a
   // packaged client now has an online endpoint in its package metadata.
   const savedBase = app.isPackaged && isLoopbackBase(settings?.apiBase) ? '' : settings?.apiBase;
   const configured = commandLineApiBase() || savedBase || packageMetadata?.guguApiBase || process.env.GUGU_API_BASE || '';
-  return normalizeBaseUrl(configured, app.isPackaged ? '' : defaultApiBase);
+  try {
+    return normalizeControlledUrl(configured, {
+      production: app.isPackaged,
+      allowedOrigin: app.isPackaged ? approvedRemoteOrigin('api') : '',
+    });
+  } catch {
+    return app.isPackaged ? '' : defaultApiBase;
+  }
 }
 
 function safeName(value, fallback = '未命名文件') {
@@ -873,7 +880,15 @@ async function openOfflinePage(message = '') {
 
 function updateFeedUrl() {
   const value = settings?.updateUrl || packageMetadata?.guguUpdateUrl || process.env.GUGU_UPDATE_URL || '';
-  return String(value || '').trim().replace(/\/$/, '');
+  try {
+    return normalizeControlledUrl(value, {
+      production: app.isPackaged,
+      allowedOrigin: app.isPackaged ? approvedRemoteOrigin('update') : '',
+      allowEmpty: true,
+    });
+  } catch {
+    return '';
+  }
 }
 function sendUpdateStatus(status, extra = {}) {
   currentUpdateStatus = {
@@ -1353,7 +1368,13 @@ function createTray() {
 }
 
 function registerIpc() {
-  ipcMain.handle('desktop:get-info', () => ({
+  const handle = createIpcRegistrar({
+    ipcMain,
+    getMainWindow: () => mainWindow,
+    getPaymentWindow: () => paymentWindow,
+    getTrustedOrigin: () => trustedOrigin,
+  });
+  handle('desktop:get-info', () => ({
     productName,
     platform: process.platform,
     arch: process.arch,
@@ -1368,8 +1389,8 @@ function registerIpc() {
     assetSyncCursor: syncCursor(),
     updateUrl: updateFeedUrl(),
   }));
-  ipcMain.handle('desktop:get-sync-state', () => ({ deviceId: settings.deviceId, workspaceId, cursor: syncCursor() }));
-  ipcMain.handle('desktop:set-sync-cursor', async (_event, value) => {
+  handle('desktop:get-sync-state', () => ({ deviceId: settings.deviceId, workspaceId, cursor: syncCursor() }));
+  handle('desktop:set-sync-cursor', async (_event, value) => {
     const cursor = String(value || '');
     if (cursor.length > 1024) throw new Error('素材同步游标无效');
     const origin = syncOriginKey();
@@ -1381,60 +1402,60 @@ function registerIpc() {
       await persistSettings();
     }
     return { deviceId: settings.deviceId, workspaceId, cursor };
-  });
-  ipcMain.handle('desktop:set-api-base', async (_event, value) => {
+  }, { validateArgs: ([value]) => [ipcText(value, 1024, '素材同步游标')] });
+  handle('desktop:set-api-base', async (_event, value) => {
     const raw = String(value || '').trim();
-    let parsed;
-    try { parsed = new URL(raw); } catch { throw new Error('服务地址必须是完整的 http:// 或 https:// 地址'); }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('服务地址必须是完整的 http:// 或 https:// 地址');
-    settings.apiBase = normalizeBaseUrl(parsed.toString(), '');
+    settings.apiBase = normalizeControlledUrl(raw, {
+      production: app.isPackaged,
+      allowedOrigin: app.isPackaged ? approvedRemoteOrigin('api') : '',
+    });
     await persistSettings();
     await loadStudio();
     return { apiBase: settings.apiBase };
-  });
-  ipcMain.handle('desktop:set-update-url', async (_event, value) => {
+  }, { validateArgs: ([value]) => [ipcText(value, 2048, '服务地址')] });
+  handle('desktop:set-update-url', async (_event, value) => {
     const raw = String(value || '').trim();
     if (!raw) {
       settings.updateUrl = '';
       await persistSettings();
       return { updateUrl: '', restartRequired: false };
     }
-    let parsed;
-    try { parsed = new URL(raw); } catch { throw new Error('更新地址必须是完整的 http:// 或 https:// 地址'); }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('更新地址必须是完整的 http:// 或 https:// 地址');
-    settings.updateUrl = parsed.toString().replace(/\/$/, '');
+    settings.updateUrl = normalizeControlledUrl(raw, {
+      production: app.isPackaged,
+      allowedOrigin: app.isPackaged ? approvedRemoteOrigin('update') : '',
+    });
     await persistSettings();
     return { updateUrl: settings.updateUrl, restartRequired: app.isPackaged };
-  });
-  ipcMain.handle('desktop:retry', () => loadStudio());
-  ipcMain.handle('window:minimize', event => {
+  }, { validateArgs: ([value]) => [ipcText(value, 2048, '更新地址')] });
+  handle('desktop:retry', () => loadStudio());
+  handle('window:minimize', event => {
     if (!isMainWindowEvent(event)) return false;
     mainWindow.minimize();
     return true;
   });
-  ipcMain.handle('window:toggle-maximize', event => {
+  handle('window:toggle-maximize', event => {
     if (!isMainWindowEvent(event)) return false;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
     return mainWindow.isMaximized();
   });
-  ipcMain.handle('window:is-maximized', event => isMainWindowEvent(event) && mainWindow.isMaximized());
-  ipcMain.handle('window:is-fullscreen', event => isMainWindowEvent(event) && mainWindow.isFullScreen());
-  ipcMain.handle('window:set-modal-state', (event, active) => {
+  handle('window:is-maximized', event => isMainWindowEvent(event) && mainWindow.isMaximized());
+  handle('window:is-fullscreen', event => isMainWindowEvent(event) && mainWindow.isFullScreen());
+  handle('window:set-modal-state', (event, active) => {
     if (!isMainWindowEvent(event)) return false;
     return setWindowsModalState(Boolean(active));
   });
-  ipcMain.handle('window:close', event => {
+  handle('window:close', event => {
     if (!isMainWindowEvent(event)) return false;
     return closeMainWindow();
   });
-  ipcMain.handle('updates:check', () => checkForUpdates());
-  ipcMain.handle('updates:snooze', event => {
+  handle('updates:check', () => checkForUpdates());
+  handle('updates:snooze', event => {
     if (!isMainWindowEvent(event)) return false;
     return snoozeUpdateReminder();
   });
-  ipcMain.handle('updates:get-status', () => currentUpdateStatus);
-  ipcMain.handle('updates:install', async () => {
+  handle('updates:get-status', () => currentUpdateStatus);
+  handle('updates:install', async () => {
     if (!updateConfigured) return false;
     if (process.platform === 'darwin') {
       return launchMacUpdateInstaller();
@@ -1446,47 +1467,59 @@ function registerIpc() {
       throw error;
     }
   });
-  ipcMain.handle('payments:open-alipay', async (event, paymentHtml) => {
+  handle('payments:open-alipay', async (event, paymentHtml) => {
     if (!isMainWindowEvent(event)) throw new Error('无效的支付窗口请求');
     return openAlipayPaymentWindow(paymentHtml);
-  });
-  ipcMain.handle('payments:complete-alipay', async event => {
+  }, { validateArgs: ([value]) => [ipcText(value, 100_000, '支付页面')] });
+  handle('payments:complete-alipay', async event => {
     if (!isMainWindowEvent(event)) return false;
     return closePaymentWindowBeforeReplace();
   });
-  ipcMain.handle('payments:close-alipay', event => {
+  handle('payments:close-alipay', event => {
     if (!paymentWindow || paymentWindow.isDestroyed() || event.sender !== paymentWindow.webContents) return false;
     return closePaymentWindow();
-  });
-  ipcMain.handle('workspace:get', () => ({ ...activeWorkspaceInfo(), assetCount: workspace ? countLocalAssets() : 0 }));
-  ipcMain.handle('workspace:choose', async () => {
+  }, { allowPaymentWindow:true });
+  handle('workspace:get', () => ({ ...activeWorkspaceInfo(), assetCount: workspace ? countLocalAssets() : 0 }));
+  handle('workspace:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 GuGu AI 工作区', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return { canceled: true };
     return { canceled: false, ...(await setWorkspaceRoot(result.filePaths[0])) };
   });
-  ipcMain.handle('workspace:activate-account', async (_event, accountId) => {
+  handle('workspace:activate-account', async (_event, accountId) => {
     return activateWorkspaceAccount(accountId);
-  });
-  ipcMain.handle('workspace:deactivate-account', async () => {
+  }, { validateArgs: ([value]) => [ipcId(value, '账号标识')] });
+  handle('workspace:deactivate-account', async () => {
     return deactivateWorkspaceAccount();
   });
-  ipcMain.handle('workspace:open', async () => {
+  handle('workspace:open', async () => {
     if (!workspace) return false;
     await shell.openPath(workspace);
     return true;
   });
-  ipcMain.handle('media:choose-and-import', (_event, options) => chooseAndImportFiles(options));
-  ipcMain.handle('media:list-local', (_event, options) => listLocalAssets(options || {}));
-  ipcMain.handle('media:list-local-by-cloud-ids', async (_event, ids) => (await listLocalAssets({ cloudAssetIds: ids })).items);
-  ipcMain.handle('media:download-remote', (_event, payload) => downloadRemoteAsset(payload || {}));
-  ipcMain.handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
-  ipcMain.handle('media:extract-tail', (_event, payload) => extractLocalTailFrame(payload || {}));
-  ipcMain.handle('media:assemble-videos', (_event, payload) => assembleLocalVideos(payload || {}));
-  ipcMain.handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
-  ipcMain.handle('media:remove-local', (_event, assetId) => removeLocalAsset(assetId));
-  ipcMain.handle('media:remove-local-by-cloud-ids', (_event, cloudAssetIds) => removeLocalAssetsByCloudIds(cloudAssetIds));
-  ipcMain.handle('media:url', (_event, assetId) => localMediaUrl(String(assetId || '')));
-  ipcMain.handle('media:show-in-folder', async (_event, assetId) => {
+  handle('media:choose-and-import', (_event, options) => chooseAndImportFiles(options));
+  handle('media:list-local', (_event, options) => listLocalAssets(options || {}));
+  handle('media:list-local-by-cloud-ids', async (_event, ids) => (await listLocalAssets({ cloudAssetIds: ids })).items, { validateArgs: ([value]) => [ipcIdList(value, '云端素材标识列表')] });
+  handle('media:list-delivery-tasks', () => listLocalDeliveryTasks({ limit:500 }));
+  handle('media:save-delivery-task', (_event, payload) => {
+    if (!workspace || !workspaceAccountId || String(payload.workspaceId || '') !== workspaceId) throw new Error('本地工作区已切换，请重试');
+    return upsertLocalDeliveryTask(payload);
+  }, { validateArgs: ([value]) => [ipcRecord(value || {}, '本地确认任务')] });
+  handle('media:complete-delivery-task', (_event, payload) => {
+    if (!workspace || !workspaceAccountId || String(payload?.workspaceId || '') !== workspaceId) throw new Error('本地工作区已切换，请重试');
+    return completeLocalDeliveryTask(payload.assetId);
+  }, { validateArgs: ([value]) => {
+    const record = ipcRecord(value || {}, '本地确认任务');
+    return [{ ...record, assetId:ipcId(record.assetId, '云端素材标识'), workspaceId:ipcText(record.workspaceId, 128, '工作区标识') }];
+  } });
+  handle('media:download-remote', (_event, payload) => downloadRemoteAsset(payload || {}));
+  handle('media:sync-local', (_event, payload) => syncLocalAsset(payload || {}));
+  handle('media:extract-tail', (_event, payload) => extractLocalTailFrame(payload || {}));
+  handle('media:assemble-videos', (_event, payload) => assembleLocalVideos(payload || {}));
+  handle('media:rename-local', (_event, payload) => renameLocalAsset(payload || {}));
+  handle('media:remove-local', (_event, assetId) => removeLocalAsset(assetId), { validateArgs: ([value]) => [ipcId(value, '本地素材标识')] });
+  handle('media:remove-local-by-cloud-ids', (_event, cloudAssetIds) => removeLocalAssetsByCloudIds(cloudAssetIds), { validateArgs: ([value]) => [ipcIdList(value, '云端素材标识列表')] });
+  handle('media:url', (_event, assetId) => localMediaUrl(String(assetId || '')), { validateArgs: ([value]) => [ipcId(value, '本地素材标识')] });
+  handle('media:show-in-folder', async (_event, assetId) => {
     const targetWorkspace = workspace;
     const targetEpoch = workspaceEpoch;
     const asset = libraryAsset(String(assetId || ''));
@@ -1497,16 +1530,35 @@ function registerIpc() {
     if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return false;
     shell.showItemInFolder(target);
     return true;
-  });
-  ipcMain.handle('logs:append', (event, payload) => {
+  }, { validateArgs: ([value]) => [ipcId(value, '本地素材标识')] });
+  handle('media:copy-to-clipboard', async (_event, assetId) => {
+    const targetWorkspace = workspace;
+    const targetEpoch = workspaceEpoch;
+    const asset = libraryAsset(String(assetId || ''));
+    if (!asset || !targetWorkspace || !workspaceAccountId) return false;
+    const target = localAssetPath(asset, targetWorkspace);
+    const isFile = await fs.stat(target).then(info => info.isFile()).catch(() => false);
+    if (!isFile || targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return false;
+    if (asset.kind === 'image') {
+      const image = nativeImage.createFromPath(target);
+      if (image.isEmpty()) throw new Error('图片无法读取');
+      clipboard.writeImage(image);
+    } else {
+      const fileUrl = pathToFileURL(target).href;
+      clipboard.write({ text: target });
+      clipboard.writeBuffer(process.platform === 'darwin' ? 'public.file-url' : 'text/uri-list', Buffer.from(`${fileUrl}\r\n`));
+    }
+    return true;
+  }, { validateArgs: ([value]) => [ipcId(value, '本地素材标识')] });
+  handle('logs:append', (event, payload) => {
     if (!isMainWindowEvent(event) || !rendererLogAllowed()) return false;
     return appendDesktopLog({ level: payload?.level, scope: 'renderer', message: payload?.message });
-  });
-  ipcMain.handle('logs:collect', event => {
+  }, { validateArgs: ([value]) => [ipcRecord(value || {}, '日志参数')] });
+  handle('logs:collect', event => {
     if (!isMainWindowEvent(event)) throw new Error('无效的日志收集请求');
     return collectDesktopLogBundle({ diagnostics: desktopDiagnostics() });
   });
-  ipcMain.handle('logs:open-folder', async () => {
+  handle('logs:open-folder', async () => {
     const dir = desktopLogDirectory();
     if (!dir) return false;
     flushDesktopLog();

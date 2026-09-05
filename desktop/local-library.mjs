@@ -135,6 +135,20 @@ export function openLocalLibrary(workspace) {
       remote_status TEXT NOT NULL,
       doc_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS delivery_tasks (
+      asset_id TEXT PRIMARY KEY,
+      local_asset_id TEXT NOT NULL,
+      size INTEGER NOT NULL DEFAULT 0,
+      sha256 TEXT,
+      mime_type TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      updated_at TEXT NOT NULL,
+      doc_json TEXT NOT NULL,
+      CHECK (status IN ('pending', 'retrying'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_delivery_tasks_due ON delivery_tasks(status, next_attempt_at, updated_at);
     CREATE INDEX IF NOT EXISTS idx_local_assets_time ON assets(created_at DESC, id ASC);
     CREATE INDEX IF NOT EXISTS idx_local_assets_kind_time ON assets(kind, created_at DESC, id ASC);
     CREATE INDEX IF NOT EXISTS idx_local_assets_sha_size ON assets(sha256, size);
@@ -255,6 +269,58 @@ export function listLocalAssetsByCloudIds(ids) {
 
 export function deleteLocalAsset(id) {
   return db().prepare('DELETE FROM assets WHERE id = :id').run({ id: String(id || '') }).changes > 0;
+}
+
+export function upsertLocalDeliveryTask({ assetId, localAssetId, size = 0, sha256 = '', mimeType = '', attempts = 0, nextAttemptAt = 0 } = {}) {
+  const normalizedAssetId = String(assetId || '').trim();
+  const normalizedLocalAssetId = String(localAssetId || '').trim();
+  if (!normalizedAssetId || !normalizedLocalAssetId) throw new Error('本地确认任务标识不完整');
+  const value = {
+    assetId: normalizedAssetId,
+    localAssetId: normalizedLocalAssetId,
+    size: Math.max(0, Number(size) || 0),
+    sha256: String(sha256 || ''),
+    mimeType: String(mimeType || ''),
+    attempts: Math.max(0, Math.floor(Number(attempts) || 0)),
+    nextAttemptAt: Math.max(0, Math.floor(Number(nextAttemptAt) || 0)),
+    updatedAt: new Date().toISOString(),
+  };
+  db().prepare(`
+    INSERT INTO delivery_tasks(asset_id, local_asset_id, size, sha256, mime_type, attempts, next_attempt_at, status, updated_at, doc_json)
+    VALUES(:assetId, :localAssetId, :size, :sha256, :mimeType, :attempts, :nextAttemptAt, 'pending', :updatedAt, :docJson)
+    ON CONFLICT(asset_id) DO UPDATE SET
+      local_asset_id = excluded.local_asset_id,
+      size = excluded.size,
+      sha256 = excluded.sha256,
+      mime_type = excluded.mime_type,
+      attempts = excluded.attempts,
+      next_attempt_at = excluded.next_attempt_at,
+      status = 'pending',
+      updated_at = excluded.updated_at,
+      doc_json = excluded.doc_json`).run({ ...value, docJson: JSON.stringify(value) });
+  return value;
+}
+
+export function listLocalDeliveryTasks({ now = Date.now(), limit = 100, dueOnly = false } = {}) {
+  const bounded = Math.max(1, Math.min(500, Number(limit) || 100));
+  const dueClause = dueOnly ? 'AND next_attempt_at <= :now' : '';
+  const params = { limit: bounded };
+  if (dueOnly) params.now = Math.max(0, Number(now) || 0);
+  return db().prepare(`
+    SELECT doc_json FROM delivery_tasks
+    WHERE status IN ('pending', 'retrying') ${dueClause}
+    ORDER BY next_attempt_at ASC, updated_at ASC, asset_id ASC
+    LIMIT :limit`).all(params).map(row => {
+    try { return JSON.parse(row.doc_json); } catch { return null; }
+  }).filter(Boolean);
+}
+
+export function completeLocalDeliveryTask(assetId) {
+  return db().prepare('DELETE FROM delivery_tasks WHERE asset_id = :assetId').run({ assetId: String(assetId || '') }).changes > 0;
+}
+
+export function removeLocalDeliveryTask(assetId) {
+  return completeLocalDeliveryTask(assetId);
 }
 
 export function countLocalAssets() {

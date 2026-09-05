@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     chooseAndImport: options => invoke('media:choose-and-import', options || {}),
     listLocal: options => invoke('media:list-local', options || {}),
     listLocalByCloudIds: cloudAssetIds => invoke('media:list-local-by-cloud-ids', cloudAssetIds || []),
+    listDeliveryTasks: () => invoke('media:list-delivery-tasks'),
+    saveDeliveryTask: payload => invoke('media:save-delivery-task', payload || {}),
+    completeDeliveryTask: (assetId, workspaceId) => invoke('media:complete-delivery-task', { assetId, workspaceId }),
     downloadRemote: payload => invoke('media:download-remote', payload),
     syncLocal: payload => invoke('media:sync-local', payload),
     extractTail: payload => invoke('media:extract-tail', payload),
@@ -65,5 +68,6 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     removeLocalByCloudIds: cloudAssetIds => invoke('media:remove-local-by-cloud-ids', cloudAssetIds || []),
     url: assetId => invoke('media:url', assetId),
     showInFolder: assetId => invoke('media:show-in-folder', assetId),
+    copyToClipboard: assetId => invoke('media:copy-to-clipboard', assetId),
   }),
 }));

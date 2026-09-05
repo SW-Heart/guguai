@@ -83,9 +83,11 @@ try {
 
   console.log('健康检查：');
   let r = await call('GET', '/healthz');
-  check('/healthz 返回 ok', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ok'); });
+  check('/healthz 返回 ok', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ok'); assert.match(r.headers.get('x-request-id'), /^[A-Za-z0-9-]+$/); });
   r = await call('GET', '/readyz');
-  check('/readyz 返回 ready', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ready'); });
+  check('/readyz 返回 ready', () => { assert.equal(r.status, 200); assert.equal(r.body.status, 'ready'); assert.equal(r.body.queue.pendingJobs, 0); });
+  r = await call('GET', '/metrics');
+  check('/metrics 返回任务与运行指标', () => { assert.equal(r.status, 200); assert.match(r.body, /gugu_pendingJobs 0/); assert.match(r.body, /gugu_generationJobsClaimed/); });
   r = await call('GET', '/payments/alipay/return');
   check('支付宝同步回跳页面可访问', () => { assert.equal(r.status, 200); assert.match(r.body, /支付结果待确认/); });
   r = await call('GET', '/payments/alipay/return/');

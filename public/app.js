@@ -1,50 +1,37 @@
-import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, mergeTransientFields, recordSignature } from './list-sync.js?v=3';
+import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, desktopHydrationRetryDelay, desktopMediaPayload, isRemoteReferenceReady, mergeDesktopAssetRecord, needsReferenceUpload, shouldHydrateDesktopAsset, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=8';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=8';
+import { createApiClient } from './api-client.js?v=3';
+import { createRecordIndexes } from './state/records.js?v=2';
+import { createDesktopScope } from './platform/desktop-scope.js?v=2';
+import { createTaskPoller } from './features/generation/polling.js?v=2';
+import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
+import { createCreditPresentation } from './features/credits/presentation.js?v=2';
+import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
+import { createAccountScope } from './state/account-scope.js?v=2';
+import { createNotificationController } from './features/notifications/controller.js?v=3';
+import { resetAccountState } from './state/account-state.js?v=1';
+import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
+import { createMediaController } from './features/media/controller.js?v=3';
+import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], generationTab:'works', generationHistory:{ image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } }, files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:sessionStorage.getItem('gugu_alipay_order') || '', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], generationTab:'works', generationHistory:{ image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } }, files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, alipayOrderNo:'', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const accountScope = createAccountScope({ getUser: () => state.user });
+const alipayOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(String(user?.id || user?.username || 'anonymous'))}`;
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
-let indexedFiles = null;
-let filesById = new Map();
-let indexedTasks = null;
-let tasksById = new Map();
-let tasksByAssetId = new Map();
+const recordIndexes = createRecordIndexes({ getFiles: () => state.files, getTasks: () => state.tasks, getHistory: () => state.generationHistory });
+const fileById = recordIndexes.fileById;
+const taskById = recordIndexes.taskById;
+const taskForAsset = recordIndexes.taskForAsset;
 let lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:null, files:null };
 const failedWorkRetentionMs = 5 * 60 * 1000;
 const transientFailureDeadlines = new Map();
 const transientFailureTimers = new Map();
-function ensureFileIndex() {
-  if (indexedFiles === state.files) return;
-  indexedFiles = state.files;
-  filesById = new Map(state.files.map(file => [file.id, file]));
-}
-function fileById(id) { ensureFileIndex(); return filesById.get(id); }
-function ensureTaskIndex() {
-  if (indexedTasks === state.tasks) return;
-  indexedTasks = state.tasks;
-  tasksById = new Map();
-  tasksByAssetId = new Map();
-  state.tasks.forEach(task => {
-    tasksById.set(task.id, task);
-    if (task.assetId && !tasksByAssetId.has(task.assetId)) tasksByAssetId.set(task.assetId, task);
-  });
-}
-function taskById(id) {
-  ensureTaskIndex();
-  const task = tasksById.get(id);
-  if (task) return task;
-  return Object.values(state.generationHistory || {}).flatMap(entry => entry?.items || []).find(item => item.id === id) || null;
-}
-function taskForAsset(file) {
-  ensureTaskIndex();
-  return taskById(file?.sourceGenerationId) || tasksByAssetId.get(file?.id)
-    || Object.values(state.generationHistory || {}).flatMap(entry => entry?.items || []).find(item => item.assetId === file?.id) || null;
-}
 const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
@@ -53,19 +40,7 @@ const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteU
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
 let tasksRequest = null;
-let libraryFiles = [];
-let localFileCursor = '';
-let localFileHasMore = true;
-let localFileTotal = 0;
-let fileQueryKey = '';
-let fileLoadVersion = 0;
-let localFileStateRevision = 0;
 let desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'' };
-let desktopSyncRequest = null;
-let desktopSyncRequestEpoch = 0;
-let pollTimer = 0;
-let notificationPollTimer = 0;
-let notificationPanelCloseTimer = 0;
 const activePollDelay = 6000;
 const notificationPollDelay = 60000;
 let desktopUpdateUnsubscribe = null;
@@ -74,14 +49,6 @@ let desktopWorkspacePath = '';
 let desktopAccountEpoch = 0;
 let desktopUpdateReminderSnoozed = false;
 let desktopUpdateDialogDismissed = false;
-const desktopHydrationQueue = [];
-const desktopHydrationQueued = new Set();
-const desktopHydrationAttempted = new Set();
-const desktopHydrationActive = new Set();
-const desktopHydrationForced = new Set();
-const desktopHydrationFailureCounts = new Map();
-const desktopHydrationRetryTimers = new Map();
-let desktopHydrationRunning = false;
 const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
@@ -89,114 +56,10 @@ let routeRenderFrame = 0;
 let routeRenderTimer = 0;
 let routeRenderEpoch = 0;
 
-function desktopScopeHeaders() {
-  if (!window.guguDesktop || !desktopSyncInfo.deviceId || !desktopSyncInfo.workspaceId) return {};
-  return {
-    'X-GuGu-Desktop': '1',
-    'X-GuGu-Device-Id': desktopSyncInfo.deviceId,
-    'X-GuGu-Workspace-Id': desktopSyncInfo.workspaceId,
-  };
-}
-async function api(url, options = {}) {
-  const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...desktopScopeHeaders(), ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
-  let data = {}; try { data = await response.json(); } catch {}
-  if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
-  return data;
-}
-async function apiPage(url, options = {}) {
-  const response = await fetch(url, { credentials:'same-origin', ...options, headers:{ ...desktopScopeHeaders(), ...(options.body instanceof Blob ? {} : { 'Content-Type':'application/json' }), ...(options.headers || {}) } });
-  let data = {}; try { data = await response.json(); } catch {}
-  if (!response.ok) { const error = Object.assign(new Error(data.error || '请求失败'), data); error.status = response.status; throw error; }
-  return { items:Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [], nextCursor:response.headers.get('X-Next-Cursor') || '', total:Number(response.headers.get('X-Total-Count') || data.total) || 0 };
-}
-function desktopLocalClientAsset(item) {
-  const cloudAssetId = String(item?.cloudAssetId || '');
-  const id = cloudAssetId || String(item?.id || '');
-  if (!id || !item?.url) return null;
-  const kind = item.kind || desktopMediaKind(item);
-  if (!kind) return null;
-  return { ...item, id, localId: item.id, cloudAssetId, kind, url: item.url, remoteUrl: item.remoteUrl || (cloudAssetId ? `/api/files/${encodeURIComponent(cloudAssetId)}/content` : ''), localStatus:'saved', localOnly:!cloudAssetId, updatedAt:item.updatedAt || item.createdAt };
-}
-async function listDesktopFiles(options = {}) {
-  const bridge = window.guguDesktop;
-  if (!bridge?.media?.listLocal) throw new Error('桌面本地文件库尚未就绪');
-  const local = await bridge.media.listLocal(options);
-  const page = Array.isArray(local) ? { items:local, nextCursor:'' } : (local || {});
-  return { items:(Array.isArray(page.items) ? page.items : []).map(desktopLocalClientAsset).filter(Boolean), total:Number(page.total) || 0, nextCursor:page.nextCursor || '' };
-}
-async function acknowledgeDesktopAsset(file, localAsset) {
-  await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
-    method:'POST',
-    body:JSON.stringify({ size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType, deviceId:desktopSyncInfo.deviceId }),
-  });
-}
-function renderAfterDesktopAssetHydration() {
-  if (state.route === 'files') {
-    if (state.initialSyncReady) scheduleRouteContentRender('files', false);
-  }
-  renderReferences();
-  if (['image', 'video'].includes(state.route) && state.initialSyncReady) scheduleRouteContentRender(state.route, false);
-  else if (state.route === 'drama') dramaController?.refreshTasks?.();
-}
-function mergeStateFiles(files) {
-  const previousById = new Map(state.files.map(file => [file.id, file]));
-  const incoming = mergeTransientFields(state.files, files, ['width','height'])
-    .map(file => mergeDesktopAssetRecord(previousById.get(file.id), file));
-  const incomingIds = new Set(incoming.map(file => file.id));
-  state.files = [...incoming, ...state.files.filter(file => !incomingIds.has(file.id))];
-  indexedFiles = null;
-}
-function applyDesktopLocalAsset(remoteFile, localAsset) {
-  const local = desktopLocalClientAsset(localAsset);
-  if (!local) return;
-  const file = { ...remoteFile, ...local, id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
-  // listLocal snapshots its SQLite rows before asynchronously statting each
-  // file. Mark this mutation so an older page is merged instead of replacing
-  // the newly hydrated record after it has already appeared in the gallery.
-  localFileStateRevision += 1;
-  const existed = state.files.some(item => item.id === file.id);
-  mergeStateFiles([file]);
-  if (libraryFileMatches(file)) {
-    libraryFiles = [file, ...libraryFiles.filter(item => item.id !== file.id)];
-    if (!existed) localFileTotal += 1;
-  }
-  renderAfterDesktopAssetHydration();
-}
-async function removeDesktopCloudAssets(assetIds) {
-  const ids = [...new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(value => String(value || '')).filter(Boolean))];
-  if (!ids.length) return;
-  const bridge = window.guguDesktop;
-  const localFiles = state.files.filter(file => ids.includes(String(file.cloudAssetId || file.id || '')) && !file.localOnly);
-  if (bridge?.media?.removeLocalByCloudIds) {
-    await bridge.media.removeLocalByCloudIds(ids);
-  } else if (bridge?.media?.removeLocal) {
-    // Older clients do not have the bulk bridge yet. Best-effort cleanup is
-    // still safe here because this path only receives server-confirmed cloud
-    // deletions; local-only imports are never included.
-    for (const file of localFiles) {
-      try { await bridge.media.removeLocal(file.localId || file.id); }
-      catch (error) { console.warn('[desktop] 清理已删除云端素材失败', { assetId:file.id, message:error.message }); }
-    }
-  }
-  const removed = new Set(ids);
-  const matches = file => removed.has(String(file.cloudAssetId || file.id || ''));
-  const removedLibraryCount = libraryFiles.filter(matches).length;
-  state.files = state.files.filter(file => !matches(file));
-  libraryFiles = libraryFiles.filter(file => !matches(file));
-  ids.forEach(id => {
-    desktopHydrationQueued.delete(id);
-    desktopHydrationAttempted.delete(id);
-    desktopHydrationActive.delete(id);
-    desktopHydrationFailureCounts.delete(id);
-    const retryTimer = desktopHydrationRetryTimers.get(id);
-    if (retryTimer) window.clearTimeout(retryTimer);
-    desktopHydrationRetryTimers.delete(id);
-  });
-  clearFileReferencesForIds(ids);
-  indexedFiles = null;
-  localFileTotal = Math.max(0, localFileTotal - removedLibraryCount);
-  renderAfterDesktopAssetHydration();
-}
+const desktopScope = createDesktopScope({ getWindow: () => window, getSyncInfo: () => desktopSyncInfo, getMediaKind: item => desktopMediaKind(item) });
+const desktopScopeHeaders = desktopScope.headers;
+const apiResponseShape = url => /\/api\/generations\?/.test(String(url)) && /(?:^|[?&])(?:ids|view)=/.test(String(url)) ? 'array' : 'object';
+const { request: api, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
 function clearFileReferencesForIds(assetIds) {
   const ids = new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(value => String(value || '')).filter(Boolean));
   for (const id of ids) {
@@ -207,6 +70,51 @@ function clearFileReferencesForIds(assetIds) {
     if (ids.has(String(state.videoFrames.last || ''))) state.videoFrames.last = '';
   }
 }
+function renderAfterDesktopAssetHydration() {
+  if (state.route === 'files') {
+    if (state.initialSyncReady) scheduleRouteContentRender('files', false);
+  }
+  renderReferences();
+  if (['image', 'video'].includes(state.route) && state.initialSyncReady) scheduleRouteContentRender(state.route, false);
+  else if (state.route === 'drama') dramaController?.refreshTasks?.();
+}
+const mediaController = createMediaController({
+  state,
+  api,
+  desktopScope,
+  recordIndexes,
+  fileById,
+  accountSnapshot:accountScope.snapshot,
+  isAccountCurrent:accountScope.isCurrent,
+  getAccountEpoch:() => desktopAccountEpoch,
+  getDesktopSyncInfo:() => desktopSyncInfo,
+  setDesktopSyncInfo:info => { desktopSyncInfo = info; },
+  getWindow:() => window,
+  getFileKind:() => state.fileKind,
+  getFileSearch:() => $('#fileSearch')?.value?.trim() || '',
+  matchesLibraryFile:file => libraryFileMatches(file),
+  clearFileReferencesForIds,
+  onChanged:() => renderAfterDesktopAssetHydration(),
+  onError:(error, context) => {
+    if (context?.action === 'show-folder') toast(`打开失败：${error.message}`);
+    if (context?.action === 'copy-asset') toast(`复制失败：${error.message}`);
+    if (context?.action === 'load-files') toast(`本地文件库加载失败：${error.message}`);
+  },
+  removeDramaAssemblyAssets:(assetIds, projectId) => {
+    if (dramaController) return dramaController.removeAssemblyVideosForAssets?.(assetIds, projectId);
+    if (!projectId) return undefined;
+    return ensureDramaController().then(controller => controller.removeAssemblyVideosForAssets?.(assetIds, projectId));
+  },
+  refreshDramaProject:options => dramaController?.refreshProject?.(options),
+});
+const desktopLocalClientAsset = mediaController.desktopLocalClientAsset;
+const mergeStateFiles = mediaController.mergeStateFiles;
+const syncDesktopDeliveries = mediaController.syncDesktopDeliveries;
+const loadFiles = mediaController.loadFiles;
+const removeDesktopCloudAssets = mediaController.removeDesktopCloudAssets;
+const claimLegacyWorkspace = mediaController.claimLegacyWorkspace;
+const showDesktopAssetInFolder = mediaController.showAssetInFolder;
+const copyDesktopAssetToClipboard = mediaController.copyAssetToClipboard;
 async function confirmGenerationDeletion(task, { title = '确认删除作品' } = {}) {
   const failed = task?.status === 'failed';
   if (!await confirmDelete({
@@ -229,206 +137,12 @@ async function confirmFileDeletion(file) {
   }
   return confirmDelete({ title:'确认删除素材', message:'素材一旦删除，无法恢复。' });
 }
-async function showDesktopAssetInFolder(file, control = null) {
-  const bridge = window.guguDesktop;
-  if (!bridge?.media || !file) return null;
-  const wasDisabled = Boolean(control?.disabled);
-  if (control) { control.disabled = true; control.setAttribute('aria-disabled', 'true'); }
-  try {
-    const localAssetId = String(file.localId || (file.localOnly ? file.id : ''));
-    if (!localAssetId || !await bridge.media.showInFolder(localAssetId)) throw new Error('本地素材不存在');
-    return true;
-  } catch (error) {
-    toast(`打开失败：${error.message}`);
-    return null;
-  } finally {
-    if (control) { control.disabled = wasDisabled; control.setAttribute('aria-disabled', String(wasDisabled)); }
-  }
-}
-async function hydrateDesktopAsset(file, { merge = true } = {}) {
-  const bridge = window.guguDesktop;
-  if (!bridge || !file || file.localOnly || file.localStatus === 'saved') return;
-  const result = await bridge.media.downloadRemote(desktopMediaPayload(file));
-  if (result?.unavailable) throw Object.assign(new Error(`远端文件已不存在（${result.status || 404}）`), { unavailable:true });
-  if (!result?.id) throw new Error('素材接收后未能写入本地工作区');
-  if (merge) applyDesktopLocalAsset(file, result);
-  try {
-    await acknowledgeDesktopAsset(file, result);
-  } catch (error) {
-    console.warn('[desktop] 本地文件已保存，但本地接收确认失败', { assetId: file.id, message: error.message });
-  }
-  return result;
-}
-
-// 老版本把生成记录写在账号级，但没有保存本地工作区归属。升级后的
-// 第一次启动只提交本地索引中已有的素材 ID，服务端据此补写归属；不下载
-// 历史文件，也不把当前设备没有的记录带进来。成功后按工作区记标记，后续
-// 启动不再重复检查。
-async function claimLegacyWorkspace(user) {
-  const bridge = window.guguDesktop;
-  if (!bridge?.media?.listLocal || !user?.id || !desktopSyncInfo.workspaceId) return { skipped:true };
-  const marker = `gugu:workspace-legacy-claimed-v1:${user.id}:${desktopSyncInfo.workspaceId}`;
-  if (localStorage.getItem(marker) === 'complete') return { skipped:true };
-  const assetIds = new Set();
-  let cursor = '';
-  do {
-    const page = await listDesktopFiles({ limit:200, cursor });
-    for (const file of page.items) {
-      for (const value of [file.id, file.cloudAssetId, file.localId]) {
-        const id = String(value || '').trim();
-        if (id) assetIds.add(id);
-      }
-    }
-    cursor = String(page.nextCursor || '');
-  } while (cursor);
-  const result = await api('/api/workspaces/claim-legacy', {
-    method:'POST',
-    body:JSON.stringify({ assetIds:[...assetIds].slice(0, 5000) }),
-  });
-  localStorage.setItem(marker, 'complete');
-  return result;
-}
-async function runDesktopHydrationQueue() {
-  if (desktopHydrationRunning) return;
-  const runEpoch = desktopAccountEpoch;
-  desktopHydrationRunning = true;
-  try {
-    while (desktopHydrationQueue.length && runEpoch === desktopAccountEpoch) {
-      const file = desktopHydrationQueue.shift();
-      try {
-        await hydrateDesktopAsset(file);
-        if (runEpoch !== desktopAccountEpoch) continue;
-        // A successful copy is represented by localStatus in state. Do not
-        // retain the attempt marker so a later missing-local-file check can
-        // repair the copy in the same client session.
-        desktopHydrationAttempted.delete(file?.id);
-        desktopHydrationForced.delete(file?.id);
-        desktopHydrationFailureCounts.delete(file?.id);
-        const retryTimer = desktopHydrationRetryTimers.get(file?.id);
-        if (retryTimer) window.clearTimeout(retryTimer);
-        desktopHydrationRetryTimers.delete(file?.id);
-      }
-      catch (error) {
-        if (runEpoch !== desktopAccountEpoch) continue;
-        const assetId = file?.id;
-        desktopHydrationAttempted.delete(assetId);
-        const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
-        desktopHydrationFailureCounts.set(assetId, failureCount);
-        const retryDelay = desktopHydrationRetryDelay(failureCount);
-        console.warn('[desktop] 自动同步素材失败', { assetId, message:error.message, failureCount, retryDelay });
-        if (!retryDelay) desktopHydrationForced.delete(assetId);
-        if (assetId && retryDelay && !desktopHydrationRetryTimers.has(assetId)) {
-          const timer = window.setTimeout(() => {
-            desktopHydrationRetryTimers.delete(assetId);
-            queueDesktopHydration([fileById(assetId) || file]);
-          }, retryDelay);
-          desktopHydrationRetryTimers.set(assetId, timer);
-        }
-      }
-      finally {
-        if (runEpoch === desktopAccountEpoch) {
-          desktopHydrationQueued.delete(file?.id);
-          desktopHydrationActive.delete(file?.id);
-          renderAfterDesktopAssetHydration();
-        }
-      }
-    }
-  } finally {
-    if (runEpoch === desktopAccountEpoch) {
-      desktopHydrationRunning = false;
-      if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
-    }
-  }
-}
-function queueDesktopHydration(files, { forceAssetIds = [] } = {}) {
-  if (!window.guguDesktop) return;
-  const forcedIds = new Set((Array.isArray(forceAssetIds) ? forceAssetIds : []).map(value => String(value || '')).filter(Boolean));
-  let queued = false;
-  for (const file of files) {
-    const assetId = String(file?.id || '');
-    if (forcedIds.has(assetId)) desktopHydrationForced.add(assetId);
-    const forced = desktopHydrationForced.has(assetId);
-    if (!shouldHydrateDesktopAsset(file, { force:forced }) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
-    desktopHydrationAttempted.add(file.id);
-    desktopHydrationQueued.add(file.id);
-    desktopHydrationActive.add(file.id);
-    desktopHydrationQueue.push(file);
-    queued = true;
-  }
-  if (queued) renderAfterDesktopAssetHydration();
-  if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
-}
-async function syncDesktopDeliveries({ assetIds = [] } = {}) {
-  const bridge = window.guguDesktop;
-  if (!bridge?.sync || !desktopSyncInfo.deviceId || !desktopSyncInfo.workspaceId) return null;
-  const requestEpoch = desktopAccountEpoch;
-  const requestedAssetIds = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(value => String(value || '')).filter(Boolean))].slice(0, 500);
-  if (desktopSyncRequest && desktopSyncRequestEpoch === requestEpoch) {
-    if (!requestedAssetIds.length) return desktopSyncRequest;
-    // A background cursor sync may already be running when task polling finds
-    // a missing local row. Wait for it, then issue the targeted repair; never
-    // let request coalescing silently discard the requested asset IDs.
-    try { await desktopSyncRequest; } catch {}
-    if (requestEpoch !== desktopAccountEpoch) return null;
-  }
-  const request = (async () => {
-    const query = new URLSearchParams({ deviceId:desktopSyncInfo.deviceId, limit:'100' });
-    if (desktopSyncInfo.cursor) query.set('cursor', desktopSyncInfo.cursor);
-    if (requestedAssetIds.length) query.set('assetIds', requestedAssetIds.join(','));
-    let result;
-    try {
-      result = await api(`/api/files/sync?${query}`);
-    } catch (error) {
-      if (requestEpoch !== desktopAccountEpoch) return null;
-      // A deployment may intentionally rotate the cursor signing material.
-      // Reset once to a fresh checkpoint; the bounded delivery query still
-      // covers recent remote-backed generations without replaying all history.
-      if (error.status !== 400 || !desktopSyncInfo.cursor) throw error;
-      desktopSyncInfo.cursor = '';
-      await bridge.sync.setCursor('');
-      query.delete('cursor');
-      result = await api(`/api/files/sync?${query}`);
-    }
-    if (requestEpoch !== desktopAccountEpoch) return null;
-    const changes = result.changes || [];
-    const deletedCloudAssetIds = [...new Set(changes
-      .filter(change => change?.action === 'delete' && change.assetId)
-      .map(change => String(change.assetId)))];
-    const changedAssets = changes
-      .filter(change => change?.action === 'upsert' && change.asset?.id)
-      .map(change => change.asset);
-    // Apply deletions before advancing the cursor. If local cleanup fails, a
-    // later sync retries the same change instead of permanently skipping it.
-    if (deletedCloudAssetIds.length) {
-      await removeDesktopCloudAssets(deletedCloudAssetIds);
-      await dramaController?.refreshProject?.({ quiet:true });
-    }
-    if (result.nextCursor) {
-      desktopSyncInfo.cursor = result.nextCursor;
-      await bridge.sync.setCursor(result.nextCursor);
-    }
-    const deliveries = [...new Map([
-      ...changedAssets,
-      ...(result.deliveries || []),
-    ].filter(file => file?.id).map(file => [file.id, file])).values()];
-    if (deliveries.length) {
-      // Keep the cloud record in the UI before starting the download. Until a
-      // local copy is ready, completed generations remain in recovery; only
-      // an explicit generation failure is rendered as an error.
-      mergeStateFiles(deliveries);
-      queueDesktopHydration(deliveries, { forceAssetIds:requestedAssetIds });
-      renderAfterDesktopAssetHydration();
-    }
-    return result;
-  })();
-  desktopSyncRequest = request;
-  desktopSyncRequestEpoch = requestEpoch;
-  try { return await request; }
-  finally {
-    if (desktopSyncRequest === request) desktopSyncRequest = null;
-  }
-}
 const esc = (value='') => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const notificationController = createNotificationController({ state, api, esc, toast, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+const { load:loadNotifications, render:renderNotifications, setPanelOpen:setNotificationPanelOpen, schedulePanelClose:scheduleNotificationPanelClose, markRead:markNotificationRead, markAllRead:markAllNotificationsRead } = notificationController;
+const supportLogController = createSupportLogController({ api, toast, closeNotifications:() => setNotificationPanelOpen(false), getClientInfo:() => desktopClientInfo, getSyncInfo:() => desktopSyncInfo });
+const generationPresentation = createGenerationPresentation({ escapeHtml:esc });
+const { taskProgress, videoProgressLabel, videoProgressMarkup, generationPreparationMarkup } = generationPresentation;
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
   const preview = assetPreviewUrl(file);
   const original = String(file?.remoteUrl || file?.url || '');
@@ -436,7 +150,7 @@ function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding
   return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
 }
 function isDesktopAssetSyncing(file) {
-  return Boolean(window.guguDesktop && desktopHydrationActive.has(file?.id) && !String(file.url || '').startsWith('gugu-media://'));
+  return mediaController.isHydrating(file);
 }
 function taskLocalSyncing(task, file = fileById(task?.assetId)) {
   if (!window.guguDesktop || task?.status !== 'completed' || !task.assetId) return false;
@@ -570,6 +284,8 @@ document.addEventListener('error', event => {
 const videoRichEditorEmptyChar = '\u200B';
 let videoPromptMentionRequest = null;
 let videoPromptCompositionFrame = 0;
+const videoPromptCodec = createPromptEditorCodec({ mentionClass: 'video-prompt-mention', mentionSelector: '[data-video-prompt-mention-id]', labelAttribute: 'videoPromptMentionLabel', emptyChar: videoRichEditorEmptyChar });
+const imagePromptCodec = createPromptEditorCodec({ mentionClass: 'image-prompt-mention', mentionSelector: '[data-image-prompt-mention-id]', labelAttribute: 'imagePromptMentionLabel', emptyChar: videoRichEditorEmptyChar });
 
 function videoPromptEditor() { return $('#videoPrompt'); }
 function videoPromptMentionLabel(mention, file) { return String(mention?.label || file?.name || '未命名素材').replace(/^@/, '').trim() || '未命名素材'; }
@@ -586,28 +302,10 @@ function videoPromptMentionMarkup(mention, resolvedFile = null) {
   return `<span class="video-prompt-mention" data-video-prompt-mention-id="${esc(file.id)}" data-video-prompt-mention-label="${esc(label)}" data-video-prompt-mention-kind="${esc(file.kind)}" contenteditable="false" aria-label="引用${esc(label)}，${videoPromptMentionKindLabel(file.kind)}"><span class="video-prompt-mention-thumb">${preview}</span><span class="video-prompt-mention-name">${esc(label)}</span></span>`;
 }
 function serializeVideoPromptEditor(editor = videoPromptEditor()) {
-  if (!editor) return '';
-  const visit = (node, isRoot = false) => {
-    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-    if (node.classList.contains('video-prompt-mention')) return `@${node.dataset.videoPromptMentionLabel || node.textContent.trim()}`;
-    if (node.nodeName === 'BR') return '\n';
-    const text = [...node.childNodes].map(child => visit(child)).join('');
-    return !isRoot && /^(DIV|P)$/.test(node.nodeName) ? `${text}\n` : text;
-  };
-  return visit(editor, true).replace(/\u00a0/g, ' ').replace(new RegExp(videoRichEditorEmptyChar, 'g'), '');
+  return videoPromptCodec.serialize(editor);
 }
 function videoPromptMentionsFromEditor(editor = videoPromptEditor()) {
-  if (!editor) return [];
-  return [...editor.querySelectorAll('[data-video-prompt-mention-id]')]
-    .map(node => ({
-      id:String(node.dataset.videoPromptMentionId || ''),
-      label:String(node.dataset.videoPromptMentionLabel || '').replace(/^@/, '').trim(),
-      kind:['image','video','audio'].includes(node.dataset.videoPromptMentionKind) ? node.dataset.videoPromptMentionKind : 'image',
-    }))
-    .filter(item => item.id && item.label)
-    .filter((item, index, list) => list.findIndex(other => other.id === item.id && other.label === item.label) === index)
-    .slice(0, 40);
+  return videoPromptCodec.mentions(editor).map(item => ({ ...item, kind:['image', 'video', 'audio'].includes(item.kind) ? item.kind : 'image' }));
 }
 function normalizeEmptyVideoPrompt(editor = videoPromptEditor()) {
   if (!editor) return;
@@ -671,40 +369,10 @@ function syncVideoPromptMentionsFromEditor() {
   state.refs.video = normalizeVideoReferenceIds([...mentionIds, ...state.refs.video.filter(id => !nextMentionIds.has(id))]);
 }
 function videoPromptMentionAtCaret(editor, direction) {
-  const selection = window.getSelection();
-  if (!editor || !selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode)) return null;
-  const range = selection.getRangeAt(0);
-  const container = range.startContainer;
-  const offset = range.startOffset;
-  const element = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
-  const inside = element?.closest('.video-prompt-mention');
-  if (inside && editor.contains(inside)) return inside;
-  const isMention = node => node?.nodeType === Node.ELEMENT_NODE && node.classList.contains('video-prompt-mention');
-  if (container.nodeType === Node.TEXT_NODE) {
-    const value = container.nodeValue || '';
-    if (direction === 'backward' && offset === 0 && isMention(container.previousSibling)) return container.previousSibling;
-    if (direction === 'backward' && offset === value.length && value === ' ' && isMention(container.previousSibling)) return container.previousSibling;
-    if (direction === 'forward' && offset === value.length && isMention(container.nextSibling)) return container.nextSibling;
-  } else if (container.nodeType === Node.ELEMENT_NODE) {
-    const adjacent = container.childNodes[direction === 'backward' ? offset - 1 : offset];
-    if (isMention(adjacent)) return adjacent;
-  }
-  return null;
+  return videoPromptCodec.mentionAtCaret(editor, direction);
 }
 function setVideoPromptCaret(editor, node, offset = 0) {
-  if (!editor?.isConnected) return;
-  editor.focus({ preventScroll:true });
-  const range = document.createRange();
-  if (node?.isConnected && editor.contains(node)) {
-    range.setStart(node, Math.max(0, Math.min(offset, node.nodeValue?.length || 0)));
-    range.collapse(true);
-  } else {
-    range.selectNodeContents(editor);
-    range.collapse(false);
-  }
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
+  videoPromptCodec.setCaret(editor, node, offset);
 }
 function removeVideoPromptMentionAtCaret(editor, event) {
   if (!['Backspace', 'Delete'].includes(event.key) || event.isComposing || editor.dataset.composing === 'true') return false;
@@ -807,28 +475,10 @@ function imagePromptMentionMarkup(mention, resolvedFile = null) {
   return `<span class="image-prompt-mention" data-image-prompt-mention-id="${esc(file.id)}" data-image-prompt-mention-label="${esc(label)}" data-image-prompt-mention-kind="image" contenteditable="false" aria-label="引用${esc(label)}，图片"><span class="image-prompt-mention-thumb">${assetImageMarkup(file, label)}</span><span class="image-prompt-mention-name">${esc(label)}</span></span>`;
 }
 function serializeImagePromptEditor(editor = imagePromptEditor()) {
-  if (!editor) return '';
-  const visit = (node, isRoot = false) => {
-    if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-    if (node.classList.contains('image-prompt-mention')) return `@${node.dataset.imagePromptMentionLabel || node.textContent.trim()}`;
-    if (node.nodeName === 'BR') return '\n';
-    const text = [...node.childNodes].map(child => visit(child)).join('');
-    return !isRoot && /^(DIV|P)$/.test(node.nodeName) ? `${text}\n` : text;
-  };
-  return visit(editor, true).replace(/\u00a0/g, ' ').replace(new RegExp(videoRichEditorEmptyChar, 'g'), '');
+  return imagePromptCodec.serialize(editor);
 }
 function imagePromptMentionsFromEditor(editor = imagePromptEditor()) {
-  if (!editor) return [];
-  return [...editor.querySelectorAll('[data-image-prompt-mention-id]')]
-    .map(node => ({
-      id:String(node.dataset.imagePromptMentionId || ''),
-      label:String(node.dataset.imagePromptMentionLabel || '').replace(/^@/, '').trim(),
-      kind:'image',
-    }))
-    .filter(item => item.id && item.label)
-    .filter((item, index, list) => list.findIndex(other => other.id === item.id && other.label === item.label) === index)
-    .slice(0, 40);
+  return imagePromptCodec.mentions(editor).map(item => ({ ...item, kind: 'image' }));
 }
 function normalizeEmptyImagePrompt(editor = imagePromptEditor()) {
   if (!editor) return;
@@ -846,25 +496,7 @@ function setImagePromptText(value = '') {
   normalizeEmptyImagePrompt(editor);
 }
 function imagePromptMentionAtCaret(editor, direction) {
-  const selection = window.getSelection();
-  if (!editor || !selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode)) return null;
-  const range = selection.getRangeAt(0);
-  const container = range.startContainer;
-  const offset = range.startOffset;
-  const element = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
-  const inside = element?.closest('.image-prompt-mention');
-  if (inside && editor.contains(inside)) return inside;
-  const isMention = node => node?.nodeType === Node.ELEMENT_NODE && node.classList.contains('image-prompt-mention');
-  if (container.nodeType === Node.TEXT_NODE) {
-    const value = container.nodeValue || '';
-    if (direction === 'backward' && offset === 0 && isMention(container.previousSibling)) return container.previousSibling;
-    if (direction === 'backward' && offset === value.length && value === ' ' && isMention(container.previousSibling)) return container.previousSibling;
-    if (direction === 'forward' && offset === value.length && isMention(container.nextSibling)) return container.nextSibling;
-  } else if (container.nodeType === Node.ELEMENT_NODE) {
-    const adjacent = container.childNodes[direction === 'backward' ? offset - 1 : offset];
-    if (isMention(adjacent)) return adjacent;
-  }
-  return null;
+  return imagePromptCodec.mentionAtCaret(editor, direction);
 }
 function removeImagePromptMentionAtCaret(editor, event) {
   if (!['Backspace', 'Delete'].includes(event.key) || event.isComposing || editor.dataset.composing === 'true') return false;
@@ -963,34 +595,11 @@ function insertImagePromptMentions(assetIds, request = imagePromptMentionRequest
 const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1048576).toFixed(1)} MB`;
 const dateText = value => new Date(value).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
 const fullDateText = value => value ? new Date(value).toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—';
+const creditPresentation = createCreditPresentation({ getState:() => state, escapeHtml:esc, formatFullDate:fullDateText });
+const { creditText, creditEntryAmount, creditDateText, creditModelName, creditGenerationType, creditSpendType, creditEarnType, creditEntryStatus, signedCreditAmount, renderCreditRows } = creditPresentation;
 const statusText = value => ({ queued:'排队中', running:'生成中', completed:'已完成', failed:'失败' })[value] || value;
 const generationStage = status => status === 'queued' ? 1 : status === 'running' ? 3 : status === 'completed' ? 5 : 0;
 const generationStages = ['排队', '准备', '生成', '增强', '完成'];
-function taskProgress(task) {
-  if (!Object.prototype.hasOwnProperty.call(task || {}, 'progress')) return null;
-  const progress = Number(task.progress);
-  return Number.isFinite(progress) && progress >= 0 && progress <= 100 ? Math.round(progress) : null;
-}
-function videoProgressLabel(task) {
-  return ({
-    submitting: '正在提交视频',
-    provider_processing: '正在生成视频',
-    polling_retry: '正在恢复连接',
-    archiving: '正在整理成品',
-    awaiting_reconciliation: '正在确认任务',
-  })[task.progressStage] || '正在生成视频';
-}
-function videoProgressMarkup(task) {
-  if (task.type !== 'video' || !['queued','running'].includes(task.status)) return '';
-  const progress = taskProgress(task);
-  if (progress === null) return '';
-  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="视频生成进度 ${progress}%"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${esc(videoProgressLabel(task))}</span><b>${progress}%</b></div><div class="skeleton-progress-track" aria-hidden="true"><i style="--progress:${progress}%"></i></div></div>`;
-}
-function generationPreparationMarkup(task) {
-  if (!task?.localPreparation && !task?.awaitingReferences) return '';
-  const label = ({ preparing_references:'正在准备素材…', confirming_price:'正在确认价格…', submitting:'正在提交生成…' })[task.progressStage] || '正在准备生成…';
-  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
-}
 const taskFailure = task => {
   if (task?.failure && typeof task.failure === 'object') return {
     code: String(task.failure.code || 'UNKNOWN'),
@@ -1184,57 +793,6 @@ $('#authForm').onsubmit = async event => {
   } catch (error) { $('#authError').textContent = error.status === 404 ? '注册服务未启动，请重启后端服务' : error.message; }
   finally { button.disabled = false; }
 };
-function creditText(balance) { return (Number(balance) || 0).toLocaleString('zh-CN', { maximumFractionDigits:4 }); }
-function creditEntryAmount(entry) {
-  const amount = Number(entry?.amount);
-  if (Number.isFinite(amount)) return amount;
-  const amountMicro = Number(entry?.amountMicro);
-  return Number.isFinite(amountMicro) ? amountMicro / 1_000_000 : 0;
-}
-function creditDateText(value) { const date = new Date(value); return value && !Number.isNaN(date.getTime()) ? fullDateText(value) : '—'; }
-function creditModelName(entry, task = null) {
-  const modelId = entry?.modelId || task?.modelId || entry?.model || entry?.modelName;
-  if (!modelId) return '—';
-  if (modelId === 'gpt-image-2') return 'GPT Image 2';
-  const catalog = state.config?.videoCapabilities?.models || [];
-  return catalog.find(model => model.id === modelId)?.label || String(modelId);
-}
-function creditGenerationType(entry) {
-  const task = entry?.generationId ? state.tasks.find(item => item.id === entry.generationId) : null;
-  if (entry?.contentType === 'image' || task?.type === 'image' || entry?.modelId === 'gpt-image-2') return '图像生成';
-  if (entry?.contentType === 'video' || task?.type === 'video') return '视频生成';
-  return '视频生成';
-}
-function creditSpendType(entry) {
-  if (entry?.type === 'llm_capture') return '文本生成';
-  if (entry?.type === 'admin_credit_adjustment') return '后台扣减';
-  return creditGenerationType(entry);
-}
-function creditEarnType(entry) {
-  if (entry?.type === 'generation_refund') return '任务失败退款';
-  if (entry?.type === 'alipay_purchase') return '支付宝充值';
-  if (entry?.type === 'signup_bonus') return '赠送积分';
-  if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
-  return '积分获取';
-}
-function creditEntryStatus(entry, task) {
-  if (entry?.type === 'generation_refund' || task?.creditStatus === 'refunded') return { key:'refunded', label:'已退款' };
-  if (['queued', 'running'].includes(task?.status) || (task?.status === 'failed' && task?.creditStatus !== 'refunded')) return { key:'pending', label:'进行中' };
-  return { key:'completed', label:'已完成' };
-}
-function signedCreditAmount(amount) { return `${amount < 0 ? '-' : '+'}${creditText(Math.abs(amount))}`; }
-function renderCreditRows(entries, direction) {
-  if (!entries.length) return `<tr><td colspan="${direction === 'spend' ? 5 : 3}"><div class="credit-empty">暂无${direction === 'spend' ? '积分消耗' : '积分获取'}记录</div></td></tr>`;
-  return entries.map(entry => {
-    const amount = creditEntryAmount(entry);
-    const task = entry.generationId ? state.tasks.find(item => item.id === entry.generationId) : null;
-    const model = direction === 'spend' ? `<td>${esc(creditModelName(entry, task))}</td>` : '';
-    const type = direction === 'spend' ? creditSpendType(entry) : creditEarnType(entry);
-    const status = direction === 'spend' ? creditEntryStatus(entry, task) : null;
-    const statusCell = status ? `<td><span class="credit-status credit-status-${status.key}">${esc(status.label)}</span></td>` : '';
-    return `<tr><td><time datetime="${esc(entry.createdAt || '')}">${esc(creditDateText(entry.createdAt))}</time></td><td>${esc(type)}</td>${model}<td class="${direction === 'spend' ? 'credit-spend' : 'credit-earn'}">${esc(signedCreditAmount(amount))}</td>${statusCell}</tr>`;
-  }).join('');
-}
 function renderCreditDetail() {
   const dialog = $('#creditDetailDialog'); if (!dialog) return;
   const balance = Number(state.creditWallet.balance ?? state.credits) || 0;
@@ -1278,14 +836,16 @@ function scheduleAlipayPaymentPolling() {
 }
 async function refreshAlipayPayment({ polling = false } = {}) {
   if (!state.alipayOrderNo) return;
+  const requestAccount = accountScope.snapshot();
   const button = $('#alipayRefreshPayment');
   button.disabled = true;
   if (!polling) setAlipayStatus('正在向支付宝确认订单状态…');
   try {
     const result = await api(`/api/payments/alipay/orders/${encodeURIComponent(state.alipayOrderNo)}/query`, { method:'POST', body:'{}' });
+    if (!accountScope.isCurrent(requestAccount)) return;
     if (result.order?.status === 'PAID') {
       stopAlipayPaymentPolling();
-      sessionStorage.removeItem('gugu_alipay_order');
+      sessionStorage.removeItem(alipayOrderStorageKey(state.user));
       state.alipayOrderNo = '';
       await loadCredits();
       setCreditBalance(state.creditWallet.balance);
@@ -1296,24 +856,26 @@ async function refreshAlipayPayment({ polling = false } = {}) {
       }
       showPaymentSuccess(result.order.credits, state.creditWallet.balance);
     } else { setAlipayStatus('等待扫码付款…'); scheduleAlipayPaymentPolling(); }
-  } catch (error) { setAlipayStatus(error.message || '暂时无法确认支付状态', 'error'); }
+  } catch (error) { if (accountScope.isCurrent(requestAccount)) setAlipayStatus(error.message || '暂时无法确认支付状态', 'error'); }
   finally { button.disabled = false; }
 }
 async function startAlipayTopup() {
+  const requestAccount = accountScope.snapshot();
   const button = $('#alipayTopupButton');
   button.disabled = true;
   setAlipayStatus('正在创建支付宝扫码收银台…');
   try {
     const result = await api('/api/payments/alipay/orders', { method:'POST', body:JSON.stringify({ credits:state.alipayTopupCredits }) });
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.alipayOrderNo = result.order.outTradeNo;
-    sessionStorage.setItem('gugu_alipay_order', state.alipayOrderNo);
+    sessionStorage.setItem(alipayOrderStorageKey(state.user), state.alipayOrderNo);
     renderCreditPurchase();
     if (!window.guguDesktop?.payments?.open) throw new Error('桌面支付能力尚未就绪，请重启客户端后再试');
     await window.guguDesktop.payments.open(result.paymentHtml);
     setAlipayStatus('支付宝扫码收银台已打开，支付后可刷新状态。');
     scheduleAlipayPaymentPolling();
   } catch (error) {
-    setAlipayStatus(error.message || '支付订单创建失败', 'error');
+    if (accountScope.isCurrent(requestAccount)) setAlipayStatus(error.message || '支付订单创建失败', 'error');
   } finally { button.disabled = false; }
 }
 function setCreditDetailTab(tab) { state.creditDetailTab = tab === 'earn' ? 'earn' : 'spend'; renderCreditDetail(); }
@@ -1326,8 +888,10 @@ function setCreditBalance(balance) {
   if ($('#creditPurchaseDialog')?.open) renderCreditPurchase();
 }
 async function loadCredits() {
+  const requestAccount = accountScope.snapshot();
   try {
     const result = await api('/api/credits');
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.pricing = result.pricing;
     state.creditWallet = { balance:Number(result.balance) || 0, held:Number(result.held) || 0, available:Number(result.available) || 0 };
     state.creditTransactions = Array.isArray(result.transactions) ? result.transactions : [];
@@ -1338,82 +902,9 @@ async function loadCredits() {
     updateVideoCost();
     renderCreditDetail();
     renderCreditPurchase();
-  } catch (error) { if (error.status === 401) location.reload(); }
+  } catch (error) { if (accountScope.isCurrent(requestAccount) && error.status === 401) location.reload(); }
 }
 
-function notificationCountText(count) { return Number(count) > 99 ? '99+' : String(Math.max(0, Number(count) || 0)); }
-function notificationDateText(value) {
-  const date = new Date(value);
-  return value && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' }) : '—';
-}
-function renderNotifications() {
-  const count = Math.max(0, Number(state.unreadNotifications) || 0);
-  const countText = notificationCountText(count);
-  const countEl = $('#notificationCount');
-  const avatarBadge = $('#avatarNotificationBadge');
-  const summary = $('#notificationSummary');
-  const list = $('#notificationList');
-  if (!list) return;
-  countEl.textContent = countText;
-  countEl.classList.toggle('hidden', count === 0);
-  avatarBadge.textContent = countText;
-  avatarBadge.setAttribute('aria-label', `${count} 条未读消息`);
-  avatarBadge.classList.toggle('hidden', count === 0);
-  summary.textContent = count ? `${countText} 条未读消息 · 共 ${state.notifications.length} 条历史` : `共 ${state.notifications.length} 条历史消息`;
-  $('#markAllNotifications').disabled = count === 0;
-  if (!state.notifications.length) {
-    list.innerHTML = '<div class="notification-empty"><span aria-hidden="true">—</span><b>暂无消息</b><small>新的公告会出现在这里。</small></div>';
-    return;
-  }
-  list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(notificationDateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(item.content)}</span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
-  list.querySelectorAll('[data-notification-id]').forEach(button => button.onclick = () => markNotificationRead(button.dataset.notificationId));
-}
-function setNotificationPanelOpen(open) {
-  const item = $('.notification-menu-item');
-  const panel = $('#notificationPanel');
-  const trigger = $('#notificationMenuButton');
-  if (!item || !panel || !trigger) return;
-  window.clearTimeout(notificationPanelCloseTimer);
-  notificationPanelCloseTimer = 0;
-  item.classList.toggle('is-open', open);
-  panel.setAttribute('aria-hidden', String(!open));
-  trigger.setAttribute('aria-expanded', String(open));
-  if (open) renderNotifications();
-}
-function scheduleNotificationPanelClose() {
-  window.clearTimeout(notificationPanelCloseTimer);
-  notificationPanelCloseTimer = window.setTimeout(() => {
-    notificationPanelCloseTimer = 0;
-    const item = $('.notification-menu-item');
-    if (!item?.matches(':hover') && !item?.matches(':focus-within')) setNotificationPanelOpen(false);
-  }, 180);
-}
-async function loadNotifications() {
-  try {
-    const result = await api('/api/notifications?limit=200');
-    state.notifications = Array.isArray(result.items) ? result.items : [];
-    state.unreadNotifications = Number(result.unreadCount) || 0;
-    renderNotifications();
-  } catch (error) { if (error.status === 401) location.reload(); }
-}
-async function markNotificationRead(id) {
-  const item = state.notifications.find(notification => notification.id === id);
-  if (!item || item.isRead) return;
-  item.isRead = true;
-  state.unreadNotifications = Math.max(0, state.unreadNotifications - 1);
-  renderNotifications();
-  try { await api(`/api/notifications/${encodeURIComponent(id)}/read`, { method:'POST', body:'{}' }); }
-  catch { item.isRead = false; state.unreadNotifications += 1; renderNotifications(); toast('消息状态更新失败，请稍后重试'); }
-}
-async function markAllNotificationsRead() {
-  if (!state.unreadNotifications) return;
-  const previous = state.notifications.map(item => item.isRead);
-  state.notifications.forEach(item => { item.isRead = true; });
-  state.unreadNotifications = 0;
-  renderNotifications();
-  try { await api('/api/notifications/read-all', { method:'POST', body:'{}' }); }
-  catch { state.notifications.forEach((item, index) => { item.isRead = previous[index]; }); state.unreadNotifications = state.notifications.filter(item => !item.isRead).length; renderNotifications(); toast('消息状态更新失败，请稍后重试'); }
-}
 function setCreditPopoverOpen(open) {
   ensureCreditPopoverEntry();
   const control = $('#creditControl');
@@ -1765,28 +1256,13 @@ function showBoot(title = '正在连接服务…', message = '', { retry = false
   toggleClass($('#authView'), 'hidden', true);
   toggleClass($('#appView'), 'hidden', true);
 }
-function resetDesktopAccountState() {
-  desktopAccountEpoch += 1;
+function clearDesktopAccountState() {
+  tasksRequest = null;
+  state.alipayOrderNo = '';
+  stopAlipayPaymentPolling();
   clearTransientFailures();
-  clearTimeout(pollTimer);
-  clearTimeout(notificationPollTimer);
-  pollTimer = 0;
-  notificationPollTimer = 0;
-  for (const timer of desktopHydrationRetryTimers.values()) window.clearTimeout(timer);
-  desktopHydrationRetryTimers.clear();
-  desktopHydrationQueue.length = 0;
-  desktopHydrationQueued.clear();
-  desktopHydrationAttempted.clear();
-  desktopHydrationActive.clear();
-  desktopHydrationForced.clear();
-  desktopHydrationFailureCounts.clear();
-  desktopHydrationRunning = false;
-  localFileCursor = '';
-  localFileHasMore = true;
-  localFileTotal = 0;
-  fileQueryKey = '';
-  fileLoadVersion += 1;
-  libraryFiles = [];
+  taskPoller.stop();
+  mediaController.reset();
   state.files = [];
   state.tasks = [];
   state.generationPreparations = [];
@@ -1796,19 +1272,25 @@ function resetDesktopAccountState() {
   state.uploadJobs.splice(0).forEach(job => {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
   });
-  indexedFiles = null;
-  indexedTasks = null;
-  tasksById = new Map();
-  tasksByAssetId = new Map();
-  state.generationTab = 'works';
-  state.generationHistory = { image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } };
+  dramaController?.resetForAccount?.();
+  resetAccountState(state);
+  desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
+  desktopWorkspacePath = '';
+  cancelRouteContentRender();
+  recordIndexes.invalidateAll();
   lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:null, files:null };
 }
+const accountLifecycle = createAccountLifecycle({
+  advanceScope:accountScope.advance,
+  onInvalidate:epoch => { desktopAccountEpoch = epoch; },
+  resetState:clearDesktopAccountState,
+});
+function resetDesktopAccountState() { accountLifecycle.reset(); }
 async function activateDesktopAccount(user) {
   const bridge = window.guguDesktop;
   if (!bridge?.workspace?.activateAccount || !user?.id) throw new Error('客户端账号工作区尚未就绪');
-  const info = await bridge.workspace.activateAccount(String(user.id));
-  resetDesktopAccountState();
+  const info = await accountLifecycle.activate(user, account => bridge.workspace.activateAccount(String(account.id)));
+  if (!info) throw Object.assign(new Error('账号切换已取消'), { stale:true });
   desktopWorkspacePath = String(info.path || '');
   // Keep the workspace path out of the native `title` tooltip. The button sits
   // in the page chrome, and a long native tooltip can appear to belong to the
@@ -1846,8 +1328,8 @@ async function initDesktopBridge() {
     initWindowControls(bridge, info);
     initDesktopModalState(bridge);
     initDesktopUpdateDialog(bridge);
-    initSupportLogDialog(bridge);
-    initRendererLogForwarding(bridge);
+    supportLogController.init(bridge);
+    supportLogController.initRendererLogForwarding(bridge);
     buttons.forEach(button => {
       button.classList.remove('hidden');
       button.removeAttribute('title');
@@ -1971,6 +1453,9 @@ async function enterApp(user) {
   }
   await activateDesktopAccount(user);
   state.user = user;
+  const startupRequest = accountLifecycle.snapshot();
+  const isStartupCurrent = () => accountLifecycle.isCurrent(startupRequest);
+  state.alipayOrderNo = sessionStorage.getItem(alipayOrderStorageKey(user)) || '';
   state.initialSyncReady = false;
   showBoot('正在加载工作区', '正在读取本地素材与生成记录，请稍候。', { progress:8, progressLabel:'准备本地工作区' });
   updateAccountIdentity(user);
@@ -1980,13 +1465,16 @@ async function enterApp(user) {
   // history scan or attempt to hydrate files created on another device.
   try {
     await claimLegacyWorkspace(user);
+    if (!isStartupCurrent()) return;
   } catch (error) {
+    if (!isStartupCurrent()) return;
     // A temporary API failure must not prevent the local editor from opening;
     // the claim is retried on the next startup until it succeeds.
     console.warn('[desktop] 老版本本地记录归属迁移暂不可用', error.message);
   }
+  if (!isStartupCurrent()) return;
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
-  const schedulePriceDialog = () => window.setTimeout(() => { void openModelPriceDialog({ auto:true }); }, 300);
+  const schedulePriceDialog = () => window.setTimeout(() => { if (isStartupCurrent()) void openModelPriceDialog({ auto:true }); }, 300);
   const initialLoadSteps = [
     { label:'读取创作配置', run:loadConfig },
     { label:'读取积分信息', run:loadCredits },
@@ -1997,15 +1485,19 @@ async function enterApp(user) {
   let completedLoadSteps = 0;
   updateBootCopy('正在加载工作区', '正在准备创作数据，请稍候。');
   await Promise.all(initialLoadSteps.map(async step => {
+    if (!isStartupCurrent()) return;
     await step.run();
+    if (!isStartupCurrent()) return;
     completedLoadSteps += 1;
     const progress = 8 + ((100 - 8) * completedLoadSteps / initialLoadSteps.length);
     setBootProgress(progress, completedLoadSteps === initialLoadSteps.length ? '工作区即将打开' : step.label);
     updateBootCopy('正在加载工作区', `已准备 ${completedLoadSteps} / ${initialLoadSteps.length} 项创作数据。`);
   }));
+  if (!isStartupCurrent()) return;
   finishInitialWorkspaceSync();
   setBootProgress(100, '工作区已准备好');
   showApp();
+  void syncDesktopDeliveries().catch(error => console.warn('[desktop] 启动时同步本地投递确认失败', error.message));
   schedulePriceDialog();
   // The price catalog is non-essential for the first interaction. It is
   // deferred until the initial background sync settles so it cannot compete
@@ -2087,113 +1579,6 @@ $('#accountSettingsDialog').addEventListener('close', () => {
   requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
 });
 
-// 诊断日志上传。客户端把本机日志打包成 gzip，这里原样 PUT 给服务端，
-// 服务端转存后返回一个短编号，用户报给客服即可定位这次上传。
-let supportLogRestoreFocus = null;
-function supportLogError(message = '') {
-  const error = $('#supportLogError');
-  if (!error) return;
-  error.textContent = message;
-  toggleClass(error, 'hidden', !message);
-}
-function supportLogResult(message = '') {
-  const result = $('#supportLogResult');
-  if (!result) return;
-  result.textContent = message;
-  toggleClass(result, 'hidden', !message);
-}
-function openSupportLogDialog() {
-  const dialog = $('#supportLogDialog');
-  if (!dialog || dialog.open) return;
-  supportLogRestoreFocus = $('#accountButton');
-  setNotificationPanelOpen(false);
-  $('#accountMenu').classList.add('hidden');
-  $('#supportLogNote').value = '';
-  supportLogError();
-  supportLogResult();
-  $('#submitSupportLog').disabled = false;
-  $('#submitSupportLog').textContent = '上传日志';
-  dialog.showModal();
-  requestAnimationFrame(() => $('#supportLogNote').focus());
-}
-function closeSupportLogDialog() {
-  const dialog = $('#supportLogDialog');
-  if (dialog?.open) dialog.close();
-}
-async function uploadSupportLogBundle(note) {
-  const bridge = window.guguDesktop;
-  if (!bridge?.logs?.collect) throw new Error('当前客户端版本不支持日志上传，请先更新客户端');
-  const bundle = await bridge.logs.collect();
-  if (!bundle?.bytes?.length) throw new Error('本机暂无可上传的日志');
-  const query = new URLSearchParams();
-  if (note) query.set('note', note);
-  if (desktopClientInfo.version) query.set('version', desktopClientInfo.version);
-  if (desktopClientInfo.platform) query.set('platform', `${desktopClientInfo.platform}-${desktopClientInfo.arch || ''}`);
-  if (desktopSyncInfo.deviceId) query.set('deviceId', desktopSyncInfo.deviceId);
-  return api(`/api/support/logs?${query}`, {
-    method: 'POST',
-    body: new Blob([bundle.bytes], { type: bundle.mimeType }),
-    headers: { 'Content-Type': bundle.mimeType },
-  });
-}
-function initSupportLogDialog(bridge) {
-  const button = $('#supportLogButton');
-  const dialog = $('#supportLogDialog');
-  if (!button || !dialog || !bridge?.logs?.collect) return;
-  button.classList.remove('hidden');
-  if (dialog.dataset.bound === 'true') return;
-  button.onclick = event => { event.stopPropagation(); openSupportLogDialog(); };
-  $('#closeSupportLog').onclick = closeSupportLogDialog;
-  $('#openSupportLogFolder').onclick = async () => {
-    try {
-      const opened = await bridge.logs.openFolder();
-      if (!opened) supportLogError('日志文件夹暂不可用');
-    } catch (error) { supportLogError(`打开日志文件夹失败：${error.message}`); }
-  };
-  $('#supportLogForm').addEventListener('submit', async event => {
-    event.preventDefault();
-    const submit = $('#submitSupportLog');
-    supportLogError();
-    supportLogResult();
-    submit.disabled = true;
-    submit.textContent = '上传中…';
-    try {
-      const result = await uploadSupportLogBundle($('#supportLogNote').value.trim());
-      supportLogResult(`上传成功，日志编号 ${result.reference}（${Math.max(1, Math.round((result.size || 0) / 1024))} KB）。请把这个编号告诉客服。`);
-      submit.textContent = '已上传';
-      toast(`诊断日志已上传，编号 ${result.reference}`);
-    } catch (error) {
-      supportLogError(error.message);
-      submit.disabled = false;
-      submit.textContent = '上传日志';
-    }
-  });
-  dialog.addEventListener('click', event => { if (event.target === dialog) closeSupportLogDialog(); });
-  dialog.addEventListener('cancel', event => { event.preventDefault(); closeSupportLogDialog(); });
-  dialog.addEventListener('close', () => {
-    const restore = supportLogRestoreFocus;
-    supportLogRestoreFocus = null;
-    supportLogError();
-    supportLogResult();
-    requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
-  });
-  dialog.dataset.bound = 'true';
-}
-// 页面侧的异常也要进日志文件，否则用户上传上来只有主进程视角。
-function initRendererLogForwarding(bridge) {
-  const append = bridge?.logs?.append;
-  if (typeof append !== 'function' || document.body.dataset.desktopLogForwardBound === 'true') return;
-  const forward = (level, message) => { void Promise.resolve(append({ level, message })).catch(() => {}); };
-  window.addEventListener('error', event => {
-    forward('error', `${event.message || '页面脚本异常'} @ ${event.filename || '未知文件'}:${event.lineno || 0}:${event.colno || 0}\n${event.error?.stack || ''}`);
-  });
-  window.addEventListener('unhandledrejection', event => {
-    const reason = event.reason;
-    forward('error', `未处理的 Promise 异常：${reason?.stack || reason?.message || reason}`);
-  });
-  document.body.dataset.desktopLogForwardBound = 'true';
-}
-
 let deleteConfirmationResolver = null;
 let deleteConfirmationRestoreFocus = null;
 function settleDeleteConfirmation(confirmed) { const resolver = deleteConfirmationResolver; const restoreFocus = deleteConfirmationRestoreFocus; deleteConfirmationResolver = null; deleteConfirmationRestoreFocus = null; const dialog = $('#deleteConfirmDialog'); if (dialog.open) dialog.close(); resolver?.(confirmed); requestAnimationFrame(() => { if (restoreFocus?.isConnected && !restoreFocus.disabled) restoreFocus.focus(); }); }
@@ -2229,7 +1614,7 @@ $('#renameFileForm').addEventListener('submit', async event => {
     if (!window.guguDesktop?.media?.renameLocal) throw new Error('桌面文件能力尚未就绪，请重启客户端后再试');
     await window.guguDesktop.media.renameLocal({ assetId:file.localId || file.id, name });
     file.name = name.trim();
-    indexedFiles = null;
+    recordIndexes.invalidateFiles();
     closeRenameFileDialog(); toast('文件名已保存'); await loadFiles();
   }
   catch (error) { renameFileError(error.message); button.disabled = false; }
@@ -2243,8 +1628,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=78').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets });
+    dramaControllerPromise = import('./drama-studio.js?v=85').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
   }
@@ -2253,7 +1638,8 @@ function ensureDramaController() {
 
 function renderRouteLoadingShell(route) {
   if (route === 'files') {
-    const count = libraryFiles.length ? `${localFileTotal} 个文件` : '正在加载…';
+    const library = mediaController.libraryState();
+    const count = library.files.length ? `${library.total} 个文件` : '正在加载…';
     $('#fileCount').textContent = count;
     const grid = $('#fileGrid');
     if (grid) grid.innerHTML = emptyState('正在加载文件库', '正在准备文件预览，请稍候。');
@@ -2374,6 +1760,8 @@ $('#markAllNotifications').onclick = event => { event.stopPropagation(); void ma
 document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
 $('#logoutButton').onclick = async () => {
+  accountLifecycle.invalidate();
+  taskPoller.stop();
   try { await api('/api/auth/logout', { method:'POST', body:'{}' }); }
   finally {
     resetDesktopAccountState();
@@ -2382,6 +1770,7 @@ $('#logoutButton').onclick = async () => {
   }
 };
 async function loadConfig() {
+  const requestAccount = accountScope.snapshot();
   const service = $('#serviceState');
   const updateServiceState = hidden => {
     if (!service) return;
@@ -2392,12 +1781,14 @@ async function loadConfig() {
   };
   try {
     const config = await api('/api/config');
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.config = config;
     if (config.pricing) state.pricing = { ...state.pricing, image: config.pricing.imagePerRequest, videoPerSecond: config.pricing.videoPerSecond };
     syncVideoModelOptions();
     updateServiceState(config.imageGeneration);
     updateDramaModelState();
   } catch {
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.config = { videoCapabilities: { models: [] } };
     syncVideoModelOptions();
     updateServiceState(false);
@@ -2515,9 +1906,10 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
     return pending.then(() => loadTasks({ background:true, activeOnly, projectOnly }));
   }
   const requestSnapshot = state.tasks;
+  const requestAccount = accountScope.snapshot();
   const activeIds = activeOnly ? activeGenerationIds() : [];
   if (activeOnly && !activeIds.length) return state.tasks;
-  tasksRequest = (async () => {
+  const request = (async () => {
     try {
       const projectTaskIds = projectOnly
         ? dramaProjectGenerationIds(state.dramaProject)
@@ -2527,7 +1919,8 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
         ? (targetedIds.length
           ? (await Promise.all(Array.from({ length:Math.ceil(targetedIds.length / 200) }, (_, index) => api(`/api/generations?ids=${encodeURIComponent(targetedIds.slice(index * 200, index * 200 + 200).join(','))}`)))).flat()
           : [])
-        : await api('/api/generations?view=works&limit=200');
+          : await api('/api/generations?view=works&limit=200');
+      if (!accountScope.isCurrent(requestAccount)) return state.tasks;
       // The global list is ordered/paginated for the gallery. A project must
       // never use that list as the authority for one of its versions: the
       // gallery request can already be in flight when a task reaches terminal
@@ -2552,6 +1945,7 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
           && !responseTaskIds.has(task.id)
           && !hydratedTaskIds.has(task.id)));
       }
+      if (!accountScope.isCurrent(requestAccount)) return state.tasks;
       const hydratedTasks = [...responseTasks];
       const hydratedIndexById = new Map(hydratedTasks.map((task, index) => [task.id, index]));
       for (const task of projectTasks) {
@@ -2594,6 +1988,7 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
         if (previewFile) renderPreviewMeta(previewFile);
       }
       if (refundedTask) await loadCredits();
+      if (!accountScope.isCurrent(requestAccount)) return state.tasks;
       const assetTasks = projectOnly ? hydratedTasks : tasks;
       const missingAssetIds = [...new Set(assetTasks.map(task => task.assetId).filter(assetId => assetId && !state.files.some(file => file.id === assetId)))];
       let assetsChanged = false;
@@ -2604,8 +1999,8 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
             .map(desktopLocalClientAsset)
             .filter(Boolean));
         }
-        if (localAssets.length) localFileStateRevision += 1;
-        mergeStateFiles(localAssets);
+        if (!accountScope.isCurrent(requestAccount)) return state.tasks;
+        mediaController.mergeLocalAssets(localAssets);
         assetsChanged = localAssets.length > 0;
       }
       if (missingAssetIds.length && window.guguDesktop?.sync && desktopSyncInfo.deviceId && desktopSyncInfo.workspaceId) {
@@ -2623,16 +2018,18 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
       if (state.user && !document.hidden) scheduleTaskPoll();
       return state.tasks;
     } catch (error) {
+      if (!accountScope.isCurrent(requestAccount)) return state.tasks;
       if (error.status === 401) return location.reload();
       if (!background) toast(error.message);
       return state.tasks;
     }
   })();
-  try { return await tasksRequest; }
-  finally { tasksRequest = null; }
+  tasksRequest = request;
+  try { return await request; }
+  finally { if (tasksRequest === request) tasksRequest = null; }
 }
-function localFileAction(file, label='在文件夹中显示') {
-  return `<button class="task-action show-in-folder" type="button" data-asset-id="${esc(file.id)}" title="${label}" aria-label="${label}"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/><path d="m12 13 3 3m0-3v3h-3"/></svg></button>`;
+function localFileAction(file, label='打开文件所在文件夹') {
+  return `<button class="task-action show-in-folder" type="button" data-asset-id="${esc(file.id)}" data-tooltip="${esc(label)}" aria-label="${esc(label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"/><path d="m12 13 3 3m0-3v3h-3"/></svg></button>`;
 }
 function configureLocalFileAction(link, file) {
   if (!link || !file) return;
@@ -2659,9 +2056,25 @@ function taskCard(task) {
     : task.status === 'failed'
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
       : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
-  const completedActions = localReady ? `<div class="card-workflow-actions"><button class="task-action" type="button" data-action="preview" data-task-id="${task.id}" title="预览"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4M11 8v6M8 11h6"/></svg><span>预览</span></button>${task.type === 'image' ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" title="作为参考"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/></svg><span>参考</span></button>` : ''}<button class="task-action" type="button" data-action="continue" data-task-id="${task.id}" title="再创作"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>再创作</span></button>${localFileAction(asset)}<button class="task-action" type="button" data-action="more" data-task-id="${task.id}" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button></div>` : '';
+  const imageActions = task.type === 'image'
+    ? `<button class="task-action" type="button" data-action="reference" data-task-id="${task.id}" data-tooltip="用作参考图" aria-label="用作参考图"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="m4 16 5-5 4 4 2-2 5 4"/><path d="M18 3v5M15.5 5.5h5"/></svg></button>
+      <button class="task-action" type="button" data-action="video-reference" data-task-id="${task.id}" data-tooltip="生成视频" aria-label="生成视频"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/><path d="m8 9 4 3-4 3z"/></svg></button>`
+    : '';
+  const copyIcon = task.type === 'image'
+    ? '<path d="M8 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/><path d="m9 15 2-2 2 2 2-2 2 2"/>'
+    : '<path d="M8 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/><path d="m10 12 4 2-4 2z"/>';
+  const copyLabel = task.type === 'image' ? '复制图片' : '复制视频';
+  const completedActions = localReady
+    ? `<div class="card-workflow-actions" aria-label="作品操作">
+        ${imageActions}
+        <button class="task-action" type="button" data-action="regenerate" data-task-id="${task.id}" data-tooltip="再次生成" aria-label="再次生成"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+        <button class="task-action" type="button" data-action="copy" data-task-id="${task.id}" data-tooltip="${copyLabel}" aria-label="${copyLabel}"><svg viewBox="0 0 24 24" aria-hidden="true">${copyIcon}</svg></button>
+        ${localFileAction(asset)}
+        <button class="task-action danger-action" type="button" data-action="delete" data-task-id="${task.id}" data-tooltip="删除" aria-label="删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
+      </div>`
+    : '';
   const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败任务操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button><button class="failure-delete task-action" type="button" data-action="delete" data-task-id="${task.id}" title="删除失败任务" aria-label="删除失败任务"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div>` : '';
-  const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '商品图' : '商品视频'}详情"></button>` : '';
+  const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '图片' : '视频'}详情"></button>` : '';
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedActions}</div></article>`;
 }
 function elementFromHtml(html) { const template = document.createElement('template'); template.innerHTML = html.trim(); return template.content.firstElementChild; }
@@ -2831,6 +2244,7 @@ async function loadGenerationHistory({ reset=false, background=false } = {}) {
   if (!['image', 'video'].includes(state.route)) return;
   const kind = state.route;
   const entry = state.generationHistory[kind];
+  const requestAccount = accountScope.snapshot();
   if (!entry || entry.loading || (!reset && entry.loaded && !entry.hasMore)) return;
   if (reset) {
     entry.items = [];
@@ -2846,6 +2260,7 @@ async function loadGenerationHistory({ reset=false, background=false } = {}) {
     if (entry.cursor) query.set('cursor', entry.cursor);
     if (entry.cursor) query.set('includeTotal', '0');
     const page = await apiPage(`/api/generations?${query}`);
+    if (!accountScope.isCurrent(requestAccount) || state.generationHistory[kind] !== entry) return;
     const ids = new Set(entry.items.map(task => task.id));
     entry.items = [...entry.items, ...page.items.filter(task => !ids.has(task.id))];
     entry.cursor = page.nextCursor || '';
@@ -2853,11 +2268,14 @@ async function loadGenerationHistory({ reset=false, background=false } = {}) {
     entry.loaded = true;
     entry.error = '';
   } catch (error) {
+    if (!accountScope.isCurrent(requestAccount) || state.generationHistory[kind] !== entry) return;
     entry.error = error.message || '请稍后重试';
     if (!background) toast(`历史记录加载失败：${error.message}`);
   } finally {
-    entry.loading = false;
-    renderGenerationHistory();
+    if (accountScope.isCurrent(requestAccount) && state.generationHistory[kind] === entry) {
+      entry.loading = false;
+      renderGenerationHistory();
+    }
   }
 }
 function setGenerationTab(tab) {
@@ -2960,32 +2378,123 @@ function generationSupplementalRows(task, fileText, fileInfoId='generationDetail
     + detailRow('积分记录', creditText)
     + detailRow('任务编号', task.id);
 }
-function addTaskReference(task, target=task.type) { if (!task) return false; const ids = task.type === 'image' && task.assetId ? [task.assetId] : Array.isArray(task.referenceAssetIds) ? task.referenceAssetIds : []; const references = ids.filter(id => state.files.some(file => file.id === id && file.kind === 'image')); if (!references.length) return false; state.refs[target] = [...new Set([...references, ...state.refs[target]])].slice(0, 7); renderReferences(); return true; }
-function continueFromTask(task, target=task.type, includeReference=false) {
+function taskReferenceIds(task, { fallbackToOutput = false, forceOutput = false } = {}) {
+  if (!task) return [];
+  if ((forceOutput || fallbackToOutput) && task.type === 'image' && task.assetId) {
+    if (forceOutput) return [String(task.assetId)];
+  }
+  const references = Array.isArray(task.referenceAssetIds) ? task.referenceAssetIds.map(String).filter(Boolean) : [];
+  if (references.length || !fallbackToOutput || task.type !== 'image') return [...new Set(references)];
+  return task.assetId ? [String(task.assetId)] : [];
+}
+function taskReferenceFiles(task, target, options = {}) {
+  const allowedKinds = target === 'image' ? new Set(['image']) : new Set(['image', 'video', 'audio']);
+  return taskReferenceIds(task, options).map(id => fileById(id)).filter(file => file && allowedKinds.has(file.kind));
+}
+function taskPromptMentionNode(target, file) {
+  const mention = { id:file.id, label:file.name, kind:file.kind };
+  const holder = document.createElement('span');
+  holder.innerHTML = target === 'image' ? imagePromptMentionMarkup(mention, file) : videoPromptMentionMarkup(mention, file);
+  const chip = holder.firstElementChild;
+  if (chip) return chip;
+  const fallback = document.createElement('span');
+  fallback.className = target === 'image' ? 'image-prompt-mention' : 'video-prompt-mention';
+  fallback.dataset[`${target}PromptMentionId`] = String(file.id);
+  fallback.dataset[`${target}PromptMentionLabel`] = videoPromptMentionLabel(mention, file);
+  fallback.dataset[`${target}PromptMentionKind`] = file.kind;
+  fallback.contentEditable = 'false';
+  fallback.textContent = `@${videoPromptMentionLabel(mention, file)}`;
+  return fallback;
+}
+function restoreTaskPromptMentions(target, task, files) {
+  const editor = target === 'image' ? imagePromptEditor() : videoPromptEditor();
+  if (!editor) return 0;
+  const byKind = { image:[], video:[], audio:[] };
+  files.forEach(file => { if (byKind[file.kind]) byKind[file.kind].push(file); });
+  const source = String(task?.prompt || '');
+  const tokenPattern = /\b(Image|Video|Audio)(\d+)\b/g;
+  const mentions = [];
+  let cursor = 0;
+  let restored = 0;
+  editor.replaceChildren();
+  for (const match of source.matchAll(tokenPattern)) {
+    const kind = match[1].toLowerCase();
+    const file = byKind[kind]?.[Number(match[2]) - 1];
+    if (!file) continue;
+    if (match.index > cursor) editor.append(document.createTextNode(source.slice(cursor, match.index)));
+    editor.append(taskPromptMentionNode(target, file));
+    mentions.push({ id:String(file.id), label:videoPromptMentionLabel({ label:file.name }, file), kind:file.kind });
+    cursor = match.index + match[0].length;
+    restored += 1;
+  }
+  if (cursor < source.length) editor.append(document.createTextNode(source.slice(cursor)));
+  if (target === 'image') {
+    state.imagePromptMentions = mentions;
+    normalizeEmptyImagePrompt(editor);
+  } else {
+    state.videoPromptMentions = mentions;
+    normalizeEmptyVideoPrompt(editor);
+  }
+  return restored;
+}
+function addTaskReference(task, target=task.type, { fallbackToOutput = false, forceOutput = false, replace = false, restoreMentions = false } = {}) {
+  if (!task) return false;
+  const references = taskReferenceFiles(task, target, { fallbackToOutput, forceOutput });
+  const ids = references.map(file => String(file.id));
+  if (target === 'video' && String(task.generationType || '').toUpperCase() === 'FIRST&LAST') {
+    const [first, last] = ids;
+    state.videoFrames = replace ? { first:first || '', last:last || '' } : { first:state.videoFrames.first || first || '', last:state.videoFrames.last || last || '' };
+    if (replace) state.refs.video = [];
+  } else {
+    state.refs[target] = replace ? ids : [...new Set([...ids, ...state.refs[target]])];
+  }
+  if (restoreMentions) restoreTaskPromptMentions(target, task, references);
+  renderReferences();
+  return ids.length > 0;
+}
+function continueFromTask(task, target=task.type, includeReference=false, { fallbackToOutput = false, forceOutput = false, replaceReferences = false, restoreMentions = false, carryPrompt = true } = {}) {
   if (!task) return;
   if ($('#generationDetailDialog').open) closeGenerationDetail();
+  if (includeReference && replaceReferences) {
+    state.refs[target] = [];
+    if (target === 'video') state.videoFrames = { first:'', last:'' };
+  }
+  if (target === 'video') {
+    if (task.type === 'video') {
+      const generationType = String(task.generationType || '').toUpperCase();
+      state.videoGenerationType = ['TEXT', 'REFERENCE', 'FIRST&LAST'].includes(generationType)
+        ? generationType
+        : (task.referenceAssetIds?.length ? 'REFERENCE' : 'TEXT');
+    } else if (includeReference && (fallbackToOutput || forceOutput)) {
+      state.videoGenerationType = 'REFERENCE';
+    }
+  }
   navigate(target);
   const prompt = $(`#${target}Prompt`);
-  if (target === 'video') setVideoPromptText(task.prompt || '');
-  else setImagePromptText(task.prompt || '');
-  prompt.dispatchEvent(new Event('input', { bubbles:true }));
-  if (target === 'image' && task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); } }
+  if (carryPrompt) {
+    if (target === 'video') setVideoPromptText(task.prompt || '');
+    else setImagePromptText(task.prompt || '');
+  }
+  if (carryPrompt && target === 'image' && task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); } }
+  if (carryPrompt && target === 'image' && task.batchSize) commitImageQuantity(task.batchSize);
   if (target === 'video' && task.type === 'video') {
     const taskModelId = task.videoModelId || task.modelId;
     const selectableModel = videoModelOptions().some(model => model.id === taskModelId && model.availability !== 'coming-soon');
-    if (selectableModel && $('#videoModel').value !== taskModelId) {
-      $('#videoModel').value = taskModelId;
-      $('#videoModel').dispatchEvent(new Event('change', { bubbles:true }));
-    } else syncVideoModelParameters();
+    if (selectableModel) $('#videoModel').value = taskModelId;
+    refreshProductSelect('videoModel');
+    syncVideoModelParameters();
+  }
+  if (includeReference) addTaskReference(task, target, { fallbackToOutput, forceOutput, replace:replaceReferences, restoreMentions });
+  if (target === 'video' && task.type === 'video') {
     const parameters = videoGenerationParameters().parameters;
     if (parameters?.aspectRatios.includes(task.aspectRatio)) $('#videoAspect').value = task.aspectRatio;
     if (parameters?.durations.includes(Number(task.duration))) $('#videoDuration').value = String(task.duration);
     if (parameters?.qualityOptions.includes(task.quality)) $('#videoResolution').value = task.quality;
     refreshProductSelect('videoAspect'); refreshProductSelect('videoDuration'); refreshProductSelect('videoResolution'); updateVideoCost();
   }
-  if (includeReference) addTaskReference(task, target);
+  if (carryPrompt) prompt.dispatchEvent(new Event('input', { bubbles:true }));
   $('#creatorPanel').scrollTo({ top:0, behavior:'smooth' }); prompt.focus();
-  toast(includeReference ? '已带入参考图和创作描述' : '已带入创作描述，可调整后重新生成');
+  toast(includeReference ? (carryPrompt ? '已带入参考素材和创作描述' : target === 'image' ? '已添加为参考图' : '已带入视频参考素材') : '已带入创作描述，可调整后重新生成');
 }
 async function deleteGenerationTask(task, button = null) {
   if (!task) return false;
@@ -3026,7 +2535,24 @@ async function deleteGenerationTask(task, button = null) {
     card?.classList.remove('is-removing');
   }
 }
-function handleTaskAction(action, id, button = null) { const task = taskById(id); if (!task) return; if (action === 'preview' || action === 'more') return openGenerationDetail(id); if (action === 'reference') { continueFromTask(task, task.type, true); return; } if (action === 'retry' || action === 'continue') { continueFromTask(task); return; } if (action === 'delete') return deleteGenerationTask(task, button); }
+async function copyTaskAsset(task, button = null) {
+  const file = fileById(task?.assetId);
+  if (!file || !requireDesktopLocalAsset(file)) return;
+  if (!copyDesktopAssetToClipboard) return toast('复制素材需要更新客户端后使用');
+  const copied = await copyDesktopAssetToClipboard(file, button);
+  if (copied) toast(`${task.type === 'image' ? '图片' : '视频'}已复制到剪贴板`);
+}
+function handleTaskAction(action, id, button = null) {
+  const task = taskById(id);
+  if (!task) return;
+  if (action === 'preview' || action === 'more') return openGenerationDetail(id);
+  if (action === 'reference') { continueFromTask(task, 'image', true, { forceOutput:true, carryPrompt:false }); return; }
+  if (action === 'video-reference') { continueFromTask(task, 'video', true, { forceOutput:true, carryPrompt:false }); return; }
+  if (action === 'regenerate') { continueFromTask(task, task.type, true, { replaceReferences:true, restoreMentions:true }); return; }
+  if (action === 'copy') { void copyTaskAsset(task, button); return; }
+  if (action === 'retry' || action === 'continue') { continueFromTask(task); return; }
+  if (action === 'delete') return deleteGenerationTask(task, button);
+}
 function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); }
 function resetDetailFit(dialog) { dialog.classList.remove('portrait-detail'); dialog.style.removeProperty('--portrait-dialog-width'); }
 function closeGenerationDetail() { const dialog = $('#generationDetailDialog'); dialog.close(); resetDetailFit(dialog); $('#generationDetailMedia').innerHTML = ''; state.detailTaskId = null; }
@@ -3079,57 +2605,10 @@ $('#generationDetailDialog').addEventListener('click', event => { if (event.targ
 $('#generationDetailDialog').addEventListener('close', () => { $('#generationDetailMedia').innerHTML = ''; $('#generationDetailPrompt').classList.remove('expanded'); $('#generationDetailPromptToggle').classList.add('hidden'); state.detailTaskId = null; });
 $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generationDetailPrompt'); const toggle = $('#generationDetailPromptToggle'); const expanded = prompt.classList.toggle('expanded'); toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? '收起描述' : '展开全部'; };
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
-$('#useGenerationReference').onclick = () => continueFromTask(taskById(state.detailTaskId), 'image', true);
-$('#deriveGeneration').onclick = () => { const task = taskById(state.detailTaskId); continueFromTask(task, 'video', true); };
+$('#useGenerationReference').onclick = () => continueFromTask(taskById(state.detailTaskId), 'image', true, { forceOutput:true, carryPrompt:false });
+$('#deriveGeneration').onclick = () => { const task = taskById(state.detailTaskId); continueFromTask(task, 'video', true, { forceOutput:task?.type === 'image', carryPrompt:task?.type === 'video' }); };
 $('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = taskById(state.detailTaskId); if (!task) return; await deleteGenerationTask(task, $('#deleteGeneration')); };
 
-async function loadFiles({ background=false, loadMore=false }={}) {
-  const search = $('#fileSearch').value.trim();
-  const queryKey = `${state.fileKind}|${search}`;
-  const reset = !loadMore || queryKey !== fileQueryKey;
-  const requestVersion = reset ? ++fileLoadVersion : fileLoadVersion;
-  const requestLocalStateRevision = localFileStateRevision;
-  const cursor = reset ? '' : localFileCursor;
-  if (reset) {
-    fileQueryKey = queryKey;
-    localFileCursor = '';
-    localFileHasMore = true;
-  }
-  try {
-    const page = await listDesktopFiles({
-      limit:200,
-      cursor,
-      kind:state.fileKind === 'all' ? '' : state.fileKind,
-      search,
-    });
-    if (requestVersion !== fileLoadVersion || queryKey !== fileQueryKey) return state.files;
-    const localStateChanged = requestLocalStateRevision !== localFileStateRevision;
-    localFileCursor = page.nextCursor || '';
-    localFileHasMore = Boolean(page.nextCursor);
-    const pageIds = new Set(page.items.map(file => file.id));
-    libraryFiles = reset
-      ? localStateChanged
-        ? [...libraryFiles.filter(file => !pageIds.has(file.id)), ...page.items]
-        : page.items
-      : [...libraryFiles, ...page.items.filter(file => !libraryFiles.some(item => item.id === file.id))];
-    localFileTotal = localStateChanged ? Math.max(page.total, libraryFiles.length) : page.total;
-    if (reset && state.fileKind === 'all' && !search) {
-      if (localStateChanged) mergeStateFiles(page.items);
-      else {
-        state.files = mergeTransientFields(state.files, page.items, ['width','height']);
-        indexedFiles = null;
-      }
-    } else mergeStateFiles(page.items);
-    if (state.route === 'files' && state.initialSyncReady) scheduleRouteContentRender('files', false);
-    renderReferences();
-    if (['image','video'].includes(state.route) && state.initialSyncReady) scheduleRouteContentRender(state.route, false);
-    else if (state.route === 'drama') dramaController?.refreshTasks?.();
-    return state.files;
-  } catch (error) {
-    if (!background) toast(`本地文件库加载失败：${error.message}`);
-    return state.files;
-  }
-}
 function assetDisplayName(file) {
   const stem = String(file.name || '').replace(/\.[^.]+$/, '').trim();
   const technical = /^(?:生成图片|生成视频)(?:\s|$)|^codex-clipboard-|^[a-f\d-]{20,}$|^\d+(?:\s*\(\d+\))?$|^(?=[A-Za-z0-9_-]{12,}$)(?=.*\d)[A-Za-z0-9_-]+$/i.test(stem);
@@ -3162,7 +2641,7 @@ function createUploadJob(file, context, { previewUrl='', mimeType='', deferUploa
   state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
 }
 function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
-function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; localFileStateRevision += 1; state.files=[asset,...state.files.filter(item=>item.id!==asset.id)]; indexedFiles=null; const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
+function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; mediaController.mergeLocalAssets([asset]); const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
 function failUploadJob(job, error) { if (!job) return; job.status='failed'; job.progress=0; job.error=error?.message || '上传失败'; job.label=job.error; notifyUploadSurfaceChanged(); }
 function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); if (shouldRemoveUploadJobLocalAsset(job) && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error)); notifyUploadSurfaceChanged(); }
 function autoSelectUploadedReference(asset, kind, job) {
@@ -3189,6 +2668,7 @@ function libraryFileMatches(file) {
 }
 function renderFiles() {
   if (state.route !== 'files') return;
+  const { files:libraryFiles, total:localFileTotal, hasMore:localFileHasMore } = mediaController.libraryState();
   const query = $('#fileSearch').value.trim().toLowerCase();
   const uploads = state.uploadJobs.filter(job => job.context === 'library' && (!query || job.name.toLowerCase().includes(query)) && (state.fileKind === 'all' || job.kind === state.fileKind));
   const uploadingAssetIds = new Set(uploads.map(job => job.assetId).filter(Boolean));
@@ -3240,7 +2720,6 @@ function clearFileReferences(fileId) {
   removeVideoPromptMentionNodes(fileId);
 }
 async function removeFile(file) {
-  const media = window.guguDesktop?.media;
   const cloudAssetId = file?.localOnly ? '' : String(file?.cloudAssetId || file?.id || '');
   if (cloudAssetId) {
     const result = await api(`/api/files/${encodeURIComponent(cloudAssetId)}`, { method:'DELETE', body:'{}' });
@@ -3249,14 +2728,7 @@ async function removeFile(file) {
     await Promise.all([loadTasks(), loadFiles()]);
     return;
   }
-  if (!media?.removeLocal) throw new Error('桌面文件能力尚未就绪，请重启客户端后再试');
-  await media.removeLocal(file.localId || file.id);
-  clearFileReferences(file.id);
-  state.files = state.files.filter(item => item.id !== file.id);
-  libraryFiles = libraryFiles.filter(item => item.id !== file.id);
-  indexedFiles = null;
-  localFileTotal = Math.max(0, localFileTotal - 1);
-  await loadFiles();
+  await mediaController.removeLocalAsset(file);
 }
 function bindFileActions(root) {
   root.querySelector('.preview-file')?.addEventListener('click', event => openPreview(event.currentTarget.dataset.id));
@@ -3856,6 +3328,7 @@ function referenceCountsForIds(ids) {
 async function submitGeneration(type, form, payload) {
   if (generationSubmissionForms.has(form)) return;
   generationSubmissionForms.add(form);
+  const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type];
   const referenceCounts = referenceCountsForIds(requestedReferenceIds);
   const deferredReferences = hasUnresolvedReference(requestedReferenceIds);
@@ -3880,6 +3353,7 @@ async function submitGeneration(type, form, payload) {
     if (routedVideo) {
       if (state.modelQuote?.signature !== quoteSignature) {
         const quote=await api('/api/model-quote', { method:'POST', body:JSON.stringify(quoteInput) });
+        if (!accountScope.isCurrent(requestAccount)) return;
         state.modelQuote={ ...quote, signature:quoteSignature };
       }
       expectedPriceVersion=state.modelQuote.priceVersion || '';
@@ -3887,7 +3361,8 @@ async function submitGeneration(type, form, payload) {
     setPreparationStage('submitting');
     const requestId = crypto.randomUUID();
     const referenceAssetIds = deferredReferences ? [] : requestedReferenceIds;
-    const result = await api('/api/generations', { method:'POST', body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(deferredReferences ? { deferReferenceUpload:true, referenceCounts } : {}), ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    const result = await api('/api/generations', { method:'POST', headers:{ 'Idempotency-Key':requestId }, body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(deferredReferences ? { deferReferenceUpload:true, referenceCounts } : {}), ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    if (!accountScope.isCurrent(requestAccount)) return;
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
     chargedTasks = tasks;
     state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
@@ -3904,7 +3379,9 @@ async function submitGeneration(type, form, payload) {
     toast(tasks.length > 1 ? `已提交 ${tasks.length} 个图像任务，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
     if (deferredReferences) {
       const uploadedReferenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
+      if (!accountScope.isCurrent(requestAccount)) return;
       const completed = await api('/api/generations/references/complete', { method:'POST', body:JSON.stringify({ taskIds:tasks.map(task => task.id), referenceAssetIds:uploadedReferenceAssetIds }) });
+      if (!accountScope.isCurrent(requestAccount)) return;
       const startedTasks = Array.isArray(completed.tasks) ? completed.tasks : [];
       state.tasks = [...startedTasks, ...state.tasks.filter(item => !startedTasks.some(task => task.id === item.id))];
       mergeTasksIntoLoadedHistory(startedTasks);
@@ -3912,6 +3389,7 @@ async function submitGeneration(type, form, payload) {
     }
     await loadTasks();
   } catch (error) {
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
     if (chargedTasks.length) {
       try {
@@ -4083,8 +3561,10 @@ async function openModelPriceDialog({ auto = false } = {}) {
   if (auto) markModelPricesAutoOpened();
   renderModelPrices();
   dialog.showModal();
+  const requestAccount = accountScope.snapshot();
   try {
     const config = await api('/api/config');
+    if (!accountScope.isCurrent(requestAccount)) return;
     state.config = { ...state.config, ...config };
     // The price dialog refreshes the catalog after the initial workspace load.
     // Rebuild model controls too, otherwise a model disabled in admin remains
@@ -4189,10 +3669,10 @@ function beginPreviewNameEditing() {
 }
 function updatePreviewFileName(file, name) {
   const identifiers = new Set([file.id, file.localId, file.cloudAssetId].filter(Boolean));
-  for (const item of [file, ...state.files, ...libraryFiles]) {
+  for (const item of [file, ...state.files, ...mediaController.libraryState().files]) {
     if (identifiers.has(item.id) || identifiers.has(item.localId) || identifiers.has(item.cloudAssetId)) item.name = name;
   }
-  indexedFiles = null;
+  recordIndexes.invalidateFiles();
 }
 async function savePreviewName({ close = false } = {}) {
   if (!previewNameEditing || previewNameSaving) return false;
@@ -4269,37 +3749,32 @@ function activeGenerationIds() {
   const historyTasks = Object.values(state.generationHistory || {}).flatMap(entry => entry?.loaded ? entry.items : []);
   return [...new Set([...state.tasks, ...historyTasks].filter(task => ['queued', 'running'].includes(task.status)).map(task => String(task.id || '')).filter(Boolean))];
 }
-function scheduleTaskPoll(delay=activePollDelay) {
-  clearTimeout(pollTimer);
-  pollTimer = 0;
-  if (!state.user || document.hidden || !activeGenerationIds().length) return;
-  pollTimer = window.setTimeout(async () => {
-    await loadTasks({ background:true, activeOnly:true });
-    scheduleTaskPoll();
-  }, Math.max(0, Number(delay) || activePollDelay));
-}
-function scheduleNotificationPoll(delay=notificationPollDelay) {
-  clearTimeout(notificationPollTimer);
-  notificationPollTimer = 0;
-  if (!state.user || document.hidden) return;
-  notificationPollTimer = window.setTimeout(async () => {
-    await loadNotifications();
-    scheduleNotificationPoll();
-  }, Math.max(0, Number(delay) || notificationPollDelay));
-}
+const taskPoller = createTaskPoller({
+  setTimeoutFn: window.setTimeout.bind(window),
+  clearTimeoutFn: window.clearTimeout.bind(window),
+  isHidden: () => document.hidden,
+  getUser: () => state.user,
+  getActiveIds: activeGenerationIds,
+  loadActiveTasks: () => loadTasks({ background: true, activeOnly: true }),
+  loadNotifications,
+  activeDelay: activePollDelay,
+  notificationDelay: notificationPollDelay,
+});
+const scheduleTaskPoll = taskPoller.scheduleTaskPoll;
+const scheduleNotificationPoll = taskPoller.scheduleNotificationPoll;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    clearTimeout(pollTimer);
-    clearTimeout(notificationPollTimer);
-    pollTimer = 0;
-    notificationPollTimer = 0;
+    taskPoller.stop();
     return;
   }
   if (state.user) {
     pruneExpiredTransientFailures();
-    Promise.all([loadTasks({ background:true, activeOnly:true }), loadNotifications()]).finally(() => {
-      scheduleTaskPoll();
-      scheduleNotificationPoll();
+    const requestAccount = accountScope.snapshot();
+    void Promise.all([loadTasks({ background:true, activeOnly:true }), loadNotifications()]).then(() => {
+      if (!document.hidden && state.user && accountScope.isCurrent(requestAccount)) {
+        scheduleTaskPoll();
+        scheduleNotificationPoll();
+      }
     });
   }
 });

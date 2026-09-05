@@ -31,6 +31,6 @@ test('importing server helpers without NODE_ENV=test does not start an HTTP list
     child.once('exit', code => { clearTimeout(timer); resolve(code); });
   });
   assert.equal(exitCode, 0, stderr);
-  assert.match(stdout, /\[db\] file=:memory:/);
+  assert.equal(stdout, '');
   assert.doesNotMatch(stdout, /GuGu AI:/);
 });

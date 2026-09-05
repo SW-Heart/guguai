@@ -6,7 +6,8 @@
   <meta name="color-scheme" content="light">
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=203">
+  <link rel="stylesheet" href="/styles/base.css?v=2">
+  <link rel="stylesheet" href="/styles.css?v=208">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
@@ -191,6 +192,7 @@
   <dialog id="supportLogDialog" class="form-dialog support-log-dialog" aria-labelledby="supportLogTitle" aria-describedby="supportLogHelp"><form id="supportLogForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">故障排查</span><h2 id="supportLogTitle">上传诊断日志</h2><p id="supportLogHelp">遇到客户端异常时，把本机运行日志发给我们，可以大幅加快定位问题。</p></div><button id="closeSupportLog" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body account-settings-body"><label class="dialog-field" for="supportLogNote"><span>问题描述（可选）</span><textarea id="supportLogNote" maxlength="300" rows="3" placeholder="例如：点击生成视频后一直卡在排队，大约 14:30 出现"></textarea><small>日志包含客户端运行记录、版本与工作区路径，不包含你的账号密码或素材内容。</small></label><p id="supportLogResult" class="support-log-result hidden" role="status"></p><small id="supportLogError" class="field-error hidden" role="alert"></small></div><footer class="dialog-footer"><button id="openSupportLogFolder" class="secondary-button" type="button">打开日志文件夹</button><button id="submitSupportLog" class="gradient-button" type="submit">上传日志</button></footer></form></dialog>
   <dialog id="captchaDialog" class="form-dialog captcha-dialog" aria-labelledby="captchaDialogTitle"><form id="captchaForm" class="form-dialog-card" novalidate><div class="dialog-head"><div><h2 id="captchaDialogTitle">人机验证</h2></div><button id="closeCaptchaDialog" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body captcha-dialog-body"><div class="captcha-field"><div class="captcha-label-row"><label for="captchaCode">请输入验证码</label><button id="refreshCaptcha" type="button">换一张</button></div><div class="captcha-row"><img id="captchaImage" alt="人机验证码"><input id="captchaCode" autocomplete="off" inputmode="text" maxlength="5" placeholder="输入图中字符"></div><small id="captchaDialogError" class="field-error hidden" role="alert"></small></div></div><footer class="dialog-footer"><button id="cancelCaptchaDialog" class="secondary-button" type="button">取消</button><button id="confirmCaptcha" class="gradient-button" type="submit">确认</button></footer></form></dialog>
   <dialog id="deleteConfirmDialog" class="delete-confirm-dialog" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage"><div><div class="dialog-head"><div><span class="dialog-kicker">危险操作</span><h2 id="deleteConfirmTitle">确认删除</h2></div></div><p id="deleteConfirmMessage">作品一旦删除，无法恢复。</p><footer><button id="cancelDeleteConfirm" class="secondary-button" type="button">取消</button><button id="acceptDeleteConfirm" class="danger-button" type="button">确认删除</button></footer></div></dialog>
+  <dialog id="projectConflictDialog" class="project-conflict-dialog" aria-labelledby="projectConflictTitle" aria-describedby="projectConflictMessage"><div class="project-conflict-card"><div class="dialog-head"><div><span class="dialog-kicker">并发编辑</span><h2 id="projectConflictTitle">合并项目修改</h2><p id="projectConflictMessage">其他编辑器已保存了新版本。请选择每个冲突字段要保留的内容。</p></div></div><div id="projectConflictList" class="project-conflict-list"></div><footer class="dialog-footer"><button id="cancelProjectConflict" class="secondary-button" type="button">保留草稿，稍后处理</button><button id="applyProjectConflict" class="gradient-button" type="button">应用合并并保存</button></footer></div></dialog>
   <dialog id="desktopUpdateDialog" class="desktop-update-dialog" aria-labelledby="desktopUpdateTitle" aria-describedby="desktopUpdateMessage" hidden>
     <div class="desktop-update-card">
       <button id="closeDesktopUpdate" class="desktop-update-close" type="button" aria-label="关闭更新提示" title="稍后提醒"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
@@ -205,6 +207,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js?v=226"></script>
+<script type="module" src="/app.js?v=241"></script>
 </body>
 </html>

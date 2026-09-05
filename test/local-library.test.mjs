@@ -11,9 +11,12 @@ import {
   findLocalAssetByCloudId,
   findLocalAssetByDigest,
   getLocalAsset,
+  listLocalDeliveryTasks,
   listLocalAssets,
   listLocalAssetsByCloudIds,
   openLocalLibrary,
+  completeLocalDeliveryTask,
+  upsertLocalDeliveryTask,
   upsertLocalAsset,
 } from '../desktop/local-library.mjs';
 import { accountWorkspacePath } from '../desktop/workspace-scope.mjs';
@@ -87,6 +90,29 @@ test('local library migrates once and paginates without loading the whole index'
   } finally {
     closeLocalLibrary();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('local delivery acknowledgement tasks survive reopening the account workspace', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'local-delivery-tasks-'));
+  try {
+    openLocalLibrary(root);
+    upsertLocalDeliveryTask({ assetId:'cloud-a', localAssetId:'local-a', size:12, sha256:'hash-a', mimeType:'video/mp4', attempts:2, nextAttemptAt:123 });
+    assert.deepEqual(listLocalDeliveryTasks({ now:100, dueOnly:true }), []);
+    const due = listLocalDeliveryTasks({ now:123, dueOnly:true });
+    assert.equal(due.length, 1);
+    assert.deepEqual({ ...due[0], updatedAt:undefined }, { assetId:'cloud-a', localAssetId:'local-a', size:12, sha256:'hash-a', mimeType:'video/mp4', attempts:2, nextAttemptAt:123, updatedAt:undefined });
+    assert.equal(typeof due[0].updatedAt, 'string');
+    closeLocalLibrary();
+    openLocalLibrary(root);
+    const restored = listLocalDeliveryTasks({ now:123 })[0];
+    assert.equal(restored.assetId, 'cloud-a');
+    assert.equal(restored.localAssetId, 'local-a');
+    assert.equal(completeLocalDeliveryTask('cloud-a'), true);
+    assert.deepEqual(listLocalDeliveryTasks(), []);
+  } finally {
+    closeLocalLibrary();
+    rmSync(root, { recursive:true, force:true });
   }
 });
 

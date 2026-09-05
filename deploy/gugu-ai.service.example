@@ -13,7 +13,7 @@ ExecStart=/usr/bin/node --env-file=.env server.mjs
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
-TimeoutStopSec=10
+TimeoutStopSec=30
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

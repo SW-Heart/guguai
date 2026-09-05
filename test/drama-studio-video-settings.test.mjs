@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDramaVideoQuoteInput, calculateVirtualShotRange, clampVirtualScrollOffset, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, isMountedVirtualShotScroll, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, clampVirtualScrollOffset, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, isMountedVirtualShotScroll, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, removeAssemblyVideoAssets, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [
@@ -9,6 +9,25 @@ test('renamed drama projects update the library immediately and move to the top'
   ];
   const next = mergeDramaProjectList(previous, { id: 'current', title: '新名称', updatedAt: '3' });
   assert.deepEqual(next.map(project => [project.id, project.title]), [['current', '新名称'], ['old', '旧项目']]);
+});
+
+test('deleting a video asset removes matching assembly history and legacy final output', () => {
+  const project = {
+    id:'project-1',
+    finalAssetId:'assembly-legacy',
+    assemblyVideos:[
+      { id:'record-1', assetId:'assembly-legacy' },
+      { id:'record-2', assetId:'assembly-keep' },
+    ],
+  };
+
+  const result = removeAssemblyVideoAssets(project, ['assembly-legacy', 'assembly-legacy']);
+
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.project.assemblyVideos, [{ id:'record-2', assetId:'assembly-keep' }]);
+  assert.equal(result.project.finalAssetId, '');
+  assert.equal(project.assemblyVideos.length, 2, '纯函数不应修改原项目');
+  assert.equal(removeAssemblyVideoAssets(result.project, ['not-found']).changed, false);
 });
 
 test('an older save response cannot overwrite fields edited while the request was in flight', () => {

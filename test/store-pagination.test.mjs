@@ -8,9 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { openDatabase, closeDatabase, sql, resetForTests } from '../lib/db.mjs';
 import {
   configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject,
-  saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
+  claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationQueueStats, saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
   parseLimit, decodeCursor, encodeCursor, InvalidCursorError,
-  findGeneration, findCloudAssets, claimLegacyWorkspace, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
+  findGeneration, findCloudAssets, claimLegacyWorkspace, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, generationJobLeaseActive, renewGenerationJobLease, rescheduleGenerationJob, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
 } from '../lib/store.mjs';
 
 let workDir;
@@ -335,9 +335,19 @@ test('store pagination', async t => {
       id: 's-awaiting-backup', type: 'image', status: 'completed', sourceUrl: 'https://upstream.example/result.png',
       archivePending: true, createdAt: '2026-01-01T00:05:00.000Z', updatedAt: '2026-01-01T00:05:00.000Z',
     });
+    saveGenerationRecord(userId, {
+      id: 's-awaiting-references', type: 'image', status: 'queued', awaitingReferences: true,
+      createdAt: '2026-01-01T00:06:00.000Z', updatedAt: '2026-01-01T00:06:00.000Z',
+    });
+    saveGenerationRecord(userId, {
+      id: 's-refund-pending', type: 'image', status: 'failed', creditStatus: 'refund_failed',
+      createdAt: '2026-01-01T00:07:00.000Z', updatedAt: '2026-01-01T00:07:00.000Z',
+    });
     const pending = listPendingGenerations();
-    assert.deepEqual(pending.map(p => p.task.status).sort(), ['completed', 'queued', 'running']);
+    assert.deepEqual(pending.map(p => p.task.status).sort(), ['completed', 'failed', 'queued', 'queued', 'running']);
     assert.ok(pending.some(p => p.task.id === 's-awaiting-backup'));
+    assert.ok(pending.some(p => p.task.id === 's-awaiting-references'));
+    assert.ok(pending.some(p => p.task.id === 's-refund-pending'));
     assert.ok(pending.every(p => p.userId === userId));
   });
 
@@ -354,4 +364,177 @@ test('store pagination', async t => {
     assert.equal(page.items[0].assetId, 'a9');
     assert.equal(listPendingGenerations().length, 0);
   });
+});
+
+test('drama project conditional save rejects a stale revision without overwriting', () => {
+  freshDb();
+  try {
+    const userId = makeUser('cas-user');
+    const createdAt = '2026-09-05T00:00:00.000Z';
+    const project = {
+      id: 'cas-project', userId, title: '初始', step: 'script', status: 'draft', revision: 1,
+      createdAt, updatedAt: createdAt, originDeviceId: 'device-a', originWorkspaceId: 'workspace-a',
+    };
+    saveDramaProjectRecord(userId, project, { insertOnly: true });
+
+    const firstUpdate = { ...project, title: '第一次保存', revision: 2, updatedAt: '2026-09-05T00:01:00.000Z' };
+    assert.equal(saveDramaProjectRecord(userId, firstUpdate, { expectedRevision: 1 }).saved, true);
+
+    const staleUpdate = { ...project, title: '过期保存', revision: 2, updatedAt: '2026-09-05T00:02:00.000Z' };
+    assert.equal(saveDramaProjectRecord(userId, staleUpdate, { expectedRevision: 1 }).saved, false);
+    const persisted = sql('SELECT title, revision FROM drama_projects WHERE id = :id').get({ id: project.id });
+    assert.equal(persisted.title, '第一次保存');
+    assert.equal(persisted.revision, 2);
+  } finally {
+    cleanupDb();
+  }
+});
+
+test('concurrent project saves allow exactly one writer for a revision', async () => {
+  freshDb();
+  try {
+    const userId = makeUser('cas-concurrent-user');
+    const project = {
+      id: 'cas-concurrent-project', userId, title: '初始', step: 'script', status: 'draft', revision: 1,
+      createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
+      originDeviceId: 'device-a', originWorkspaceId: 'workspace-a',
+    };
+    saveDramaProjectRecord(userId, project, { insertOnly: true });
+    const [first, second] = await Promise.all([
+      Promise.resolve(saveDramaProjectRecord(userId, { ...project, title:'并发一', revision:2 }, { expectedRevision:1 })),
+      Promise.resolve(saveDramaProjectRecord(userId, { ...project, title:'并发二', revision:2 }, { expectedRevision:1 })),
+    ]);
+    assert.equal([first.saved, second.saved].filter(Boolean).length, 1);
+    const persisted = sql('SELECT title, revision FROM drama_projects WHERE id = :id').get({ id: project.id });
+    assert.equal(persisted.revision, 2);
+    assert.ok(['并发一', '并发二'].includes(persisted.title));
+  } finally {
+    cleanupDb();
+  }
+});
+
+test('generation jobs enforce lease ownership and can be rescheduled', () => {
+  freshDb();
+  try {
+    const userId = makeUser('job-user');
+    saveGenerationRecord(userId, { id:'job-generation', type:'image', status:'queued', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    const job = enqueueGenerationJob({ userId, generationId:'job-generation', nextRunAt:100 });
+    const [claimed] = claimGenerationJobs({ owner:'worker-a', now:100, limit:1, leaseMs:1000 });
+    assert.equal(claimed.id, job.id);
+    assert.equal(claimed.leaseToken, 1);
+    assert.equal(renewGenerationJobLease({ id:job.id, owner:'worker-a', leaseToken:1, leaseUntil:2_000, now:100 }), true);
+    assert.equal(generationJobLeaseActive({ id:job.id, owner:'worker-a', leaseToken:1, now:1_999 }), true);
+    assert.equal(generationJobLeaseActive({ id:job.id, owner:'worker-a', leaseToken:1, now:2_000 }), false);
+    assert.equal(completeGenerationJob({ id:job.id, owner:'worker-b', leaseToken:1 }), false);
+    assert.equal(rescheduleGenerationJob({ id:job.id, owner:'worker-a', leaseToken:1, nextRunAt:3_000, errorCode:'TEMPORARY', errorMessage:'retry later', now:1_999 }), true);
+    assert.deepEqual(generationQueueStats(2_000), {
+      pendingJobs: 1, leasedJobs: 0, expiredLeases: 0, manualReviewJobs: 0,
+      pendingGenerations: 1, refundPendingGenerations: 0,
+    });
+
+    const [reclaimed] = claimGenerationJobs({ owner:'worker-b', now:3_000, limit:1, leaseMs:1000 });
+    assert.equal(reclaimed.id, job.id);
+    assert.equal(reclaimed.leaseToken, 2);
+    assert.equal(completeGenerationJob({ id:job.id, owner:'worker-b', leaseToken:2, now:3_999 }), true);
+  } finally {
+    cleanupDb();
+  }
+});
+
+test('expired generation leases cannot renew, complete, or merge into another job', () => {
+  freshDb();
+  try {
+    const userId = makeUser('expired-job-user');
+    saveGenerationRecord(userId, { id:'expired-generation', type:'image', status:'running', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    const generationJob = enqueueGenerationJob({ userId, generationId:'expired-generation', kind:'generation', nextRunAt:100 });
+    const pollJob = enqueueGenerationJob({ userId, generationId:'expired-generation', kind:'poll', nextRunAt:9_000 });
+    const [lease] = claimGenerationJobs({ owner:'expired-worker', now:100, limit:1, leaseMs:1_000 });
+    assert.equal(lease.id, generationJob.id);
+    assert.equal(generationJobLeaseActive({ id:lease.id, owner:'expired-worker', leaseToken:lease.leaseToken, now:1_100 }), false);
+    assert.equal(renewGenerationJobLease({ id:lease.id, owner:'expired-worker', leaseToken:lease.leaseToken, leaseUntil:5_000, now:1_100 }), false);
+    assert.equal(completeGenerationJob({ id:lease.id, owner:'expired-worker', leaseToken:lease.leaseToken, now:1_100 }), false);
+    assert.equal(rescheduleGenerationJob({ id:lease.id, owner:'expired-worker', leaseToken:lease.leaseToken, kind:'poll', nextRunAt:1, now:1_100 }), false);
+    const persisted = sql('SELECT state, lease_owner, lease_token, lease_until FROM generation_jobs WHERE id = :id').get({ id:lease.id });
+    assert.deepEqual({ ...persisted }, { state:'leased', lease_owner:'expired-worker', lease_token:1, lease_until:1_100 });
+    assert.equal(sql('SELECT next_run_at FROM generation_jobs WHERE id = :id').get({ id:pollJob.id }).next_run_at, 9_000);
+  } finally {
+    cleanupDb();
+  }
+});
+
+test('generation job rescheduling validates its lease before merging jobs and preserves recovery timing', () => {
+  freshDb();
+  try {
+    const userId = makeUser('job-safety-user');
+    saveGenerationRecord(userId, { id:'refund-generation', type:'image', status:'failed', creditStatus:'refund_failed', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    const refundJob = enqueueGenerationJob({ userId, generationId:'refund-generation', kind:'refund_reconcile', nextRunAt:100 });
+    const [refundLease] = claimGenerationJobs({ owner:'refund-worker', now:100, limit:1, leaseMs:10_000 });
+    assert.equal(rescheduleGenerationJob({ id:refundJob.id, owner:'refund-worker', leaseToken:refundLease.leaseToken, nextRunAt:5_000, now:100 }), true);
+    assert.equal(sql('SELECT kind FROM generation_jobs WHERE id = :id').get({ id:refundJob.id }).kind, 'refund_reconcile');
+    assert.equal(sql('SELECT state FROM generation_jobs WHERE id = :id').get({ id:refundJob.id }).state, 'pending');
+
+    saveGenerationRecord(userId, { id:'conflict-generation', type:'image', status:'running', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    const generationJob = enqueueGenerationJob({ userId, generationId:'conflict-generation', kind:'generation', nextRunAt:200 });
+    const pollJob = enqueueGenerationJob({ userId, generationId:'conflict-generation', kind:'poll', nextRunAt:900_000 });
+    const [generationLease] = claimGenerationJobs({ owner:'generation-worker', now:200, limit:1, leaseMs:10_000 });
+    assert.equal(generationLease.id, generationJob.id);
+    assert.equal(rescheduleGenerationJob({ id:generationJob.id, owner:'stale-worker', leaseToken:generationLease.leaseToken, kind:'poll', nextRunAt:1 }), false);
+    assert.equal(sql('SELECT next_run_at FROM generation_jobs WHERE id = :id').get({ id:pollJob.id }).next_run_at, 900_000);
+    assert.equal(completeGenerationJob({ id:generationJob.id, owner:'generation-worker', leaseToken:generationLease.leaseToken, now:200 }), true);
+
+    saveGenerationRecord(userId, { id:'timed-generation', type:'image', status:'queued', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    const scheduled = enqueueGenerationJob({ userId, generationId:'timed-generation', kind:'generation', nextRunAt:900_000 });
+    const preserved = enqueueGenerationJob({ userId, generationId:'timed-generation', kind:'generation', nextRunAt:1, preserveScheduledTime:true });
+    assert.equal(preserved.id, scheduled.id);
+    assert.equal(preserved.nextRunAt, 900_000);
+
+    saveGenerationRecord(userId, { id:'batch-generation', type:'image', status:'queued', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    enqueueGenerationJob({ userId, generationId:'batch-generation', kind:'generation', nextRunAt:300 });
+    enqueueGenerationJob({ userId, generationId:'batch-generation', kind:'poll', nextRunAt:300 });
+    saveGenerationRecord(userId, { id:'batch-other-generation', type:'image', status:'queued', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    enqueueGenerationJob({ userId, generationId:'batch-other-generation', kind:'generation', nextRunAt:300 });
+    const batch = claimGenerationJobs({ owner:'batch-worker', now:300, limit:3 });
+    assert.equal(batch.filter(job => job.generationId === 'batch-generation').length, 1);
+    assert.equal(batch.length, 2);
+
+    saveGenerationRecord(userId, { id:'serial-generation', type:'image', status:'queued', createdAt:'2026-09-05T00:00:00.000Z', updatedAt:'2026-09-05T00:00:00.000Z' });
+    enqueueGenerationJob({ userId, generationId:'serial-generation', kind:'generation', nextRunAt:400 });
+    enqueueGenerationJob({ userId, generationId:'serial-generation', kind:'poll', nextRunAt:400 });
+    const [serialLease] = claimGenerationJobs({ owner:'serial-worker-a', now:400, limit:1 });
+    assert.equal(serialLease.generationId, 'serial-generation');
+    assert.deepEqual(claimGenerationJobs({ owner:'serial-worker-b', now:400, limit:1 }), []);
+    assert.equal(completeGenerationJob({ id:serialLease.id, owner:'serial-worker-a', leaseToken:serialLease.leaseToken, now:400 }), true);
+  } finally {
+    cleanupDb();
+  }
+});
+
+test('generation request idempotency records preserve the request hash and task list', () => {
+  freshDb();
+  try {
+    const userId = makeUser('idempotency-user');
+    const request = createGenerationRequest({
+      userId,
+      idempotencyKey: 'request-key-1234',
+      requestHash: 'hash-a',
+      generationIds: ['generation-a', 'generation-b', 'generation-b'],
+    });
+    assert.deepEqual(request.generationIds, ['generation-a', 'generation-b']);
+    assert.deepEqual(findGenerationRequest(userId, 'request-key-1234'), request);
+    assert.deepEqual(createGenerationRequest({
+      userId,
+      idempotencyKey: 'request-key-1234',
+      requestHash: 'hash-a',
+      generationIds: ['generation-a', 'generation-b'],
+    }), request);
+    assert.throws(() => createGenerationRequest({
+      userId,
+      idempotencyKey: 'request-key-1234',
+      requestHash: 'hash-b',
+      generationIds: ['generation-a', 'generation-b'],
+    }), error => error.code === 'IDEMPOTENCY_KEY_REUSED' && error.statusCode === 409);
+    assert.equal(findGenerationRequest(userId, 'missing-key'), null);
+  } finally {
+    cleanupDb();
+  }
 });

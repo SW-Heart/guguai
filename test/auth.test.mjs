@@ -32,6 +32,17 @@ test('invite codes are normalized and no public codes are built in', () => {
   assert.equal(__test.isKnownInviteCode('STUDIO-NOT-VALID'), false);
 });
 
+test('HTTP error serialization exposes only whitelisted public codes', () => {
+  assert.deepEqual(__test.publicHttpErrorBody({ code:'PROJECT_VERSION_CONFLICT', message:'internal', publicData:{ project:{ id:'project-a' } } }), {
+    error:'internal',
+    project:{ id:'project-a' },
+    code:'PROJECT_VERSION_CONFLICT',
+  });
+  assert.deepEqual(__test.publicHttpErrorBody({ code:'GENERATION_JOB_LEASE_LOST', message:'internal lease details' }), {
+    error:'internal lease details',
+  });
+});
+
 test('trusted proxy IP is accepted only from a loopback peer', () => {
   const request = (remoteAddress, realIp) => ({ socket: { remoteAddress }, headers: { 'x-real-ip': realIp } });
   assert.equal(clientIp(request('203.0.113.5', '198.51.100.7'), { TRUST_PROXY: 'loopback' }), '203.0.113.5');

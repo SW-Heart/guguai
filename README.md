@@ -115,6 +115,12 @@ MODEL_ROUTE_CHECK_INTERVAL_MS=600000
 VIDEO_ROUTE_SUBMIT_TIMEOUT_MS=180000
 # 异步视频提交后，超过此时间仍未取得上游 taskId 则失败并退款（默认 5 分钟）
 VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS=300000
+# 已持久化任务的恢复扫描间隔（默认 60 秒）
+GENERATION_RECOVERY_SWEEP_MS=60000
+# 任务执行器并发、租约和轮询参数
+GENERATION_JOB_CONCURRENCY=4
+GENERATION_JOB_LEASE_MS=300000
+GENERATION_JOB_POLL_MS=5000
 
 AUTODL_API_BASE=https://autodl.art
 AUTODL_MINIMAX_H3_15S_WORKFLOW_ID=minimax_h3_image_audio_to_video_v2_15s
@@ -464,7 +470,7 @@ sudo certbot renew --dry-run
 - 1800 秒上游超时，覆盖智能导演和服务端生成任务处理。
 - 原始 `Host` 与真实客户端 IP 传递。
 - 普通登录和管理员登录的 Nginx IP 限流，超限统一返回 HTTP 429。
-- `/healthz` 存活检查和 `/readyz` SQLite 就绪检查。
+- `/healthz` 存活检查、`/readyz` SQLite 与任务队列就绪检查、`/metrics` 任务积压/租约/退款待处理运行指标。
 
 只保留一个正式域名；其他域名应 301 跳转到正式 HTTPS 域名，避免 Cookie 和登录状态分散。
 

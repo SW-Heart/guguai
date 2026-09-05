@@ -10,13 +10,38 @@ import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
-import { closeDatabase, openDatabase, resolveDbFile, sql } from './lib/db.mjs';
+import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
 import { claimLegacyWorkspace, claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
-import { analyzeDirectorPlanRecovery, analyzeDirectorShotShortage, buildDirectorPackageRepairPrompt, buildDirectorShotCompletionPrompt, buildDirectorShotRepairPrompt, directorPackageJsonSchema, directorPackageRepairSystemPrompt, directorPackageSystemPrompt, directorRecoveryDiagnostic, directorShotCompletionJsonSchema, directorShotCompletionSystemPrompt, directorShotRepairJsonSchema, directorShotRepairSystemPrompt, mergeDirectorShotCompletion, parseJsonObject, prepareDirectorPackage, replaceDirectorShots, scriptAnalysisSystemPrompt, storyboardSystemPrompt, validateDirectorPackage, validateScriptAnalysis, validateStoryboard } from './lib/drama-analysis.mjs';
+import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
+import { createProviderAdapterRegistry } from './lib/provider-adapters.mjs';
+import { generationRequestFingerprint } from './lib/generation-service.mjs';
+import { createProjectService } from './services/projects.mjs';
+import { createDirectorService } from './services/director.mjs';
+import { createDuomiProvider } from './providers/duomi.mjs';
+import { createTtapiProvider } from './providers/ttapi.mjs';
+import { createCntcnProvider } from './providers/cntcn.mjs';
+import { createRoutedProvider } from './providers/routed.mjs';
+import { createAutodlProvider } from './providers/autodl.mjs';
+import { createOaiProvider } from './providers/oai.mjs';
+import { createProviderTransport } from './providers/transport.mjs';
+import { createStorageKeyService } from './storage/keys.mjs';
+import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
+import { createGenerationLifecycleService } from './services/generations.mjs';
+import { createGenerationRecoveryService } from './services/generation-recovery.mjs';
+import { createMediaArchiveService } from './services/media-archive.mjs';
+import { createRuntimeLifecycle } from './services/runtime-lifecycle.mjs';
+import { bodyBuffer, bodyForm, bodyJson, mutationAllowed, publicHttpErrorBody, publicHttpErrorMessage, requestTraceId, sendJson, sendText } from './server/http-protocol.mjs';
+import { isDesktopRequest, serveFile, serveStatic, staticCacheControl, staticEntryFile } from './server/static.mjs';
+import { createAuthRouteHandler } from './server/routes/auth.mjs';
+import { createAccountRouteHandler } from './server/routes/account.mjs';
+import { createDramaRouteHandler } from './server/routes/drama.mjs';
+import { createFilesRouteHandler } from './server/routes/files.mjs';
+import { createGenerationRouteHandler } from './server/routes/generations.mjs';
+import { createSystemRouteHandler } from './server/routes/system.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
@@ -44,6 +69,7 @@ import {
 const scrypt = promisify(scryptCallback);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isMainModule = path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url);
+const runtimeBootstrapEnabled = isMainModule || process.env.NODE_ENV === 'test';
 const publicDir = path.join(here, 'public');
 const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(here, 'data');
 const userDataDir = path.join(dataDir, 'users');
@@ -84,8 +110,27 @@ const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUES
 const autodlMaxPollDurationMs = Math.max(autodlPollIntervalMs, Number(process.env.AUTODL_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
 const autodlMaxPolls = Math.max(1, Number(process.env.AUTODL_MAX_POLLS || Math.ceil(autodlMaxPollDurationMs / autodlPollIntervalMs)));
 const generationRetryMaxDelayMs = 60_000;
-const archiveAttemptsPerRun = 6;
 const archiveRescheduleMs = 5 * 60_000;
+const generationRecoverySweepMs = Math.max(15_000, Number(process.env.GENERATION_RECOVERY_SWEEP_MS || 60_000));
+const generationJobConcurrency = Math.max(1, Math.min(12, Number(process.env.GENERATION_JOB_CONCURRENCY || 4)));
+const generationJobLeaseMs = Math.max(60_000, Number(process.env.GENERATION_JOB_LEASE_MS || 300_000));
+const generationJobPollMs = Math.max(5_000, Number(process.env.GENERATION_JOB_POLL_MS || 5_000));
+const generationJobPolicy = createGenerationJobPolicy({
+  imagePollIntervalMs,
+  oaiPollIntervalMs,
+  autodlPollIntervalMs,
+  ttapiPollIntervalMs,
+  cntcnPollIntervalMs,
+  defaultPollIntervalMs: generationJobPollMs,
+  recoverySweepMs: generationRecoverySweepMs,
+  archiveRescheduleMs,
+  providerTaskIdDeadline: task => {
+    const anchor = Date.parse(task?.createdAt || task?.submissionUncertainAt || '');
+    return (Number.isFinite(anchor) ? anchor : Date.now()) + providerTaskIdTimeoutMs;
+  },
+});
+const generationJobOwner = `${process.pid}:${randomUUID()}`;
+const generationJobGuards = new Map();
 const desktopDirectDeliveryGraceMs = Math.max(10_000, Number(process.env.DESKTOP_DIRECT_DELIVERY_GRACE_SECONDS || 120) * 1_000);
 // The web surface is a public product page. The creator workspace is served
 // only to requests carrying the desktop client marker; tests can opt out to
@@ -150,6 +195,20 @@ const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
 
 const activeGenerations = new Map();
+const activeGenerationJobs = new Map();
+const activeGenerationIds = new Set();
+const runtimeLifecycle = createRuntimeLifecycle();
+const activeRequests = new Set();
+const runtimeMetrics = {
+  projectVersionConflicts: 0,
+  idempotencyConflicts: 0,
+  generationJobsClaimed: 0,
+  generationJobsCompleted: 0,
+  generationJobsRescheduled: 0,
+  generationJobLeaseRenewalFailures: 0,
+  generationJobExecutionFailures: 0,
+  recoveryRuns: 0,
+};
 const pendingProviderSubmissions = new Set();
 const generationRetryTimers = new Map();
 const providerTaskIdTimeoutTimers = new Map();
@@ -180,34 +239,38 @@ const fixedModels = Object.freeze({ image: 'gpt-image-2' });
 const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
 
-await fs.mkdir(userDataDir, { recursive: true });
-await fs.mkdir(mediaTmpDir, { recursive: true });
-const staleMediaCutoff = Date.now() - mediaTmpMaxAgeMs;
-for (const entry of await fs.readdir(mediaTmpDir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  const target = path.join(mediaTmpDir, entry.name);
-  const stat = await fs.stat(target).catch(() => null);
-  if (stat && stat.mtimeMs < staleMediaCutoff) await fs.rm(target, { recursive: true, force: true }).catch(error => console.error(`[media] 启动清理失败 ${target}`, error.message));
+if (runtimeBootstrapEnabled) {
+  await fs.mkdir(userDataDir, { recursive: true });
+  await fs.mkdir(mediaTmpDir, { recursive: true });
+  const staleMediaCutoff = Date.now() - mediaTmpMaxAgeMs;
+  for (const entry of await fs.readdir(mediaTmpDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const target = path.join(mediaTmpDir, entry.name);
+    const stat = await fs.stat(target).catch(() => null);
+    if (stat && stat.mtimeMs < staleMediaCutoff) await fs.rm(target, { recursive: true, force: true }).catch(error => console.error(`[media] 启动清理失败 ${target}`, error.message));
+  }
 }
 
 // Metadata lives in SQLite; media binaries use local caches and private R2 objects.
-openDatabase({ verbose: true, file: process.env.NODE_ENV === 'test' || !isMainModule ? ':memory:' : null });
-ensureDefaultModelRoutes();
+if (runtimeBootstrapEnabled) {
+  openDatabase({ verbose: true, file: isMainModule ? null : ':memory:' });
+  ensureDefaultModelRoutes();
+  configureLedger({ llmRates, llmProtocol: llmConfig.protocol, llmModel: llmConfig.model });
+  // Signing key for opaque list cursors. Derived from the session secret material
+  // so it survives restarts without adding another env var to manage.
+  configureCursors(createHash('sha256').update(`cursor:${process.env.DUOMI_API_KEY || ''}:${resolveDbFile()}`).digest('hex'));
+}
 
-configureLedger({ llmRates, llmProtocol: llmConfig.protocol, llmModel: llmConfig.model });
-// Signing key for opaque list cursors. Derived from the session secret material
-// so it survives restarts without adding another env var to manage.
-configureCursors(createHash('sha256').update(`cursor:${process.env.DUOMI_API_KEY || ''}:${resolveDbFile()}`).digest('hex'));
-
-const expiredSessions = purgeExpiredSessions(new Date().toISOString());
+const expiredSessions = runtimeBootstrapEnabled ? purgeExpiredSessions(new Date().toISOString()) : 0;
 if (expiredSessions) console.log(`[sessions] 启动清理过期会话 ${expiredSessions} 条`);
-const sessionSweeper = setInterval(() => {
+const sessionSweeper = runtimeBootstrapEnabled ? setInterval(() => {
   try {
     const removed = purgeExpiredSessions(new Date().toISOString());
     if (removed) console.log(`[sessions] 定期清理过期会话 ${removed} 条`);
   } catch (error) { console.error('清理过期会话失败', error); }
-}, 6 * 60 * 60 * 1000);
-sessionSweeper.unref();
+}, 6 * 60 * 60 * 1000) : null;
+sessionSweeper?.unref();
+if (sessionSweeper) runtimeLifecycle.registerTimer(sessionSweeper);
 
 const now = () => new Date().toISOString();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -235,6 +298,7 @@ function videoPollRequestSignal(provider, taskId, startedAt, maxDurationMs, requ
   return AbortSignal.timeout(Math.max(1, Math.min(requestTimeoutMs, remainingMs)));
 }
 const safeId = value => String(value || '').replace(/[^a-zA-Z0-9_-]/g, '');
+const storageKeyService = createStorageKeyService({ storagePrefix, referenceImagePrefix: r2ReferenceImagePrefix, safeId, id: randomUUID });
 const normalizeDeviceId = value => {
   const deviceId = String(value || '').trim();
   return /^[a-zA-Z0-9_-]{8,128}$/.test(deviceId) ? deviceId : '';
@@ -273,7 +337,7 @@ const publicUser = user => ({
 });
 const uploadSweepIntervalMs = Math.max(60_000, Number(process.env.UPLOAD_SWEEP_INTERVAL_MINUTES || 10) * 60_000);
 const uploadVerifyStaleMs = Math.max(60_000, Number(process.env.UPLOAD_VERIFY_STALE_MINUTES || 10) * 60_000);
-const uploadSweeper = setInterval(() => {
+const uploadSweeper = runtimeBootstrapEnabled ? setInterval(() => {
   if (!directUploadEnabled || !r2Configured) return;
   const nowIso = now();
   try {
@@ -288,8 +352,9 @@ const uploadSweeper = setInterval(() => {
     });
     if (expired.length || stale.length) console.log(`[uploads] 清理过期 ${expired.length} 条，超时 ${stale.length} 条`);
   } catch (error) { console.error('[uploads] 定期清理失败', error); }
-}, uploadSweepIntervalMs);
-uploadSweeper.unref();
+}, uploadSweepIntervalMs) : null;
+uploadSweeper?.unref();
+if (uploadSweeper) runtimeLifecycle.registerTimer(uploadSweeper);
 const generationFailureCatalog = Object.freeze({
   CONTENT_REJECTED: Object.freeze({ message: '内容未通过生成检查', suggestion: '请调整可能涉及敏感、侵权或高风险的描述及参考图片后重试。', action: 'edit_input' }),
   REFERENCE_REQUIRED: Object.freeze({ message: '当前视频服务要求参考图片', suggestion: '请添加符合要求的参考图片，或切换到支持纯文本生成的视频服务后重试。', action: 'edit_input' }),
@@ -456,22 +521,6 @@ function currentUser(req) {
   return userForSession(tokenHash(token), now());
 }
 function requireUser(req, res) { const user = currentUser(req); if (!user) { sendJson(res, 401, { error: '请先登录' }); return null; } return user; }
-function mutationAllowed(req) { if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) return true; const origin = req.headers.origin; if (!origin) return true; try { return new URL(origin).host === req.headers.host; } catch { return false; } }
-
-async function bodyJson(req, limit = 2_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { throw Object.assign(new Error('JSON 格式不正确'), { statusCode: 400 }); } }
-async function bodyBuffer(req, limit, tooLargeMessage = '请求体过大') { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error(tooLargeMessage), { statusCode: 413 }); chunks.push(chunk); } return Buffer.concat(chunks); }
-async function bodyForm(req, limit = 1_000_000) { const chunks = []; let size = 0; for await (const chunk of req) { size += chunk.length; if (size > limit) throw Object.assign(new Error('请求体过大'), { statusCode: 413 }); chunks.push(chunk); } return Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))); }
-function sendJson(res, status, value) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(JSON.stringify(value)); }
-function sendText(res, status, value, contentType = 'text/plain; charset=utf-8') { res.writeHead(status, { 'Content-Type': contentType, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(String(value)); }
-function publicHttpErrorMessage(error) {
-  if (error?.publicMessage) return String(error.publicMessage);
-  if (error?.upstreamError) return '模型服务暂时不可用，请稍后重试';
-  const message = String(error?.message || '').trim();
-  const hasInternalMetadata = Boolean(error?.provider || error?.providerTaskId || error?.routeId || error?.routeDisplayName || error?.routeAdapter || error?.routeBaseUrl || error?.routeCredentialId || error?.upstreamStatus || error?.upstreamMessage || error?.providerResponse || error?.submissionUncertain);
-  const containsInternalDetail = hasInternalMetadata || /上游|供应商|凭证|线路|渠道|接口地址|原始响应|请求地址|API\s*Key|Bearer|https?:\/\/|\b(?:provider|upstream|credential|route|request[_ -]?url|raw[_ -]?response)\b|\bsd(?:20|25)-|\b(?:WJ|DIW|CNTCN|TTAPI|AutoDL|Duomi)\b/i.test(message);
-  if (containsInternalDetail) return Number(error?.statusCode) >= 500 ? '生成服务暂时不可用，请稍后重试' : '请求无法处理，请稍后重试或联系支持';
-  return message || '服务错误';
-}
 const publicCreditModelIds = new Set([
   fixedModels.image,
   ...Object.values(VIDEO_MODEL_IDS),
@@ -612,640 +661,210 @@ function videoProgress(value) {
   if (!Number.isFinite(numeric)) return null;
   return Math.max(0, Math.min(100, Math.round(numeric)));
 }
-async function notifyVideoProgress(hooks, state) {
-  const progress = videoProgress(state);
-  if (progress === null) return hooks.onProgressAbsent?.();
-  return hooks.onProgress?.({ progress });
-}
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  let value;
-  try { value = JSON.parse(text); } catch { value = { raw: text }; }
-  if (!response.ok) {
-    const message = errorMessage(value, text.slice(0, 300));
-    throw Object.assign(new Error(`${response.status} ${message}`), {
-      upstreamStatus: response.status,
-      upstreamMessage: message,
-    });
-  }
-  return value;
-}
-function trackProviderSubmission(operation) {
-  const tracked = Promise.resolve(operation);
-  pendingProviderSubmissions.add(tracked);
-  void tracked.finally(() => pendingProviderSubmissions.delete(tracked)).catch(() => {});
-  return tracked;
-}
-async function waitForProviderSubmissions(timeoutMs = providerSubmissionShutdownGraceMs) {
-  const submissions = [...pendingProviderSubmissions];
-  if (!submissions.length) return { pending:0, timedOut:false };
-  let timeout;
-  const timedOut = await Promise.race([
-    Promise.allSettled(submissions).then(() => false),
-    new Promise(resolve => { timeout = setTimeout(() => resolve(true), Math.max(1, timeoutMs)); }),
-  ]);
-  if (timeout) clearTimeout(timeout);
-  return { pending:pendingProviderSubmissions.size, timedOut };
-}
-async function pollDuomiImage(taskId, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false } = {}) {
-  let consecutiveErrors = 0;
-  let firstRequest = true;
-  for (;;) {
-    let remainingMs = videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs);
-    if (remainingMs <= 0 && !(firstRequest && allowExpiredFinalCheck)) throw videoPollTimeoutError('图片', taskId);
-    if (!(firstRequest && immediate)) {
-      await sleep(Math.min(imagePollIntervalMs, Math.max(1, remainingMs)));
-      remainingMs = videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs);
-    }
-    firstRequest = false;
-    let state;
-    try {
-      state = await fetchJson(`${duomiBase}/v1/tasks/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: process.env.DUOMI_API_KEY },
-        signal:remainingMs > 0
-          ? videoPollRequestSignal('图片', taskId, pollStartedAt, imageMaxPollDurationMs, 60_000)
-          : AbortSignal.timeout(60_000),
-      });
-      consecutiveErrors = 0;
-      await hooks.onPollRecovered?.();
-    } catch (error) {
-      if ([401, 403].includes(Number(error.upstreamStatus))) {
-        throw Object.assign(error, { provider:'duomi', providerTaskId:taskId, upstreamTerminal:true });
-      }
-      if (videoPollRemainingMs(pollStartedAt, imageMaxPollDurationMs) <= 0) throw videoPollTimeoutError('图片', taskId);
-      consecutiveErrors += 1;
-      await hooks.onPollError?.({ consecutiveErrors, detail:error.message });
-      console.error('[image] Duomi poll transport failure; task remains active', { taskId, consecutiveErrors, detail:error.message });
-      continue;
-    }
-    const status = String(state.state || state.status || '').toLowerCase();
-    if (['succeeded', 'completed', 'success', 'done'].includes(status)) {
-      return { provider:'duomi', taskId, url:state.data?.images?.[0]?.url || state.data?.url || state.url };
-    }
-    if (['error', 'failed', 'failure', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
-      throw Object.assign(new Error(errorMessage(state.message || state.error || state, '图片生成失败')), {
-        provider:'duomi', providerTaskId:taskId, upstreamTerminal:true,
-      });
-    }
-  }
-}
-async function createImage(task, refs, hooks = {}) {
-  const payload = { model:task.model, prompt:task.prompt, size:task.size, quality:task.quality };
-  if (refs.length) payload.image = refs.slice(0, 7);
-  const taskId = await trackProviderSubmission((async () => {
-    const created = await fetchJson(`${duomiBase}/v1/images/generations?async=true`, {
-      method:'POST',
-      headers:{ Authorization:process.env.DUOMI_API_KEY, 'Content-Type':'application/json' },
-      body:JSON.stringify(payload),
-    });
-    const submittedTaskId = created.id || created.task_id;
-    if (!submittedTaskId) throw new Error('图片任务没有返回任务 ID');
-    await hooks.onSubmitted?.({ provider:'duomi', taskId:String(submittedTaskId) });
-    return String(submittedTaskId);
-  })());
-  return pollDuomiImage(taskId, hooks, videoPollStartedAt(task));
-}
-async function createDuomiVideo(task, refs) {
-  let taskId = '';
-  let pollStartedAt = 0;
-  try {
-    const created = await fetchJson(`${duomiBase}/v1/videos/generations`, { method: 'POST', headers: { Authorization: process.env.DUOMI_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify(buildVideoPayload(task, refs)) });
-    taskId = created.id || created.task_id;
-    if (!taskId) throw Object.assign(new Error('多米视频任务没有返回任务 ID'), { provider: 'duomi', fallbackEligible: false });
-    pollStartedAt = Date.now();
-    for (;;) {
-      const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
-      if (remainingMs <= 0) throw videoPollTimeoutError('多米', taskId);
-      await sleep(Math.min(8000, remainingMs));
-      const state = await fetchJson(`${duomiBase}/v1/videos/tasks/${taskId}`, {
-        headers: { Authorization: process.env.DUOMI_API_KEY },
-        signal: videoPollRequestSignal('多米', taskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
-      });
-      if (['succeeded', 'completed'].includes(state.state)) return { provider: 'duomi', taskId, url: state.data?.videos?.[0]?.url };
-      if (['error', 'failed'].includes(state.state)) throw Object.assign(new Error(state.message || '多米视频生成失败'), { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
-    }
-  } catch (error) {
-    if (pollStartedAt && Date.now() - pollStartedAt >= videoMaxPollDurationMs && !error.upstreamTerminal) error = videoPollTimeoutError('多米', taskId);
-    console.error('[video] Duomi upstream failure', {
-      generationId: task.id,
-      modelId: task.videoModelId || task.modelId || null,
-      model: task.model || null,
-      phase: taskId ? 'poll' : 'submit',
-      status: error.upstreamStatus || null,
-      message: error.upstreamMessage || error.message,
-    });
-    if (taskId && error.fallbackEligible === undefined) error = Object.assign(error, { provider: 'duomi', providerTaskId: taskId, fallbackEligible: true });
-    throw error;
-  }
-}
-function upstreamRequestErrorDetail(error) {
-  return [error?.upstreamStatus, error?.cause?.code, error?.upstreamMessage || error?.cause?.message || error?.message]
-    .filter(Boolean).join(' · ') || '未知上游网络错误';
-}
-function isDefinitiveSubmitRejection(error) {
-  return Number(error?.upstreamStatus) >= 400
-    && Number(error?.upstreamStatus) < 500
-    && ![408, 409, 425, 429].includes(Number(error.upstreamStatus));
-}
-async function pollTtapiVideo(taskId, hooks = {}, pollStartedAt = Date.now()) {
-  let consecutiveErrors = 0;
-  let recovering = false;
-  for (;;) {
-    const delay = consecutiveErrors
-      ? Math.min(ttapiPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), ttapiMaxPollBackoffMs)
-      : ttapiPollIntervalMs;
-    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
-    if (remainingMs <= 0) throw videoPollTimeoutError('TTAPI', taskId);
-    await sleep(Math.min(delay, remainingMs));
-    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('TTAPI', taskId);
-    let state;
-    try {
-      state = await fetchJson(`${ttapiBase}/grok/fetch?jobId=${encodeURIComponent(taskId)}`, {
-        headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY },
-        signal: videoPollRequestSignal('TTAPI', taskId, pollStartedAt, videoMaxPollDurationMs, ttapiRequestTimeoutMs),
-      });
-    } catch (error) {
-      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('TTAPI', taskId);
-      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: 'ttapi', providerTaskId: taskId, upstreamTerminal: true });
-      consecutiveErrors++;
-      recovering = true;
-      const detail = upstreamRequestErrorDetail(error);
-      console.error('[video] TTAPI poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
-      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
-      catch (saveError) { console.error('[video] TTAPI poll state persistence failed', { taskId, message: saveError.message }); }
-      continue;
-    }
+const providerTransport = createProviderTransport({ fetchImpl: (...args) => globalThis.fetch(...args), errorMessage, videoProgress, sleep, pendingProviderSubmissions });
+const duomiProvider = createDuomiProvider({
+  baseUrl: duomiBase,
+  apiKey: process.env.DUOMI_API_KEY,
+  ...providerTransport,
+  sleep,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  imageMaxPollDurationMs,
+  videoMaxPollDurationMs,
+  buildVideoPayload,
+  errorMessage,
+});
+const ttapiProvider = createTtapiProvider({
+  baseUrl: ttapiBase,
+  apiKey: process.env.TTAPI_API_KEY,
+  ...providerTransport,
+  sleep,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  videoMaxPollDurationMs,
+  pollIntervalMs: ttapiPollIntervalMs,
+  maxBackoffMs: ttapiMaxPollBackoffMs,
+  requestTimeoutMs: ttapiRequestTimeoutMs,
+  errorMessage,
+});
+const cntcnProvider = createCntcnProvider({
+  baseUrl: cntcnBase,
+  apiKey: process.env.CNTCN_KEY,
+  ...providerTransport,
+  sleep,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  videoMaxPollDurationMs,
+  pollIntervalMs: cntcnPollIntervalMs,
+  requestTimeoutMs: cntcnRequestTimeoutMs,
+  buildVideoPayload,
+  errorMessage,
+});
+const routedProvider = createRoutedProvider({
+  ...providerTransport,
+  sleep,
+  routeCredential,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  videoMaxPollDurationMs,
+  submitTimeoutMs: routedVideoSubmitTimeoutMs,
+  errorMessage,
+});
+const autodlProvider = createAutodlProvider({
+  baseUrl: autodlBase,
+  workflowId: autodlWorkflowId,
+  apiKey: process.env.AUTODL_COMFYUI_KEY,
+  ...providerTransport,
+  sleep,
+  notifyVideoProgress: providerTransport.notifyVideoProgress,
+  upstreamRequestErrorDetail: providerTransport.upstreamRequestErrorDetail,
+  isDefinitiveSubmitRejection: providerTransport.isDefinitiveSubmitRejection,
+  errorMessage,
+  videoPollTimeoutError,
+  pollIntervalMs: autodlPollIntervalMs,
+  requestTimeoutMs: autodlRequestTimeoutMs,
+  maxPollDurationMs: autodlMaxPollDurationMs,
+  maxPolls: autodlMaxPolls,
+});
+const oaiProvider = createOaiProvider({
+  baseUrl: oaiBase,
+  keys: {
+    gemini: process.env.OAIAPI_GEMINI_KEY,
+    veo: process.env.OAIAPI_VEO_KEY,
+    minimax: process.env.OAIAPI_MINIMAX_KEY,
+    grok: process.env.OAIAPI_GROK_KEY,
+  },
+  ...providerTransport,
+  sleep,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  buildVideoPayload,
+  videoModelIds: VIDEO_MODEL_IDS,
+  legacyVideoModelIds: LEGACY_VIDEO_MODEL_IDS,
+  pollIntervalMs: oaiPollIntervalMs,
+  requestTimeoutMs: oaiRequestTimeoutMs,
+  maxPollDurationMs: oaiMaxPollDurationMs,
+  maxPolls: oaiMaxPolls,
+  errorMessage,
+});
+const { fetchJson, trackProviderSubmission, waitForProviderSubmissions, upstreamRequestErrorDetail, isDefinitiveSubmitRejection, notifyVideoProgress } = providerTransport;
+const pollDuomiImage = (...args) => duomiProvider.pollImage(...args);
+const createImage = (...args) => duomiProvider.createImage(...args);
+const routedVideoPayload = routedProvider.payload;
 
-    if (recovering) {
-      try { await hooks.onPollRecovered?.(); }
-      catch (saveError) { console.error('[video] TTAPI recovery state persistence failed', { taskId, message: saveError.message }); }
-    }
-    consecutiveErrors = 0;
-    recovering = false;
-    await notifyVideoProgress(hooks, state);
-    const videoUrl = state.data?.videoUrl;
-    if (videoUrl) return { provider: 'ttapi', taskId, url: videoUrl };
-    const status = String(state.status || state.data?.status || '').toUpperCase();
-    if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) {
-      throw Object.assign(new Error(errorMessage(state, 'TTAPI 视频生成失败')), {
-        provider: 'ttapi', providerTaskId: taskId, upstreamTerminal: true,
-      });
-    }
-  }
-}
-async function createTtapiVideo(task, refs, hooks = {}) {
-  const payload = { prompt: task.prompt, model: task.model, aspect_ratio: task.aspectRatio, video_length: String(task.duration), resolution_name: task.quality || '720p' };
-  if (refs.length) payload.refer_images = refs.slice(0, task.maxReferenceImages || 7);
-  let created;
-  try {
-    created = await fetchJson(`${ttapiBase}/grok/generations`, {
-      method: 'POST',
-      headers: { 'TT-API-KEY': process.env.TTAPI_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(ttapiRequestTimeoutMs),
-    });
-  } catch (error) {
-    if (isDefinitiveSubmitRejection(error)) {
-      throw Object.assign(error, { provider: 'ttapi', upstreamTerminal: true });
-    }
-    throw Object.assign(new Error(`TTAPI 提交结果待确认：${upstreamRequestErrorDetail(error)}`), {
-      provider: 'ttapi', submissionUncertain: true, cause: error,
-    });
-  }
-  const taskId = created.data?.jobId || created.jobId;
-  if (!taskId) {
-    throw Object.assign(new Error('TTAPI 已接受请求，但没有返回任务 ID，提交结果待核对'), {
-      provider: 'ttapi', submissionUncertain: true,
-    });
-  }
-  await hooks.onSubmitted?.({ provider: 'ttapi', taskId: String(taskId) });
-  return pollTtapiVideo(String(taskId), hooks, videoPollStartedAt(task));
-}
-function cntcnVideoUrl(value) {
-  const candidates = [
-    value?.video_url, value?.url, value?.download_url, value?.original_video_url,
-    value?.data?.video_url, value?.data?.url, value?.data?.download_url, value?.data?.original_video_url,
-  ];
-  const candidate = candidates.find(item => typeof item === 'string' && item.trim());
-  return candidate ? candidate.trim() : '';
-}
-function cntcnTaskId(value) {
-  const candidate = value?.task_id || value?.taskId || value?.id || value?.data?.task_id || value?.data?.taskId || value?.data?.id;
-  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
-}
-function cntcnStatus(value) {
-  return String(value?.status || value?.data?.status || value?.data?.status_code || '').trim().toLowerCase();
-}
-function cntcnError(value) {
-  return errorMessage(value?.error || value?.error_message || value?.api_error || value, 'CNTCN 视频生成失败');
-}
-async function pollCntcnVideo(taskId, hooks = {}, pollStartedAt = Date.now()) {
-  let consecutiveErrors = 0;
-  let recovering = false;
-  for (;;) {
-    const delay = consecutiveErrors ? Math.min(cntcnPollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000) : cntcnPollIntervalMs;
-    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
-    if (remainingMs <= 0) throw videoPollTimeoutError('CNTCN', taskId);
-    await sleep(Math.min(delay, remainingMs));
-    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('CNTCN', taskId);
-    let state;
-    try {
-      state = await fetchJson(`${cntcnBase}/videos/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: `Bearer ${process.env.CNTCN_KEY}` },
-        signal: videoPollRequestSignal('CNTCN', taskId, pollStartedAt, videoMaxPollDurationMs, cntcnRequestTimeoutMs),
-      });
-    } catch (error) {
-      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError('CNTCN', taskId);
-      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:'cntcn', providerTaskId:taskId, upstreamTerminal:true });
-      consecutiveErrors++;
-      recovering = true;
-      const detail = upstreamRequestErrorDetail(error);
-      console.error('[video] CNTCN poll transport failure; task remains active', { taskId, consecutiveErrors, detail });
-      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
-      catch (saveError) { console.error('[video] CNTCN poll state persistence failed', { taskId, message: saveError.message }); }
-      continue;
-    }
-    if (recovering) {
-      try { await hooks.onPollRecovered?.(); }
-      catch (saveError) { console.error('[video] CNTCN recovery state persistence failed', { taskId, message: saveError.message }); }
-    }
-    consecutiveErrors = 0;
-    recovering = false;
-    await notifyVideoProgress(hooks, state);
-    const videoUrl = cntcnVideoUrl(state);
-    if (videoUrl) return { provider: 'cntcn', taskId, url: videoUrl };
-    const status = cntcnStatus(state);
-    if (['failed', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
-      throw Object.assign(new Error(cntcnError(state)), { provider: 'cntcn', providerTaskId: taskId, upstreamTerminal: true });
-    }
-    // An expired URL can be regenerated by querying the task again.
-  }
-}
-async function createCntcnVideo(task, refs, hooks = {}) {
-  let taskId = '';
-  try {
-    const created = await fetchJson(`${cntcnBase}/videos`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.CNTCN_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildVideoPayload(task, refs)),
-      signal: AbortSignal.timeout(cntcnRequestTimeoutMs),
-    });
-    taskId = cntcnTaskId(created);
-    if (!taskId) throw new Error('CNTCN 已接受请求，但没有返回任务 ID，提交结果待核对');
-    await hooks.onSubmitted?.({ provider: 'cntcn', taskId });
-    return pollCntcnVideo(taskId, hooks, videoPollStartedAt(task));
-  } catch (error) {
-    if (error.upstreamTerminal) throw error;
-    if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'cntcn', upstreamTerminal: true });
-    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'cntcn', providerTaskId: taskId });
-    throw Object.assign(new Error(`CNTCN 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'cntcn', submissionUncertain: true, cause: error });
-  }
-}
-
-function routedVideoPayload(task, refs) {
-  const groups = Array.isArray(refs) ? { images: refs, videos: [], audios: [] } : (refs || { images: [], videos: [], audios: [] });
-  const limits = task.referenceLimits || {};
-  const images = groups.images?.slice(0, limits.image || 0) || [];
-  const videos = groups.videos?.slice(0, limits.video || 0) || [];
-  const audios = groups.audios?.slice(0, limits.audio || 0) || [];
-  if (task.routeAdapter === 'cntcn-video') {
-    return {
-      model: task.model, prompt: task.prompt, seconds: task.duration,
-      aspect_ratio: task.aspectRatio, resolution: task.quality,
-      ...(images.length ? { reference_image_urls: images } : {}),
-      ...(videos.length ? { reference_videos: videos } : {}),
-      ...(audios.length ? { reference_audios: audios } : {}),
-    };
-  }
-  const payload = {
-    model: task.model, prompt: task.prompt,
-    [task.routeAdapter === 'wj-video' ? 'seconds' : 'duration']: task.duration,
-    aspect_ratio: task.aspectRatio,
-  };
-  if (task.routeAdapter === 'diw-video') payload.resolution = task.quality;
-  if (images.length) payload.images = images;
-  if (videos.length) payload.videos = videos;
-  if (audios.length) payload.audios = audios;
-  return payload;
-}
-
-async function pollRoutedVideo(task, hooks = {}) {
-  const key = routeCredential(task.routeCredentialId);
-  if (!key) throw Object.assign(new Error('任务原调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
-  const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
-  let consecutiveErrors = 0;
-  const pollStartedAt = videoPollStartedAt(task);
-  for (;;) {
-    const delay = consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000;
-    const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
-    if (remainingMs <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
-    await sleep(Math.min(delay, remainingMs));
-    if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
-    let state;
-    try {
-      state = await fetchJson(`${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}`, {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
-      });
-    } catch (error) {
-      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
-      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:task.provider, providerTaskId:task.providerTaskId, upstreamTerminal:true });
-      consecutiveErrors++;
-      await hooks.onPollError?.({ consecutiveErrors, detail: upstreamRequestErrorDetail(error) });
-      continue;
-    }
-    if (consecutiveErrors) await hooks.onPollRecovered?.();
-    consecutiveErrors = 0;
-    await notifyVideoProgress(hooks, state);
-    const status = String(state.status || state.data?.status || '').trim().toLowerCase();
-    const resultUrl = cntcnVideoUrl(state);
-    if (resultUrl) return { provider: task.provider, taskId: task.providerTaskId, url: new URL(resultUrl, `${base}/`).href, requiresAuth: /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(resultUrl) };
-    if (['completed', 'succeeded', 'success', 'done'].includes(status)) return { provider: task.provider, taskId: task.providerTaskId, url: `${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}/content`, requiresAuth: true };
-    if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) throw Object.assign(new Error(errorMessage(state.error || state, '视频生成失败')), { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
-  }
-}
-
-async function createRoutedVideo(task, refs, hooks = {}) {
-  const key = routeCredential(task.routeCredentialId);
-  if (!key) throw Object.assign(new Error('当前调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
-  const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
-  let taskId = '';
-  try {
-    const created = await fetchJson(`${base}/v1/videos`, {
-      method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(routedVideoPayload(task, refs)), signal: AbortSignal.timeout(routedVideoSubmitTimeoutMs),
-    });
-    taskId = cntcnTaskId(created);
-    if (!taskId) throw new Error('渠道已接受请求，但没有返回任务 ID');
-    await hooks.onSubmitted?.({ provider: task.provider, taskId });
-    task.providerTaskId = taskId;
-    return pollRoutedVideo(task, hooks);
-  } catch (error) {
-    if (error.upstreamTerminal) throw error;
-    if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: task.provider, upstreamTerminal: true });
-    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: task.provider, providerTaskId: taskId });
-    throw Object.assign(new Error(`视频提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: task.provider, submissionUncertain: true, cause: error });
-  }
-}
-function autodlStatus(value) {
-  return String(value?.data?.status || value?.status || '').trim().toLowerCase();
-}
-function autodlTaskId(value) {
-  const candidate = value?.data?.task_id || value?.data?.taskId || value?.task_id || value?.taskId;
-  return candidate === undefined || candidate === null ? '' : String(candidate);
-}
-function autodlResults(value) {
-  return Array.isArray(value?.data?.results) ? value.data.results : Array.isArray(value?.results) ? value.results : [];
-}
-function autodlVideoUrl(value) {
-  const result = autodlResults(value).find(item => item?.type === 'video' && typeof item.url === 'string' && item.url.trim())
-    || autodlResults(value).find(item => typeof item?.url === 'string' && item.url.trim());
-  return result?.url?.trim() || '';
-}
-function autodlRetryableResponseError(value) {
-  const code = value?.code;
-  const normalizedCode = code === undefined || code === null ? '' : String(code).trim().toLowerCase();
-  if (!normalizedCode || normalizedCode === 'success' || value?.data != null) return null;
-  const detail = errorMessage(value, 'AutoDL 返回业务错误');
-  return Object.assign(new Error(detail), {
-    upstreamCode: String(code),
-    upstreamMessage: detail,
-    retryableBusinessResponse: true,
-  });
-}
-async function pollAutodlVideo(taskId, hooks = {}, runtime = {}) {
-  const fetchState = runtime.fetchJson || fetchJson;
-  const wait = runtime.sleep || sleep;
-  const nowMs = runtime.now || Date.now;
-  const maxPolls = Math.max(1, Number(runtime.maxPolls ?? autodlMaxPolls));
-  const maxDurationMs = Math.max(1, Number(runtime.maxDurationMs ?? autodlMaxPollDurationMs));
-  const pollIntervalMs = Math.max(0, Number(runtime.pollIntervalMs ?? autodlPollIntervalMs));
-  const startedAt = Number.isFinite(runtime.startedAt) ? runtime.startedAt : nowMs();
-  let consecutiveErrors = 0;
-  let recovering = false;
-  for (let attempt = 0; attempt < maxPolls; attempt++) {
-    const remainingMs = maxDurationMs - (nowMs() - startedAt);
-    if (remainingMs <= 0) break;
-    const delay = consecutiveErrors
-      ? Math.min(pollIntervalMs * 2 ** Math.min(consecutiveErrors, 3), 60_000)
-      : pollIntervalMs;
-    await wait(Math.min(delay, remainingMs));
-    const requestRemainingMs = maxDurationMs - (nowMs() - startedAt);
-    if (requestRemainingMs <= 0) break;
-    let state;
-    try {
-      state = await fetchState(`${autodlBase}/api/v1/comfyui/comfyui_workflow/result/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}` },
-        signal: AbortSignal.timeout(Math.max(1, Math.min(autodlRequestTimeoutMs, requestRemainingMs))),
-      });
-      const businessError = autodlRetryableResponseError(state);
-      if (businessError) throw businessError;
-    } catch (error) {
-      if (maxDurationMs - (nowMs() - startedAt) <= 0) break;
-      if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider:'autodl', providerTaskId:taskId, upstreamTerminal:true });
-      consecutiveErrors++;
-      recovering = true;
-      const detail = upstreamRequestErrorDetail(error);
-      console.error('[video] AutoDL poll retryable failure; task remains active', { taskId, consecutiveErrors, detail });
-      try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
-      catch (saveError) { console.error('[video] AutoDL poll state persistence failed', { taskId, message: saveError.message }); }
-      continue;
-    }
-    if (recovering) {
-      try { await hooks.onPollRecovered?.(); }
-      catch (saveError) { console.error('[video] AutoDL recovery state persistence failed', { taskId, message: saveError.message }); }
-    }
-    consecutiveErrors = 0;
-    recovering = false;
-    await notifyVideoProgress(hooks, state);
-    const videoUrl = autodlVideoUrl(state);
-    const status = autodlStatus(state);
-    if (videoUrl) return { provider: 'autodl', taskId, url: videoUrl };
-    if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
-      throw Object.assign(new Error(state.msg || state.message || 'AutoDL 视频生成失败'), { provider: 'autodl', providerTaskId: taskId, upstreamTerminal: true });
-    }
-  }
-  throw videoPollTimeoutError('AutoDL', taskId);
-}
-function buildAutodlPayload(task, refs) {
-  const groups = Array.isArray(refs) ? { images: refs, audios: [] } : (refs || { images: [], audios: [] });
-  const payload = {
-    prompt: task.prompt,
-    duration: task.duration,
-    resolution: `${task.quality || '768p'}${task.aspectRatio === '9:16' ? '竖' : '横'}`,
-  };
-  groups.images?.slice(0, task.referenceLimits?.image || task.maxReferenceImages || 9).forEach((url, index) => { payload[`ref_image_${index}`] = url; });
-  groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { payload[`ref_audio_${index}`] = url; });
-  return payload;
-}
-async function createAutodlVideo(task, refs, hooks = {}, runtime = {}) {
-  const submit = runtime.fetchJson || fetchJson;
-  let taskId = '';
-  try {
-    const created = await submit(`${autodlBase}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(autodlWorkflowId)}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.AUTODL_COMFYUI_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAutodlPayload(task, refs)),
-      signal: AbortSignal.timeout(autodlRequestTimeoutMs),
-    });
-    taskId = autodlTaskId(created);
-    if (!taskId) throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });
-    await hooks.onSubmitted?.({ provider: 'autodl', taskId });
-    const immediateUrl = autodlVideoUrl(created);
-    if (immediateUrl) return { provider: 'autodl', taskId, url: immediateUrl };
-    const persistedStartedAt = Date.parse(task.submittedAt || '');
-    return pollAutodlVideo(taskId, hooks, Number.isFinite(persistedStartedAt) ? { ...runtime, startedAt:persistedStartedAt } : runtime);
-  } catch (error) {
-    if (error.upstreamTerminal || error.submissionUncertain) throw error;
-    if (!taskId && isDefinitiveSubmitRejection(error)) {
-      throw Object.assign(error, { provider: 'autodl', upstreamTerminal: true });
-    }
-    if (taskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'autodl', providerTaskId: taskId });
-    throw Object.assign(new Error(`AutoDL 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'autodl', submissionUncertain: true, cause: error });
-  }
-}
-function oaiVideoUrl(value) {
-  const candidate = value?.data?.[0]?.video_url || value?.data?.[0]?.url || value?.data?.video_url || value?.data?.url || value?.video_url || value?.videoUrl || value?.output?.url || value?.result?.url || value?.url;
-  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : '';
-}
-function oaiTaskId(value) {
-  const candidate = value?.task_id || value?.taskId || value?.id || value?.data?.task_id || value?.data?.taskId || value?.data?.id || value?.data?.[0]?.task_id || value?.data?.[0]?.taskId || value?.data?.[0]?.id;
-  return typeof candidate === 'string' || typeof candidate === 'number' ? String(candidate) : '';
-}
-function oaiStatus(value) {
-  return String(value?.status || value?.state || value?.data?.status || value?.data?.state || value?.data?.[0]?.status || value?.data?.[0]?.state || '').trim().toUpperCase();
-}
-function isLegacyOaiGrokTask(task) {
-  return task?.provider === 'oai' && [LEGACY_VIDEO_MODEL_IDS.GUGU_2, LEGACY_VIDEO_MODEL_IDS.GROK_VIDEO_1_5].includes(task?.videoModelId);
-}
+const oaiVideoUrl = oaiProvider.videoUrl;
+const oaiTaskId = oaiProvider.taskId;
+const oaiStatus = oaiProvider.status;
+const isLegacyOaiGrokTask = oaiProvider.isLegacyGrokTask;
+const oaiKeyForTask = oaiProvider.keyForTask;
+const buildOaiVideoPayload = oaiProvider.payload;
+const autodlStatus = autodlProvider.status;
+const autodlTaskId = autodlProvider.taskId;
+const autodlResults = autodlProvider.results;
+const autodlVideoUrl = autodlProvider.videoUrl;
+const autodlRetryableResponseError = autodlProvider.retryableResponseError;
+const buildAutodlPayload = autodlProvider.payload;
+const pollAutodlVideo = (...args) => autodlProvider.pollVideo(...args);
+const createAutodlVideo = (...args) => autodlProvider.createVideo(...args);
 function canonicalVideoModelId(value) {
   const modelId = String(value || '').trim().toLowerCase();
   return modelId === LEGACY_VIDEO_MODEL_IDS.GUGU_2 ? VIDEO_MODEL_IDS.MINIMAX_H3_15S : modelId;
 }
-function oaiKeyForTask(task) {
-  if (isLegacyOaiGrokTask(task)) return process.env.OAIAPI_GROK_KEY;
-  if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) return process.env.OAIAPI_VEO_KEY;
-  if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) return process.env.OAIAPI_MINIMAX_KEY;
-  return process.env.OAIAPI_GEMINI_KEY;
-}
-function veo31Size(task) {
-  const sizeByAspect = {
-    '16:9': { '720p': '1280x720', '1080p': '1920x1080' },
-    '9:16': { '720p': '720x1280', '1080p': '1080x1920' },
-  };
-  return sizeByAspect[task.aspectRatio]?.[task.quality || '720p'] || '1280x720';
-}
-function buildOaiVideoPayload(task, refs) {
-  if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) return buildVideoPayload(task, refs);
-  if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) {
-    const payload = {
-      model: task.model,
-      prompt: task.prompt,
-      seconds: String(task.duration),
-      size: veo31Size(task),
-      generation_type: task.generationType || (refs.length ? 'REFERENCE' : 'TEXT'),
-    };
-    if (task.generationType === 'FIRST&LAST') {
-      if (refs[0]) payload.first_image_url = refs[0];
-      if (refs[1]) payload.last_image_url = refs[1];
-    } else if (task.generationType === 'REFERENCE') {
-      if (refs.length === 1) payload.image_url = refs[0];
-      else if (refs.length > 1) payload.images = refs.slice(0, task.maxReferenceImages || 3);
-    }
-    return payload;
-  }
-  const isLegacyGrokOai = isLegacyOaiGrokTask(task);
-  const payload = { model: task.model, prompt: task.prompt, aspect_ratio: task.aspectRatio, seconds: isLegacyGrokOai ? String(task.duration) : task.duration };
-  if (isLegacyGrokOai) {
-    payload.resolution = task.quality || '720p';
-    if (refs[0]) payload.image = refs[0];
-  } else if (task.generationType === 'FIRST&LAST') {
-    if (refs[0]) payload.first_image_url = refs[0];
-    if (refs[1]) payload.last_image_url = refs[1];
-  } else if (refs.length === 1) {
-    payload.image_url = refs[0];
-  } else if (refs.length > 1) {
-    payload.images = refs.slice(0, task.maxReferenceImages || 5);
-  }
-  return payload;
-}
-function oaiVideoRequest(task, refs, apiKey) {
-  const payload = buildOaiVideoPayload(task, refs);
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  };
-  return { headers, body: JSON.stringify(payload) };
-}
-async function createOaiVideo(task, refs) {
-  const apiKey = oaiKeyForTask(task);
-  let taskId = '';
-  let pollStartedAt = 0;
-  try {
-    const request = oaiVideoRequest(task, refs, apiKey);
-    const created = await fetchJson(`${oaiBase}/videos`, { method: 'POST', ...request, signal: AbortSignal.timeout(oaiRequestTimeoutMs) });
-    taskId = oaiTaskId(created);
-    const submittedUrl = oaiVideoUrl(created);
-    if (submittedUrl && taskId) return { provider: 'oai', taskId, url: submittedUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(submittedUrl) };
-    if (!taskId) throw new Error('OAI 视频任务没有返回任务 ID');
-    pollStartedAt = Date.now();
-    for (let i = 0; i < oaiMaxPolls; i++) {
-      const remainingMs = videoPollRemainingMs(pollStartedAt, oaiMaxPollDurationMs);
-      if (remainingMs <= 0) break;
-      await sleep(Math.min(oaiPollIntervalMs, remainingMs));
-      if (videoPollRemainingMs(pollStartedAt, oaiMaxPollDurationMs) <= 0) break;
-      const state = await fetchJson(`${oaiBase}/videos/${encodeURIComponent(taskId)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: videoPollRequestSignal('OAI', taskId, pollStartedAt, oaiMaxPollDurationMs, oaiRequestTimeoutMs),
-      });
-      const videoUrl = oaiVideoUrl(state);
-      const status = oaiStatus(state);
-      if (videoUrl) return { provider: 'oai', taskId, url: videoUrl, requiresAuth: /\/videos\/[^/]+\/content(?:$|\?)/.test(videoUrl) };
-      if (['SUCCEEDED', 'SUCCESS', 'COMPLETED', 'COMPLETE', 'DONE'].includes(status)) {
-        if (task.videoModelId === VIDEO_MODEL_IDS.VEO_31) throw new Error('Veo 3.1 任务已完成，但响应没有返回顶层 video_url');
-        if (task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3) throw new Error('MiniMax H3 任务已完成，但响应没有返回 video_url');
-        return { provider: 'oai', taskId, url: `${oaiBase}/videos/${encodeURIComponent(taskId)}/content`, requiresAuth: true };
-      }
-      if (['FAILED', 'FAILURE', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status)) throw new Error(errorMessage(state, 'OAI 视频生成失败'));
-    }
-    throw videoPollTimeoutError('OAI', taskId);
-  } catch (error) {
-    if (pollStartedAt && Date.now() - pollStartedAt >= oaiMaxPollDurationMs && !error.upstreamTerminal) error = videoPollTimeoutError('OAI', taskId);
-    if (taskId && error.providerTaskId === undefined) error = Object.assign(error, { provider: 'oai', providerTaskId: taskId });
-    throw error;
-  }
-}
+const projectService = createProjectService({
+  videoAspectRatios, dramaVideoDurations, dramaStepOrder, canonicalVideoModelId, publicLlmUsage,
+});
+const { publicDramaProject, createDefaultDramaShot, normalizeDramaProject, dramaProjectGenerationIds, removeGenerationFromDramaProject } = projectService;
+const directorService = createDirectorService({
+  storyboardEngineVersion: STORYBOARD_ENGINE_VERSION,
+  llmConfig,
+  conservativeInputTokenUpperBound,
+  llmReservationMicro,
+  llmRates,
+  reserveLlmCredits,
+  settleLlmCredits,
+  releaseLlmCredits,
+  markLlmBillingReconcile,
+  callLlm,
+  publicLlmUsage,
+  publicDramaProject,
+  normalizeDramaProject,
+});
+const { runSmartDirector, analyzeScript, createStoryboard } = directorService;
 async function createVideo(task, refs, hooks = {}) {
-  if (task.routeId) return createRoutedVideo(task, refs, hooks);
-  if (task.provider === 'ttapi') {
-    if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置');
-    return createTtapiVideo(task, refs, hooks);
-  }
-  if (task.provider === 'duomi') return createDuomiVideo(task, refs);
-  if (task.provider === 'cntcn') {
-    if (!cntcnConfigured) throw new Error('CNTCN Seedance 视频服务尚未配置');
-    return createCntcnVideo(task, refs, hooks);
-  }
-  if (task.provider === 'autodl') {
-    if (!autodlConfigured) throw new Error('AutoDL GuGu 2.0 视频服务尚未配置');
-    return createAutodlVideo(task, refs, hooks);
-  }
-  if (task.provider === 'oai') {
-    if (!oaiKeyForTask(task)) {
-      const message = isLegacyOaiGrokTask(task)
-        ? '历史 Grok Video 服务尚未配置'
-        : task.videoModelId === VIDEO_MODEL_IDS.VEO_31
-          ? 'Veo 3.1 服务尚未配置'
-          : task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3
-            ? 'MiniMax H3 服务尚未配置'
-            : 'OAI 视频服务尚未配置';
-      throw new Error(message);
-    }
-    return createOaiVideo(task, refs);
-  }
-  throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
+  const adapter = videoProviderAdapters.forTask(task);
+  if (!adapter) throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
+  adapter.validate(task);
+  return adapter.submit(task, refs, hooks);
 }
+
+function persistedProviderTask(task) {
+  return task?.providerTaskId ? { taskId:String(task.providerTaskId) } : null;
+}
+function validVideoTask(task) {
+  if (!task || task.type !== 'video') throw new Error('视频任务参数无效');
+  return task;
+}
+const videoProviderAdapters = createProviderAdapterRegistry({
+  duomi: {
+    validate: validVideoTask,
+    submit: (task, refs, hooks) => duomiProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, startedAt, options) => duomiProvider.pollVideo(task, hooks, startedAt, options),
+    lookup: persistedProviderTask,
+  },
+  ttapi: {
+    validate: task => { validVideoTask(task); if (!ttapiConfigured) throw new Error('TTAPI 视频服务尚未配置'); return task; },
+    submit: (task, refs, hooks) => ttapiProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, startedAt, options) => ttapiProvider.pollVideo(task.providerTaskId, hooks, startedAt, options),
+    lookup: persistedProviderTask,
+  },
+  cntcn: {
+    validate: task => { validVideoTask(task); if (!cntcnConfigured) throw new Error('CNTCN Seedance 视频服务尚未配置'); return task; },
+    submit: (task, refs, hooks) => cntcnProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, startedAt, options) => cntcnProvider.pollVideo(task.providerTaskId, hooks, startedAt, options),
+    lookup: persistedProviderTask,
+  },
+  autodl: {
+    validate: task => { validVideoTask(task); if (!autodlConfigured) throw new Error('AutoDL GuGu 2.0 视频服务尚未配置'); return task; },
+    submit: (task, refs, hooks) => autodlProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, _startedAt) => autodlProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
+    lookup: persistedProviderTask,
+  },
+  oai: {
+    validate: task => {
+      validVideoTask(task);
+      if (!oaiProvider.keyForTask(task)) {
+        const message = oaiProvider.isLegacyGrokTask(task)
+          ? '历史 Grok Video 服务尚未配置'
+          : task.videoModelId === VIDEO_MODEL_IDS.VEO_31
+            ? 'Veo 3.1 服务尚未配置'
+            : task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3
+              ? 'MiniMax H3 服务尚未配置'
+              : 'OAI 视频服务尚未配置';
+        throw new Error(message);
+      }
+      return task;
+    },
+    submit: (task, refs, hooks) => oaiProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, _startedAt, options) => oaiProvider.pollVideo(task, hooks, options),
+    lookup: persistedProviderTask,
+  },
+  route: {
+    validate: validVideoTask,
+    submit: (task, refs, hooks) => routedProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks) => routedProvider.pollVideo(task, hooks),
+    lookup: persistedProviderTask,
+  },
+});
 function downloadErrorDetail(error) { const cause = error?.cause; return [cause?.code, cause?.message || error?.message].filter(Boolean).join(' · ') || '未知网络错误'; }
 async function downloadToFile(url, target, attempts = 4, options = {}) {
   const partial = `${target}.part`;
@@ -1269,133 +888,58 @@ async function downloadToFile(url, target, attempts = 4, options = {}) {
   throw new Error(`成品下载失败（已重试 ${attempts} 次）：${downloadErrorDetail(lastError)}`);
 }
 
-function saveGeneration(userId, task) { task.updatedAt = now(); return saveGenerationRecord(userId, task); }
+function assertGenerationJobLease(task, leaseGuard = generationJobGuards.get(task?.id)) {
+  const guard = leaseGuard;
+  if (!guard) return;
+  if (!generationJobLeaseActive(guard)) {
+    throw Object.assign(new Error('生成任务执行租约已失效'), { code:'GENERATION_JOB_LEASE_LOST' });
+  }
+}
+function saveGeneration(userId, task) {
+  assertGenerationJobLease(task);
+  task.updatedAt = now();
+  return saveGenerationRecord(userId, task);
+}
 async function saveGenerationWithRetry(userId, task, phase = 'update') {
   let failures = 0;
   for (;;) {
     try { return await saveGeneration(userId, task); }
     catch (error) {
+      if (error.code === 'GENERATION_JOB_LEASE_LOST') throw error;
       failures++;
       console.error('[generation] critical state persistence retry', { generationId: task.id, phase, failures, message: error.message });
       await sleep(Math.min(500 * 2 ** Math.min(failures - 1, 6), generationRetryMaxDelayMs));
     }
   }
 }
-function saveDramaProject(userId, project) {
-  project.revision = Math.max(0, Number(project.revision) || 0) + 1;
-  project.updatedAt = now();
-  return saveDramaProjectRecord(userId, project);
-}
-const publicDramaProjectFields = Object.freeze([
-  'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings',
-  'analysis', 'analysisUsage', 'storyboard', 'storyboardUsage', 'resources', 'scenes', 'shots',
-  'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'assemblyVideos', 'workflowVersion',
-  'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
-]);
-function publicDramaProject(project) {
-  // Project records may contain legacy or future server-only fields. Never
-  // serialize the whole persistence object to a customer response.
-  return Object.fromEntries(publicDramaProjectFields
-    .filter(field => Object.hasOwn(project, field))
-    .map(field => [field, ['analysisUsage', 'storyboardUsage'].includes(field) ? publicLlmUsage(project[field]) : project[field]]));
-}
-function createDefaultDramaShot() {
-  return { id:randomUUID(), title:'分镜 1' };
-}
-function normalizeDramaAssemblyVideos(project) {
-  const source = Array.isArray(project.assemblyVideos) ? [...project.assemblyVideos] : [];
-  const legacyId = String(project.finalAssetId || '').trim();
-  if (legacyId && !source.some(item => String(item?.assetId || item?.id || '') === legacyId)) {
-    source.unshift({ id:legacyId, assetId:legacyId, name:'完整成片', createdAt:project.updatedAt || now(), shotCount:project.shots?.length || 0, shotIds:[] });
+function saveDramaProject(userId, project, { create = false, expectedRevision = project.revision } = {}) {
+  if (create) {
+    project.revision = Math.max(1, Number(project.revision) || 1);
+    project.updatedAt = now();
+    saveDramaProjectRecord(userId, project, { insertOnly: true });
+    return project;
   }
-  project.assemblyVideos = source.map(item => {
-    const assetId = String(item?.assetId || item?.id || '').trim().slice(0, 200);
-    if (!assetId) return null;
-    return {
-      id:String(item?.id || assetId).trim().slice(0, 200) || assetId,
-      assetId,
-      name:String(item?.name || '完整成片').trim().slice(0, 120) || '完整成片',
-      createdAt:String(item?.createdAt || project.updatedAt || now()).slice(0, 80),
-      shotCount:Math.max(0, Math.min(120, Number(item?.shotCount) || 0)),
-      shotIds:[...new Set((Array.isArray(item?.shotIds) ? item.shotIds : []).map(String).filter(Boolean))].slice(0, 120),
-    };
-  }).filter(Boolean).slice(0, 50);
-}
-function normalizeDramaProject(project) {
-  const legacyMaxStep = !dramaStepOrder.includes(project.maxStep);
-  project.schemaVersion = 5; project.revision = Math.max(1, Number(project.revision) || 1); project.workflowVersion = Number(project.workflowVersion) || 1; project.mode ||= 'smart';
-  if (project.mode === 'professional' && project.workflowVersion < 2) project.workflowVersion = 2;
-  project.step ||= project.storyboard ? 'storyboard' : 'script'; project.input ||= project.script || '';
-  project.synopsis ||= project.analysis?.logline || '';
-  project.settings = { shotCount:Math.max(1, Math.min(120, Number(project.settings?.shotCount) || project.storyboard?.shots?.length || 5)), totalDuration:Math.max(20, Math.min(3600, Number(project.settings?.totalDuration) || (project.storyboard?.shots?.length || 5) * 20)), shotDuration:dramaVideoDurations.has(Number(project.settings?.shotDuration)) ? Number(project.settings.shotDuration) : 20, aspectRatio:videoAspectRatios.has(project.settings?.aspectRatio) ? project.settings.aspectRatio : '9:16' };
-  project.projectAssetIds = Array.isArray(project.projectAssetIds) ? [...new Set(project.projectAssetIds.map(String).filter(Boolean))].slice(0, 200) : [];
-  project.projectAssetCategories = project.projectAssetCategories && typeof project.projectAssetCategories === 'object' && !Array.isArray(project.projectAssetCategories) ? Object.fromEntries(Object.entries(project.projectAssetCategories).filter(([id, category]) => project.projectAssetIds.includes(String(id)) && ['characters','locations','props','other'].includes(category)).slice(0, 200)) : {};
-  if (!Array.isArray(project.episodes)) project.episodes = [{ id:randomUUID(), number:1, title:'第 1 集', synopsis:project.synopsis, status:'draft' }];
-  project.episodes = project.episodes.map((episode,index)=>({ id:episode.id || randomUUID(), number:index+1, title:String(episode.title || `第 ${index+1} 集`), synopsis:String(episode.synopsis || ''), status:String(episode.status || 'draft') }));
-  if (!Array.isArray(project.scenes)) project.scenes = [];
-  project.scenes = normalizeProductionScenes(project.scenes.map((scene,index)=>({ id:scene.id || randomUUID(), sceneNumber:index+1, heading:String(scene.heading || `场次 ${index+1}`), location:String(scene.location || ''), timeOfDay:String(scene.timeOfDay || '日'), dramaticFunction:String(scene.dramaticFunction || ''), geography:String(scene.geography || ''), lighting:String(scene.lighting || ''), continuityNotes:String(scene.continuityNotes || ''), beats:Array.isArray(scene.beats) ? scene.beats : [] })), project.settings);
-  if (!Array.isArray(project.resources)) {
-    const mapping = { characters:'character', locations:'location', props:'prop' };
-    project.resources = Object.entries(mapping).flatMap(([key,type]) => (project.analysis?.assets?.[key] || []).map(item => ({ id:randomUUID(), type, name:typeof item === 'string' ? item : item.name, description:typeof item === 'string' ? '' : item.description || '', prompt:`${typeof item === 'string' ? item : item.name}，${typeof item === 'string' ? '' : item.description || ''}，真人短剧设定图，9:16`, versions:[], selectedTaskId:'' })));
+
+  const currentRevision = Number(expectedRevision);
+  if (!Number.isSafeInteger(currentRevision) || currentRevision < 1) {
+    throw Object.assign(new Error('项目版本无效，请刷新后重试'), {
+      statusCode: 409,
+      code: 'PROJECT_VERSION_CONFLICT',
+      publicMessage: '项目版本已过期，请刷新后重试',
+    });
   }
-  project.resources = project.resources.map(item => ({ id:item.id || randomUUID(), type:['character','location','prop'].includes(item.type) ? item.type : 'prop', name:String(item.name || '未命名资源'), description:String(item.description || ''), prompt:String(item.prompt || ''), bible:{ identity:String(item.bible?.identity || item.description || ''), dramaticGoal:String(item.bible?.dramaticGoal || ''), appearance:String(item.bible?.appearance || ''), costume:String(item.bible?.costume || ''), canonicalViews:String(item.bible?.canonicalViews || ''), stateNotes:String(item.bible?.stateNotes || '') }, lifecycle:{ status:String(item.lifecycle?.status || (item.selectedTaskId ? 'approved' : 'draft')), revision:Math.max(1,Number(item.lifecycle?.revision)||1), approvedAt:String(item.lifecycle?.approvedAt || '') }, versions:Array.isArray(item.versions) ? item.versions : [], selectedTaskId:String(item.selectedTaskId || '') }));
-  if (!Array.isArray(project.shots)) project.shots = (project.storyboard?.shots || []).map((shot,index) => ({ id:shot.id || randomUUID(), shotNumber:index + 1, title:shot.title, script:[shot.action, shot.dialogue].filter(Boolean).join('\n'), prompt:shot.videoPrompt, duration:shot.duration || 6, aspectRatio:'9:16', resourceIds:[], referenceAssetIds:[], videoVersions:shot.videoTaskId ? [shot.videoTaskId] : [], selectedVideoTaskId:shot.videoTaskId || '', tailFrameAssetId:'' }));
-  const dramaPromptOverrides = project.shots.map(shot => String(shot?.promptOverride || '').slice(0, 4000));
-  project.shots = project.shots.map((shot,index) => {
-    const professionalAssets = {
-      characters:[...new Set(Array.isArray(shot.professionalAssets?.characters) ? shot.professionalAssets.characters.map(String) : [])],
-      locations:[...new Set(Array.isArray(shot.professionalAssets?.locations) ? shot.professionalAssets.locations.map(String) : [])],
-    };
-    const categorizedIds = [...professionalAssets.characters, ...professionalAssets.locations];
-    const assetMentions = Array.isArray(shot.assetMentions)
-      ? shot.assetMentions.map(item => ({ id:String(item?.id || ''), label:String(item?.label || '').replace(/^@/, '').trim().slice(0, 120), kind:['image','video','audio'].includes(item?.kind) ? item.kind : 'image' })).filter(item => item.id && item.label).slice(0, 40)
-      : [];
-    const mentionedIds = assetMentions.map(item => item.id);
-    const referenceAssetIds = [...new Set([...(Array.isArray(shot.referenceAssetIds) ? shot.referenceAssetIds.map(String) : []), ...categorizedIds, ...mentionedIds])];
-    const requestedGenerationType = ['TEXT','FIRST&LAST','REFERENCE'].includes(shot.generation?.type) ? shot.generation.type : (referenceAssetIds.length ? 'REFERENCE' : 'TEXT');
-    const generationType = requestedGenerationType;
-    const professionalShot = project.mode === 'professional';
-    const firstFrameAssetId = String(shot.generation?.firstFrameAssetId || (!professionalShot ? referenceAssetIds[0] : '') || '');
-    const lastFrameAssetId = String(shot.generation?.lastFrameAssetId || '');
-    const explicitReferences = Array.isArray(shot.generation?.referenceAssetIds) ? shot.generation.referenceAssetIds.map(String) : [];
-    const generationReferenceAssetIds = generationType === 'TEXT'
-      ? []
-      : generationType === 'FIRST&LAST'
-        ? [firstFrameAssetId, lastFrameAssetId].filter(Boolean).slice(0, 2)
-        : [...new Set([...explicitReferences, ...referenceAssetIds])];
-    const pendingImageGenerations = professionalShot && Array.isArray(shot.pendingImageGenerations)
-      ? shot.pendingImageGenerations.slice(0, 20).map(item => ({
-          id:String(item.id || item.taskId || randomUUID()),
-          taskId:String(item.taskId || ''),
-          targetType:item.targetType === 'frame' ? 'frame' : 'category',
-          kind:item.kind === 'locations' ? 'locations' : 'characters',
-          frameField:item.frameField === 'lastFrameAssetId' ? 'lastFrameAssetId' : 'firstFrameAssetId',
-          label:String(item.label || '图片').slice(0, 40),
-          prompt:String(item.prompt || '').slice(0, 4000),
-          size:imageSizes.has(item.size) ? item.size : '1:1',
-          quality:['low','medium','high'].includes(item.quality) ? item.quality : 'medium',
-          referenceAssetIds:Array.isArray(item.referenceAssetIds) ? item.referenceAssetIds.map(String).slice(0, 7) : [],
-        }))
-      : [];
-    return { id:shot.id || randomUUID(), shotNumber:index + 1, sceneNumber:Math.max(1,Number(shot.sceneNumber)||Math.max(1,project.scenes.findIndex(scene=>scene.id===shot.sceneId)+1)), sceneId:String(shot.sceneId || project.scenes[Math.max(0,(Number(shot.sceneNumber)||1)-1)]?.id || project.scenes[0]?.id || ''), title:String(shot.title || `分镜 ${index + 1}`), sourceBeatIds:Array.isArray(shot.sourceBeatIds)?shot.sourceBeatIds.map(String):[], script:String(shot.script || ''), assetMentions, prompt:String(shot.prompt || shot.visualDirection || ''), visualDirection:String(shot.visualDirection || shot.prompt || ''), narrativeFunction:String(shot.narrativeFunction || ''), shotSize:String(shot.shotSize || '中景'), cameraMovement:String(shot.cameraMovement || '固定'), framing:String(shot.framing || ''), startStateId:String(shot.startStateId || ''), startState:String(shot.startState || ''), action:String(shot.action || shot.script || ''), endStateId:String(shot.endStateId || ''), endState:String(shot.endState || ''), continuityNotes:String(shot.continuityNotes || ''), sound:String(shot.sound || ''), negativePrompt:String(shot.negativePrompt || '禁止人物变脸、服装变化、道具消失、空间轴线跳变'), motionPlan:normalizeMotionPlan(shot.motionPlan), duration:dramaVideoDurations.has(Number(shot.duration)) ? Number(shot.duration) : project.settings.shotDuration, aspectRatio:videoAspectRatios.has(shot.aspectRatio) ? shot.aspectRatio : project.settings.aspectRatio, resourceIds:Array.isArray(shot.resourceIds) ? shot.resourceIds : [], referenceAssetIds, professionalAssets, pendingImageGenerations, generation:{ type:generationType, modelId:canonicalVideoModelId(shot.generation?.modelId), firstFrameAssetId, lastFrameAssetId, referenceAssetIds:generationReferenceAssetIds, quality:['480p','720p','768p','1080p','2k','4k'].includes(shot.generation?.quality) ? shot.generation.quality : '720p', count:[1,2,4].includes(Number(shot.generation?.count)) ? Number(shot.generation.count) : 1 }, lifecycle:{ status:String(shot.lifecycle?.status || (shot.selectedVideoTaskId ? 'generated' : 'draft')), revision:Math.max(1,Number(shot.lifecycle?.revision)||1), staleReasons:Array.isArray(shot.lifecycle?.staleReasons) ? shot.lifecycle.staleReasons.map(String) : [] }, videoVersions:Array.isArray(shot.videoVersions) ? shot.videoVersions : [], selectedVideoTaskId:String(shot.selectedVideoTaskId || ''), tailFrameAssetId:String(shot.tailFrameAssetId || '') };
-  });
-  project.shots.forEach((shot,index) => { shot.promptOverride = dramaPromptOverrides[index] || ''; });
-  project.productionQuality = productionQualitySummary({scenes:project.scenes,shots:project.shots}, project.settings);
-  let inferredStep = dramaStepOrder.includes(project.step) ? project.step : 'script';
-  if (project.resources.some(item => item.selectedTaskId || item.lifecycle.revision > 1)) inferredStep = dramaStepOrder[Math.max(dramaStepOrder.indexOf(inferredStep), 1)];
-  if (project.shots.some(shot => shot.selectedVideoTaskId || shot.videoVersions.length)) inferredStep = 'video';
-  else if (project.shots.some(shot => shot.lifecycle.status === 'reviewed' || shot.lifecycle.revision > 1 || shot.referenceAssetIds.length)) inferredStep = dramaStepOrder[Math.max(dramaStepOrder.indexOf(inferredStep), 2)];
-  project.maxStep = legacyMaxStep ? inferredStep : dramaStepOrder[Math.max(dramaStepOrder.indexOf(project.maxStep), dramaStepOrder.indexOf(inferredStep))];
-  if (legacyMaxStep && dramaStepOrder.indexOf(project.step) < dramaStepOrder.indexOf(project.maxStep)) project.step = project.maxStep;
-  normalizeDramaAssemblyVideos(project);
+  const candidate = { ...project, revision: currentRevision + 1, updatedAt: now() };
+  const result = saveDramaProjectRecord(userId, candidate, { expectedRevision: currentRevision });
+  if (!result.saved) {
+    runtimeMetrics.projectVersionConflicts++;
+    throw Object.assign(new Error('项目已在其他操作中更新'), {
+      statusCode: 409,
+      code: 'PROJECT_VERSION_CONFLICT',
+      publicMessage: '项目已在其他操作中更新，请刷新后重试',
+    });
+  }
+  Object.assign(project, candidate);
   return project;
-}
-function dramaProjectGenerationIds(project) {
-  return [...new Set([
-    ...(project?.resources || []).flatMap(resource => [resource.selectedTaskId, ...(resource.versions || [])]),
-    ...(project?.shots || []).flatMap(shot => [shot.selectedVideoTaskId, ...(shot.videoVersions || []), ...(shot.pendingImageGenerations || []).map(item => item?.taskId)]),
-    ...(project?.storyboard?.shots || []).flatMap(shot => [shot.keyframeTaskId, shot.videoTaskId]),
-  ].map(value => String(value || '')).filter(Boolean))];
 }
 async function loadDramaProject(userId, id, scope = {}) {
   const project = findDramaProject(userId, id, scope);
@@ -1416,38 +960,20 @@ function reconcileDramaProjectGenerationReferences(userId, project, scope = {}) 
   staleIds.forEach(taskId => removeGenerationFromDramaProject(project, taskId));
   return staleIds.length > 0;
 }
-async function saveAsset(userId, asset) { asset.updatedAt = now(); saveAssetRecord(userId, asset); return asset; }
-function removeGenerationFromDramaProject(project, taskId) {
-  const id=String(taskId||'');
-  if(!project||!id)return false;
-  let changed=false;
-  const removeFromList=(value,assign)=>{
-    if(!Array.isArray(value)||!value.some(item=>String(item)===id))return;
-    assign(value.filter(item=>String(item)!==id));
-    changed=true;
-  };
-  (Array.isArray(project.resources)?project.resources:[]).forEach(resource=>{
-    removeFromList(resource.versions||[],next=>{resource.versions=next;});
-    if(String(resource.selectedTaskId||'')===id){
-      resource.selectedTaskId=resource.versions.at(-1)||'';
-      resource.lifecycle={...resource.lifecycle,status:resource.selectedTaskId?'approved':'draft',approvedAt:resource.selectedTaskId?resource.lifecycle?.approvedAt||'':''};
-      changed=true;
-    }
+async function saveAsset(userId, asset) {
+  asset.updatedAt = now();
+  saveAssetRecord(userId, asset);
+  return asset;
+}
+function saveGenerationAsset(userId, asset, task, leaseGuard) {
+  assertGenerationJobLease(task, leaseGuard);
+  return tx(() => {
+    assertGenerationJobLease(task, leaseGuard);
+    asset.updatedAt = now();
+    const saved = saveAssetRecord(userId, asset);
+    assertGenerationJobLease(task, leaseGuard);
+    return saved;
   });
-  (Array.isArray(project.shots)?project.shots:[]).forEach(shot=>{
-    removeFromList(shot.videoVersions||[],next=>{shot.videoVersions=next;});
-    if(String(shot.selectedVideoTaskId||'')===id){shot.selectedVideoTaskId=shot.videoVersions.at(-1)||'';changed=true;}
-    if(Array.isArray(shot.pendingImageGenerations)&&shot.pendingImageGenerations.some(item=>String(item?.taskId||'')===id)){
-      shot.pendingImageGenerations=shot.pendingImageGenerations.filter(item=>String(item?.taskId||'')!==id);
-      changed=true;
-    }
-  });
-  (Array.isArray(project.storyboard?.shots)?project.storyboard.shots:[]).forEach(shot=>{
-    if(String(shot.videoTaskId||'')===id){shot.videoTaskId='';changed=true;}
-    if(String(shot.keyframeTaskId||'')===id){shot.keyframeTaskId='';changed=true;}
-  });
-  if(changed)normalizeDramaProject(project);
-  return changed;
 }
 async function removeGenerationFromDramaProjects(userId, task) {
   const id=String(task?.id||'');
@@ -1540,7 +1066,21 @@ function publicAsset(asset) {
     ...(asset.kind === 'image' ? { previewUrl: `/api/files/${encodeURIComponent(asset.id)}/preview` } : {}),
   };
 }
-function assetObjectKey(userId, storageName) { const extension = path.extname(storageName).toLowerCase().replace(/[^a-z0-9.]/g, ''); const base = safeId(path.basename(storageName, path.extname(storageName))); return [storagePrefix, safeId(userId), `${base}${extension}`].filter(Boolean).join('/'); }
+const assetObjectKey = storageKeyService.assetObjectKey;
+const mediaArchive = createMediaArchiveService({
+  assertGenerationJobLease,
+  findAsset,
+  findGeneration,
+  saveAsset,
+  saveGenerationAsset,
+  withMediaTempDir,
+  generationAssetExtension,
+  generationAssetName,
+  generationSourceHeaders,
+  assetObjectKey,
+  now,
+});
+const { prepareGenerationAsset, archiveGenerationResult } = mediaArchive;
 async function withMediaTempDir(label, callback) {
   const jobDir = path.join(mediaTmpDir, `${safeId(label) || 'job'}-${randomUUID()}`);
   await fs.mkdir(jobDir, { recursive: true, mode: 0o700 });
@@ -1555,13 +1095,9 @@ async function uploadAssetFile(userId, asset, sourceFile) {
   await saveAsset(userId, asset);
   return key;
 }
-function uploadExtension(mimeType, name = '') {
-  const requested = path.extname(String(name)).toLowerCase().replace(/[^a-z0-9.]/g, '');
-  if (requested && requested.length <= 10) return requested;
-  return ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
-}
-function pendingUploadKey(userId, uploadId, mimeType, name) { return [storagePrefix, 'pending', safeId(userId), `${safeId(uploadId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
-function finalUploadKey(userId, assetId, mimeType, name) { return [storagePrefix, 'assets', safeId(userId), `${safeId(assetId)}${uploadExtension(mimeType, name)}`].filter(Boolean).join('/'); }
+const uploadExtension = storageKeyService.uploadExtension;
+const pendingUploadKey = storageKeyService.pendingUploadKey;
+const finalUploadKey = storageKeyService.finalUploadKey;
 function storageUnavailable(label = 'R2') { return Object.assign(new Error(`${label} 文件存储服务尚未配置`), { statusCode: 503 }); }
 async function putObject(key, sourceFile, mimeType) {
   if (!r2) throw storageUnavailable();
@@ -1585,10 +1121,7 @@ async function deleteObject(key) {
   if (!r2) throw storageUnavailable();
   await r2.send(new DeleteObjectCommand({ Bucket: r2Bucket, Key: key }));
 }
-function r2ReferenceImageKey(userId, generationId, asset) {
-  const extension = uploadExtension(asset?.mimeType, asset?.storageName) || '.bin';
-  return [r2ReferenceImagePrefix, safeId(userId), safeId(generationId), `${Date.now()}-${randomUUID()}${extension}`].filter(Boolean).join('/');
-}
+const r2ReferenceImageKey = storageKeyService.referenceImageKey;
 function clearR2ReferenceImageCleanup(key) {
   const timer = r2ReferenceImageCleanupTimers.get(key);
   if (timer) clearTimeout(timer);
@@ -1605,6 +1138,7 @@ function scheduleR2ReferenceImageCleanup(key, deleteAt = Date.now() + r2Referenc
     catch (error) { console.error('[image-reference] R2 临时参考图清理失败', { key, message: error.message }); }
   }, Math.max(0, deleteAt - Date.now()));
   timer.unref();
+  runtimeLifecycle.registerTimer(timer);
   r2ReferenceImageCleanupTimers.set(key, timer);
 }
 function storageStatus(error) { return error?.$metadata?.httpStatusCode || error?.status || error?.statusCode || error?.res?.status; }
@@ -1872,40 +1406,12 @@ function generationSourceHeaders(task, resultUrl) {
   const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''));
   if (routeContent) return { Authorization: `Bearer ${routeCredential(task.routeCredentialId)}` };
   const contentUrl = task?.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
-  if (contentUrl && resultUrl === contentUrl) return { Authorization: `Bearer ${oaiKeyForTask(task)}` };
+  if (contentUrl && resultUrl === contentUrl) return { Authorization: `Bearer ${oaiProvider.keyForTask(task)}` };
   return {};
 }
 function generationAssetExtension(task) { return task?.type === 'image' ? '.png' : '.mp4'; }
 function generationAssetName(task, extension = generationAssetExtension(task)) {
   return `${task?.type === 'image' ? '生成图片' : '生成视频'} ${new Date(task?.createdAt || Date.now()).toLocaleString('zh-CN')}${extension}`;
-}
-async function prepareGenerationAsset(userId, task, result) {
-  const assetId = task.assetId || `generation-${task.id}`;
-  const extension = generationAssetExtension(task);
-  const existing = findAsset(userId, assetId);
-  if (existing?.sourceGenerationId === task.id && existing.objectKey) return existing;
-  const asset = {
-    ...(existing || {}),
-    id: assetId,
-    ownerId: userId,
-    name: existing?.name || generationAssetName(task, extension),
-    kind: task.type,
-    mimeType: existing?.mimeType || (task.type === 'image' ? 'image/png' : 'video/mp4'),
-    size: Number(existing?.size) || 0,
-    storageName: existing?.storageName || `${assetId}${extension}`,
-    source: 'generation',
-    sourceGenerationId: task.id,
-    originDeviceId: String(task.originDeviceId || ''),
-    originWorkspaceId: String(task.originWorkspaceId || ''),
-    sourceUrl: result.url,
-    sourceRequiresAuth: Boolean(result.requiresAuth),
-    deliveryStatus: existing?.deliveryStatus === 'local_ready' ? 'local_ready' : 'awaiting_local',
-    remoteStatus: existing?.objectKey ? 'ready' : 'pending',
-    createdAt: existing?.createdAt || now(),
-    updatedAt: now(),
-  };
-  await saveAsset(userId, asset);
-  return asset;
 }
 async function servePendingGenerationSource(res, asset) {
   if (!asset?.sourceUrl || asset.objectKey) return false;
@@ -1930,67 +1436,11 @@ async function servePendingGenerationSource(res, asset) {
   Readable.fromWeb(response.body).pipe(res);
   return true;
 }
-async function archiveGenerationResult(userId, task, resultUrl) {
-  const assetId = task.assetId || `generation-${task.id}`;
-  const existing = findAsset(userId, assetId);
-  if (existing?.sourceGenerationId === task.id && existing.objectKey) {
-    task.assetId = assetId;
-    task.status = 'completed';
-    task.error = '';
-    return;
-  }
-  return withMediaTempDir(`generation-${task.id}`, async jobDir => {
-    const extension = generationAssetExtension(task);
-    const storageName = `${assetId}${extension}`;
-    const localFile = path.join(jobDir, storageName);
-    const downloadHeaders = generationSourceHeaders(task, resultUrl);
-    const saved = await downloadToFile(resultUrl, localFile, 4, { headers: downloadHeaders });
-    // The desktop may acknowledge the direct download while this fallback is
-    // fetching the same upstream file. Never overwrite that newer local-ready
-    // record with the snapshot captured before the download started.
-    const beforeUpload = findAsset(userId, assetId);
-    const currentTask = findGeneration(userId, task.id);
-    if (beforeUpload?.deliveryStatus === 'local_ready' || currentTask?.localReadyAt) return;
-    const objectKey = beforeUpload?.objectKey || assetObjectKey(userId, storageName);
-    await putObject(objectKey, localFile, saved.contentType);
-    const latest = findAsset(userId, assetId);
-    const latestTask = findGeneration(userId, task.id);
-    if (latest?.deliveryStatus === 'local_ready' || latestTask?.localReadyAt) {
-      if (!beforeUpload?.objectKey) await deleteObject(objectKey).catch(error => console.warn('[generation] 清理并发归档对象失败', { generationId:task.id, message:error.message }));
-      return;
-    }
-    const asset = {
-      ...(latest || beforeUpload || existing || {}),
-      id: assetId,
-      ownerId: userId,
-      name: latest?.name || beforeUpload?.name || existing?.name || generationAssetName(task, extension),
-      kind: task.type,
-      mimeType: saved.contentType,
-      size: saved.size,
-      storageName,
-      source: 'generation',
-      sourceGenerationId: task.id,
-      sourceUrl: resultUrl,
-      sourceRequiresAuth: Boolean(task.sourceRequiresAuth),
-      originDeviceId: String(task.originDeviceId || ''),
-      originWorkspaceId: String(task.originWorkspaceId || ''),
-      deliveryStatus: 'remote_backed_up',
-      remoteStatus: 'ready',
-      objectKey,
-      objectUploadedAt: now(),
-      createdAt: latest?.createdAt || beforeUpload?.createdAt || existing?.createdAt || now(),
-      updatedAt: now(),
-    };
-    await saveAsset(userId, asset);
-    task.assetId = assetId;
-    task.status = 'completed';
-    task.error = '';
-  });
-}
 function progressPersistenceHooks(userId, task) {
   return {
     onProgress: async ({ progress }) => {
-      if (task.progress === progress) return;
+      const pollRecovered = clearPollFailureState(task);
+      if (task.progress === progress && !pollRecovered) return;
       task.progress = progress;
       await saveGeneration(userId, task);
     },
@@ -2000,6 +1450,14 @@ function progressPersistenceHooks(userId, task) {
       await saveGeneration(userId, task);
     },
   };
+}
+function clearPollFailureState(task) {
+  const changed = Boolean(task.lastPollError || task.lastPollErrorAt || task.pollFailureCount);
+  if (!changed) return false;
+  task.lastPollError = '';
+  task.lastPollErrorAt = null;
+  task.pollFailureCount = 0;
+  return true;
 }
 function duomiImagePersistenceHooks(userId, task) {
   return {
@@ -2023,10 +1481,38 @@ function duomiImagePersistenceHooks(userId, task) {
       await saveGeneration(userId, task);
     },
     onPollRecovered: async () => {
-      if (!task.lastPollError && !task.pollFailureCount) return;
+      if (!clearPollFailureState(task)) return;
+      await saveGeneration(userId, task);
+    },
+  };
+}
+function duomiVideoPersistenceHooks(userId, task) {
+  return { ...progressPersistenceHooks(userId, task), ...duomiImagePersistenceHooks(userId, task) };
+}
+function oaiPersistenceHooks(userId, task) {
+  return {
+    ...progressPersistenceHooks(userId, task),
+    onSubmitted: async ({ provider, taskId }) => {
+      clearProviderTaskIdTimeout(task.id);
+      task.provider = provider;
+      task.providerTaskId = taskId;
+      task.submittedAt ||= now();
+      task.submissionUncertain = false;
+      task.error = '';
       task.lastPollError = '';
       task.lastPollErrorAt = null;
       task.pollFailureCount = 0;
+      await saveGenerationWithRetry(userId, task, 'oai-submitted');
+    },
+    onPollError: async ({ consecutiveErrors, detail }) => {
+      task.status = 'running';
+      task.lastPollError = detail;
+      task.lastPollErrorAt = now();
+      task.pollFailureCount = consecutiveErrors;
+      await saveGeneration(userId, task);
+    },
+    onPollRecovered: async () => {
+      if (!clearPollFailureState(task)) return;
       await saveGeneration(userId, task);
     },
   };
@@ -2054,9 +1540,7 @@ function ttapiPersistenceHooks(userId, task) {
       await saveGeneration(userId, task);
     },
     onPollRecovered: async () => {
-      task.lastPollError = '';
-      task.lastPollErrorAt = null;
-      task.pollFailureCount = 0;
+      if (!clearPollFailureState(task)) return;
       await saveGeneration(userId, task);
     },
   };
@@ -2084,9 +1568,7 @@ function cntcnPersistenceHooks(userId, task) {
       await saveGeneration(userId, task);
     },
     onPollRecovered: async () => {
-      task.lastPollError = '';
-      task.lastPollErrorAt = null;
-      task.pollFailureCount = 0;
+      if (!clearPollFailureState(task)) return;
       await saveGeneration(userId, task);
     },
   };
@@ -2115,9 +1597,7 @@ function autodlPersistenceHooks(userId, task) {
       await saveGeneration(userId, task);
     },
     onPollRecovered: async () => {
-      task.lastPollError = '';
-      task.lastPollErrorAt = null;
-      task.pollFailureCount = 0;
+      if (!clearPollFailureState(task)) return;
       await saveGeneration(userId, task);
     },
   };
@@ -2131,58 +1611,55 @@ function scheduleGenerationArchive(userId, task) {
     generationRetryTimers.delete(task.id);
     const current = findGeneration(userId, task.id);
     if (current?.archivePending && current.sourceUrl && !current.localReadyAt) {
-      resumeGenerationArchive(userId, current);
+      enqueueGenerationJob({ userId, generationId:current.id, kind:'archive', nextRunAt:Date.now() });
+      drainGenerationJobs();
     }
   }, delay);
   timer.unref();
+  runtimeLifecycle.registerTimer(timer);
   generationRetryTimers.set(task.id, timer);
 }
 async function archiveGenerationWithRetry(userId, task) {
   let current = findGeneration(userId, task.id) || task;
   if (!current.archivePending || current.localReadyAt) { Object.assign(task, current); return true; }
-  let failures = Number(task.archiveFailureCount) || 0;
-  for (let attempt = 1; attempt <= archiveAttemptsPerRun; attempt++) {
-    try {
-      await archiveGenerationResult(userId, current, current.sourceUrl);
-      current = findGeneration(userId, task.id) || current;
-      current.archiveFailureCount = 0;
-      current.archivePending = false;
-      current.localDeliveryDeadlineAt = '';
-      current.lastArchiveError = '';
-      current.lastArchiveErrorAt = null;
-      current.status = 'completed';
-      current.error = '';
-      current.finishedAt ||= now();
-      await saveGenerationWithRetry(userId, current, 'archive-completed');
-      Object.assign(task, current);
-      return true;
-    } catch (error) {
-      current = findGeneration(userId, task.id) || current;
-      if (current.localReadyAt || !current.archivePending) { Object.assign(task, current); return true; }
-      failures++;
-      current.status = 'running';
-      current.archiveFailureCount = failures;
-      current.lastArchiveError = error.message;
-      current.lastArchiveErrorAt = now();
-      await saveGeneration(userId, current);
-      Object.assign(task, current);
-      console.error('[generation] archive retry scheduled', { generationId: task.id, failures, message: error.message });
-      if (attempt < archiveAttemptsPerRun) {
-        await sleep(Math.min(2_000 * 2 ** Math.min(attempt - 1, 5), generationRetryMaxDelayMs));
-      }
-    }
+  try {
+    await archiveGenerationResult(userId, current, current.sourceUrl);
+    current = findGeneration(userId, task.id) || current;
+    current.archiveFailureCount = 0;
+    current.archivePending = false;
+    current.localDeliveryDeadlineAt = '';
+    current.lastArchiveError = '';
+    current.lastArchiveErrorAt = null;
+    current.status = 'completed';
+    current.error = '';
+    current.finishedAt ||= now();
+    await saveGenerationWithRetry(userId, current, 'archive-completed');
+    Object.assign(task, current);
+    return true;
+  } catch (error) {
+    current = findGeneration(userId, task.id) || current;
+    if (current.localReadyAt || !current.archivePending) { Object.assign(task, current); return true; }
+    const failures = (Number(current.archiveFailureCount) || 0) + 1;
+    current.status = 'running';
+    current.archiveFailureCount = failures;
+    current.lastArchiveError = error.message;
+    current.lastArchiveErrorAt = now();
+    await saveGeneration(userId, current);
+    Object.assign(task, current);
+    console.error('[generation] archive retry scheduled', { generationId: task.id, failures, message: error.message });
+    return false;
   }
-  current.archivePending = true;
-  await saveGenerationWithRetry(userId, current, 'archive-deferred');
-  Object.assign(task, current);
-  scheduleGenerationArchive(userId, current);
-  return false;
 }
 async function completeGenerationResult(userId, task, result) {
+  assertGenerationJobLease(task);
   task.provider = result.provider || task.provider;
   task.providerTaskId = result.taskId || task.providerTaskId;
   task.sourceUrl = result.url;
   task.sourceRequiresAuth = Boolean(result.requiresAuth);
+  // A transient poll failure is diagnostic state, not part of the terminal
+  // result. Clear it here as a defensive boundary so a completed task cannot
+  // carry a stale retry indicator into a later client refresh.
+  clearPollFailureState(task);
   const asset = await prepareGenerationAsset(userId, task, result);
   task.assetId = asset.id;
   task.archivePending = true;
@@ -2197,6 +1674,7 @@ async function completeGenerationResult(userId, task, result) {
   return true;
 }
 async function failGeneration(userId, task, error) {
+  assertGenerationJobLease(task);
   task.status = 'failed';
   task.error = error.message;
   try {
@@ -2205,6 +1683,7 @@ async function failGeneration(userId, task, error) {
   } catch (refundError) {
     task.creditStatus = 'refund_failed';
     task.error += `；自动退款失败：${refundError.message}`;
+    enqueueGenerationJob({ userId, generationId:task.id, kind:'refund_reconcile', nextRunAt:Date.now() + archiveRescheduleMs });
   }
 }
 function providerTaskIdDeadline(task) {
@@ -2220,6 +1699,8 @@ function awaitingProviderTaskId(task) {
 function providerTaskIdTimedOut(task, at = Date.now()) {
   return awaitingProviderTaskId(task) && at >= providerTaskIdDeadline(task);
 }
+const generationLifecycle = createGenerationLifecycleService({ now, saveGenerationWithRetry, providerTaskIdDeadline });
+const generationRecovery = createGenerationRecoveryService({ activeGenerations, now, saveGeneration, saveGenerationWithRetry, completeGenerationResult, failGeneration });
 function clearProviderTaskIdTimeout(generationId) {
   const timer = providerTaskIdTimeoutTimers.get(generationId);
   if (timer) clearTimeout(timer);
@@ -2227,10 +1708,7 @@ function clearProviderTaskIdTimeout(generationId) {
 }
 async function failMissingProviderTaskId(userId, task) {
   clearProviderTaskIdTimeout(task.id);
-  task.lastSubmissionError ||= task.error || '';
-  task.lastSubmissionErrorAt ||= task.submissionUncertainAt || task.updatedAt || now();
-  task.submissionUncertain = false;
-  task.submissionTimedOut = true;
+  generationLifecycle.markSubmissionTimedOut(task);
   await failGeneration(userId, task, new Error('模型无响应：超过5分钟未获得上游任务 ID'));
   task.finishedAt = now();
   await saveGenerationWithRetry(userId, task, 'provider-task-id-timeout');
@@ -2243,28 +1721,30 @@ function scheduleProviderTaskIdTimeout(userId, task) {
     try {
       const current = findGeneration(userId, task.id);
       if (current && providerTaskIdTimedOut(current)) {
-        await failMissingProviderTaskId(userId, current);
-        console.error('[generation] provider task ID timeout', { generationId: current.id, provider: current.provider });
+        enqueueGenerationJob({ userId, generationId:current.id, kind:'reconcile_submission', nextRunAt:Date.now() });
+        drainGenerationJobs();
       }
     } catch (error) {
       console.error('[generation] provider task ID timeout handling failed', { generationId: task.id, message: error.message });
     }
   }, delay);
   timer.unref();
+  runtimeLifecycle.registerTimer(timer);
   providerTaskIdTimeoutTimers.set(task.id, timer);
 }
-function startGeneration(userId, task) {
+function startGeneration(userId, task, { deferPolling = false } = {}) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
     try {
-      task.status = 'running';
-      task.finishedAt = null;
+      generationLifecycle.markRunning(task);
       await saveGenerationWithRetry(userId, task, 'generation-running');
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
       const hooks = task.type === 'image' && task.provider === 'duomi'
         ? duomiImagePersistenceHooks(userId, task)
+        : task.provider === 'oai'
+        ? oaiPersistenceHooks(userId, task)
         : task.routeId
         ? routedPersistenceHooks(userId, task)
         : task.provider === 'ttapi'
@@ -2274,29 +1754,23 @@ function startGeneration(userId, task) {
           : task.provider === 'autodl'
             ? autodlPersistenceHooks(userId, task)
             : {};
-      const result = task.type === 'image' ? await createImage(task, refs, hooks) : await createVideo(task, refs, hooks);
+      hooks.deferPolling = deferPolling;
+      const result = task.type === 'image' ? await duomiProvider.createImage(task, refs, hooks) : await createVideo(task, refs, hooks);
+      if (result?.pending) return;
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
       await completeGenerationResult(userId, task, result);
     } catch (error) {
       if (error.submissionUncertain) {
-        task.status = 'running';
-        task.submissionUncertain = true;
-        task.submissionUncertainAt ||= now();
-        task.lastSubmissionError = error.message;
-        task.lastSubmissionErrorAt = now();
-        task.error = error.message;
-        task.creditStatus = 'charged';
+        generationLifecycle.markSubmissionUncertain(task, error);
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if ((task.type === 'image' || task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
-        task.status = 'running';
-        task.error = `任务处理暂时中断，将由持久化任务恢复：${error.message}`;
-        task.creditStatus = 'charged';
+      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
+        generationLifecycle.markProviderTaskPaused(task, error);
         console.error('[video] async provider task paused without refund', { generationId: task.id, provider: task.provider, providerTaskId: task.providerTaskId, message: error.message });
       } else {
         await failGeneration(userId, task, error);
       }
     } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
+      generationLifecycle.markFinished(task);
       try { await saveGenerationWithRetry(userId, task, 'generation-final'); }
       finally {
         activeGenerations.delete(task.id);
@@ -2307,138 +1781,69 @@ function startGeneration(userId, task) {
   activeGenerations.set(task.id, promise);
   return promise;
 }
-function resumeDuomiImageGeneration(userId, task) {
-  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
-  const promise = (async () => {
-    try {
-      task.status = 'running';
-      task.finishedAt = null;
-      task.error = '';
-      await saveGenerationWithRetry(userId, task, 'duomi-image-recovery-running');
-      const result = await pollDuomiImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true });
-      if (!result.url) throw Object.assign(new Error('图片任务完成，但没有返回结果地址'), { upstreamTerminal:true });
-      await completeGenerationResult(userId, task, result);
-    } catch (error) {
-      if (error.upstreamTerminal) await failGeneration(userId, task, error);
-      else {
-        task.status = 'running';
-        task.error = `图片任务恢复暂时中断，将在服务重启后继续：${error.message}`;
-        task.creditStatus = 'charged';
-        console.error('[image] Duomi recovery paused without refund', { generationId:task.id, providerTaskId:task.providerTaskId, message:error.message });
-      }
-    } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
-      try { await saveGenerationWithRetry(userId, task, 'duomi-image-recovery-final'); }
-      finally { activeGenerations.delete(task.id); }
-    }
-  })();
-  activeGenerations.set(task.id, promise);
-  return promise;
+function resumeOaiGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    startPhase: 'oai-recovery-running',
+    finalPhase: 'oai-recovery-final',
+    useRetryForStart: true,
+    poll: ({ pollOnce }) => oaiProvider.pollVideo(task, oaiPersistenceHooks(userId, task), { immediate:true, allowExpiredFinalCheck:true, pollOnce }),
+    missingUrlMessage: 'OAI 视频任务完成，但没有返回结果地址',
+    pauseMessage: error => `任务恢复暂时中断，将继续由持久化任务恢复：${error.message}`,
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
 }
-function resumeTtapiGeneration(userId, task) {
-  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
-  const promise = (async () => {
-    try {
-      task.status = 'running';
-      task.finishedAt = null;
-      task.error = '';
-      await saveGeneration(userId, task);
-      const result = await pollTtapiVideo(task.providerTaskId, ttapiPersistenceHooks(userId, task), videoPollStartedAt(task));
-      await completeGenerationResult(userId, task, result);
-    } catch (error) {
-      if (error.upstreamTerminal) {
-        await failGeneration(userId, task, error);
-      } else {
-        task.status = 'running';
-        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
-        task.creditStatus = 'charged';
-        console.error('[video] TTAPI recovery paused without refund', { generationId: task.id, message: error.message });
-      }
-    } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
-      try { await saveGenerationWithRetry(userId, task, 'ttapi-recovery-final'); }
-      finally { activeGenerations.delete(task.id); }
-    }
-  })();
-  activeGenerations.set(task.id, promise);
-  return promise;
+function resumeDuomiImageGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    startPhase: 'duomi-image-recovery-running',
+    finalPhase: 'duomi-image-recovery-final',
+    useRetryForStart: true,
+    poll: ({ pollOnce }) => duomiProvider.pollImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce }),
+    missingUrlMessage: '图片任务完成，但没有返回结果地址',
+    logScope: 'image',
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
 }
-function resumeCntcnGeneration(userId, task) {
-  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
-  const promise = (async () => {
-    try {
-      task.status = 'running';
-      task.finishedAt = null;
-      task.error = '';
-      await saveGeneration(userId, task);
-      const result = await pollCntcnVideo(task.providerTaskId, cntcnPersistenceHooks(userId, task), videoPollStartedAt(task));
-      await completeGenerationResult(userId, task, result);
-    } catch (error) {
-      if (error.upstreamTerminal) await failGeneration(userId, task, error);
-      else {
-        task.status = 'running';
-        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
-        task.creditStatus = 'charged';
-        console.error('[video] CNTCN recovery paused without refund', { generationId: task.id, message: error.message });
-      }
-    } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
-      try { await saveGenerationWithRetry(userId, task, 'cntcn-recovery-final'); }
-      finally { activeGenerations.delete(task.id); }
-    }
-  })();
-  activeGenerations.set(task.id, promise);
-  return promise;
+function resumeDuomiVideoGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    startPhase: 'duomi-video-recovery-running',
+    finalPhase: 'duomi-video-recovery-final',
+    useRetryForStart: true,
+    poll: ({ pollOnce }) => duomiProvider.pollVideo(task, duomiVideoPersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce }),
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
 }
-function resumeRoutedGeneration(userId, task) {
-  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
-  const promise = (async () => {
-    try {
-      task.status = 'running'; task.finishedAt = null; task.error = '';
-      await saveGeneration(userId, task);
-      const result = await pollRoutedVideo(task, routedPersistenceHooks(userId, task));
-      await completeGenerationResult(userId, task, result);
-    } catch (error) {
-      if (error.upstreamTerminal) await failGeneration(userId, task, error);
-      else {
-        task.status = 'running'; task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`; task.creditStatus = 'charged';
-        console.error('[video] routed recovery paused without refund', { generationId: task.id, routeId: task.routeId, message: error.message });
-      }
-    } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
-      try { await saveGenerationWithRetry(userId, task, 'routed-recovery-final'); }
-      finally { activeGenerations.delete(task.id); }
-    }
-  })();
-  activeGenerations.set(task.id, promise);
-  return promise;
+function resumeTtapiGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'ttapi-recovery-final',
+    poll: ({ pollOnce }) => ttapiProvider.pollVideo(task.providerTaskId, ttapiPersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, pollOnce }),
+  });
 }
-function resumeAutodlGeneration(userId, task) {
-  if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
-  const promise = (async () => {
-    try {
-      task.status = 'running';
-      task.finishedAt = null;
-      task.error = '';
-      await saveGeneration(userId, task);
-      const result = await pollAutodlVideo(task.providerTaskId, autodlPersistenceHooks(userId, task), { startedAt:videoPollStartedAt(task) });
-      await completeGenerationResult(userId, task, result);
-    } catch (error) {
-      if (error.upstreamTerminal) await failGeneration(userId, task, error);
-      else {
-        task.status = 'running';
-        task.error = `任务恢复暂时中断，将在服务重启后继续：${error.message}`;
-        task.creditStatus = 'charged';
-        console.error('[video] AutoDL recovery paused without refund', { generationId: task.id, message: error.message });
-      }
-    } finally {
-      task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
-      try { await saveGenerationWithRetry(userId, task, 'autodl-recovery-final'); }
-      finally { activeGenerations.delete(task.id); }
-    }
-  })();
-  activeGenerations.set(task.id, promise);
-  return promise;
+function resumeCntcnGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'cntcn-recovery-final',
+    poll: ({ pollOnce }) => cntcnProvider.pollVideo(task.providerTaskId, cntcnPersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, pollOnce }),
+  });
+}
+function resumeRoutedGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'routed-recovery-final',
+    poll: ({ pollOnce }) => routedProvider.pollVideo(task, routedPersistenceHooks(userId, task), { immediate:true, pollOnce }),
+    logContext: () => ({ routeId:task.routeId }),
+  });
+}
+function resumeAutodlGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'autodl-recovery-final',
+    poll: ({ pollOnce }) => autodlProvider.pollVideo(task.providerTaskId, autodlPersistenceHooks(userId, task), { startedAt: videoPollStartedAt(task), pollOnce }),
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
 }
 function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
@@ -2460,113 +1865,195 @@ function resumeGenerationArchive(userId, task) {
   return promise;
 }
 
+async function reconcileMissingProviderTaskId(userId, task) {
+  task.status = 'running';
+  task.finishedAt = null;
+  task.creditStatus = 'charged';
+  task.submissionUncertain = true;
+  task.submissionUncertainAt ||= task.updatedAt || task.createdAt || now();
+  task.error ||= '服务中断时未能确认上游任务 ID，任务保留待核对且不会自动退款';
+  if (providerTaskIdTimedOut(task)) {
+    await failMissingProviderTaskId(userId, task);
+    return;
+  }
+  await saveGenerationWithRetry(userId, task, 'provider-task-id-reconciliation');
+  scheduleProviderTaskIdTimeout(userId, task);
+}
+
+async function failUnsupportedGenerationRecovery(userId, task) {
+  await failGeneration(userId, task, new Error(task.error || `任务恢复时不支持供应商 ${task.provider || 'unknown'}`));
+  task.finishedAt = now();
+  await saveGenerationWithRetry(userId, task, 'unsupported-recovery-provider');
+}
+
+async function reconcileGenerationRefund(userId, task) {
+  if (task.status !== 'failed' || task.creditStatus !== 'refund_failed') return;
+  assertGenerationJobLease(task);
+  try {
+    await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost));
+    task.creditStatus = 'refunded';
+    task.error = String(task.error || '').replace(/；自动退款失败：.*$/, '');
+    await saveGenerationWithRetry(userId, task, 'refund-reconcile-completed');
+  } catch (error) {
+    task.creditStatus = 'refund_failed';
+    task.error = `${String(task.error || '').replace(/；自动退款失败：.*$/, '')}；自动退款失败：${error.message}`;
+    await saveGenerationWithRetry(userId, task, 'refund-reconcile-deferred');
+    throw error;
+  }
+}
+
+function processGenerationTask(userId, task, kind = 'generation') {
+  if (kind === 'refund_reconcile') return reconcileGenerationRefund(userId, task);
+  if (kind === 'archive') return resumeGenerationArchive(userId, task);
+  if (kind === 'reconcile_submission') return reconcileMissingProviderTaskId(userId, task);
+  if (task.awaitingReferences) return Promise.resolve();
+  if (task.archivePending && task.sourceUrl && !task.localReadyAt) return resumeGenerationArchive(userId, task);
+  const pollOnce = kind === 'poll' || Boolean(task.providerTaskId);
+  if (task.status === 'queued' && !task.awaitingReferences) return startGeneration(userId, task, { deferPolling:true });
+  if (task.type === 'image' && task.provider === 'duomi' && task.providerTaskId) return resumeDuomiImageGeneration(userId, task, { pollOnce });
+  if (task.type === 'video' && task.provider === 'duomi' && task.providerTaskId) return resumeDuomiVideoGeneration(userId, task, { pollOnce });
+  if (task.provider === 'oai' && task.providerTaskId) return resumeOaiGeneration(userId, task, { pollOnce });
+  if (task.routeId && task.providerTaskId) return resumeRoutedGeneration(userId, task, { pollOnce });
+  if (task.provider === 'ttapi' && task.providerTaskId) return resumeTtapiGeneration(userId, task, { pollOnce });
+  if (task.provider === 'cntcn' && task.providerTaskId) return resumeCntcnGeneration(userId, task, { pollOnce });
+  if (task.provider === 'autodl' && task.providerTaskId) return resumeAutodlGeneration(userId, task, { pollOnce });
+  if (!task.providerTaskId) return reconcileMissingProviderTaskId(userId, task);
+  return failUnsupportedGenerationRecovery(userId, task);
+}
+
+const generationPollInterval = generationJobPolicy.pollInterval;
+const generationJobNextRunAt = generationJobPolicy.nextRunAt;
+const generationRecoveryKind = generationJobPolicy.recoveryKind;
+
+async function runGenerationJob(job) {
+  const heartbeatMs = Math.max(5_000, Math.floor(generationJobLeaseMs / 3));
+  const heartbeat = setInterval(() => {
+    if (!renewGenerationJobLease({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken, leaseUntil:Date.now() + generationJobLeaseMs })) {
+      runtimeMetrics.generationJobLeaseRenewalFailures++;
+      console.error('[generation-job] lease renewal failed', { jobId:job.id, generationId:job.generationId });
+    }
+  }, heartbeatMs);
+  heartbeat.unref();
+  let task = null;
+  try {
+    task = findGeneration(job.userId, job.generationId);
+    if (task) {
+      generationJobGuards.set(task.id, { id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken });
+      if (!(job.kind === 'refund_reconcile'
+        ? task.status !== 'failed' || task.creditStatus !== 'refund_failed'
+        : (['completed', 'failed'].includes(task.status) && !task.archivePending))) {
+        await processGenerationTask(job.userId, task, job.kind);
+      }
+    }
+  } catch (error) {
+    runtimeMetrics.generationJobExecutionFailures++;
+    console.error('[generation-job] execution failed', { jobId:job.id, generationId:job.generationId, message:error.message });
+  } finally {
+    clearInterval(heartbeat);
+    if (task) generationJobGuards.delete(task.id);
+    const persistedTask = findGeneration(job.userId, job.generationId);
+    if (job.kind === 'refund_reconcile') {
+      if (!persistedTask || persistedTask.creditStatus === 'refunded') {
+        if (completeGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken })) runtimeMetrics.generationJobsCompleted++;
+      } else if (rescheduleGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken, kind:'refund_reconcile', nextRunAt:Date.now() + archiveRescheduleMs, errorCode:'REFUND_PENDING', errorMessage:persistedTask.error || '退款待重试' })) {
+        runtimeMetrics.generationJobsRescheduled++;
+      }
+    } else if (!persistedTask || (['completed', 'failed'].includes(persistedTask.status) && !persistedTask.archivePending)) {
+      if (completeGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken })) runtimeMetrics.generationJobsCompleted++;
+    } else if (persistedTask.awaitingReferences) {
+      if (completeGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken })) runtimeMetrics.generationJobsCompleted++;
+    } else {
+      const nextKind = generationRecoveryKind(persistedTask);
+      const nextRunAt = nextKind === 'archive' && !persistedTask.archiveFailureCount
+        ? Math.max(generationJobNextRunAt(persistedTask, nextKind), Date.parse(persistedTask.localDeliveryDeadlineAt || '') || 0)
+        : generationJobNextRunAt(persistedTask, nextKind);
+      if (rescheduleGenerationJob({
+        id:job.id,
+        owner:generationJobOwner,
+        leaseToken:job.leaseToken,
+        kind:nextKind,
+        nextRunAt,
+        errorCode: persistedTask.lastSubmissionError ? 'SUBMISSION_UNCERTAIN' : null,
+        errorMessage: persistedTask.lastSubmissionError || persistedTask.error || null,
+      })) runtimeMetrics.generationJobsRescheduled++;
+    }
+  }
+}
+
+function drainGenerationJobs() {
+  if (serverDraining) return;
+  const capacity = generationJobConcurrency - activeGenerationJobs.size;
+  if (capacity <= 0) return;
+  const jobs = claimGenerationJobs({ owner:generationJobOwner, limit:capacity, leaseMs:generationJobLeaseMs, excludeGenerationIds:[...activeGenerationIds] });
+  runtimeMetrics.generationJobsClaimed += jobs.length;
+  for (const job of jobs) {
+    activeGenerationIds.add(job.generationId);
+    const promise = runtimeLifecycle.track(runGenerationJob(job));
+    activeGenerationJobs.set(job.id, promise);
+    void promise.finally(() => {
+      activeGenerationJobs.delete(job.id);
+      activeGenerationIds.delete(job.generationId);
+      drainGenerationJobs();
+    }).catch(error => console.error('[generation-job] cleanup failed', error));
+  }
+}
+
 /** Resume durable generation work after a process restart without depending on any browser session. */
 async function recoverPendingGenerations() {
+  runtimeMetrics.recoveryRuns++;
   const startedAt = Date.now();
   const pending = listPendingGenerations();
-  let polling = 0;
-  let archiving = 0;
-  let refunded = 0;
+  let scheduled = 0;
+  let refundReconciliations = 0;
   let awaitingReconciliation = 0;
 
   for (const { userId, task } of pending) {
-    if (task.awaitingReferences) {
-      task.awaitingReferences = false;
-      await failGeneration(userId, task, new Error('素材准备因服务重启而中断'));
-      task.finishedAt = now();
-      saveGeneration(userId, task);
-      refunded++;
-    } else if (task.archivePending && task.sourceUrl && !task.localReadyAt) {
-      const deadline = Date.parse(task.localDeliveryDeadlineAt || '');
-      if (Number.isFinite(deadline) && deadline > Date.now()) scheduleGenerationArchive(userId, task);
-      else resumeGenerationArchive(userId, task);
-      archiving++;
-    } else if (task.type === 'image' && task.provider === 'duomi' && task.providerTaskId) {
-      resumeDuomiImageGeneration(userId, task);
-      polling++;
-    } else if (task.routeId && task.providerTaskId) {
-      resumeRoutedGeneration(userId, task);
-      polling++;
-    } else if (task.provider === 'ttapi' && task.providerTaskId) {
-      resumeTtapiGeneration(userId, task);
-      polling++;
-    } else if (task.provider === 'cntcn' && task.providerTaskId) {
-      resumeCntcnGeneration(userId, task);
-      polling++;
-    } else if (task.provider === 'autodl' && task.providerTaskId) {
-      resumeAutodlGeneration(userId, task);
-      polling++;
-    } else if (!task.providerTaskId) {
-      task.status = 'running';
-      task.finishedAt = null;
-      task.creditStatus = 'charged';
-      task.submissionUncertain = true;
-      task.submissionUncertainAt ||= task.updatedAt || task.createdAt || now();
-      task.error ||= '服务中断时未能确认上游任务 ID，任务保留待核对且不会自动退款';
-      if (providerTaskIdTimedOut(task)) {
-        await failMissingProviderTaskId(userId, task);
-        refunded++;
-      } else {
-        saveGeneration(userId, task);
-        scheduleProviderTaskIdTimeout(userId, task);
-        awaitingReconciliation++;
-      }
+    if (task.creditStatus === 'refund_failed') {
+      enqueueGenerationJob({ userId, generationId:task.id, kind:'refund_reconcile', nextRunAt:Date.now(), preserveScheduledTime:true });
+      refundReconciliations++;
+    } else if (task.awaitingReferences) {
+      continue;
     } else {
-      await failGeneration(userId, task, new Error(task.error || '服务重启时任务尚未提交到模型服务'));
-      task.finishedAt = now();
-      saveGeneration(userId, task);
-      refunded++;
+      const kind = generationRecoveryKind(task);
+      enqueueGenerationJob({ userId, generationId:task.id, kind, nextRunAt:Date.now(), preserveScheduledTime:true });
+      scheduled++;
+      if (!task.providerTaskId) awaitingReconciliation++;
     }
   }
 
+  drainGenerationJobs();
+
   if (pending.length) {
-    console.log(`[recovery] 待恢复 ${pending.length} 恢复轮询 ${polling} 恢复归档 ${archiving} 待核对 ${awaitingReconciliation} 退款 ${refunded} 耗时 ${Date.now() - startedAt}ms`);
+    console.log(`[recovery] 待恢复 ${pending.length} 已入队 ${scheduled} 待核对 ${awaitingReconciliation} 退款对账 ${refundReconciliations} 耗时 ${Date.now() - startedAt}ms`);
   }
 }
 
-async function serveFile(res, file, mimeType, cacheControl = 'private, max-age=3600', validator = null) { const stat = await fs.stat(file); const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' }; if (validator) { const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`; headers.ETag = etag; if (validator.ifNoneMatch === etag) { delete headers['Content-Length']; res.writeHead(304, headers); return res.end(); } } res.writeHead(200, headers); createReadStream(file).pipe(res); }
-function staticCacheControl(ext, { versioned = false, production = process.env.NODE_ENV === 'production' } = {}) {
-  if (['.js', '.css'].includes(ext)) {
-    return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
-  }
-  return ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
-}
-const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
-const marketingRouteFiles = new Map([
-  ['/features', 'features.html'],
-  ['/features/', 'features.html'],
-  ['/pricing', 'pricing.html'],
-  ['/pricing/', 'pricing.html'],
-]);
-function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
-function staticEntryFile(pathname, { desktop = false, appOnly = desktopAppOnly } = {}) {
-  return marketingRouteFiles.get(pathname)
-    || (pathname === '/guguadmin' || pathname === '/guguadmin/'
-      ? 'guguadmin.html'
-      : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
-        ? (desktop || !appOnly ? 'index.html' : 'home.html')
-        : pathname.slice(1));
+function startGenerationRecoverySweeper() {
+  let running = false;
+  const run = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await recoverPendingGenerations();
+    } catch (error) {
+      console.error('[recovery] scheduled sweep failed', error);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(run, generationRecoverySweepMs);
+  timer.unref();
+  runtimeLifecycle.registerTimer(timer);
+  void run();
+  return timer;
 }
 
-async function serveStatic(res, pathname, req = null) {
-  const desktop = Boolean(req && isDesktopRequest(req));
-  const relative = staticEntryFile(pathname, { desktop });
-  const file = path.resolve(publicDir, relative);
-  if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
-  const ext = path.extname(file);
-  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-  // Production versioned JS/CSS URLs are safe to cache for a year. Development
-  // must revalidate on every request because files can change without a query
-  // version bump while the desktop client is running.
-  const revalidate = ['.js', '.css'].includes(ext);
-  const versioned = revalidate && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
-  const cacheControl = staticCacheControl(ext, { versioned });
-  // The same route serves the public home page or the desktop workspace
-  // depending on the request marker. Keep an intermediary cache from serving
-  // one variant to the other.
-  if (desktopAppOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
-  try { await serveFile(res, file, mime, cacheControl, revalidate && !versioned ? { ifNoneMatch:req?.headers['if-none-match'] || '' } : null); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
+function startGenerationJobPoller() {
+  const timer = setInterval(drainGenerationJobs, generationJobPollMs);
+  timer.unref();
+  runtimeLifecycle.registerTimer(timer);
+  drainGenerationJobs();
+  return timer;
 }
 
 function websiteApiAllowed(pathname) {
@@ -2576,215 +2063,284 @@ function websiteApiAllowed(pathname) {
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+function metricsText() {
+  const queue = generationQueueStats();
+  const values = {
+    ...runtimeMetrics,
+    ...queue,
+    activeGenerations: activeGenerations.size,
+    activeGenerationJobs: activeGenerationJobs.size,
+  };
+  return Object.entries(values)
+    .map(([name, value]) => `gugu_${name} ${Number(value) || 0}`)
+    .join('\n') + '\n';
+}
 
+let serverDraining = false;
+let shuttingDown = false;
+let generationRecoverySweeper = null;
+let generationJobPoller = null;
+const systemRoute = createSystemRouteHandler({
+  sendJson,
+  sendText,
+  isDraining:() => serverDraining,
+  checkReady:() => sql('SELECT 1 AS ready').get(),
+  queueStats:generationQueueStats,
+  metricsText,
+});
+const authRoute = createAuthRouteHandler({
+  bodyJson,
+  sendJson,
+  clientIp,
+  normalizePhoneNumber,
+  captchaStore,
+  smsConfig,
+  smsSendLimiter,
+  smsVerifyLimiter,
+  sendSmsVerifyCode,
+  checkSmsVerifyCode,
+  findUserByPhoneNumber,
+  createSmsUser,
+  hashPassword,
+  randomId:randomUUID,
+  randomSecret:() => randomBytes(32).toString('base64url'),
+  ensureUserDirs,
+  createSession,
+  setSessionCookie,
+  publicUser,
+  now,
+  registerUser,
+  findUserByLogin,
+  loginLimiter,
+  verifyPassword,
+  currentUser,
+  requireUser,
+  updateUserProfile,
+  parseCookies,
+  deleteSession,
+  tokenHash,
+  clearSessionCookie,
+  profileNicknamePattern,
+});
+const accountRoute = createAccountRouteHandler({
+  bodyForm,
+  bodyJson,
+  sendJson,
+  sendText,
+  requireUser,
+  currentUser,
+  port,
+  publicReturnUrl,
+  publicNotifyUrl,
+  handleAlipayNotification,
+  paymentReturnPage,
+  queryPaymentOrder,
+  paymentOrderForUser,
+  createPaymentOrder,
+  closePaymentOrder,
+  refundPaymentOrder,
+  queryPaymentRefund,
+  configState,
+  walletOf,
+  currentPricing,
+  recentCreditEntries,
+  publicCreditEntry,
+  creditPricing,
+  llmRates,
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+});
+const dramaRoute = createDramaRouteHandler({
+  bodyJson,
+  sendJson,
+  requireUser,
+  requireDesktopWorkspaceScope,
+  listDramaProjects,
+  setPageHeaders,
+  publicDramaProject,
+  normalizeDramaProject,
+  parseLimit,
+  randomId:randomUUID,
+  createDefaultDramaShot,
+  saveDramaProject,
+  latestDramaProject,
+  loadDramaProject,
+  findDramaProject,
+  findGeneration,
+  safeId,
+  dramaStepOrder,
+  reconcileDramaProjectGenerationReferences,
+  isLlmConfigured,
+  llmConfig,
+  runSmartDirector,
+  deleteGenerationRecord,
+  activeGenerations,
+  now,
+  charLength,
+  analyzeScript,
+  createStoryboard,
+});
+const filesRoute = createFilesRouteHandler({
+  bodyJson,
+  bodyBuffer,
+  sendJson,
+  serveFile,
+  requireUser,
+  requireDesktopWorkspaceScope,
+  normalizeDeviceId,
+  listAssetChanges,
+  listPendingAssetDeliveries,
+  findCloudAssets,
+  markAssetDeliveryPending,
+  publicAsset,
+  parseLimit,
+  findAsset,
+  listAssets,
+  setPageHeaders,
+  supportLogStorageReady,
+  supportLogRateAllowed,
+  supportLogMime:SUPPORT_LOG_MIME,
+  supportLogMaxBytes,
+  supportLogObjectKey,
+  putSupportLogObject,
+  appendSystemEvent,
+  directUploadEnabled,
+  r2Configured,
+  uploadInitRateAllowed,
+  uploadMaxPendingPerUser,
+  uploadIntentExpiresSeconds,
+  uploadUrlExpiresSeconds,
+  countActiveUploadIntents,
+  normalizeUploadMime,
+  imageTypes,
+  videoTypes,
+  audioTypes,
+  uploadSizeLimit,
+  findAssetBySha256,
+  uploadKind,
+  randomId:randomUUID,
+  pendingUploadKey,
+  finalUploadKey,
+  now,
+  createUploadIntent,
+  signedUploadUrl,
+  findUploadIntent,
+  expireUploadIntent,
+  deleteObject,
+  claimUploadIntent,
+  verifyUploadedObject,
+  promoteUploadedObject,
+  uploadExtension,
+  completeUploadIntentWithAsset,
+  markUploadIntentFailed,
+  assetFilesDir,
+  assetPreviewCacheSeconds,
+  fs,
+  signedAssetUrl,
+  localReadyBatchLimit,
+  applyLocalReadyAcknowledgement,
+  servePendingGenerationSource,
+  safeId,
+  saveAsset,
+  findGeneration,
+  activeGenerations,
+  deleteGenerationRecord,
+  deleteAssetRecord,
+});
+const generationRoute = createGenerationRouteHandler({
+  bodyJson,
+  sendJson,
+  requireUser,
+  requireDesktopWorkspaceScope,
+  findGeneration,
+  listGenerations,
+  setPageHeaders,
+  parseLimit,
+  safeId,
+  publicGeneration,
+  publicDramaProject,
+  loadDramaProject,
+  validateVideoRequest,
+  validateReferenceAssets,
+  referenceAssetCounts,
+  normalizeQuoteReferenceCounts,
+  assertReferenceCountsWithinLimits,
+  selectModelRoute,
+  publicRoutePriceVersion,
+  currentPricing,
+  pricingSnapshot,
+  staticPriceVersion:request => `v1-${createHash('sha256').update(`gugu-price:static:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}`,
+  creditsToMicro,
+  charLength,
+  walletOf,
+  chargeGenerationMicro,
+  chargeGenerationBatchMicro,
+  createGenerationRequest,
+  findGenerationRequest,
+  generationRequestFingerprint,
+  enqueueGenerationJob,
+  saveGeneration,
+  failGeneration,
+  deleteGenerationRecord,
+  saveDramaProject,
+  ensureUserDirs,
+  randomId:randomUUID,
+  now,
+  resolveVideoPrompt,
+  buildShotVideoPrompt,
+  isModelEnabled,
+  fixedModels,
+  imageSizes,
+  videoModelIds:VIDEO_MODEL_IDS,
+  legacyVideoModelIds:LEGACY_VIDEO_MODEL_IDS,
+  storyboardEngineVersion:STORYBOARD_ENGINE_VERSION,
+  r2ReferenceConfigured,
+  r2ReferencePublicBaseUrl,
+  providerAvailability:{
+    duomi:Boolean(process.env.DUOMI_API_KEY),
+    ttapi:ttapiConfigured,
+    cntcn:cntcnConfigured,
+    autodl:autodlConfigured,
+    oai:oaiConfigured,
+    oaiVeo:oaiVeoConfigured,
+    oaiMinimax:oaiMinimaxConfigured,
+  },
+  runtimeMetrics,
+  activeGenerations,
+});
+
+export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
+  let finishRequest;
+  const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));
+  const requestToken = { requestWork };
+  activeRequests.add(requestToken);
+  let released = false;
+  const releaseRequest = () => {
+    if (released) return;
+    released = true;
+    activeRequests.delete(requestToken);
+    finishRequest();
+  };
+  res.once('finish', releaseRequest);
+  res.once('close', releaseRequest);
+  const requestId = requestTraceId(req);
+  res.setHeader('X-Request-Id', requestId);
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname === '/healthz' && req.method === 'GET') return sendJson(res, 200, { status: 'ok' });
-    if (url.pathname === '/readyz' && req.method === 'GET') {
-      try {
-        sql('SELECT 1 AS ready').get();
-        return sendJson(res, 200, { status: 'ready' });
-      } catch {
-        return sendJson(res, 503, { status: 'not_ready' });
-      }
-    }
+    if (await systemRoute(req, res, url)) return;
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
-    if (url.pathname === '/api/payments/alipay/notify' && req.method === 'POST') {
-      try {
-        await handleAlipayNotification(await bodyForm(req));
-        return sendText(res, 200, 'success');
-      } catch (error) {
-        console.warn('[alipay] notification rejected', { message: error.message });
-        return sendText(res, 200, 'fail');
-      }
-    }
-    if ((url.pathname === '/payments/alipay/return' || url.pathname === '/payments/alipay/return/') && req.method === 'GET') {
-      const user = currentUser(req);
-      const outTradeNo = String(url.searchParams.get('out_trade_no') || '').trim();
-      if (!user || !outTradeNo) return sendText(res, 200, paymentReturnPage(), 'text/html; charset=utf-8');
-      let order = null;
-      let error = '';
-      try { order = (await queryPaymentOrder(user.id, outTradeNo)).order; }
-      catch (queryError) {
-        try { order = paymentOrderForUser(user.id, outTradeNo); } catch {}
-        error = '支付结果暂时无法确认，请返回 GuGu AI 后刷新。';
-      }
-      return sendText(res, 200, paymentReturnPage({ order, error }), 'text/html; charset=utf-8');
-    }
+    if (await accountRoute(req, res, url, { publicOnly:true })) return;
     // Public pricing data intentionally sits before the desktop-only API
     // guard so website visitors can inspect prices before signing in.
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
-
-    if (url.pathname === '/api/auth/captcha' && req.method === 'GET') {
-      return sendJson(res, 200, captchaStore.issue(clientIp(req)));
-    }
-    if (url.pathname === '/api/auth/sms/send' && req.method === 'POST') {
-      const input = await bodyJson(req);
-      const phone = normalizePhoneNumber(input.phone);
-      if (!phone) return sendJson(res, 400, { error: '请输入正确的手机号' });
-      const captcha = captchaStore.verify(input.captchaId, input.captchaCode, clientIp(req));
-      if (!captcha.ok) return sendJson(res, 400, { error: '人机验证失败，请刷新验证码后重试' });
-      if (!smsConfig.configured) return sendJson(res, 503, { error: '短信登录服务尚未配置' });
-      const remainingMs = smsSendLimiter.remainingMs(req, phone);
-      if (remainingMs > 0) {
-        return sendJson(res, 429, { error: `请 ${Math.ceil(remainingMs / 1000)} 秒后再试`, cooldownSeconds: Math.ceil(remainingMs / 1000) });
-      }
-      try {
-        await sendSmsVerifyCode({ phone, config: smsConfig });
-        smsSendLimiter.record(req, phone);
-        return sendJson(res, 200, { ok: true, cooldownSeconds: smsConfig.intervalSeconds, expiresIn: smsConfig.validTimeSeconds });
-      } catch (error) {
-        return sendJson(res, error.statusCode || 502, { error: error.publicMessage || '短信服务暂时不可用，请稍后再试' });
-      }
-    }
-    if (url.pathname === '/api/auth/sms/login' && req.method === 'POST') {
-      const input = await bodyJson(req);
-      const phone = normalizePhoneNumber(input.phone);
-      const code = String(input.code || '').trim();
-      if (!phone) return sendJson(res, 400, { error: '请输入正确的手机号' });
-      if (!/^\d{4,8}$/.test(code)) return sendJson(res, 400, { error: '请输入短信验证码' });
-      if (!smsConfig.configured) return sendJson(res, 503, { error: '短信登录服务尚未配置' });
-      if (smsVerifyLimiter.isBlocked(req, phone)) return sendJson(res, 429, { error: '验证码尝试次数过多，请稍后再试' });
-      let checked;
-      try {
-        checked = await checkSmsVerifyCode({ phone, code, config: smsConfig });
-      } catch (error) {
-        return sendJson(res, error.statusCode || 502, { error: error.publicMessage || '短信服务暂时不可用，请稍后再试' });
-      }
-      if (!checked.verified) {
-        smsVerifyLimiter.recordFailure(req, phone);
-        return sendJson(res, 401, { error: '验证码错误或已过期' });
-      }
-      smsVerifyLimiter.reset(req, phone);
-      let user = findUserByPhoneNumber(phone);
-      if (user?.status === 'disabled') return sendJson(res, 403, { error: '账号已停用，请联系管理员' });
-      if (!user) {
-        const createdAt = now();
-        user = createSmsUser({ user: {
-          id: randomUUID(),
-          username: phone,
-          phoneNumber: phone,
-          role: 'user',
-          status: 'active',
-          credits: 0,
-          creditBalanceMicro: 0,
-          creditHeldMicro: 0,
-          passwordHash: await hashPassword(randomBytes(32).toString('base64url')),
-          createdAt,
-          updatedAt: createdAt,
-        } });
-      }
-      if (!user) return sendJson(res, 500, { error: '创建短信账号失败，请稍后再试' });
-      await ensureUserDirs(user.id);
-      const token = createSession(user.id);
-      setSessionCookie(res, token);
-      return sendJson(res, 200, { user: publicUser(user) });
-    }
-
-    if (url.pathname === '/api/auth/register' && req.method === 'POST') {
-      // Keep this endpoint for old clients, but registration no longer depends
-      // on invitation codes. New accounts are created by verified phone login.
-      const input = await bodyJson(req); const username = String(input.username || '').trim().toLowerCase(); const password = String(input.password || '');
-      if (!/^[a-z0-9_]{3,24}$/.test(username)) return sendJson(res, 400, { error: '账号需为 3–24 位字母、数字或下划线' });
-      if (password.length < 8 || password.length > 128) return sendJson(res, 400, { error: '密码长度需为 8–128 位' });
-      // Password hashing is deliberately outside the transaction: scrypt takes
-      // tens of milliseconds and must not be held across a write lock.
-      const passwordHash = await hashPassword(password);
-      const user = { id: randomUUID(), username, role: 'user', status: 'active', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, passwordHash, createdAt: now(), updatedAt: now() };
-      const result = registerUser({ user });
-      if (result.error) return sendJson(res, result.status, { error: result.error });
-      await ensureUserDirs(result.user.id);
-      const token = createSession(result.user.id); setSessionCookie(res, token); return sendJson(res, 201, { user: publicUser(result.user) });
-    }
-    if (url.pathname === '/api/auth/login' && req.method === 'POST') {
-      const input = await bodyJson(req);
-      const identifier = String(input.username || input.identifier || '').trim();
-      if (loginLimiter.isBlocked(req, identifier)) return sendJson(res, 429, { error: '尝试次数过多，请稍后再试' });
-      const user = findUserByLogin(identifier);
-      const valid = user && user.status === 'active' ? await verifyPassword(String(input.password || ''), user.passwordHash) : false;
-      if (!valid) {
-        loginLimiter.recordFailure(req, identifier);
-        return sendJson(res, 401, { error: '账号或密码不正确' });
-      }
-      loginLimiter.reset(req, identifier);
-      await ensureUserDirs(user.id);
-      const token = createSession(user.id);
-      setSessionCookie(res, token);
-      return sendJson(res, 200, { user: publicUser(user) });
-    }
-    if (url.pathname === '/api/auth/profile' && req.method === 'PATCH') {
-      const user = requireUser(req, res);
-      if (!user) return;
-      const input = await bodyJson(req);
-      const hasNickname = Object.prototype.hasOwnProperty.call(input, 'nickname');
-      const hasPassword = Object.prototype.hasOwnProperty.call(input, 'password');
-      if (!hasNickname && !hasPassword) return sendJson(res, 400, { error: '没有需要保存的设置' });
-
-      let nickname;
-      if (hasNickname) {
-        if (input.nickname !== null && typeof input.nickname !== 'string') return sendJson(res, 400, { error: '昵称格式不正确' });
-        nickname = input.nickname === null ? '' : input.nickname.trim();
-        if (nickname && !profileNicknamePattern.test(nickname)) return sendJson(res, 400, { error: '昵称需为 2–24 位中文、字母、数字、下划线或短横线' });
-      }
-
-      let passwordHash;
-      if (hasPassword) {
-        if (typeof input.password !== 'string') return sendJson(res, 400, { error: '密码格式不正确' });
-        if (input.password && (input.password.length < 8 || input.password.length > 128)) return sendJson(res, 400, { error: '密码长度需为 8–128 位' });
-        if (input.password) passwordHash = await hashPassword(input.password);
-      }
-      if (!hasNickname && passwordHash === undefined) return sendJson(res, 400, { error: '请输入新密码' });
-
-      try {
-        const updated = updateUserProfile(user.id, { nickname, passwordHash, updatedAt: now() });
-        return updated ? sendJson(res, 200, { user: publicUser(updated) }) : sendJson(res, 401, { error: '登录状态已失效，请重新登录' });
-      } catch (error) {
-        return sendJson(res, error.statusCode || 500, { error: error.statusCode === 409 ? error.message : '账号设置保存失败，请稍后重试' });
-      }
-    }
-    if (url.pathname === '/api/auth/logout' && req.method === 'POST') { const token = parseCookies(req.headers.cookie).studio_session; if (token) deleteSession(tokenHash(token)); clearSessionCookie(res); return sendJson(res, 200, { ok: true }); }
-    if (url.pathname === '/api/auth/me' && req.method === 'GET') { const user = currentUser(req); return user ? sendJson(res, 200, { user: publicUser(user) }) : sendJson(res, 401, { error: '未登录' }); }
-    if (url.pathname === '/api/config' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, configState()); }
-    if (url.pathname === '/api/credits' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; const wallet = walletOf(user.id); const pricing = currentPricing(); const transactions = recentCreditEntries(user.id, 1000).map(publicCreditEntry); return sendJson(res, 200, { ...wallet, pricing: { image: pricing.imagePerRequest, videoPerSecond: pricing.videoPerSecond, signupBonus: creditPricing.signupBonus, version: pricing.version, llmInputYuanPerMillion: llmRates.inputYuanPerMillion, llmOutputYuanPerMillion: llmRates.outputYuanPerMillion, yuanPerCredit: llmRates.yuanPerCredit }, transactions }); }
-    if (url.pathname === '/api/payments/alipay/orders' && req.method === 'POST') {
-      const user = requireUser(req, res); if (!user) return;
-      const input = await bodyJson(req);
-      const result = await createPaymentOrder({
-        userId: user.id,
-        credits: input.credits,
-        returnUrl: publicReturnUrl(process.env, port),
-        notifyUrl: publicNotifyUrl(process.env),
-      });
-      return sendJson(res, 201, result);
-    }
-    const alipayOrderMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)$/);
-    if (alipayOrderMatch && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      return sendJson(res, 200, { order: paymentOrderForUser(user.id, alipayOrderMatch[1]) });
-    }
-    const alipayOrderActionMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)\/(query|close|refunds)$/);
-    if (alipayOrderActionMatch && req.method === 'POST') {
-      const user = requireUser(req, res); if (!user) return;
-      const [, outTradeNo, action] = alipayOrderActionMatch;
-      if (action === 'query') return sendJson(res, 200, await queryPaymentOrder(user.id, outTradeNo));
-      if (action === 'close') return sendJson(res, 200, await closePaymentOrder(user.id, outTradeNo));
-      return sendJson(res, 200, await refundPaymentOrder(user.id, outTradeNo, await bodyJson(req)));
-    }
-    const alipayRefundMatch = url.pathname.match(/^\/api\/payments\/alipay\/orders\/([A-Za-z0-9_-]+)\/refunds\/([A-Za-z0-9_-]+)$/);
-    if (alipayRefundMatch && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      return sendJson(res, 200, await queryPaymentRefund(user.id, alipayRefundMatch[1], alipayRefundMatch[2]));
-    }
-    if (url.pathname === '/api/notifications' && req.method === 'GET') { const user = requireUser(req, res); if (!user) return; return sendJson(res, 200, listNotifications(user.id, { limit: url.searchParams.get('limit') })); }
-    const notificationReadMatch = url.pathname.match(/^\/api\/notifications\/([\w-]+)\/read$/);
-    if (notificationReadMatch && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markNotificationRead(user.id, notificationReadMatch[1]); return sendJson(res, 200, listNotifications(user.id)); }
-    if (url.pathname === '/api/notifications/read-all' && req.method === 'POST') { const user = requireUser(req, res); if (!user) return; markAllNotificationsRead(user.id); return sendJson(res, 200, listNotifications(user.id)); }
+    if (await authRoute(req, res, url)) return;
+    if (await accountRoute(req, res, url)) return;
 
     // Older desktop clients did not record a workspace origin on server
     // metadata. Claim only records whose asset IDs are already present in the
@@ -2800,922 +2356,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok:true, ...result });
     }
 
-    if (url.pathname === '/api/drama/projects' && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const page = listDramaProjects(user.id, { deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor: url.searchParams.get('cursor') });
-      setPageHeaders(res, page);
-      return sendJson(res, 200, { projects: page.items.map(project => publicDramaProject(normalizeDramaProject(project))) });
-    }
-    if (url.pathname === '/api/drama/projects' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req);
-      const mode = input.mode === 'professional' ? 'professional' : 'smart'; const title = String(input.title || '未命名短剧').trim().slice(0, 80);
-      const project = normalizeDramaProject({ id:randomUUID(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
-      await saveDramaProject(user.id, project); return sendJson(res, 201, { project:publicDramaProject(project) });
-    }
-    // Must precede the /:id route below, otherwise "latest" is captured as a
-    // project id and always resolves to 404.
-    if (url.pathname === '/api/drama/projects/latest' && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const project = latestDramaProject(user.id, { deviceId:scope.deviceId, workspaceId:scope.workspaceId });
-      return project ? sendJson(res, 200, { project: publicDramaProject(normalizeDramaProject(project)) }) : sendJson(res, 404, { error: '还没有短剧项目' });
-    }
-    const dramaProjectMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)$/);
-    if (dramaProjectMatch && req.method === 'GET') { const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1], scope); return project ? sendJson(res, 200, { project:publicDramaProject(project) }) : sendJson(res, 404, { error:'短剧项目不存在' }); }
-    if (dramaProjectMatch && req.method === 'PATCH') {
-      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const project = await loadDramaProject(user.id, dramaProjectMatch[1], scope); if (!project) return sendJson(res, 404, { error:'短剧项目不存在' }); const input = await bodyJson(req);
-      if (input.revision !== undefined && Number(input.revision) !== Number(project.revision)) {
-        return sendJson(res, 409, { error:'项目已在其他操作中更新，正在合并最新内容', code:'PROJECT_VERSION_CONFLICT', project:publicDramaProject(project) });
-      }
-      if (input.title !== undefined) project.title = String(input.title).trim().slice(0,80) || project.title;
-      if (input.mode !== undefined) project.mode = input.mode === 'professional' ? 'professional' : 'smart';
-      if (dramaStepOrder.includes(input.step)) { project.step = input.step; project.maxStep = dramaStepOrder[Math.max(dramaStepOrder.indexOf(project.maxStep || 'script'), dramaStepOrder.indexOf(input.step))]; }
-      for (const key of ['input','synopsis','script']) if (input[key] !== undefined) project[key] = String(input[key]).slice(0, key === 'script' ? 120000 : 10000);
-      if (input.settings) project.settings = { ...project.settings, ...input.settings };
-      if (Array.isArray(input.scenes)) project.scenes = input.scenes;
-      if (Array.isArray(input.resources)) project.resources = input.resources;
-      if (Array.isArray(input.shots)) project.shots = input.shots;
-      if (Array.isArray(input.projectAssetIds)) project.projectAssetIds = input.projectAssetIds;
-      if (input.projectAssetCategories && typeof input.projectAssetCategories === 'object' && !Array.isArray(input.projectAssetCategories)) project.projectAssetCategories = input.projectAssetCategories;
-      if (Array.isArray(input.assemblyVideos)) project.assemblyVideos = input.assemblyVideos;
-      normalizeDramaProject(project);
-      // A deletion can race a debounced editor save. Never let that older
-      // payload resurrect task ids which no longer exist.
-      reconcileDramaProjectGenerationReferences(user.id, project, scope);
-      await saveDramaProject(user.id, project); return sendJson(res, 200, { project:publicDramaProject(project) });
-    }
-    const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);
-    if (directorMatch && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error:'导演服务尚未配置' }); const project = await loadDramaProject(user.id, directorMatch[1], scope); if (!project) return sendJson(res,404,{error:'短剧项目不存在'}); const input = await bodyJson(req);
-      project.input = String(input.input ?? project.input).trim(); if (!project.input) return sendJson(res,400,{error:'请输入一句话创意或剧本'}); project.settings = { ...project.settings, ...(input.settings || {}) }; normalizeDramaProject(project);
-      const inputIsScript = project.input.length >= 200 || /(?:^|\n)\s*(?:#{1,3}\s*)?(?:\d+[-–—]\d+秒|场景|第[一二三四五六七八九十\d]+场|[A-Z]+\s*[：:])/m.test(project.input);
-      const prompt = `制作参数：${JSON.stringify(project.settings)}\n生产协议版本：${STORYBOARD_ENGINE_VERSION}\n输入类型：${inputIsScript?'完整剧本，必须保留原稿，不需要在结果中重复 script':'故事创意，需要生成完整 script'}\n用户输入：\n${project.input}`;
-      const maxOutputTokens = 12000;
-      const maxDirectorAttempts = 4;
-      const maxRecoveryRounds = maxDirectorAttempts - 1;
-      const initialRequestId = randomUUID();
-      let activeRequestId = initialRequestId;
-      let activeRequestHeld = false;
-      let initialShotCount = 0;
-      let recoveredShotCount = 0;
-      let appendedShotCount = 0;
-      let attemptCount = 0;
-      let recoveryAttemptCount = 0;
-      let recoveryMode = '';
-      let recoveryProblemCount = 0;
-      let latestFailureKind = '';
-      let latestGateIds = [];
-      let failureBalance;
-      const recoveryHistory = [];
-      const settlements = [];
-      const usageSummary = () => publicLlmUsage({
-        inputTokens:settlements.reduce((sum,item)=>sum+item.inputTokens,0),
-        outputTokens:settlements.reduce((sum,item)=>sum+item.outputTokens,0),
-        chargedCredits:settlements.reduce((sum,item)=>sum+item.chargedCredits,0),
-        attemptCount,
-        maxAttemptCount:maxDirectorAttempts,
-        recoveryAttempts:recoveryAttemptCount,
-        maxRecoveryRounds,
-        initialReturnedCount:initialShotCount,
-        recoveredShotCount,
-        completionCount:appendedShotCount,
-        recoveryMode,
-        correctedProblemCount:recoveryMode==='replace'?recoveryProblemCount:0,
-        autoCompleted:recoveryHistory.includes('append') && appendedShotCount > 0,
-        autoRegenerated:recoveryHistory.includes('regenerate'),
-        autoCorrected:recoveryHistory.includes('replace') && recoveryAttemptCount > 0,
-        // Attempt ledger IDs are internal reconciliation keys, not client data.
-        attempts:settlements.map(item=>({type:item.attemptType,inputTokens:item.inputTokens,outputTokens:item.outputTokens,chargedCredits:item.chargedCredits})),
-      });
-      const reservedMicro = llmReservationMicro(conservativeInputTokenUpperBound(directorPackageSystemPrompt,prompt),maxOutputTokens,llmRates);
-      const reserved = await reserveLlmCredits(user.id,initialRequestId,reservedMicro,{projectId:project.id,skillName:'smart-director',skillVersion:'6.0.0',attemptType:'initial'});
-      if (reserved.error) return sendJson(res,reserved.status,{error:reserved.error,balance:reserved.balance});
-      activeRequestHeld = true;
-      try {
-        attemptCount += 1;
-        const initialResult = await callLlm({system:directorPackageSystemPrompt,prompt,maxOutputTokens,outputSchema:directorPackageJsonSchema({requireScript:!inputIsScript,shotCount:project.settings.shotCount}),toolName:'submit_director_package',config:llmConfig});
-        settlements.push({...await settleLlmCredits(user.id,initialRequestId,initialResult,{projectId:project.id,skillName:'smart-director',skillVersion:'6.0.0',attemptType:'initial'}),attemptType:'initial'});
-        activeRequestHeld = false;
-        let candidate;
-        let pack;
-        let prepared;
-        let validationError;
-        try {
-          candidate = parseJsonObject(initialResult.text);
-          initialShotCount = Array.isArray(candidate.shots) ? candidate.shots.length : 0;
-          pack = validateDirectorPackage(candidate,project.settings,project.input);
-        } catch (error) {
-          validationError = error;
-          if (candidate) {
-            try { prepared = prepareDirectorPackage(candidate,project.settings,project.input); }
-            catch (prepareError) { validationError = prepareError; }
-          }
-        }
+    if (await dramaRoute(req, res, url)) return;
 
-        while (!pack && !prepared && attemptCount < maxDirectorAttempts) {
-          const recoveryRound = recoveryAttemptCount + 1;
-          recoveryMode = 'regenerate';
-          const feedback = directorRecoveryDiagnostic(validationError,{requestedShotCount:project.settings.shotCount,returnedShotCount:initialShotCount});
-          latestFailureKind = feedback.kind;
-          latestGateIds = (feedback.gateIds || []).slice(0, 7);
-          recoveryProblemCount = Math.max(recoveryProblemCount,(feedback.problems || []).length);
-          const recoveryPrompt = buildDirectorPackageRepairPrompt(prompt,project.settings,feedback,{round:recoveryRound,requireScript:!inputIsScript});
-          const recoveryRequestId = randomUUID();
-          activeRequestId = recoveryRequestId;
-          const attemptType = `package-repair-${recoveryRound}`;
-          const recoveryReservedMicro = llmReservationMicro(conservativeInputTokenUpperBound(directorPackageRepairSystemPrompt,recoveryPrompt),maxOutputTokens,llmRates);
-          const recoveryReserved = await reserveLlmCredits(user.id,recoveryRequestId,recoveryReservedMicro,{projectId:project.id,skillName:'smart-director-package-repair',skillVersion:'1.0.0',attemptType,parentRequestId:initialRequestId,recoveryRound});
-          if (recoveryReserved.error) {
-            failureBalance = recoveryReserved.balance;
-            throw Object.assign(new Error(`第 ${recoveryRound} 轮自动重建导演方案所需积分不足：${recoveryReserved.error}`),{statusCode:recoveryReserved.status});
-          }
-          activeRequestHeld = true;
-          recoveryAttemptCount = recoveryRound;
-          recoveryHistory.push('regenerate');
-          attemptCount += 1;
-          const recoveryResult = await callLlm({system:directorPackageRepairSystemPrompt,prompt:recoveryPrompt,maxOutputTokens,outputSchema:directorPackageJsonSchema({requireScript:!inputIsScript,shotCount:project.settings.shotCount}),toolName:'submit_director_package',config:llmConfig});
-          settlements.push({...await settleLlmCredits(user.id,recoveryRequestId,recoveryResult,{projectId:project.id,skillName:'smart-director-package-repair',skillVersion:'1.0.0',attemptType,parentRequestId:initialRequestId,recoveryRound}),attemptType});
-          activeRequestHeld = false;
-          let regenerated;
-          try {
-            regenerated = parseJsonObject(recoveryResult.text);
-            recoveredShotCount = Array.isArray(regenerated.shots) ? regenerated.shots.length : 0;
-            pack = validateDirectorPackage(regenerated,project.settings,project.input);
-          } catch (error) {
-            validationError = error;
-            if (regenerated) {
-              try { prepared = prepareDirectorPackage(regenerated,project.settings,project.input); }
-              catch (prepareError) { validationError = prepareError; }
-            }
-          }
-        }
+    if (await generationRoute(req, res, url)) return;
+    if (await filesRoute(req, res, url)) return;
 
-        if (!pack && !prepared) throw validationError || new Error('智能导演未形成可修复的完整方案');
-
-        if (!pack) {
-          let recovery = analyzeDirectorPlanRecovery(prepared,project.settings);
-          if (recovery.mode === 'none') throw validationError;
-          let mode = recovery.mode;
-          let base = prepared;
-          let feedback = directorRecoveryDiagnostic(validationError,{requestedShotCount:project.settings.shotCount,returnedShotCount:initialShotCount});
-          let candidateShots = base.shots;
-
-          while (!pack && attemptCount < maxDirectorAttempts) {
-            const recoveryRound = recoveryAttemptCount + 1;
-            recoveryMode = mode;
-            latestFailureKind = feedback.kind;
-            latestGateIds = (feedback.gateIds || []).slice(0, 7);
-            recoveryProblemCount = Math.max(recoveryProblemCount,(feedback.problems || []).length);
-            const append = mode === 'append';
-            const replaceRecovery = append ? recovery : { ...recovery, mode:'replace', requestedShotCount:project.settings.shotCount, failedGates:validationError?.gates?.filter(gate=>!gate.ok) || recovery.failedGates || [] };
-            const recoveryPrompt = append
-              ? buildDirectorShotCompletionPrompt(base,project.settings,recovery.shortage)
-              : buildDirectorShotRepairPrompt(base,project.settings,replaceRecovery,{feedback,round:recoveryRound,candidateShots});
-            const recoverySystem = append ? directorShotCompletionSystemPrompt : directorShotRepairSystemPrompt;
-            const recoverySchema = append ? directorShotCompletionJsonSchema(recovery.shortage.missingShotCount) : directorShotRepairJsonSchema(project.settings.shotCount);
-            const recoveryCount = append ? recovery.shortage.missingShotCount : project.settings.shotCount;
-            const recoveryMaxOutputTokens = Math.min(12000,Math.max(2048,recoveryCount*1800));
-            const recoveryRequestId = randomUUID();
-            activeRequestId = recoveryRequestId;
-            const attemptType = append ? 'completion' : `quality-repair-${recoveryRound}`;
-            const skillName = append ? 'smart-director-completion' : 'smart-director-quality-repair';
-            const recoveryReservedMicro = llmReservationMicro(conservativeInputTokenUpperBound(recoverySystem,recoveryPrompt),recoveryMaxOutputTokens,llmRates);
-            const recoveryReserved = await reserveLlmCredits(user.id,recoveryRequestId,recoveryReservedMicro,{projectId:project.id,skillName,skillVersion:'2.0.0',attemptType,parentRequestId:initialRequestId,recoveryRound});
-            if (recoveryReserved.error) {
-              failureBalance = recoveryReserved.balance;
-              throw Object.assign(new Error(`已有导演方案通过基础校验，但第 ${recoveryRound} 轮自动${append?'补全':'校正'}所需积分不足：${recoveryReserved.error}`),{statusCode:recoveryReserved.status});
-            }
-            activeRequestHeld = true;
-            recoveryAttemptCount = recoveryRound;
-            recoveryHistory.push(mode);
-            attemptCount += 1;
-            const recoveryResult = await callLlm({system:recoverySystem,prompt:recoveryPrompt,maxOutputTokens:recoveryMaxOutputTokens,outputSchema:recoverySchema,toolName:append?'submit_director_shot_completion':'submit_director_shot_repair',config:llmConfig});
-            settlements.push({...await settleLlmCredits(user.id,recoveryRequestId,recoveryResult,{projectId:project.id,skillName,skillVersion:'2.0.0',attemptType,parentRequestId:initialRequestId,recoveryRound}),attemptType});
-            activeRequestHeld = false;
-
-            let recoveryCandidate;
-            try {
-              recoveryCandidate = parseJsonObject(recoveryResult.text);
-              recoveredShotCount = Array.isArray(recoveryCandidate.shots) ? recoveryCandidate.shots.length : 0;
-              if (append) appendedShotCount = recoveredShotCount;
-              const combinedShots = append ? [...base.shots,...(Array.isArray(recoveryCandidate.shots)?recoveryCandidate.shots:[])] : recoveryCandidate.shots;
-              candidateShots = Array.isArray(combinedShots) ? combinedShots : candidateShots;
-              pack = append
-                ? mergeDirectorShotCompletion(base,recoveryCandidate,project.settings,project.input)
-                : replaceDirectorShots(base,recoveryCandidate,project.settings,project.input);
-            } catch (error) {
-              validationError = error;
-              feedback = directorRecoveryDiagnostic(error,{requestedShotCount:project.settings.shotCount,returnedShotCount:recoveredShotCount});
-              latestFailureKind = feedback.kind;
-              latestGateIds = (feedback.gateIds || []).slice(0, 7);
-              recoveryProblemCount = Math.max(recoveryProblemCount,(feedback.problems || []).length);
-              if (Array.isArray(candidateShots) && candidateShots.length) {
-                try { base = prepareDirectorPackage({ ...base, shots:candidateShots },project.settings,project.input); }
-                catch {}
-              }
-              mode = 'replace';
-              recovery = { ...analyzeDirectorPlanRecovery(base,project.settings), mode:'replace', requestedShotCount:project.settings.shotCount, failedGates:error?.gates?.filter(gate=>!gate.ok) || [] };
-            }
-          }
-          if (!pack) throw validationError || new Error('导演方案未通过最终生产校验');
-        }
-
-        const usage = usageSummary();
-        project.workflowVersion=pack.workflowVersion; project.title=pack.title; project.synopsis=pack.synopsis; project.script=pack.script; project.scenes=pack.scenes.map(item=>({id:randomUUID(),...item})); project.resources=pack.resources.map(item=>({id:randomUUID(),...item,versions:[],selectedTaskId:''})); const byName=new Map(project.resources.map(item=>[item.name,item.id])); project.shots=pack.shots.map(item=>({id:randomUUID(),...item,sceneId:project.scenes[Math.max(0,item.sceneNumber-1)]?.id || project.scenes[0]?.id || '',resourceIds:item.resourceNames.map(name=>byName.get(name)).filter(Boolean),referenceAssetIds:[],generation:{type:'TEXT',firstFrameAssetId:'',lastFrameAssetId:'',referenceAssetIds:[],quality:'720p',count:1},videoVersions:[],selectedVideoTaskId:'',tailFrameAssetId:''})); project.productionQuality=pack.productionQuality; project.status='designed'; project.directorUsage=usage; normalizeDramaProject(project); await saveDramaProject(user.id,project);
-        console.info('smart-director',JSON.stringify({projectId:project.id,attemptCount:usage.attemptCount,maxAttemptCount:maxDirectorAttempts,recoveryAttempts:recoveryAttemptCount,recoveryMode,recoveryHistory,initialShotCount,recoveredShotCount,inputTokens:usage.inputTokens,outputTokens:usage.outputTokens,chargedCredits:usage.chargedCredits,status:'succeeded'}));
-        return sendJson(res,200,{project:publicDramaProject(project),usage,balance:settlements.at(-1).wallet.balance});
-      } catch(error) {
-        if (activeRequestHeld) {
-          if(error.billingReconcileRequired) await markLlmBillingReconcile(user.id,activeRequestId,error);
-          else await releaseLlmCredits(user.id,activeRequestId,error.message).catch(releaseError=>console.error('释放智能导演 LLM 冻结额度失败',releaseError));
-          activeRequestHeld = false;
-        }
-        if (recoveryAttemptCount || settlements.length) {
-          const usage = usageSummary();
-          error.publicData={directorRecovery:{attempted:recoveryAttemptCount>0,mode:recoveryMode,history:recoveryHistory,round:recoveryAttemptCount,maxRounds:maxRecoveryRounds,exhausted:attemptCount>=maxDirectorAttempts,requestedShotCount:project.settings.shotCount,initialShotCount,recoveredShotCount,problemCount:recoveryProblemCount,lastFailureKind:latestFailureKind,lastGateIds:latestGateIds},usage,balance:failureBalance ?? settlements.at(-1)?.wallet?.balance};
-          if (recoveryAttemptCount && !/^(?:已有导演方案通过基础校验，但第 \d+ 轮自动(?:补全|校正)|第 \d+ 轮自动重建导演方案)所需积分不足/.test(error.message)) {
-            const recoveryLabel = recoveryHistory.includes('regenerate') ? '重建并校正' : recoveryMode==='append' ? '补全' : '校正';
-            error.message = `系统已自动${recoveryLabel} ${recoveryAttemptCount} 轮，但仍未形成可制作方案`;
-          }
-          console.info('smart-director',JSON.stringify({projectId:project.id,attemptCount:usage.attemptCount,maxAttemptCount:maxDirectorAttempts,recoveryAttempts:recoveryAttemptCount,recoveryMode,recoveryHistory,initialShotCount,recoveredShotCount,lastFailureKind:latestFailureKind,lastGateIds:latestGateIds,inputTokens:usage.inputTokens,outputTokens:usage.outputTokens,chargedCredits:usage.chargedCredits,status:'failed',category:error.code || (error.billingReconcileRequired?'billing_reconcile':'validation')}));
-        }
-        throw error;
-      }
-    }
-    const resourceVersionMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/resources\/([\w-]+)\/versions$/);
-    if (resourceVersionMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,resourceVersionMatch[1],scope); const resource=project?.resources.find(item=>item.id===resourceVersionMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId), scope); if(!task||task.type!=='image')return sendJson(res,400,{error:'图片任务不存在'}); if(!resource.versions.includes(task.id))resource.versions.push(task.id); if(!resource.selectedTaskId)resource.selectedTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
-    const resourceSelectMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/resources\/([\w-]+)\/select$/);
-    if (resourceSelectMatch && req.method === 'PATCH') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,resourceSelectMatch[1],scope); const resource=project?.resources.find(item=>item.id===resourceSelectMatch[2]); if(!resource)return sendJson(res,404,{error:'资源不存在'}); const input=await bodyJson(req); if(!resource.versions.includes(input.taskId))return sendJson(res,400,{error:'该版本不属于此资源'}); if(resource.selectedTaskId!==input.taskId){resource.selectedTaskId=input.taskId;resource.lifecycle={...resource.lifecycle,status:'approved',revision:(resource.lifecycle?.revision||1)+1,approvedAt:now()};project.shots.filter(shot=>shot.resourceIds.includes(resource.id)).forEach(shot=>{shot.lifecycle.staleReasons=[...new Set([...(shot.lifecycle.staleReasons||[]),`${resource.name} 视觉版本已变更`])];});} await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
-    const shotVideoMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/videos$/);
-    if (shotVideoMatch && req.method === 'POST') { const user=await requireUser(req,res); if(!user)return; const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return; const project=await loadDramaProject(user.id,shotVideoMatch[1],scope); const shot=project?.shots.find(item=>item.id===shotVideoMatch[2]); if(!shot)return sendJson(res,404,{error:'分镜不存在'}); const input=await bodyJson(req); const task=findGeneration(user.id, safeId(input.taskId), scope); if(!task||task.type!=='video')return sendJson(res,400,{error:'视频任务不存在'}); if(!shot.videoVersions.includes(task.id))shot.videoVersions.push(task.id); shot.selectedVideoTaskId=task.id; await saveDramaProject(user.id,project); return sendJson(res,200,{project:publicDramaProject(project)}); }
-    const shotVideoDeleteMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/videos\/([\w-]+)$/);
-    if (shotVideoDeleteMatch && req.method === 'DELETE') {
-      const user=await requireUser(req,res); if(!user)return;
-      const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return;
-      const project=await loadDramaProject(user.id,shotVideoDeleteMatch[1],scope);
-      const shot=project?.shots.find(item=>item.id===shotVideoDeleteMatch[2]);
-      if(!shot)return sendJson(res,404,{error:'分镜不存在'});
-      const id=safeId(shotVideoDeleteMatch[3]);
-      if(!shot.videoVersions.includes(id))return sendJson(res,404,{error:'视频版本不存在'});
-      const task=findGeneration(user.id,id,scope);
-      if(!task||task.type!=='video')return sendJson(res,404,{error:'视频任务不存在'});
-      if(activeGenerations.has(id)||['queued','running'].includes(task.status))return sendJson(res,409,{error:'任务正在生成中，完成后才能删除'});
-      const deleted=await deleteGenerationRecord(user.id,task,{project});
-      return sendJson(res,200,{project:publicDramaProject(project),...deleted});
-    }
-    const professionalShotDeleteMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)$/);
-    if (professionalShotDeleteMatch && req.method === 'DELETE') {
-      const user=await requireUser(req,res); if(!user)return;
-      const scope=requireDesktopWorkspaceScope(req,res); if(!scope)return;
-      const project=await loadDramaProject(user.id,professionalShotDeleteMatch[1],scope);
-      const shot=project?.shots.find(item=>item.id===professionalShotDeleteMatch[2]);
-      if(!project||!shot)return sendJson(res,404,{error:'分镜不存在'});
-      if(project.mode!=='professional')return sendJson(res,409,{error:'该删除接口仅用于专业编辑模式'});
-      const generationIds=[...new Set([
-        ...(shot.videoVersions||[]),
-        shot.selectedVideoTaskId,
-        ...(shot.pendingImageGenerations||[]).map(item=>item?.taskId),
-      ].map(value=>String(value||'')).filter(Boolean))];
-      const tasks=generationIds.map(id=>findGeneration(user.id,id,scope)).filter(Boolean);
-      if(tasks.some(task=>activeGenerations.has(task.id)||['queued','running'].includes(task.status)))return sendJson(res,409,{error:'分镜仍有任务正在生成，请等待完成后再删除'});
-      project.shots=project.shots.filter(item=>item.id!==shot.id);
-      normalizeDramaProject(project);
-      await saveDramaProject(user.id,project);
-      const deletedAssetIds=[];
-      for(const task of tasks){
-        const deleted=await deleteGenerationRecord(user.id,task);
-        if(deleted.deletedAssetId)deletedAssetIds.push(deleted.deletedAssetId);
-      }
-      const latest=await loadDramaProject(user.id,project.id,scope);
-      return sendJson(res,200,{project:publicDramaProject(latest||project),deletedTaskIds:tasks.map(task=>task.id),deletedAssetIds});
-    }
-    if (url.pathname === '/api/drama/analyze-script' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error: 'LLM 服务尚未配置' });
-      const input = await bodyJson(req); const script = String(input.script || '').trim();
-      if (!script) return sendJson(res, 400, { error: '请输入剧本内容' });
-      if (charLength(script) > 80_000) return sendJson(res, 400, { error: '单次剧本分析不能超过 80,000 个字符' });
-      const maxOutputTokens = 4096;
-      const requestId = randomUUID();
-      const inputTokenUpperBound = conservativeInputTokenUpperBound(scriptAnalysisSystemPrompt, script);
-      const reservedMicro = llmReservationMicro(inputTokenUpperBound, maxOutputTokens, llmRates);
-      const reserved = await reserveLlmCredits(user.id, requestId, reservedMicro, { skillName: 'script-structure', skillVersion: '1.0.0' });
-      if (reserved.error) return sendJson(res, reserved.status, { error: reserved.error, balance: reserved.balance, held: reserved.held, available: reserved.available });
-      try {
-        const result = await callLlm({ system: scriptAnalysisSystemPrompt, prompt: script, maxOutputTokens, jsonMode:true, config: llmConfig });
-        const analysis = validateScriptAnalysis(parseJsonObject(result.text));
-        const settled = await settleLlmCredits(user.id, requestId, result, { skillName: 'script-structure', skillVersion: '1.0.0' });
-        const project = { id: randomUUID(), ownerId: user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title: analysis.title, script, analysis, storyboard: null, status: 'analysis_complete', analysisRequestId: requestId, analysisUsage: { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits }, createdAt: now(), updatedAt: now() };
-        await saveDramaProject(user.id, project);
-        return sendJson(res, 200, { project: publicDramaProject(project), analysis, usage: project.analysisUsage, balance: settled.wallet.balance, held: settled.wallet.held, available: settled.wallet.available });
-      } catch (error) {
-        if (error.billingReconcileRequired) await markLlmBillingReconcile(user.id, requestId, error);
-        else await releaseLlmCredits(user.id, requestId, error.message).catch(releaseError => console.error('释放 LLM 冻结额度失败', releaseError));
-        throw error;
-      }
-    }
-
-    const storyboardMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/storyboard$/);
-    if (storyboardMatch && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      if (!isLlmConfigured(llmConfig)) return sendJson(res, 503, { error: '导演服务尚未配置' });
-      const project = findDramaProject(user.id, storyboardMatch[1], scope);
-      if (!project) return sendJson(res, 404, { error: '短剧项目不存在' });
-      const maxOutputTokens = 8_000; const requestId = randomUUID();
-      const prompt = `原始剧本：\n${project.script}\n\n已确认分析：\n${JSON.stringify(project.analysis)}`;
-      const inputTokenUpperBound = conservativeInputTokenUpperBound(storyboardSystemPrompt, prompt);
-      const reservedMicro = llmReservationMicro(inputTokenUpperBound, maxOutputTokens, llmRates);
-      const reserved = await reserveLlmCredits(user.id, requestId, reservedMicro, { projectId: project.id, skillName: 'shot-director', skillVersion: '1.0.0' });
-      if (reserved.error) return sendJson(res, reserved.status, { error: reserved.error, balance: reserved.balance, held: reserved.held, available: reserved.available });
-      try {
-        const result = await callLlm({ system: storyboardSystemPrompt, prompt, maxOutputTokens, jsonMode:true, config: llmConfig });
-        const storyboard = validateStoryboard(parseJsonObject(result.text));
-        storyboard.shots = storyboard.shots.map(shot => ({ id: randomUUID(), ...shot, keyframeTaskId: '', videoTaskId: '' }));
-        const settled = await settleLlmCredits(user.id, requestId, result, { projectId: project.id, skillName: 'shot-director', skillVersion: '1.0.0' });
-        project.storyboard = storyboard; project.status = 'storyboard_ready'; project.storyboardRequestId = requestId;
-        project.storyboardUsage = { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits };
-        await saveDramaProject(user.id, project);
-        return sendJson(res, 200, { project: publicDramaProject(project), usage: project.storyboardUsage, balance: settled.wallet.balance, held: settled.wallet.held, available: settled.wallet.available });
-      } catch (error) {
-        if (error.billingReconcileRequired) await markLlmBillingReconcile(user.id, requestId, error);
-        else await releaseLlmCredits(user.id, requestId, error.message).catch(releaseError => console.error('释放分镜 LLM 冻结额度失败', releaseError));
-        throw error;
-      }
-    }
-
-    const shotBindingMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)$/);
-    if (shotBindingMatch && req.method === 'PATCH') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const project = findDramaProject(user.id, shotBindingMatch[1], scope);
-      if (!project?.storyboard?.shots) return sendJson(res, 404, { error: '短剧项目或分镜不存在' });
-      const shot = project.storyboard.shots.find(item => item.id === shotBindingMatch[2]);
-      if (!shot) return sendJson(res, 404, { error: '镜头不存在' });
-      const input = await bodyJson(req); const field = input.kind === 'video' ? 'videoTaskId' : input.kind === 'keyframe' ? 'keyframeTaskId' : '';
-      if (!field) return sendJson(res, 400, { error: '只支持绑定关键帧或视频任务' });
-      const taskId = safeId(input.taskId); const task = findGeneration(user.id, taskId, scope);
-      const expectedType = field === 'keyframeTaskId' ? 'image' : 'video';
-      if (!task || task.type !== expectedType) return sendJson(res, 400, { error: '生成任务不存在或类型不匹配' });
-      shot[field] = taskId; await saveDramaProject(user.id, project);
-      return sendJson(res, 200, { project: publicDramaProject(project) });
-    }
-
-    if (url.pathname === '/api/model-quote' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req);
-      const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
-      const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
-      const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
-      // Price previews can run before deferred reference uploads finish. Local
-      // clients supply only media-kind counts so route compatibility and price
-      // are exact without uploading assets just to render a button. Generation
-      // submission still validates the real asset records and readable sources.
-      const generationType = String(input.generationType || '').toUpperCase();
-      const quoteReferenceCount = requestedReferenceCount || suppliedReferenceCount || (['REFERENCE', 'FIRST&LAST'].includes(generationType) ? 1 : 0);
-      const request = validateVideoRequest(input, quoteReferenceCount);
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, request.referenceLimits, { requireReadable:false, scope });
-      const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds, scope) : suppliedReferenceCounts;
-      assertReferenceCountsWithinLimits(quotedReferenceCounts, request.referenceLimits);
-      const route = request.provider === 'route' ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: quotedReferenceCounts }) : null;
-      if (request.provider === 'route' && !route) return sendJson(res, 503, { error: '当前模型暂不可用，请稍后重试' });
-      if (route) {
-        // Keep the customer-facing quote stable across text/image input. The
-        // price token still belongs to the actually selected route, so the
-        // submit endpoint can charge the configured image-route price when
-        // the two pools are accidentally configured differently.
-        const displayRoute = request.modelId === VIDEO_MODEL_IDS.SEEDANCE_2
-          ? selectModelRoute({ logicalModelId: request.modelId, quality: request.quality, duration: request.duration, aspectRatio: request.aspectRatio, referenceCounts: {} })
-          : route;
-        const visiblePrice = displayRoute || route;
-        return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:visiblePrice.salePriceCredits, yuan:visiblePrice.salePriceYuan, priceVersion:publicRoutePriceVersion(route) });
-      }
-      const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
-      const credits = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) * request.duration : currentPricing().videoPerSecond * request.duration;
-      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:`v1-${createHash('sha256').update(`gugu-price:static:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}` });
-    }
-
-    if (url.pathname === '/api/generations' && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      if (url.searchParams.has('ids')) {
-        const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(safeId).filter(Boolean))].slice(0, 200);
-        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id, scope)).filter(Boolean).map(publicGeneration));
-      }
-      const view = String(url.searchParams.get('view') || 'all').trim().toLowerCase();
-      if (!['all', 'works', 'history'].includes(view)) return sendJson(res, 400, { error: '生成记录视图无效' });
-      const cursor = url.searchParams.get('cursor');
-      const page = listGenerations(user.id, { type: url.searchParams.get('type'), view, deviceId:scope.deviceId, workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')), cursor, includeTotal: !cursor || url.searchParams.get('includeTotal') === '1' });
-      setPageHeaders(res, page);
-      return sendJson(res, 200, page.items.map(publicGeneration));
-    }
-    if (url.pathname === '/api/generations' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req); const type = input.type;
-      const generationRequestId = String(input.requestId || '').trim();
-      if (generationRequestId && !/^[a-zA-Z0-9_-]{8,80}$/.test(generationRequestId)) return sendJson(res, 400, { error: '生成请求 ID 无效' });
-      if (!['image', 'video'].includes(type)) return sendJson(res, 400, { error: '只支持图片或视频生成' }); let prompt = String(input.prompt ?? '');
-      await ensureUserDirs(user.id);
-      let dramaProjectId = ''; let dramaShotId = ''; let dramaProject = null; let dramaShot = null;
-      if (type === 'video' && input.dramaProjectId && input.dramaShotId) { dramaProjectId=safeId(input.dramaProjectId);dramaShotId=safeId(input.dramaShotId);dramaProject=await loadDramaProject(user.id,dramaProjectId,scope);dramaShot=dramaProject?.shots.find(shot=>shot.id===dramaShotId);if(!dramaProject||!dramaShot)return sendJson(res,404,{error:'短剧项目或分镜不存在'});if(dramaProject.workflowVersion>=STORYBOARD_ENGINE_VERSION&&!dramaProject.productionQuality?.passed){const first=dramaProject.productionQuality?.gates?.find(gate=>!gate.ok)?.problems?.[0]||'分镜方案未通过质量检查';return sendJson(res,409,{error:`不能生成视频：${first}`});}if(!prompt.trim()){const scene=dramaProject.scenes.find(item=>item.id===dramaShot.sceneId);const resources=(dramaShot.resourceIds||[]).map(id=>dramaProject.resources.find(item=>item.id===id)).filter(Boolean);prompt=resolveVideoPrompt(prompt,buildShotVideoPrompt({project:dramaProject,shot:dramaShot,scene,resources}));} }
-      if (!prompt.trim()) return sendJson(res, 400, { error: '请输入提示词' });
-      const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
-      const promptMaxLength = type === 'image' ? 5000 : [VIDEO_MODEL_IDS.MINIMAX_H3_15S, LEGACY_VIDEO_MODEL_IDS.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
-      if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` });
-      if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error: '请选择视频模型' });
-      if (type === 'video' && dramaShot) {
-        const requestedDuration = Number(input.duration ?? dramaShot.duration);
-        if (!Number.isFinite(requestedDuration) || requestedDuration !== Number(dramaShot.duration)) return sendJson(res, 409, { error: `分镜时长已保存为 ${dramaShot.duration} 秒，请刷新页面后再生成` });
-        input.duration = Number(dramaShot.duration);
-      }
-      const size = type === 'image' ? String(input.size || '16:9') : null;
-      if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error: '不支持的图片比例' });
-      const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
-      const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
-      const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
-      const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;
-      let aspectRatio = null; let duration = null; let videoRequest = null;
-      if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-      const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope });
-      const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
-      assertReferenceCountsWithinLimits(referenceCounts, videoRequest?.referenceLimits);
-      if (referenceCounts.image && !r2ReferenceConfigured) {
-        return sendJson(res, 503, { error: `${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` });
-      }
-      const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
-      if (!isModelEnabled(modelId)) return sendJson(res, 503, { error: '当前模型暂不可用' });
-      const routeSelection = type === 'video' && videoRequest.provider === 'route'
-        ? selectModelRoute({ logicalModelId: modelId, quality: videoRequest.quality, duration, aspectRatio, referenceCounts })
-        : null;
-      if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error: '当前模型暂不可用，请稍后重试' });
-      const provider = type === 'image' ? 'duomi' : routeSelection?.provider || videoRequest.provider;
-      if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) {
-        return sendJson(res, 503, { error: '图生视频参考图片暂时不可用，请稍后重试或联系支持' });
-      }
-      if (provider === 'duomi' && !process.env.DUOMI_API_KEY) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
-      if (provider === 'ttapi' && !ttapiConfigured) return sendJson(res, 503, { error: '视频生成服务尚未配置' });
-      if (provider === 'cntcn' && !cntcnConfigured) return sendJson(res, 503, { error: `${type === 'image' ? '图片' : '视频'}生成服务尚未配置` });
-      if (provider === 'autodl' && !autodlConfigured) return sendJson(res, 503, { error: `${type === 'image' ? '图片' : '视频'}生成服务尚未配置` });
-      if (provider === 'oai') {
-        const configured = videoRequest.modelId === VIDEO_MODEL_IDS.VEO_31
-          ? oaiVeoConfigured
-          : videoRequest.modelId === VIDEO_MODEL_IDS.MINIMAX_H3
-            ? oaiMinimaxConfigured
-            : oaiConfigured;
-        if (!configured) {
-          return sendJson(res, 503, { error: '视频生成服务尚未配置' });
-        }
-      }
-      const pricing = currentPricing();
-      const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
-        ? { ...pricing, videoPerSecondMicro: creditsToMicro(videoRequest.pricing.amount) }
-        : pricing;
-      const quantity = input.quantity === undefined ? 1 : Number(input.quantity);
-      const maxQuantity = type === 'image' ? 10 : 4;
-      if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantity) return sendJson(res, 400, { error: `${type === 'image' ? '图片' : '视频'}生成数量需为 1–${maxQuantity} 的整数` });
-      const taskIds = generationRequestId
-        ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`)
-        : Array.from({ length:quantity }, () => randomUUID());
-      // Professional editing submits an explicit quantity, including for one
-      // video. Keep the legacy smart-director submit/bind flow untouched.
-      const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
-      const pricingSnapshotValue = routeSelection ? {
-        version: pricing.version, contentType: type, billingUnit: 'request', quantity: 1,
-        unitPriceMicro: routeSelection.salePriceMicro, totalMicro: routeSelection.salePriceMicro,
-        unitPrice: routeSelection.salePriceCredits, total: routeSelection.salePriceCredits,
-        routeId: routeSelection.id, routeVersion: routeSelection.version,
-        upstreamModelId: routeSelection.upstreamModelId, costYuan: routeSelection.costYuan,
-        markupPercent: 20, salePriceYuan: routeSelection.salePriceYuan,
-        priceVersion: publicRoutePriceVersion(routeSelection),
-      } : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
-      if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error: '当前价格已变化，请刷新价格后重试', code: 'PRICE_CHANGED', price: { credits: pricingSnapshotValue.total, yuan: pricingSnapshotValue.salePriceYuan, priceVersion: pricingSnapshotValue.priceVersion } });
-      const batchId = quantity > 1 ? randomUUID() : '';
-      const tasks = Array.from({ length: quantity }, (_, index) => ({
-        id: taskIds[index], ownerId: user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
-        model: type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : fixedModels.image, modelId, size,
-        quality: type === 'image' ? String(input.quality || 'medium') : videoRequest.quality,
-        aspectRatio, duration,
-        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits: routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
-        ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
-        ...(generationRequestId ? { requestId:generationRequestId } : {}),
-        ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex: index + 1, batchSize: quantity } : {}),
-        creditCost: pricingSnapshotValue.total, creditCostMicro: pricingSnapshotValue.totalMicro,
-        pricingVersion: pricingSnapshotValue.version, pricingSnapshot: pricingSnapshotValue,
-        creditStatus: 'charged', status: 'queued', providerTaskId: '', assetId: '', error: '',
-        ...(deferredReferences ? { awaitingReferences:true, expectedReferenceCounts:referenceCounts, progressStage:'preparing_references' } : {}),
-        createdAt: now(), updatedAt: now(), finishedAt: null,
-      }));
-      const existingTasks = tasks.map(task => findGeneration(user.id, task.id, scope));
-      if (existingTasks.some(Boolean)) {
-        if (!existingTasks.every(Boolean)) return sendJson(res, 409, { error: '重复生成请求的任务记录不完整，请联系支持' });
-        if (bindDramaTasks) {
-          for (const task of existingTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id);
-          dramaShot.selectedVideoTaskId = existingTasks.at(-1).id;
-          await saveDramaProject(user.id, dramaProject);
-        }
-        const wallet = walletOf(user.id);
-        const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
-        if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(existingTasks[0]), balance:wallet.balance, ...boundProject });
-        return sendJson(res, 202, { tasks:existingTasks.map(publicGeneration), quantity, balance:wallet.balance, ...boundProject });
-      }
-      const chargeItems = tasks.map(task => ({
-        generationId: task.id,
-        costMicro: task.creditCostMicro,
-        metadata: { modelId, contentType:type, provider, pricingVersion: task.pricingVersion, onCharged: () => saveGeneration(user.id, task) },
-      }));
-      const charged = quantity === 1
-        ? await chargeGenerationMicro(user.id, tasks[0].id, tasks[0].creditCostMicro, chargeItems[0].metadata)
-        : await chargeGenerationBatchMicro(user.id, chargeItems);
-      if (charged.error) return sendJson(res, charged.status, { error: charged.error, balance: charged.balance });
-      // Another identical request can finish charging while this request waits
-      // for the per-user ledger lock. Always continue with the persisted rows;
-      // startGeneration itself also coalesces the same task ID in this process.
-      const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id, scope) || task);
-      if (bindDramaTasks) {
-        for (const task of effectiveTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id);
-        dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id;
-        await saveDramaProject(user.id, dramaProject);
-      }
-      effectiveTasks.forEach(task => { if (task.status === 'queued' && !task.awaitingReferences) startGeneration(user.id, task); });
-      const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
-      if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(effectiveTasks[0]), balance: charged.balance, ...boundProject });
-      return sendJson(res, 202, { tasks: effectiveTasks.map(publicGeneration), quantity, balance: charged.balance, ...boundProject });
-    }
-    if (url.pathname === '/api/generations/references/complete' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req);
-      const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
-      if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待启动生成任务无效' });
-      const tasks = taskIds.map(id => findGeneration(user.id, id, scope));
-      if (tasks.some(task => !task || !task.awaitingReferences || task.status !== 'queued')) return sendJson(res, 409, { error:'生成任务已启动或不再等待素材' });
-      const first = tasks[0];
-      if (tasks.some(task => task.type !== first.type || task.requestId !== first.requestId)) return sendJson(res, 400, { error:'待启动生成任务不属于同一批次' });
-      const referenceAssetIds = await validateReferenceAssets(user.id, input.referenceAssetIds, first.referenceLimits, { scope });
-      const actualCounts = referenceAssetCounts(user.id, referenceAssetIds, scope);
-      const expectedCounts = normalizeQuoteReferenceCounts(first.expectedReferenceCounts);
-      if (['image','video','audio'].some(kind => actualCounts[kind] !== expectedCounts[kind])) return sendJson(res, 409, { error:'上传后的素材类型或数量与扣费时不一致，请重新生成' });
-      for (const task of tasks) {
-        task.referenceAssetIds = referenceAssetIds;
-        task.awaitingReferences = false;
-        task.progressStage = 'submitting';
-        saveGeneration(user.id, task);
-        startGeneration(user.id, task);
-      }
-      const wallet = walletOf(user.id);
-      return sendJson(res, 202, { tasks:tasks.map(publicGeneration), balance:wallet.balance });
-    }
-    if (url.pathname === '/api/generations/references/cancel' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req);
-      const taskIds = [...new Set((Array.isArray(input.taskIds) ? input.taskIds : []).map(safeId).filter(Boolean))];
-      if (!taskIds.length || taskIds.length > 10) return sendJson(res, 400, { error:'待取消生成任务无效' });
-      const tasks = taskIds.map(id => findGeneration(user.id, id, scope)).filter(task => task?.awaitingReferences && task.status === 'queued');
-      for (const task of tasks) {
-        task.awaitingReferences = false;
-        await failGeneration(user.id, task, new Error(String(input.error || '素材准备失败').slice(0, 300)));
-        task.finishedAt = now();
-        saveGeneration(user.id, task);
-      }
-      const wallet = walletOf(user.id);
-      return sendJson(res, 200, { tasks:tasks.map(publicGeneration), balance:wallet.balance });
-    }
-    const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
-    if (generationMatch && req.method === 'DELETE') {
-      const user = await requireUser(req, res); if (!user) return; const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return; const id = safeId(generationMatch[1]);
-      const task = findGeneration(user.id, id, scope); if (!task) return sendJson(res, 404, { error: '生成记录不存在' });
-      if (activeGenerations.has(id)||['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
-      const deleted=await deleteGenerationRecord(user.id,task);
-      return sendJson(res, 200, { ok: true, ...deleted });
-    }
-
-    if (url.pathname === '/api/files/sync' && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const deviceId = scope.deviceId || normalizeDeviceId(url.searchParams.get('deviceId'));
-      if (!deviceId) return sendJson(res, 400, { error: '设备标识无效' });
-      const page = listAssetChanges(user.id, {
-        deviceId,
-        workspaceId:scope.workspaceId,
-        cursor: url.searchParams.get('cursor'),
-        limit: parseLimit(url.searchParams.get('limit')),
-      });
-      const requestedAssetIds=[...new Set(String(url.searchParams.get('assetIds')||'').split(',').map(safeId).filter(Boolean))].slice(0,500);
-      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { workspaceId:scope.workspaceId, limit: parseLimit(url.searchParams.get('limit')) });
-      const requestedDeliveries = requestedAssetIds.length ? findCloudAssets(user.id, requestedAssetIds, { deviceId, workspaceId:scope.workspaceId }) : [];
-      const deliveries=[...new Map([...pendingDeliveries,...requestedDeliveries].map(asset=>[asset.id,asset])).values()];
-      deliveries.forEach(asset => markAssetDeliveryPending(user.id, deviceId, asset.id));
-      return sendJson(res, 200, {
-        deviceId,
-        changes: page.items.map(change => ({
-          seq: change.seq,
-          action: change.action,
-          assetId: change.assetId,
-          asset: change.action === 'delete' ? null : publicAsset(change.asset),
-        })),
-        deliveries: deliveries.map(publicAsset),
-        nextCursor: page.nextCursor,
-        hasMore: page.hasMore,
-      });
-    }
-
-    const singleAssetMatch = url.pathname.match(/^\/api\/files\/([\w-]+)$/);
-    if (singleAssetMatch && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const asset = findAsset(user.id, singleAssetMatch[1], scope);
-      return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 404, { error: '文件不存在' });
-    }
-
-    if (url.pathname === '/api/files' && req.method === 'GET') {
-      const user = requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const cursor = url.searchParams.get('cursor');
-      const page = listAssets(user.id, {
-        kind: url.searchParams.get('kind'),
-        search: url.searchParams.get('search'),
-        deviceId:scope.deviceId,
-        workspaceId:scope.workspaceId,
-        limit: parseLimit(url.searchParams.get('limit')),
-        cursor,
-        includeTotal: !cursor || url.searchParams.get('includeTotal') === '1',
-      });
-      setPageHeaders(res, page);
-      return sendJson(res, 200, page.items.map(publicAsset));
-    }
-    // 客户端诊断日志上传。请求体就是客户端 gzip 好的日志包，服务端直接转存对象
-    // 存储；素材直传那套 intent 状态机在这里没有价值（不入素材库、不需要秒传），
-    // 而日志包本身只有几百 KB，走服务端反而少两次往返。
-    if (url.pathname === '/api/support/logs' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      if (!supportLogStorageReady) return sendJson(res, 503, { error: '诊断日志上传服务尚未配置' });
-      if (!supportLogRateAllowed(user.id)) return sendJson(res, 429, { error: '日志上传过于频繁，请稍后再试' });
-      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-      if (contentType !== SUPPORT_LOG_MIME) return sendJson(res, 415, { error: '日志包必须以 application/gzip 提交' });
-      const bundle = await bodyBuffer(req, supportLogMaxBytes, `日志包不能超过 ${Math.round(supportLogMaxBytes / (1024 * 1024))} MB`);
-      if (bundle.length < 3) return sendJson(res, 400, { error: '日志包为空' });
-      if (bundle[0] !== 0x1f || bundle[1] !== 0x8b) return sendJson(res, 415, { error: '日志包必须是 gzip 数据' });
-      const note = String(url.searchParams.get('note') || '').replace(/[\r\n\u0000-\u001f]+/g, ' ').trim().slice(0, 500);
-      const objectKey = supportLogObjectKey(user.id);
-      await putSupportLogObject(objectKey, bundle);
-      const event = appendSystemEvent({
-        level: 'info',
-        category: 'client_log',
-        userId: user.id,
-        message: note || '客户端上传诊断日志',
-        details: {
-          objectKey,
-          size: bundle.length,
-          note,
-          username: user.username,
-          appVersion: String(url.searchParams.get('version') || '').trim().slice(0, 40),
-          platform: String(url.searchParams.get('platform') || '').trim().slice(0, 40),
-          deviceId: normalizeDeviceId(url.searchParams.get('deviceId')),
-          userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
-        },
-      });
-      // 用户拿到短编号后报给客服，后台按编号直接定位这一次上传。
-      return sendJson(res, 201, { ok: true, reference: event.id.slice(0, 8), size: bundle.length, uploadedAt: event.createdAt });
-    }
-    if (url.pathname === '/api/files/uploads/init' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      if (!directUploadEnabled || !r2Configured) return sendJson(res, 503, { error: '直传暂未启用' });
-      if (!uploadInitRateAllowed(user.id)) return sendJson(res, 429, { error: '上传请求过于频繁，请稍后再试' });
-      if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) return sendJson(res, 429, { error: '未完成上传数量过多，请先完成或稍后重试' });
-      const input = await bodyJson(req, 32_000);
-      const mimeType = normalizeUploadMime(input.mimeType, input.name);
-      if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) return sendJson(res, 415, { error: '只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' });
-      const size = Number(input.size);
-      const sizeLimit = uploadSizeLimit(mimeType);
-      if (!Number.isSafeInteger(size) || size <= 0) return sendJson(res, 400, { error: '文件大小无效' });
-      if (size > sizeLimit) return sendJson(res, 413, { error: imageTypes.has(mimeType) ? '单张图片不能超过 20 MB' : '视频或音频不能超过 25 MB' });
-      const name = String(input.name || 'file').replace(/[\r\n\u0000-\u001f]/g, '').trim().slice(0, 160) || 'file';
-      const suppliedHash = input.sha256 === undefined || input.sha256 === null || input.sha256 === '' ? '' : String(input.sha256).trim().toLowerCase();
-      if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) return sendJson(res, 400, { error: 'sha256 格式无效' });
-      if (suppliedHash) {
-        const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true, deviceId:scope.deviceId, workspaceId:scope.workspaceId });
-        if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) {
-          return sendJson(res, 200, { mode: 'reuse', asset: publicAsset(existingAsset), sha256: suppliedHash });
-        }
-      }
-      const uploadId = randomUUID();
-      const assetId = randomUUID();
-      const createdAt = now();
-      const expiresAt = new Date(Date.now() + Math.min(uploadIntentExpiresSeconds, uploadUrlExpiresSeconds) * 1000).toISOString();
-      const intent = {
-        id: uploadId,
-        userId: user.id,
-        assetId,
-        temporaryObjectKey: pendingUploadKey(user.id, uploadId, mimeType, name),
-        finalObjectKey: finalUploadKey(user.id, assetId, mimeType, name),
-        name,
-        kind: uploadKind(mimeType),
-        mimeType,
-        expectedSize: size,
-        sha256: suppliedHash || null,
-        clientWidth: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.width) || 0))) || null : null,
-        clientHeight: imageTypes.has(mimeType) ? Math.max(0, Math.min(100000, Math.round(Number(input.height) || 0))) || null : null,
-        status: 'pending',
-        expiresAt,
-        createdAt,
-        updatedAt: createdAt,
-      };
-      createUploadIntent(intent);
-      const uploadUrl = await signedUploadUrl(intent.temporaryObjectKey, mimeType, Math.min(uploadIntentExpiresSeconds, uploadUrlExpiresSeconds));
-      return sendJson(res, 201, {
-        uploadId,
-        assetId,
-        method: 'PUT',
-        uploadUrl,
-        headers: { 'Content-Type': mimeType },
-        expiresAt,
-      });
-    }
-    const uploadStatusMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)$/);
-    if (uploadStatusMatch && req.method === 'GET') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const intent = findUploadIntent(user.id, uploadStatusMatch[1]);
-      if (!intent) return sendJson(res, 404, { error: '上传任务不存在' });
-      const asset = intent.status === 'completed' ? findAsset(user.id, intent.assetId, scope) : null;
-      return sendJson(res, 200, { uploadId: intent.id, assetId: intent.assetId, status: intent.status, expiresAt: intent.expiresAt, asset: asset ? publicAsset(asset) : null });
-    }
-    const uploadCompleteMatch = url.pathname.match(/^\/api\/files\/uploads\/([\w-]+)\/complete$/);
-    if (uploadCompleteMatch && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      if (!directUploadEnabled || !r2Configured) return sendJson(res, 503, { error: '直传暂未启用' });
-      const uploadId = uploadCompleteMatch[1];
-      const existing = findUploadIntent(user.id, uploadId);
-      if (!existing) return sendJson(res, 404, { error: '上传任务不存在' });
-      if (existing.status === 'completed') {
-        const asset = findAsset(user.id, existing.assetId, scope);
-        return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
-      }
-      if (existing.status === 'expired') return sendJson(res, 410, { error: '上传凭证已过期，请重新选择文件' });
-      if (existing.status === 'failed') return sendJson(res, 422, { error: '上传文件验证失败，请重新选择文件' });
-      const nowIso = now();
-      if (existing.expiresAt <= nowIso) {
-        const expired = expireUploadIntent(user.id, uploadId, nowIso);
-        if (expired) await deleteObject(expired.temporaryObjectKey).catch(error => console.warn(`[upload] 清理过期 pending 失败 uploadId=${uploadId}`, error.message));
-        return sendJson(res, 410, { error: '上传凭证已过期，请重新选择文件' });
-      }
-      if (!claimUploadIntent(user.id, uploadId, nowIso)) {
-        const current = findUploadIntent(user.id, uploadId);
-        if (current?.status === 'completed') {
-          const asset = findAsset(user.id, current.assetId, scope);
-          return asset ? sendJson(res, 200, publicAsset(asset)) : sendJson(res, 409, { error: '上传记录不完整，请联系支持' });
-        }
-        return sendJson(res, 202, { uploadId, assetId: existing.assetId, status: current?.status || 'verifying' });
-      }
-      const intent = findUploadIntent(user.id, uploadId);
-      let meta;
-      try {
-        meta = await verifyUploadedObject(intent);
-        const finalMeta = await promoteUploadedObject(intent);
-        const extension = uploadExtension(intent.mimeType, intent.name);
-        const asset = {
-          id: intent.assetId,
-          ownerId: user.id,
-          name: intent.name,
-          kind: intent.kind,
-          mimeType: intent.mimeType,
-          size: meta.size,
-          ...(intent.sha256 ? { sha256: intent.sha256 } : {}),
-          storageName: `${intent.assetId}${extension}`,
-          source: 'upload',
-          sourceGenerationId: '',
-          sourceUrl: '',
-          objectKey: intent.finalObjectKey,
-          objectUploadedAt: nowIso,
-          ...(scope.desktop ? { originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId } : {}),
-          ...(intent.kind === 'image' && intent.clientWidth && intent.clientHeight ? { width: intent.clientWidth, height: intent.clientHeight } : {}),
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
-        completeUploadIntentWithAsset(user.id, uploadId, { actualSize: finalMeta.size || meta.size, objectEtag: finalMeta.etag || meta.etag, asset, nowIso });
-        await deleteObject(intent.temporaryObjectKey).catch(error => console.warn(`[upload] 清理 pending 失败 uploadId=${uploadId}`, error.message));
-        return sendJson(res, 201, publicAsset(asset));
-      } catch (error) {
-        const code = error.code || 'UPLOAD_VERIFY_FAILED';
-        if (code.startsWith('UPLOAD_')) {
-          markUploadIntentFailed(user.id, uploadId, { errorCode: code, actualSize: error.actualSize ?? meta?.size ?? null, objectEtag: error.objectEtag ?? meta?.etag ?? null, nowIso: now() });
-          await deleteObject(intent.temporaryObjectKey).catch(() => {});
-          return sendJson(res, error.statusCode || 422, { error: error.message || '上传文件验证失败', code });
-        }
-        throw Object.assign(new Error(`上传文件归档失败：${error.message}`), { statusCode: 502, cause: error });
-      }
-    }
-    const assetPreviewMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/preview$/);
-    if (assetPreviewMatch && req.method === 'GET') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const asset = findAsset(user.id, assetPreviewMatch[1], scope);
-      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
-      if (asset.kind !== 'image') return sendJson(res, 415, { error: '只有图片支持缩略图预览' });
-      // Serve a local image first so gallery rendering never waits on remote storage.
-      const localFile = path.join(assetFilesDir(user.id), asset.storageName);
-      if (await fs.access(localFile).then(() => true).catch(() => false)) {
-        return serveFile(res, localFile, asset.mimeType, `private, max-age=${assetPreviewCacheSeconds}`);
-      }
-      if (asset.objectKey) {
-        const previewUrl = await signedAssetUrl(asset.objectKey, assetPreviewCacheSeconds + 60, { cacheControl: `private, max-age=${assetPreviewCacheSeconds}` });
-        res.writeHead(302, { Location: previewUrl, 'Cache-Control': `private, max-age=${assetPreviewCacheSeconds}` });
-        return res.end();
-      }
-      return sendJson(res, 404, { error: '文件内容不存在' });
-    }
-    // 批量入口：客户端保存本地文件后一次提交一整页接收确认，避免每条素材一次 HTTP 往返。
-    // 单条被拒绝不会让整个请求失败，逐条结果交给客户端判断哪些需要重试。
-    if (url.pathname === '/api/files/local-ready' && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const input = await bodyJson(req);
-      const items = Array.isArray(input.items) ? input.items : [];
-      if (!items.length) return sendJson(res, 400, { error: '缺少本地接收确认条目' });
-      if (items.length > localReadyBatchLimit) return sendJson(res, 400, { error: `单次最多确认 ${localReadyBatchLimit} 个素材` });
-      const deviceId = scope.deviceId || normalizeDeviceId(input.deviceId);
-      const results = [];
-      for (const item of items) {
-        const assetId = safeId(item?.id);
-        const asset = assetId ? findAsset(user.id, assetId, scope) : null;
-        if (!asset) {
-          results.push({ id: String(item?.id || ''), ok: false, error: '文件不存在' });
-          continue;
-        }
-        const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...item, deviceId });
-        results.push(outcome.error ? { id: asset.id, ok: false, error: outcome.error } : { id: asset.id, ok: true });
-      }
-      return sendJson(res, 200, { deviceId, acknowledged: results.filter(result => result.ok).length, results });
-    }
-    const localReadyMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/local-ready$/);
-    if (localReadyMatch && req.method === 'POST') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const asset = findAsset(user.id, localReadyMatch[1], scope);
-      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
-      const input = await bodyJson(req);
-      const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...input, deviceId: scope.deviceId || normalizeDeviceId(input.deviceId) });
-      if (outcome.error) return sendJson(res, outcome.status, { error: outcome.error });
-      return sendJson(res, 200, publicAsset(outcome.asset));
-    }
-    const directMediaMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/direct$/);
-    if (directMediaMatch && req.method === 'GET') {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const asset = findAsset(user.id, directMediaMatch[1], scope);
-      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
-      // Prefer a server-side local copy before issuing a private R2 redirect.
-      const localFile = path.join(assetFilesDir(user.id), asset.storageName);
-      if (await fs.access(localFile).then(() => true).catch(() => false)) {
-        res.writeHead(302, { Location: `/api/files/${asset.id}/content`, 'Cache-Control': 'private, no-store' });
-        return res.end();
-      }
-      if (asset.objectKey) {
-        res.writeHead(302, { Location: await signedAssetUrl(asset.objectKey), 'Cache-Control': 'private, no-store' });
-        return res.end();
-      }
-      if (await servePendingGenerationSource(res, asset)) return;
-      return sendJson(res, 404, { error: '文件内容不存在' });
-    }
-    const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content))?$/);
-    if (fileMatch) {
-      const user = await requireUser(req, res); if (!user) return;
-      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return;
-      const asset = findAsset(user.id, fileMatch[1], scope);
-      if (!asset) return sendJson(res, 404, { error: '文件不存在' });
-      if (req.method === 'GET' && fileMatch[2]) {
-        const localFile = path.join(assetFilesDir(user.id), asset.storageName);
-        if (await fs.access(localFile).then(() => true).catch(() => false)) return serveFile(res, localFile, asset.mimeType);
-        if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); return res.end(); }
-        if (await servePendingGenerationSource(res, asset)) return;
-        return sendJson(res, 404, { error:'文件内容不存在' });
-      }
-      if (req.method === 'PATCH' && !fileMatch[2]) {
-        const input = await bodyJson(req);
-        const name = String(input.name || '').trim().replace(/[\r\n]/g, '').slice(0, 160);
-        if (!name) return sendJson(res, 400, { error: '文件名不能为空' });
-        asset.name = name; await saveAsset(user.id, asset); return sendJson(res, 200, publicAsset(asset));
-      }
-      if (req.method === 'DELETE' && !fileMatch[2]) {
-        const task = asset.sourceGenerationId ? findGeneration(user.id, asset.sourceGenerationId, scope) : null;
-        if (task) {
-          if (activeGenerations.has(task.id) || ['queued','running'].includes(task.status)) return sendJson(res, 409, { error: '任务正在生成中，完成后才能删除' });
-          const deleted = await deleteGenerationRecord(user.id, task);
-          return sendJson(res, 200, { ok: true, ...deleted });
-        }
-        await deleteAssetRecord(user.id, asset);
-        return sendJson(res, 200, { ok: true, deletedAssetId: asset.id });
-      }
-    }
 
     const downloadMatch = url.pathname.match(/^\/downloads\/(mac|windows)$/);
     if (downloadMatch && req.method === 'GET') {
@@ -3724,40 +2369,57 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(302, { Location: target, 'Cache-Control': 'no-store' });
       return res.end();
     }
-    return await serveStatic(res, url.pathname, req);
-  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error(error); if (res.headersSent) return res.end(); const message = String(req.url || '').split('?')[0].startsWith('/api/admin/') ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), { error: message, ...(error.publicData && typeof error.publicData === 'object' ? error.publicData : {}) }); }
+    return await serveStatic(res, url.pathname, req, { publicDir, appOnly:desktopAppOnly, sendJson });
+  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error({ requestId, url:req.url, code:error.code, message:error.message }); if (res.headersSent) return res.end(); const isAdminRequest = String(req.url || '').split('?')[0].startsWith('/api/admin/'); const message = isAdminRequest ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), publicHttpErrorBody(error, message)); }
 });
 
 // Importing server helpers from a test must never open the production port.
 // NODE_ENV is a deployment setting, not a reliable main-module check: running
 // `node --test test/auth.test.mjs` directly does not set it automatically.
+async function shutdownServer() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  serverDraining = true;
+  clearInterval(sessionSweeper);
+  clearInterval(uploadSweeper);
+  if (generationRecoverySweeper) clearInterval(generationRecoverySweeper);
+  if (generationJobPoller) clearInterval(generationJobPoller);
+  for (const timer of generationRetryTimers.values()) clearTimeout(timer);
+  for (const timer of providerTaskIdTimeoutTimers.values()) clearTimeout(timer);
+  for (const timer of r2ReferenceImageCleanupTimers.values()) clearTimeout(timer);
+  generationRetryTimers.clear();
+  providerTaskIdTimeoutTimers.clear();
+  r2ReferenceImageCleanupTimers.clear();
+  const serverClosed = new Promise(resolve => {
+    if (!server.listening) return resolve();
+    server.close(() => resolve());
+  });
+  const forceExitTimer = setTimeout(() => process.exit(0), providerSubmissionShutdownGraceMs + 5_000);
+  try {
+    const [runtimeResult, providerResult] = await Promise.all([
+      runtimeLifecycle.drain({ timeoutMs:providerSubmissionShutdownGraceMs }),
+      providerTransport.waitForProviderSubmissions(providerSubmissionShutdownGraceMs),
+      serverClosed,
+    ]);
+    if (runtimeResult.timedOut || providerResult.timedOut || activeRequests.size) {
+      console.warn('[shutdown] 优雅退出达到预算', { jobs:runtimeResult.pending, submissions:providerResult.pending, requests:activeRequests.size });
+    }
+  } catch (error) {
+    console.error('[shutdown] 等待上游任务号落库失败', error);
+  }
+  try { closeDatabase(); } catch (error) { console.error('关闭数据库失败', error); }
+  clearTimeout(forceExitTimer);
+  process.exit(0);
+}
+
 if (isMainModule && process.env.NODE_ENV !== 'test') {
+  process.once('SIGINT', shutdownServer);
+  process.once('SIGTERM', shutdownServer);
   server.listen(port, '127.0.0.1', () => {
     console.log(`GuGu AI: http://127.0.0.1:${port}`);
     // Recovery runs after the port is open so a backlog never delays startup.
-    recoverPendingGenerations().catch(error => console.error('启动恢复失败', error));
+    generationRecoverySweeper = startGenerationRecoverySweeper();
+    generationJobPoller = startGenerationJobPoller();
     startModelRouteMonitor();
   });
-
-  // Checkpoint the WAL on the way out so the .db file is self-contained.
-  let shuttingDown = false;
-  for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, async () => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      clearInterval(sessionSweeper);
-      clearInterval(uploadSweeper);
-      server.close();
-      const forceExitTimer = setTimeout(() => process.exit(0), providerSubmissionShutdownGraceMs + 5_000);
-      try {
-        const result = await waitForProviderSubmissions();
-        if (result.timedOut) console.warn('[shutdown] 等待上游任务号落库超时', { pending:result.pending });
-      } catch (error) {
-        console.error('[shutdown] 等待上游任务号落库失败', error);
-      }
-      try { closeDatabase(); } catch (error) { console.error('关闭数据库失败', error); }
-      clearTimeout(forceExitTimer);
-      process.exit(0);
-    });
-  }
 }

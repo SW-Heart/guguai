@@ -248,7 +248,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({ size: upstreamPayload.length, sha256: digest, mimeType: 'video/mp4', deviceId: 'device-a-123456' }),
   });
-  assert.equal(acknowledged.status, 200);
+  assert.equal(acknowledged.status, 200, await acknowledged.clone().text());
   const acknowledgedAsset = await acknowledged.json();
   assert.equal(acknowledgedAsset.deliveryStatus, 'local_ready');
   assert.equal(acknowledgedAsset.size, upstreamPayload.length);
@@ -307,6 +307,24 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const staleProjectSaveData = await staleProjectSave.json();
   assert.equal(staleProjectSaveData.code, 'PROJECT_VERSION_CONFLICT');
   assert.notEqual(staleProjectSaveData.project.title, '不应覆盖的新标题');
+
+  const concurrentRevision = deletedWholeShotData.project.revision;
+  const concurrentResponses = await Promise.all([
+    fetch(`${base}/api/drama/projects/${dramaProjectId}`, {
+      method:'PATCH', headers:{ ...headers, 'Content-Type':'application/json' },
+      body:JSON.stringify({ revision:concurrentRevision, title:'并发编辑一' }),
+    }),
+    fetch(`${base}/api/drama/projects/${dramaProjectId}`, {
+      method:'PATCH', headers:{ ...headers, 'Content-Type':'application/json' },
+      body:JSON.stringify({ revision:concurrentRevision, title:'并发编辑二' }),
+    }),
+  ]);
+  const concurrentData = await Promise.all(concurrentResponses.map(response => response.json()));
+  assert.equal(concurrentResponses.filter(response => response.status === 200).length, 1);
+  const concurrentConflict = concurrentData.find((data, index) => concurrentResponses[index].status === 409);
+  assert.equal(concurrentConflict.code, 'PROJECT_VERSION_CONFLICT');
+  assert.equal(concurrentConflict.project.revision, concurrentRevision + 1);
+  assert.ok(['并发编辑一', '并发编辑二'].includes(concurrentConflict.project.title));
 
   const deletionSync = await fetch(`${base}/api/files/sync?deviceId=device-a-123456&cursor=${encodeURIComponent(thirdSyncData.nextCursor)}&limit=20`, { headers });
   assert.equal(deletionSync.status, 200);

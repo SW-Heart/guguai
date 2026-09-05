@@ -52,6 +52,9 @@ test('empty database creates the R2-only schema v1 baseline', async () => {
   try {
     assert.equal(dbModule.readSchemaVersion(), 1);
     assert.equal(dbModule.readMeta('schema_baseline'), 'r2-only-v1');
+    assert.equal(dbModule.readMeta('schema_min_rollback_version'), '1');
+    assert.match(dbModule.readMeta('schema_checksum'), /^[a-f0-9]{64}$/);
+    assert.deepEqual(handle.prepare('SELECT version, name, checksum, rollback_version AS rollbackVersion FROM schema_migrations').all().map(row => ({ ...row, checksum:row.checksum.length })), [{ version:1, name:'r2-only-v1', checksum:64, rollbackVersion:1 }]);
     const tables = handle.prepare(`
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -62,6 +65,7 @@ test('empty database creates the R2-only schema v1 baseline', async () => {
     const columns = tables.flatMap(({ name }) => handle.prepare(`PRAGMA table_info(${name})`).all());
     assert.deepEqual(columns.filter(column => column.name.toLowerCase().includes('oss')), []);
     assert.ok(handle.prepare('PRAGMA table_info(assets)').all().some(column => column.name === 'object_key'));
+    assert.ok(handle.prepare('PRAGMA table_info(drama_projects)').all().some(column => column.name === 'revision'));
     const uploadColumns = handle.prepare('PRAGMA table_info(upload_intents)').all().map(column => column.name);
     assert.ok(uploadColumns.includes('temporary_object_key'));
     assert.ok(uploadColumns.includes('final_object_key'));
@@ -69,6 +73,65 @@ test('empty database creates the R2-only schema v1 baseline', async () => {
     assert.ok(handle.prepare('SELECT COUNT(*) AS count FROM model_controls').get().count > 0);
   } finally {
     dbModule.closeDatabase({ checkpoint: false });
+  }
+});
+
+test('schema migration metadata rejects a tampered checksum before startup', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'schema-metadata-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    const creator = await isolatedDbModule();
+    creator.openDatabase({ file });
+    creator.closeDatabase({ checkpoint:false });
+    const tampered = new DatabaseSync(file);
+    tampered.prepare("UPDATE schema_migrations SET checksum = 'tampered' WHERE version = 1").run();
+    tampered.close();
+    const reopener = await isolatedDbModule();
+    assert.throws(() => reopener.openDatabase({ file }), /数据库迁移记录校验失败/);
+    assert.throws(() => reopener.database(), /数据库尚未打开/);
+  } finally {
+    rmSync(dir, { recursive:true, force:true });
+  }
+});
+
+test('existing R2 baseline adds the drama project revision column without losing data', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'drama-revision-migration-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    const creator = await isolatedDbModule();
+    const handle = creator.openDatabase({ file });
+    const userId = randomUUID();
+    const projectId = randomUUID();
+    const timestamp = '2026-09-05T00:00:00.000Z';
+    handle.prepare(`
+      INSERT INTO users(id, username, password_hash, created_at, doc_json)
+      VALUES(:id, :username, 'scrypt:x:y', :createdAt, :docJson)`).run({
+      id: userId, username: `revision-${userId}`, createdAt: timestamp, docJson: JSON.stringify({ id:userId }),
+    });
+    handle.prepare(`
+      INSERT INTO drama_projects(id, user_id, title, revision, created_at, updated_at, doc_json)
+      VALUES(:id, :userId, '保留项目', 7, :createdAt, :updatedAt, :docJson)`).run({
+      id: projectId, userId, createdAt: timestamp, updatedAt: timestamp, docJson: JSON.stringify({ id:projectId, revision:7, title:'保留项目' }),
+    });
+    creator.closeDatabase({ checkpoint:false });
+
+    const legacy = new DatabaseSync(file);
+    legacy.exec('ALTER TABLE drama_projects DROP COLUMN revision');
+    legacy.close();
+
+    const reopener = await isolatedDbModule();
+    const reopened = reopener.openDatabase({ file });
+    try {
+      assert.ok(reopened.prepare('PRAGMA table_info(drama_projects)').all().some(column => column.name === 'revision'));
+      const row = reopened.prepare('SELECT title, revision, doc_json FROM drama_projects WHERE id = :id').get({ id: projectId });
+      assert.equal(row.title, '保留项目');
+      assert.equal(row.revision, 7);
+      assert.equal(JSON.parse(row.doc_json).revision, 7);
+    } finally {
+      reopener.closeDatabase({ checkpoint:false });
+    }
+  } finally {
+    rmSync(dir, { recursive:true, force:true });
   }
 });
 

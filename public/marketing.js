@@ -1,4 +1,7 @@
+import { createApiClient } from './api-client.js?v=3';
+
 (() => {
+  const { request: api } = createApiClient({ responseShapeFor: () => 'object' });
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
   const isHomePage = document.body.dataset.page === 'home';
   if (!isHomePage) {
@@ -46,11 +49,6 @@
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 7v5l3.5 2"/></svg>';
   };
 
-  const readJson = async response => {
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw Object.assign(new Error(payload.error || '请求暂时无法完成'), { status:response.status });
-    return payload;
-  };
   const loginDestination = credits => `/login?next=${encodeURIComponent(credits ? `/pricing?purchase=${credits}` : '/pricing')}`;
   const pricePage = document.querySelector('[data-price-page]');
   const siteAccountMenu = document.querySelector('#siteAccountMenu');
@@ -75,12 +73,7 @@
   };
   const loadSiteAccount = async () => {
     try {
-      const response = await fetch('/api/auth/me', { cache:'no-store', headers:{ Accept:'application/json' } });
-      if (response.status === 401) {
-        renderSiteAccount(null);
-        return null;
-      }
-      const payload = await readJson(response);
+      const payload = await api('/api/auth/me', { cache:'no-store' });
       renderSiteAccount(payload.user);
       return payload.user || null;
     } catch {
@@ -101,8 +94,7 @@
   siteLogoutButton?.addEventListener('click', async () => {
     siteLogoutButton.disabled = true;
     try {
-      const response = await fetch('/api/auth/logout', { method:'POST', headers:{ Accept:'application/json' } });
-      await readJson(response);
+      await api('/api/auth/logout', { method:'POST', body:'{}' });
       window.location.assign('/');
     } catch (error) {
       if (siteAccountSummary) siteAccountSummary.textContent = error.message || '退出登录失败，请稍后重试';
@@ -127,7 +119,8 @@
   const paymentRefresh = document.querySelector('#paymentRefresh');
   const purchaseButtons = [...document.querySelectorAll('[data-buy-credits]')];
   const orderFromUrl = new URLSearchParams(window.location.search).get('order') || '';
-  let pendingOrderNo = /^[A-Za-z0-9_-]+$/.test(orderFromUrl) ? orderFromUrl : sessionStorage.getItem('gugu_alipay_order') || '';
+  const paymentOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(String(user?.id || user?.username || 'anonymous'))}`;
+  let pendingOrderNo = /^[A-Za-z0-9_-]+$/.test(orderFromUrl) ? orderFromUrl : '';
   let purchaseUser = null;
   let purchaseSessionReady = false;
   let paymentPollTimer = 0;
@@ -135,6 +128,7 @@
 
   const showPurchaseAccount = user => {
     purchaseUser = user || null;
+    if (!orderFromUrl) pendingOrderNo = user ? sessionStorage.getItem(paymentOrderStorageKey(user)) || '' : '';
     purchaseSessionReady = true;
     const signedIn = Boolean(user);
     const identityText = user ? `${user.nickname || user.displayName || user.username || '已登录'} · ${formatNumber(user.credits, 0)} 积分` : '购买前需要登录';
@@ -177,15 +171,10 @@
     paymentRefresh.disabled = true;
     if (!polling) setPaymentTracker('正在确认支付结果', '正在向支付宝查询这笔订单，请稍候。');
     try {
-      const response = await fetch(`/api/payments/alipay/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', headers:{ Accept:'application/json', 'Content-Type':'application/json' }, body:'{}' });
-      if (response.status === 401) {
-        window.location.assign(`/login?next=${encodeURIComponent(`/pricing?order=${pendingOrderNo}`)}`);
-        return;
-      }
-      const result = await readJson(response);
+      const result = await api(`/api/payments/alipay/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', body:'{}' });
       if (result.order?.status === 'PAID') {
         stopPaymentPolling();
-        sessionStorage.removeItem('gugu_alipay_order');
+        sessionStorage.removeItem(paymentOrderStorageKey(purchaseUser));
         pendingOrderNo = '';
         setPaymentTracker('积分已经到账', `${formatNumber(result.order.credits, 0)} 积分已加入你的账户。`, 'paid');
         await loadPurchaseAccount();
@@ -197,6 +186,10 @@
         schedulePaymentPolling();
       }
     } catch (error) {
+      if (error.status === 401) {
+        window.location.assign(`/login?next=${encodeURIComponent(`/pricing?order=${pendingOrderNo}`)}`);
+        return;
+      }
       setPaymentTracker('暂时无法确认订单', error.message || '请稍后再试。');
     } finally {
       paymentRefresh.disabled = false;
@@ -205,17 +198,16 @@
   const purchaseCredits = async (credits, button) => {
     button.disabled = true;
     try {
-      const response = await fetch('/api/payments/alipay/orders', { method:'POST', headers:{ Accept:'application/json', 'Content-Type':'application/json' }, body:JSON.stringify({ credits }) });
-      if (response.status === 401) {
-        window.location.assign(loginDestination(credits));
-        return;
-      }
-      const result = await readJson(response);
+      const result = await api('/api/payments/alipay/orders', { method:'POST', body:JSON.stringify({ credits }) });
       pendingOrderNo = result.order.outTradeNo;
-      sessionStorage.setItem('gugu_alipay_order', pendingOrderNo);
+      sessionStorage.setItem(paymentOrderStorageKey(purchaseUser), pendingOrderNo);
       setPaymentTracker('正在进入支付宝收银台', `将在当前页面展示 ¥${result.order.totalAmount} 的支付宝扫码入口。`);
       submitPaymentForm(result.paymentHtml);
     } catch (error) {
+      if (error.status === 401) {
+        window.location.assign(loginDestination(credits));
+        return;
+      }
       setPaymentTracker('支付订单创建失败', error.message || '请稍后再试。');
     } finally {
       button.disabled = false;
@@ -238,10 +230,11 @@
     requestAnimationFrame(() => requestedCard.scrollIntoView({ behavior:reducedMotion ? 'auto' : 'smooth', block:'center' }));
   }
   const purchaseSessionPromise = loadPurchaseAccount();
-  if (pendingOrderNo) {
+  void purchaseSessionPromise.then(() => {
+    if (!pendingOrderNo) return;
     setPaymentTracker('发现一笔待确认订单', '完成付款后，可以在这里刷新支付状态。');
-    if (orderFromUrl) void purchaseSessionPromise.then(() => refreshPayment());
-  }
+    if (orderFromUrl) void refreshPayment();
+  });
 
   const setStatus = (message, state = '') => {
     if (!status) return;
@@ -295,9 +288,7 @@
     setStatus('正在获取最新价格…');
     if (!catalog.children.length || catalog.querySelector('.price-loading')) catalog.innerHTML = '<div class="price-loading">正在同步今日模型价格</div>';
     try {
-      const response = await fetch('/api/public/model-prices', { cache: 'no-store', headers: { Accept: 'application/json' } });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload || !Array.isArray(payload.items)) throw new Error(payload?.error || '价格服务暂时不可用');
+      const payload = await api('/api/public/model-prices', { cache:'no-store', responseShape: data => Boolean(data && typeof data === 'object' && Array.isArray(data.items)) });
       renderCatalog(payload);
       setStatus('实时价格已更新', 'live');
       if (updated) updated.textContent = `更新时间：${formatDateTime(payload.generatedAt)}`;
