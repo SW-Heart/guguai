@@ -27,7 +27,11 @@ export function createGenerationJobPolicy({
   function nextRunAt(task, kind, at = Date.now()) {
     if (kind === 'reconcile_submission') return providerTaskIdDeadline(task);
     if (kind === 'archive') {
-      const failures = Math.max(1, Number(task?.archiveFailureCount) || 0);
+      const failures = Math.max(0, Number(task?.archiveFailureCount) || 0);
+      if (!failures) {
+        const deadline = Date.parse(task?.localDeliveryDeadlineAt || '');
+        return Math.max(at, Number.isFinite(deadline) ? deadline : at);
+      }
       return at + Math.min(archiveRescheduleMs * 2 ** Math.min(failures - 1, 4), 60 * 60_000);
     }
     if (kind === 'poll') {

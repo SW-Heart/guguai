@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 
 import { openDatabase, closeDatabase, sql, resetForTests } from '../lib/db.mjs';
 import {
-  configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject,
+  configureCursors, listGenerations, listAssets, listDramaProjects, latestDramaProject, deleteDramaProject,
   claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationQueueStats, saveGenerationRecord, saveAssetRecord, saveDramaProjectRecord,
   parseLimit, decodeCursor, encodeCursor, InvalidCursorError,
   findGeneration, findCloudAssets, claimLegacyWorkspace, listPendingGenerations, listAssetChanges, listPendingAssetDeliveries, markAssetDeliveryPending, markAssetDeliveryReady, generationJobLeaseActive, renewGenerationJobLease, rescheduleGenerationJob, deleteAsset, MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT,
@@ -158,6 +158,11 @@ test('store pagination', async t => {
     assert.equal(findCloudAssets(userId, ['asset-b'], scopeA).length, 0);
     assert.deepEqual(listDramaProjects(userId, scopeA).items.map(item => item.id), ['project-a']);
     assert.equal(latestDramaProject(userId, scopeB).id, 'project-b');
+    assert.equal(deleteDramaProject(userId, 'project-b', scopeA), false, '不能删除其他工作区的项目');
+    assert.equal(deleteDramaProject(userId, 'project-a', scopeA), true);
+    assert.deepEqual(listDramaProjects(userId, scopeA).items, []);
+    assert.equal(findGeneration(userId, 'gen-a', scopeA).id, 'gen-a', '删除项目不能删除生成任务');
+    assert.equal(listAssets(userId, scopeA).items[0].id, 'asset-a', '删除项目不能删除生成视频素材');
     assert.deepEqual(listPendingAssetDeliveries(userId, 'device-a-123456', { workspaceId:scopeA.workspaceId }).map(item => item.id), ['asset-a']);
 
     saveGenerationRecord(userId, { id:'legacy-generation', type:'image', status:'completed', assetId:'legacy-asset', createdAt, updatedAt:createdAt });

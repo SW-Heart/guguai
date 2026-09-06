@@ -29,7 +29,9 @@ test('generation job policy keeps recovery kind and bounded backoff deterministi
   assert.equal(policy.recoveryKind({ submissionUncertain: true }), 'reconcile_submission');
   assert.equal(policy.recoveryKind({ providerTaskId: 'task' }), 'poll');
   assert.equal(policy.recoveryKind({}), 'generation');
-  assert.equal(policy.nextRunAt({ archiveFailureCount: 2 }, 'archive', 1_000), 1_200);
+  assert.equal(policy.nextRunAt({ localDeliveryDeadlineAt:'1970-01-01T00:00:01.500Z' }, 'archive', 1_000), 1_500);
+  assert.equal(policy.nextRunAt({ localDeliveryDeadlineAt:'1970-01-01T00:00:00.500Z' }, 'archive', 1_000), 1_000);
+  assert.equal(policy.nextRunAt({ archiveFailureCount: 2, localDeliveryDeadlineAt:'1970-01-01T00:00:10.000Z' }, 'archive', 1_000), 1_200);
   assert.equal(policy.nextRunAt({ pollFailureCount: 2, provider: 'oai' }, 'poll', 1_000), 1_080);
   assert.equal(policy.nextRunAt({ deadline: 1_234 }, 'reconcile_submission', 1_000), 1_234);
 });

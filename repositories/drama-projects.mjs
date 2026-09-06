@@ -66,9 +66,10 @@ export function createDramaProjectRepository({ sql, keysetPage, scopeWhere, pars
       .get({ id, userId, ...scoped.params }));
   }
 
-  function deleteDramaProject(userId, id) {
-    return sql('DELETE FROM drama_projects WHERE id = :id AND user_id = :userId')
-      .run({ id, userId }).changes > 0;
+  function deleteDramaProject(userId, id, scope = {}) {
+    const scoped = scopeWhere(scope);
+    return sql(`DELETE FROM drama_projects WHERE id = :id AND user_id = :userId ${scoped.where.length ? `AND ${scoped.where.join(' AND ')}` : ''}`)
+      .run({ id, userId, ...scoped.params }).changes > 0;
   }
 
   function listDramaProjects(userId, { deviceId = '', workspaceId = '', limit = 100, cursor = null } = {}) {

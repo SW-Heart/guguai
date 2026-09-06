@@ -19,6 +19,10 @@ test('generation lifecycle service owns durable state markers', async () => {
   service.markProviderTaskPaused(task, new Error('网络中断'));
   assert.match(task.error, /网络中断/);
   service.markFinished({ status: 'completed' });
+  const archiving = { status:'running', archivePending:true, finishedAt:'2026-09-04T23:59:00.000Z' };
+  service.markArchivePending(archiving);
+  assert.equal(archiving.status, 'completed');
+  assert.equal(archiving.finishedAt, '2026-09-04T23:59:00.000Z');
   service.markSubmissionTimedOut(task);
   assert.equal(task.submissionUncertain, false);
   assert.equal(task.submissionTimedOut, true);

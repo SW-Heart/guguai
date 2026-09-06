@@ -659,7 +659,13 @@ import { createApiClient } from './api-client.js?v=3';
   }
 
   $('#loginForm').addEventListener('submit', login);
-  $('#logoutButton').addEventListener('click', async event => { const button = event.currentTarget; setButtonBusy(button, true, '退出中…'); try { await api('/api/admin/auth/logout', { method: 'POST', body: '{}' }); } finally { location.reload(); } });
+  $('#logoutButton').addEventListener('click', async event => {
+    const confirmed = await showAdminDialog({ kicker:'会话操作', title:'确认退出登录', description:'退出后需要重新登录才能继续访问管理后台。', html:'<p class="admin-dialog-confirmation">当前管理员会话会立即结束。</p>', submit:'确认退出', danger:true });
+    if (confirmed === null) return;
+    const button = event.currentTarget;
+    setButtonBusy(button, true, '退出中…');
+    try { await api('/api/admin/auth/logout', { method: 'POST', body: '{}' }); } finally { location.reload(); }
+  });
   document.querySelectorAll('.nav').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
   api('/api/admin/auth/session', { skipAuthRedirect: true }).then(result => { state.csrf = result.csrfToken; state.admin = result.admin; $('#adminName').textContent = result.admin.username; $('#adminLogin').classList.add('hidden'); $('#adminApp').classList.remove('hidden'); showView('overview'); }).catch(() => {});
 })();

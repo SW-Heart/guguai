@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=9';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=10';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
@@ -375,7 +375,7 @@ export function createMediaController({
           desktopHydrationAttempted.delete(assetId);
           const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
           desktopHydrationFailureCounts.set(assetId, failureCount);
-          const retryDelay = desktopHydrationRetryDelay(failureCount);
+          const retryDelay = error?.unavailable ? 0 : desktopHydrationRetryDelay(failureCount);
           console.warn('[desktop] 自动同步素材失败', { assetId, message:error.message, failureCount, retryDelay });
           if (!retryDelay) desktopHydrationForced.delete(assetId);
           if (assetId && retryDelay && !desktopHydrationRetryTimers.has(assetId)) {
@@ -537,11 +537,10 @@ export function createMediaController({
         : [...libraryFiles, ...page.items.filter(file => !libraryFiles.some(item => item.id === file.id))];
       localFileTotal = localStateChanged ? Math.max(page.total, libraryFiles.length) : page.total;
       if (reset && getFileKind() === 'all' && !search) {
-        if (localStateChanged) mergeStateFiles(page.items);
-        else {
-          state.files = mergeTransientFields(state.files, page.items, ['width','height']);
-          recordIndexes.invalidateFiles();
-        }
+        // The local library is paginated, while state.files is also the global
+        // lookup used by generation cards. Replacing it with page one makes
+        // valid completed assets beyond that page temporarily disappear.
+        mergeStateFiles(page.items);
       } else mergeStateFiles(page.items);
       notifyChanged();
       return state.files;

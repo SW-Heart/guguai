@@ -11,6 +11,9 @@ export function createMediaArchiveService({
   generationAssetName,
   generationSourceHeaders,
   assetObjectKey,
+  download,
+  put,
+  remove,
   now,
 }) {
   async function prepareGenerationAsset(userId, task, result) {
@@ -42,7 +45,11 @@ export function createMediaArchiveService({
     return asset;
   }
 
-  async function archiveGenerationResult(userId, task, resultUrl, { download, put, remove, leaseGuard } = {}) {
+  async function archiveGenerationResult(userId, task, resultUrl, overrides = {}) {
+    const downloadFile = overrides.download || download;
+    const putFile = overrides.put || put;
+    const removeFile = overrides.remove || remove;
+    const leaseGuard = overrides.leaseGuard;
     assertGenerationJobLease(task, leaseGuard);
     const assetId = task.assetId || `generation-${task.id}`;
     const existing = findAsset(userId, assetId);
@@ -56,22 +63,22 @@ export function createMediaArchiveService({
       const extension = generationAssetExtension(task);
       const storageName = `${assetId}${extension}`;
       const localFile = path.join(jobDir, storageName);
-      const saved = await download(resultUrl, localFile, 4, { headers:generationSourceHeaders(task, resultUrl) });
+      const saved = await downloadFile(resultUrl, localFile, 4, { headers:generationSourceHeaders(task, resultUrl) });
       assertGenerationJobLease(task, leaseGuard);
       const beforeUpload = findAsset(userId, assetId);
       const currentTask = findGeneration(userId, task.id);
       if (beforeUpload?.deliveryStatus === 'local_ready' || currentTask?.localReadyAt) return;
       const objectKey = beforeUpload?.objectKey || assetObjectKey(userId, storageName);
-      await put(objectKey, localFile, saved.contentType);
+      await putFile(objectKey, localFile, saved.contentType);
       try { assertGenerationJobLease(task, leaseGuard); }
       catch (error) {
-        if (!beforeUpload?.objectKey) await remove(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:task.id, message:cleanupError.message }));
+        if (!beforeUpload?.objectKey) await removeFile(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:task.id, message:cleanupError.message }));
         throw error;
       }
       const latest = findAsset(userId, assetId);
       const latestTask = findGeneration(userId, task.id);
       if (latest?.deliveryStatus === 'local_ready' || latestTask?.localReadyAt) {
-        if (!beforeUpload?.objectKey) await remove(objectKey).catch(error => console.warn('[generation] 清理并发归档对象失败', { generationId:task.id, message:error.message }));
+        if (!beforeUpload?.objectKey) await removeFile(objectKey).catch(error => console.warn('[generation] 清理并发归档对象失败', { generationId:task.id, message:error.message }));
         return;
       }
       const asset = {
@@ -98,7 +105,7 @@ export function createMediaArchiveService({
       };
       try { saveGenerationAsset(userId, asset, task, leaseGuard); }
       catch (error) {
-        if (error.code === 'GENERATION_JOB_LEASE_LOST' && !beforeUpload?.objectKey) await remove(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:task.id, message:cleanupError.message }));
+        if (error.code === 'GENERATION_JOB_LEASE_LOST' && !beforeUpload?.objectKey) await removeFile(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:task.id, message:cleanupError.message }));
         throw error;
       }
       task.assetId = assetId;

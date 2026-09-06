@@ -498,6 +498,7 @@ td b { color: var(--text); font-weight: 700; }
 .admin-dialog-check small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
 .admin-dialog-error { flex: 0 0 auto; min-height: 0; padding: 5px 27px 0; color: var(--danger); font-size: 12px; }
 .admin-dialog-error:empty { display: none; }
+.admin-dialog-confirmation { grid-column: 1 / -1; margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.6; }
 .admin-dialog-footer { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 9px; margin-top: 18px; padding: 18px 27px 25px; border-top: 1px solid var(--line); background: #101923aa; }
 .admin-dialog-footer button { min-height: 42px; }
 

@@ -91,7 +91,44 @@ import { createApiClient } from './api-client.js?v=3';
   siteLoginLink?.addEventListener('click', event => {
     if (siteAccountMenu?.classList.contains('is-signed-in')) event.preventDefault();
   });
+  let siteLogoutConfirmation = null;
+  const confirmSiteLogout = () => {
+    if (!siteLogoutConfirmation) {
+      const dialog = document.createElement('dialog');
+      dialog.id = 'siteLogoutConfirmDialog';
+      dialog.className = 'site-confirm-dialog';
+      dialog.setAttribute('aria-labelledby', 'siteLogoutConfirmTitle');
+      dialog.setAttribute('aria-describedby', 'siteLogoutConfirmMessage');
+      dialog.innerHTML = `<div class="site-confirm-card"><span class="site-confirm-kicker">账号操作</span><h2 id="siteLogoutConfirmTitle">确认退出登录</h2><p id="siteLogoutConfirmMessage">退出后需要重新登录才能继续购买积分或进入创作工作台。</p><footer><button class="secondary-button" data-site-logout-cancel type="button">取消</button><button class="primary-button" data-site-logout-confirm type="button">确认退出</button></footer></div>`;
+      document.body.append(dialog);
+      const state = { resolver:null, restoreFocus:null };
+      const settle = confirmed => {
+        const resolver = state.resolver;
+        const restoreFocus = state.restoreFocus;
+        state.resolver = null;
+        state.restoreFocus = null;
+        if (dialog.open) dialog.close();
+        resolver?.(confirmed);
+        window.requestAnimationFrame(() => { if (restoreFocus?.isConnected && !restoreFocus.disabled) restoreFocus.focus(); });
+      };
+      dialog.querySelector('[data-site-logout-cancel]').addEventListener('click', () => settle(false));
+      dialog.querySelector('[data-site-logout-confirm]').addEventListener('click', () => settle(true));
+      dialog.addEventListener('cancel', event => { event.preventDefault(); settle(false); });
+      dialog.addEventListener('click', event => { if (event.target === dialog) settle(false); });
+      siteLogoutConfirmation = () => {
+        if (state.resolver) settle(false);
+        state.restoreFocus = document.activeElement;
+        return new Promise(resolve => {
+          state.resolver = resolve;
+          dialog.showModal();
+          window.requestAnimationFrame(() => dialog.querySelector('[data-site-logout-confirm]').focus());
+        });
+      };
+    }
+    return siteLogoutConfirmation();
+  };
   siteLogoutButton?.addEventListener('click', async () => {
+    if (!await confirmSiteLogout()) return;
     siteLogoutButton.disabled = true;
     try {
       await api('/api/auth/logout', { method:'POST', body:'{}' });

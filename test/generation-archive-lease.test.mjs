@@ -11,6 +11,35 @@ import {
   insertUser,
   saveGenerationRecord,
 } from '../lib/store.mjs';
+import { createMediaArchiveService } from '../services/media-archive.mjs';
+
+test('generation archive uses its configured runtime dependencies without call-site overrides', async () => {
+  const calls = [];
+  let storedAsset = null;
+  const task = { id:'generation-default-deps', type:'video', sourceRequiresAuth:false };
+  const service = createMediaArchiveService({
+    assertGenerationJobLease:() => {},
+    findAsset:() => storedAsset,
+    findGeneration:() => task,
+    saveAsset:async () => {},
+    saveGenerationAsset:(_userId, asset) => { storedAsset = asset; },
+    withMediaTempDir:async (_label, callback) => callback('/tmp'),
+    generationAssetExtension:() => '.mp4',
+    generationAssetName:() => '生成视频.mp4',
+    generationSourceHeaders:() => ({}),
+    assetObjectKey:() => 'assets/result.mp4',
+    download:async () => { calls.push('download'); return { contentType:'video/mp4', size:12 }; },
+    put:async () => { calls.push('put'); },
+    remove:async () => { calls.push('remove'); },
+    now:() => '2026-09-06T00:00:00.000Z',
+  });
+
+  await service.archiveGenerationResult('user-default-deps', task, 'https://example.test/result.mp4');
+
+  assert.deepEqual(calls, ['download', 'put']);
+  assert.equal(storedAsset.objectKey, 'assets/result.mp4');
+  assert.equal(task.status, 'completed');
+});
 
 test('generation archive does not persist an asset after lease loss during upload', async () => {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;

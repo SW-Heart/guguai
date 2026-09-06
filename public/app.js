@@ -1,6 +1,6 @@
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=8';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=10';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=2';
@@ -12,7 +12,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=3';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=3';
+import { createMediaController } from './features/media/controller.js?v=4';
 import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
@@ -160,7 +160,9 @@ function taskLocalSyncing(task, file = fileById(task?.assetId)) {
   return !localReady;
 }
 function taskDisplayStatus(task, file = fileById(task?.assetId)) {
-  return taskLocalSyncing(task, file) ? 'running' : task?.status;
+  // Generation completion is terminal. Local delivery has its own syncing UI
+  // and must never make a completed provider task look as if it is generating again.
+  return task?.status;
 }
 function failureDeadline(task, observedAt = Date.now()) {
   const source = Date.parse(task?.finishedAt || task?.updatedAt || task?.createdAt || '');
@@ -615,6 +617,22 @@ let alipayPaymentPollTimer = 0;
 let creditPopoverCloseTimer = 0;
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('show'); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3200); }
 function emptyState(title, body, action='') { return `<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>${esc(title)}</h3><p>${esc(body)}</p>${action}</div>`; }
+function generationLoadingSkeleton() {
+  const cards = Array.from({ length:8 }, () => '<article class="task-card loading-skeleton-card"><div class="card-visual"><div class="card-placeholder"><div class="skeleton-frame"><i></i><i></i><i></i></div><div class="skeleton-card-lines"><i></i><i></i></div></div></div></article>').join('');
+  return `<div class="loading-skeleton loading-skeleton--gallery" role="status" aria-live="polite" aria-label="正在加载作品">${cards}</div>`;
+}
+function generationHistoryLoadingSkeleton() {
+  const rows = Array.from({ length:7 }, () => '<article class="generation-history-row loading-skeleton-history-row"><span class="skeleton-history-thumb"></span><span class="skeleton-history-copy"><i></i><i></i></span><span class="skeleton-history-status"><i></i></span><span class="skeleton-history-date"></span><span class="skeleton-history-credit"></span><span class="skeleton-history-actions"><i></i><i></i></span></article>').join('');
+  return `<div class="loading-skeleton loading-skeleton--history" role="status" aria-live="polite" aria-label="正在加载历史记录">${rows}</div>`;
+}
+function fileLibraryLoadingSkeleton() {
+  const cards = Array.from({ length:10 }, () => '<article class="file-card loading-skeleton-file"><div class="file-preview"><span class="skeleton-file-thumb"></span><div class="skeleton-file-copy"><i class="skeleton-file-line"></i><i class="skeleton-file-line short"></i></div></div></article>').join('');
+  return `<div class="loading-skeleton loading-skeleton--files" role="status" aria-live="polite" aria-label="正在加载文件库">${cards}</div>`;
+}
+function dramaProjectsLoadingSkeleton() {
+  const cards = Array.from({ length:7 }, () => '<article class="project-card loading-skeleton-project"><div class="skeleton-project-content"><i class="skeleton-project-kicker"></i><i class="skeleton-project-title"></i><i class="skeleton-project-title short"></i><span class="skeleton-project-footer"></span></div></article>').join('');
+  return `<div class="loading-skeleton loading-skeleton--projects" role="status" aria-live="polite" aria-label="正在加载短剧项目"><div class="project-library-toolbar loading-skeleton-project-toolbar"><span class="skeleton-project-search"></span><span class="skeleton-project-count"></span></div><div class="project-library-grid"><div class="create-project-card loading-skeleton-project-create"><span></span><i></i></div>${cards}</div></div>`;
+}
 
 let captchaRequest = null;
 let smsCountdownTimer = 0;
@@ -883,7 +901,6 @@ function setCreditBalance(balance) {
   state.credits = Number(balance) || 0;
   state.creditWallet = { ...state.creditWallet, balance:state.credits, available:Math.max(0, state.credits - (Number(state.creditWallet.held) || 0)) };
   $('#creditAmount').textContent = creditText(state.credits);
-  $('#menuAccountMeta').textContent = `${state.user?.role === 'admin' ? '管理员' : '当前账号'} · ${creditText(state.credits)} 积分`;
   renderCreditDetail();
   if ($('#creditPurchaseDialog')?.open) renderCreditPurchase();
 }
@@ -897,7 +914,6 @@ async function loadCredits() {
     state.creditTransactions = Array.isArray(result.transactions) ? result.transactions : [];
     state.credits = state.creditWallet.balance;
     $('#creditAmount').textContent = creditText(state.credits);
-    $('#menuAccountMeta').textContent = `${state.user?.role === 'admin' ? '管理员' : '当前账号'} · ${creditText(state.credits)} 积分`;
     updateImageCost();
     updateVideoCost();
     renderCreditDetail();
@@ -1433,13 +1449,52 @@ function loginReturnDestination() {
 function accountDisplayName(user = state.user) {
   return String(user?.nickname || user?.displayName || user?.username || 'user');
 }
+function accountUuid(user = state.user) {
+  return String(user?.id || user?.uuid || user?.userId || '').trim();
+}
+function ensureAccountMenuProfile() {
+  const menu = $('#accountMenu');
+  const profile = menu?.querySelector('.account-profile');
+  if (!menu || !profile) return null;
+  const copy = profile.querySelector('p');
+  if (copy) copy.className = 'account-profile-copy';
+  const legacyMeta = $('#menuAccountMeta');
+  legacyMeta?.remove();
+  menu.querySelector('.account-credit-row')?.remove();
+  if (!profile.querySelector('#copyAccountUuid')) {
+    const button = document.createElement('button');
+    button.id = 'copyAccountUuid';
+    button.className = 'account-uuid';
+    button.type = 'button';
+    button.title = '复制 UUID';
+    button.setAttribute('aria-label', '复制 UUID');
+    button.innerHTML = '<span>UUID</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';
+    button.onclick = event => { event.stopPropagation(); void copyAccountUuid(); };
+    copy?.append(button);
+  }
+  return profile;
+}
+async function copyAccountUuid() {
+  const uuid = accountUuid();
+  if (!uuid) return toast('暂无可复制的 UUID');
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(uuid);
+    else if (!copyTextFallback(uuid)) throw new Error('copy failed');
+    toast('UUID 已复制');
+  } catch {
+    toast('复制失败，请手动重试');
+  }
+}
 function updateAccountIdentity(user = state.user) {
   const displayName = accountDisplayName(user);
-  const initial = Array.from(displayName)[0]?.toUpperCase() || 'U';
+  const phone = String(user?.phoneNumber || '').replace(/\D/g, '');
+  const initial = phone.length >= 3 ? phone.slice(0, 3) : Array.from(displayName)[0]?.toUpperCase() || 'U';
   $('#accountName').textContent = displayName;
   $('#menuName').textContent = displayName;
   $('#accountInitial').textContent = initial;
   $('#menuInitial').textContent = initial;
+  $('#accountButton')?.setAttribute('aria-label', `打开${displayName}的用户菜单`);
+  ensureAccountMenuProfile();
 }
 function finishInitialWorkspaceSync() {
   state.initialSyncReady = true;
@@ -1582,7 +1637,8 @@ $('#accountSettingsDialog').addEventListener('close', () => {
 let deleteConfirmationResolver = null;
 let deleteConfirmationRestoreFocus = null;
 function settleDeleteConfirmation(confirmed) { const resolver = deleteConfirmationResolver; const restoreFocus = deleteConfirmationRestoreFocus; deleteConfirmationResolver = null; deleteConfirmationRestoreFocus = null; const dialog = $('#deleteConfirmDialog'); if (dialog.open) dialog.close(); resolver?.(confirmed); requestAnimationFrame(() => { if (restoreFocus?.isConnected && !restoreFocus.disabled) restoreFocus.focus(); }); }
-function confirmDelete({ title = '确认删除', message = '删除后无法恢复。' } = {}) { if (deleteConfirmationResolver) settleDeleteConfirmation(false); const dialog = $('#deleteConfirmDialog'); deleteConfirmationRestoreFocus = document.activeElement; $('#deleteConfirmTitle').textContent = title; $('#deleteConfirmMessage').textContent = message; return new Promise(resolve => { deleteConfirmationResolver = resolve; dialog.showModal(); requestAnimationFrame(() => $('#acceptDeleteConfirm').focus()); }); }
+function confirmAction({ kicker = '危险操作', title = '确认操作', message = '操作后无法恢复。', confirmLabel = '确认' } = {}) { if (deleteConfirmationResolver) settleDeleteConfirmation(false); const dialog = $('#deleteConfirmDialog'); deleteConfirmationRestoreFocus = document.activeElement; $('#deleteConfirmKicker').textContent = kicker; $('#deleteConfirmTitle').textContent = title; $('#deleteConfirmMessage').textContent = message; $('#acceptDeleteConfirm').textContent = confirmLabel; return new Promise(resolve => { deleteConfirmationResolver = resolve; dialog.showModal(); requestAnimationFrame(() => $('#acceptDeleteConfirm').focus()); }); }
+function confirmDelete({ title = '确认删除', message = '删除后无法恢复。' } = {}) { return confirmAction({ kicker:'危险操作', title, message, confirmLabel:'确认删除' }); }
 $('#cancelDeleteConfirm').onclick = () => settleDeleteConfirmation(false);
 $('#acceptDeleteConfirm').onclick = () => settleDeleteConfirmation(true);
 $('#deleteConfirmDialog').addEventListener('cancel', event => { event.preventDefault(); settleDeleteConfirmation(false); });
@@ -1628,7 +1684,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=85').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=86').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -1642,7 +1698,7 @@ function renderRouteLoadingShell(route) {
     const count = library.files.length ? `${library.total} 个文件` : '正在加载…';
     $('#fileCount').textContent = count;
     const grid = $('#fileGrid');
-    if (grid) grid.innerHTML = emptyState('正在加载文件库', '正在准备文件预览，请稍候。');
+    if (grid) grid.innerHTML = fileLibraryLoadingSkeleton();
     $('#loadMoreFiles')?.classList.add('hidden');
     return;
   }
@@ -1651,17 +1707,17 @@ function renderRouteLoadingShell(route) {
     syncGenerationTab();
     if (state.generationTab === 'history') {
       const history = $('#generationHistory');
-      if (history) history.innerHTML = emptyState('正在加载历史记录', '正在准备生成记录，请稍候。');
+      if (history) history.innerHTML = generationHistoryLoadingSkeleton();
       $('#loadMoreGenerationHistory')?.classList.add('hidden');
     } else {
       const grid = $('#generationGrid');
-      if (grid) grid.innerHTML = emptyState('正在加载作品', '正在准备生成记录，请稍候。');
+      if (grid) grid.innerHTML = generationLoadingSkeleton();
     }
     return;
   }
   if (route === 'drama') {
     const projects = $('#dramaProjects');
-    if (projects && !projects.children.length) projects.innerHTML = emptyState('正在加载短剧工作区', '正在准备项目与创作内容，请稍候。');
+    if (projects && !projects.children.length) projects.innerHTML = dramaProjectsLoadingSkeleton();
   }
 }
 
@@ -1760,6 +1816,7 @@ $('#markAllNotifications').onclick = event => { event.stopPropagation(); void ma
 document.addEventListener('click', event => { if (!$('#accountMenu').contains(event.target) && event.target !== $('#accountButton')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); } });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('#accountMenu').classList.contains('hidden')) { $('#accountMenu').classList.add('hidden'); setNotificationPanelOpen(false); $('#accountButton').setAttribute('aria-expanded', 'false'); $('#accountButton').focus(); } });
 $('#logoutButton').onclick = async () => {
+  if (!await confirmAction({ kicker:'账号操作', title:'确认退出登录', message:'退出后需要重新登录才能继续创作。', confirmLabel:'确认退出' })) return;
   accountLifecycle.invalidate();
   taskPoller.stop();
   try { await api('/api/auth/logout', { method:'POST', body:'{}' }); }
@@ -2128,7 +2185,8 @@ function reconcileCards(container, records, { card, signature, bind, empty }) {
   const existing = new Map([...container.children].filter(node => node.dataset.recordId).map(node => [node.dataset.recordId, node]));
   if (!records.length) {
     const emptySignature = empty;
-    if (container.dataset.emptySignature !== emptySignature || container.children.length !== 1 || !container.firstElementChild?.classList.contains('empty-state')) container.innerHTML = empty;
+    const isPlaceholder = node => node?.classList.contains('empty-state') || node?.classList.contains('loading-skeleton');
+    if (container.dataset.emptySignature !== emptySignature || container.children.length !== 1 || !isPlaceholder(container.firstElementChild)) container.innerHTML = empty;
     container.classList.remove('masonry-ready');
     container.style.removeProperty('height');
     generationLayoutObserver?.disconnect();
@@ -2230,7 +2288,7 @@ function renderGenerationHistory() {
     ? emptyState('历史记录加载失败', entry.error, '<button class="secondary-button history-retry" type="button">重试</button>')
     : entry.loaded
       ? emptyState(`还没有${state.route === 'image' ? '图像' : '视频'}历史记录`, '完成一次生成后，任务会出现在这里。')
-      : emptyState('正在加载历史记录', '正在读取全部生成记录，请稍候。');
+      : generationHistoryLoadingSkeleton();
   reconcileCards(container, tasks, { card:historyTaskRow, signature:taskRenderSignature, bind:bindHistoryRow, empty });
   container.querySelector('.history-retry')?.addEventListener('click', () => void loadGenerationHistory({ reset:true }), { once:true });
   const loadMore = $('#loadMoreGenerationHistory');
@@ -2310,7 +2368,7 @@ function renderTasks() {
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0 || state.generationPreparations.length > 0;
   const empty = hasInitialData
     ? emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。')
-    : emptyState('正在加载作品', '正在读取你的生成记录，页面可以先使用。');
+    : generationLoadingSkeleton();
   reconcileCards($('#generationGrid'), hasInitialData ? tasks : [], { card:taskCard, signature:taskRenderSignature, bind:bindTaskCard, empty });
   scheduleGenerationLayout();
   lastTaskRender = renderState;
@@ -2677,7 +2735,7 @@ function renderFiles() {
   $('#fileCount').textContent = hasInitialData ? `${localFileTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个同步中` : ''}` : '正在加载…';
   const empty = hasInitialData
     ? uploads.length ? '' : emptyState(libraryFiles.length ? '没有匹配的文件' : '文件库还是空的', libraryFiles.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', libraryFiles.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>')
-    : emptyState('正在加载文件库', '正在读取本地工作区，页面可以先使用。');
+    : fileLibraryLoadingSkeleton();
   const grid = $('#fileGrid');
   reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty });
   renderUploadJobCards(grid, uploads, 'file');

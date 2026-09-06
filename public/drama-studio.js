@@ -57,6 +57,11 @@ const richEditorEmptyChar = '\u200B';
 export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, confirmDelete, taskFailure, isAssetSyncing = () => false, showAssetInFolder = null, removeCloudAssets = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
   const root = document.querySelector('#dramaStage');
   let projects = [];
+  let projectQuery = '';
+  let projectMenuId = '';
+  let renameProjectId = '';
+  let renameProjectRestoreFocus = null;
+  const deletingProjectIds = new Set();
   let project = null;
   let projectBaseSnapshot = null;
   let viewStep = null;
@@ -596,16 +601,147 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     if(titleInput)titleInput.value=open?project.title:'';
   }
   function setStudioVisible(open) { document.querySelector('#dramaProjects')?.classList.toggle('hidden',open); document.querySelector('#dramaStudio')?.classList.toggle('hidden',!open); }
-  function projectProgress(item) { const count=(item.shots||[]).filter(shot=>taskLocallyReady(shot.selectedVideoTaskId)).length; return { count,total:(item.shots||[]).length }; }
+  function projectCardMarkup(item) {
+    const id = esc(item.id);
+    const title = esc(item.title || '未命名短剧');
+    const updatedAt = new Date(item.updatedAt || item.createdAt).toLocaleDateString('zh-CN');
+    return `<article class="project-card" data-project-id="${id}"><button type="button" class="project-card-open" data-project-open="${id}" aria-label="打开短剧项目：${title}"><span>${item.mode === 'smart' ? '智能导演 · 内测' : '专业编辑'} · ${stepNames[item.step] || '剧本设计'}</span><h2>${title}</h2><footer><time>最新修改：${updatedAt}</time></footer></button><div class="project-card-menu"><button type="button" class="project-card-menu-trigger" data-project-menu="${id}" aria-label="打开${title}的更多操作" aria-expanded="false" aria-controls="project-card-actions-${id}" title="更多操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="12" cy="19" r="1.35"/></svg></button><div id="project-card-actions-${id}" class="project-card-actions" role="menu" hidden><button type="button" role="menuitem" data-project-rename="${id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16-.8 4.8L8 20 19.2 8.8a2 2 0 0 0-2.8-2.8L5.2 17.2"/><path d="m14.8 7.2 2.8 2.8"/></svg><span>重命名</span></button><button type="button" role="menuitem" class="project-card-delete" data-project-delete="${id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div></div></article>`;
+  }
+  const projectForId = id => projects.find(item => String(item.id) === String(id));
+  function closeProjectMenu() {
+    projectMenuId = '';
+    document.querySelectorAll('#dramaProjectGrid .project-card-menu').forEach(menu => {
+      menu.querySelector('[data-project-menu]')?.setAttribute('aria-expanded', 'false');
+      menu.querySelector('[role="menu"]')?.setAttribute('hidden', '');
+    });
+  }
+  function toggleProjectMenu(id, trigger) {
+    const menu = trigger.closest('.project-card-menu')?.querySelector('[role="menu"]');
+    const shouldOpen = projectMenuId !== String(id) || menu?.hasAttribute('hidden');
+    closeProjectMenu();
+    if (!shouldOpen || !menu) return;
+    projectMenuId = String(id);
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.removeAttribute('hidden');
+  }
+  function setRenameProjectError(message = '') {
+    const error = document.querySelector('#renameDramaProjectError');
+    if (!error) return;
+    error.textContent = message;
+    error.classList.toggle('hidden', !message);
+  }
+  function openRenameProjectDialog(id, restoreFocus = null) {
+    const item = projectForId(id);
+    const dialog = document.querySelector('#renameDramaProjectDialog');
+    const input = document.querySelector('#renameDramaProjectInput');
+    if (!item || !dialog || !input) return;
+    renameProjectId = String(id);
+    renameProjectRestoreFocus = restoreFocus || document.activeElement;
+    input.value = item.title || '';
+    setRenameProjectError();
+    closeProjectMenu();
+    dialog.showModal();
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+  }
+  function closeRenameProjectDialog() {
+    const dialog = document.querySelector('#renameDramaProjectDialog');
+    if (dialog?.open) dialog.close();
+  }
+  document.addEventListener('click', event => {
+    if (projectMenuId && !event.target?.closest?.('#dramaProjectGrid .project-card-menu')) closeProjectMenu();
+  });
 
   function renderProjects() {
     const projectsRoot = document.querySelector('#dramaProjects');
     if (!projectsRoot) return;
     setStudioVisible(false);
-    projectsRoot.innerHTML=`<div class="project-library-grid"><button type="button" class="create-project-card" id="openCreateDramaProject"><span><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><b>创建项目</b></button>${projects.map(item=>{const progress=projectProgress(item);return `<button class="project-card" data-project-id="${item.id}"><span>${item.mode==='smart'?'智能导演 · 内测':'专业编辑'} · ${stepNames[item.step]||'剧本设计'}</span><h2>${esc(item.title)}</h2><p>${esc(item.synopsis||item.input||'尚未填写故事内容')}</p><footer><b>${progress.count}/${progress.total} 镜头完成</b><time>${new Date(item.updatedAt||item.createdAt).toLocaleDateString('zh-CN')}</time></footer></button>`}).join('')}</div>`;
-    projectsRoot.querySelector('#openCreateDramaProject').onclick=openCreateProjectDialog;
-    projectsRoot.querySelectorAll('[data-project-id]').forEach(button=>button.onclick=()=>openProject(button.dataset.projectId));
+    projectsRoot.innerHTML=`<div class="project-library-toolbar"><label class="project-library-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索短剧项目</span><input id="dramaProjectSearch" type="search" value="${esc(projectQuery)}" placeholder="搜索项目" autocomplete="off"></label><span id="dramaProjectCount" class="project-library-count"></span></div><div id="dramaProjectGrid" class="project-library-grid"></div>`;
+    const search = projectsRoot.querySelector('#dramaProjectSearch');
+    const count = projectsRoot.querySelector('#dramaProjectCount');
+    const grid = projectsRoot.querySelector('#dramaProjectGrid');
+    const renderCards = () => {
+      closeProjectMenu();
+      const query = projectQuery.trim().toLocaleLowerCase();
+      const visibleProjects = projects.filter(item => !query || [item.title, item.synopsis, item.input, item.mode === 'smart' ? '智能导演' : '专业编辑'].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+      count.textContent = query ? `${visibleProjects.length} / ${projects.length} 个项目` : `${projects.length} 个项目`;
+      grid.innerHTML=`<button type="button" class="create-project-card" id="openCreateDramaProject"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><b>创建项目</b></button>${visibleProjects.map(projectCardMarkup).join('')||`<div class="project-library-empty"><b>没有找到匹配的项目</b><p>换个关键词试试，或创建一个新项目。</p></div>`}`;
+      grid.querySelector('#openCreateDramaProject').onclick=openCreateProjectDialog;
+      grid.querySelectorAll('[data-project-open]').forEach(button=>button.onclick=()=>openProject(button.dataset.projectOpen));
+      grid.querySelectorAll('[data-project-menu]').forEach(button=>button.setAttribute('aria-haspopup','menu'));
+      grid.querySelectorAll('[data-project-menu]').forEach(button=>button.onclick=event=>{event.stopPropagation();toggleProjectMenu(button.dataset.projectMenu,button);});
+      grid.querySelectorAll('[data-project-rename]').forEach(button=>button.onclick=event=>{event.stopPropagation();const trigger=button.closest('.project-card-menu')?.querySelector('[data-project-menu]');openRenameProjectDialog(button.dataset.projectRename,trigger);});
+      grid.querySelectorAll('[data-project-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();void deleteProject(button.dataset.projectDelete,button);});
+    };
+    search.oninput = event => { projectQuery = event.target.value; renderCards(); };
+    projectsRoot.onkeydown = event => {
+      if (event.key !== 'Escape' || !projectMenuId) return;
+      const trigger = [...projectsRoot.querySelectorAll('[data-project-menu]')].find(button => button.dataset.projectMenu === projectMenuId);
+      closeProjectMenu();
+      trigger?.focus();
+    };
+    renderCards();
   }
+  async function deleteProject(id, button) {
+    const targetId = String(id || '');
+    const item = projectForId(targetId);
+    if (!item || deletingProjectIds.has(targetId)) return;
+    if (typeof confirmDelete !== 'function') { toast('删除确认暂不可用，请稍后重试'); return; }
+    const confirmed = await confirmDelete({ title:'确认删除短剧项目', message:`删除“${item.title}”后，项目记录、剧本和分镜配置将无法恢复。已生成的视频和素材不会删除。` });
+    if (!confirmed || !projectForId(targetId)) return;
+    const requestAccount = accountSnapshot();
+    deletingProjectIds.add(targetId);
+    if (button) { button.disabled = true; button.querySelector('span').textContent = '删除中…'; }
+    closeProjectMenu();
+    try {
+      await api(`/api/drama/projects/${encodeURIComponent(targetId)}`, { method:'DELETE', body:'{}' });
+      if (!isAccountCurrent(requestAccount)) return;
+      projects = projects.filter(value => String(value.id) !== targetId);
+      renderProjects();
+      toast('短剧项目已删除，生成的视频和素材已保留');
+    } catch (error) {
+      if (isAccountCurrent(requestAccount)) toast(error.message);
+      if (button?.isConnected) { button.disabled = false; button.querySelector('span').textContent = '删除'; }
+    } finally {
+      deletingProjectIds.delete(targetId);
+    }
+  }
+  document.querySelector('#closeRenameDramaProject')?.addEventListener('click', closeRenameProjectDialog);
+  document.querySelector('#cancelRenameDramaProject')?.addEventListener('click', closeRenameProjectDialog);
+  document.querySelector('#renameDramaProjectDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeRenameProjectDialog(); });
+  document.querySelector('#renameDramaProjectDialog')?.addEventListener('close', () => {
+    const restore = renameProjectRestoreFocus;
+    renameProjectId = '';
+    renameProjectRestoreFocus = null;
+    setRenameProjectError();
+    const button = document.querySelector('#saveRenameDramaProject');
+    if (button) { button.disabled = false; button.textContent = '保存名称'; }
+    requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
+  });
+  document.querySelector('#renameDramaProjectForm')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const item = projectForId(renameProjectId);
+    const input = document.querySelector('#renameDramaProjectInput');
+    const button = document.querySelector('#saveRenameDramaProject');
+    if (!item || !input || !button) return;
+    const name = input.value.trim();
+    if (!name) { setRenameProjectError('请输入项目名称。'); input.focus(); return; }
+    const requestAccount = accountSnapshot();
+    button.disabled = true;
+    button.textContent = '保存中…';
+    setRenameProjectError();
+    try {
+      const result = await api(`/api/drama/projects/${encodeURIComponent(item.id)}`, { method:'PATCH', body:JSON.stringify({ title:name, revision:item.revision }) });
+      if (!isAccountCurrent(requestAccount)) return;
+      const updated = result.project || { ...item, title:name, revision:Number(item.revision || 1) + 1 };
+      projects = projects.map(value => String(value.id) === String(item.id) ? updated : value);
+      if (project?.id === item.id) { project = { ...project, ...updated }; state.dramaProject = project; syncProjectHeader(); }
+      closeRenameProjectDialog();
+      renderProjects();
+      toast('短剧项目已重命名');
+    } catch (error) {
+      if (isAccountCurrent(requestAccount)) { setRenameProjectError(error.message); button.disabled = false; button.textContent = '保存名称'; input.focus(); input.select(); }
+    }
+  });
   function resetCreateProjectDialog(){document.querySelectorAll('[data-create-drama-mode]').forEach(button=>{button.disabled=button.hasAttribute('data-unavailable');button.classList.remove('creating');});}
   function openCreateProjectDialog(){const dialog=document.querySelector('#createDramaProjectDialog');resetCreateProjectDialog();dialog.showModal();requestAnimationFrame(()=>dialog.querySelector('[data-create-drama-mode]:not(:disabled)')?.focus());}
   async function chooseProjectMode(mode){const dialog=document.querySelector('#createDramaProjectDialog');const selected=dialog.querySelector(`[data-create-drama-mode="${mode}"]`);dialog.querySelectorAll('[data-create-drama-mode]').forEach(button=>button.disabled=true);selected?.classList.add('creating');const created=await createProject(mode);if(created)dialog.close();else resetCreateProjectDialog();}
@@ -2540,7 +2676,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     clearTimeout(projectAssetSearchTimer);projectAssetSearchTimer=0;
     closeMentionPicker();
     closeWorkbenchDropdowns();
-    ['#projectAssetDialog','#professionalAssetDialog','#professionalGenerationReferenceDialog','#professionalMediaPreviewDialog','#professionalAssemblyDialog','#professionalAssemblyLibraryDialog'].forEach(selector=>{const dialog=document.querySelector(selector);if(dialog?.open)dialog.close();});
+    closeProjectMenu();
+    ['#projectAssetDialog','#professionalAssetDialog','#professionalGenerationReferenceDialog','#professionalMediaPreviewDialog','#professionalAssemblyDialog','#professionalAssemblyLibraryDialog','#renameDramaProjectDialog'].forEach(selector=>{const dialog=document.querySelector(selector);if(dialog?.open)dialog.close();});
   }
   function resetForAccount(){
     suspend();

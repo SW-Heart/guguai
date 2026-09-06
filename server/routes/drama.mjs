@@ -4,6 +4,7 @@ export function createDramaRouteHandler({
   requireUser,
   requireDesktopWorkspaceScope,
   listDramaProjects,
+  deleteDramaProject,
   setPageHeaders,
   publicDramaProject,
   normalizeDramaProject,
@@ -112,6 +113,18 @@ export function createDramaRouteHandler({
         throw error;
       }
       sendJson(res, 200, { project:publicDramaProject(project) });
+      return true;
+    }
+    if (dramaProjectMatch && req.method === 'DELETE') {
+      const user = await requireUser(req, res);
+      if (!user) return true;
+      const scope = requireDesktopWorkspaceScope(req, res);
+      if (!scope) return true;
+      const deleted = deleteDramaProject(user.id, dramaProjectMatch[1], scope);
+      if (!deleted) { sendJson(res, 404, { error:'短剧项目不存在' }); return true; }
+      // A project is only metadata. Its generations and media assets are
+      // intentionally kept so deleting a project never deletes produced video.
+      sendJson(res, 200, { deleted:true, id:dramaProjectMatch[1] });
       return true;
     }
     const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);

@@ -118,6 +118,14 @@ img { max-width: 100%; }
 #siteAccountSummary { margin: 0 4px 9px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 #siteLogoutButton { width: 100%; padding: 8px 10px; border-radius: 9px; background: rgba(91,92,232,.08); color: var(--ink-2); cursor: pointer; font-size: 12px; text-align: left; }
 #siteLogoutButton:hover { background: rgba(91,92,232,.14); }
+.site-confirm-dialog { width: min(420px, calc(100% - 32px)); padding: 0; border: 1px solid rgba(255,255,255,.86); border-radius: 22px; color: var(--ink); background: rgba(255,255,255,.94); box-shadow: 0 28px 90px rgba(49,52,76,.22); }
+.site-confirm-dialog::backdrop { background: rgba(21,25,39,.42); backdrop-filter: blur(8px); }
+.site-confirm-card { padding: 26px; }
+.site-confirm-kicker { color: var(--blue); font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; letter-spacing: .14em; }
+.site-confirm-card h2 { margin: 8px 0 0; font-size: 21px; letter-spacing: -.04em; }
+.site-confirm-card p { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.site-confirm-card footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; }
+.site-confirm-card footer button { min-height: 42px; min-width: 86px; padding: 0 16px; border-radius: 12px; font-size: 13px; }
 .nav-cta svg, .primary-button svg, .secondary-button svg, .refresh-button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .marketing-main { position: relative; }
 .page-hero { position: relative; padding: 174px 0 96px; text-align: center; }

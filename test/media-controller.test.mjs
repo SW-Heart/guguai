@@ -154,6 +154,19 @@ test('media loader owns local pagination and merges pages into the local index',
   assert.deepEqual(harness.state.files.map(file => file.id), ['local-b', 'local-a']);
 });
 
+test('refreshing the first local page preserves completed assets used outside that page', async () => {
+  const completedAsset = { id:'cloud-older', name:'Older.mp4', kind:'video', localStatus:'saved', url:'gugu-media://older' };
+  const harness = createHarness({
+    initialFiles:[completedAsset],
+    listLocal:async () => ({ items:[{ id:'cloud-newer', name:'Newer.mp4', kind:'video', url:'gugu-media://newer' }], total:201, nextCursor:'cursor-next' }),
+  });
+
+  await harness.controller.loadFiles();
+
+  assert.deepEqual(harness.state.files.map(file => file.id), ['cloud-newer', 'cloud-older']);
+  assert.deepEqual(harness.controller.libraryState().files.map(file => file.id), ['cloud-newer']);
+});
+
 test('deleting a local library asset notifies the drama assembly history owner', async () => {
   const removed = [];
   const file = { id:'assembly-a', localId:'assembly-a', localOnly:true, kind:'video', name:'成片.mp4', projectId:'project-a', localStatus:'saved' };

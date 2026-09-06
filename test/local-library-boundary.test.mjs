@@ -27,6 +27,14 @@ test('desktop file library reads only the local workspace', () => {
   assert.match(app, /function libraryFileMatches\(/);
 });
 
+test('completed generation status is not rewritten by local delivery state', () => {
+  const start = app.indexOf('function taskDisplayStatus(');
+  const end = app.indexOf('\n}', start) + 2;
+  const source = app.slice(start, end);
+  assert.match(source, /return task\?\.status/);
+  assert.doesNotMatch(source, /['"]running['"]/);
+});
+
 test('desktop startup stays local and does not receive cross-device history', () => {
   const loadFilesStart = mediaController.indexOf('async function loadFiles(');
   const loadFilesEnd = mediaController.indexOf('\n  async function removeLocalAsset', loadFilesStart);
@@ -54,13 +62,13 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=241/);
-  assert.match(index, /\/styles\.css\?v=208/);
+  assert.match(index, /\/app\.js\?v=247/);
+  assert.match(index, /\/styles\.css\?v=213/);
   assert.match(index, /\/styles\/base\.css\?v=2/);
-  assert.match(app, /\.\/desktop-media-sync\.js\?v=8/);
-  assert.match(app, /\.\/drama-studio\.js\?v=85/);
+  assert.match(app, /\.\/desktop-media-sync\.js\?v=10/);
+  assert.match(app, /\.\/drama-studio\.js\?v=86/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
-  assert.match(app, /\.\/features\/media\/controller\.js\?v=3/);
+  assert.match(app, /\.\/features\/media\/controller\.js\?v=4/);
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=3/);
   assert.match(app, /\.\/state\/account-state\.js\?v=1/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
@@ -80,7 +88,7 @@ test('account-scoped loaders ignore responses from an older session', () => {
   assert.match(marketing, /const paymentOrderStorageKey = user =>/);
   assert.doesNotMatch(marketing, /sessionStorage\.(?:getItem|setItem|removeItem)\('gugu_alipay_order'/);
   assert.match(marketing, /sessionStorage\.setItem\(paymentOrderStorageKey\(purchaseUser\)/);
-  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=8/));
+  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=9/));
   assert.match(app, /const requestAccount = accountScope\.snapshot\(\);\n  const button = \$\('#alipayTopupButton'\)/);
   assert.match(app, /const result = await api\(`\/api\/payments\/alipay\/orders\/\$\{encodeURIComponent\(state\.alipayOrderNo\)\}\/query`[\s\S]*?if \(!accountScope\.isCurrent\(requestAccount\)\) return;/);
   const loadTasksStart = app.indexOf('async function loadTasks(');
@@ -230,7 +238,8 @@ test('a completed desktop hydration invalidates older local-library snapshots', 
   assert.match(mediaController, /mergeDesktopAssetRecord\(previousById\.get\(file\.id\), file\)/);
   assert.ok(applySource.indexOf('localFileStateRevision += 1') < applySource.indexOf('mergeStateFiles([file])'));
   assert.match(loadFilesSource, /const localStateChanged = requestLocalStateRevision !== localFileStateRevision/);
-  assert.match(loadFilesSource, /if \(localStateChanged\) mergeStateFiles\(page\.items\)/);
+  assert.match(loadFilesSource, /mergeStateFiles\(page\.items\)/);
+  assert.doesNotMatch(loadFilesSource, /state\.files = mergeTransientFields/);
 });
 
 test('targeted missing-file repairs bypass stale local-ready delivery state', () => {
@@ -278,6 +287,15 @@ test('generation fallback archive refreshes state around network waits', () => {
   assert.match(archiveSource, /const latest = findAsset\(userId, assetId\)/);
   assert.match(archiveSource, /deliveryStatus === 'local_ready'/);
   assert.match(archiveSource, /\.\.\.\(latest \|\| beforeUpload \|\| existing \|\| \{\}\)/);
+});
+
+test('production archive wiring provides its runtime storage dependencies', () => {
+  const start = server.indexOf('const mediaArchive = createMediaArchiveService({');
+  const end = server.indexOf('\n});', start) + 4;
+  const wiring = server.slice(start, end);
+  assert.match(wiring, /download:downloadToFile/);
+  assert.match(wiring, /put:putObject/);
+  assert.match(wiring, /remove:deleteObject/);
 });
 
 test('desktop file actions only reveal an existing local asset', () => {

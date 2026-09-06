@@ -58,14 +58,14 @@ export function shouldHydrateDesktopAsset(file, { force = false } = {}) {
 
 export function desktopHydrationRetryDelay(failureCount, { baseDelay = 750, maxFailures = 3 } = {}) {
   const count = Math.max(1, Math.floor(Number(failureCount) || 1));
-  if (count >= Math.max(1, Math.floor(Number(maxFailures) || 3))) return 0;
-  return Math.min(5000, Math.max(100, Number(baseDelay) || 750) * (2 ** (count - 1)));
+  const cappedCount = Math.min(count, Math.max(1, Math.floor(Number(maxFailures) || 3)));
+  return Math.min(5000, Math.max(100, Number(baseDelay) || 750) * (2 ** (cappedCount - 1)));
 }
 
 export function desktopAcknowledgementRetryDelay(failureCount, { baseDelay = 1000, maxFailures = 5 } = {}) {
   const count = Math.max(1, Math.floor(Number(failureCount) || 1));
-  if (count >= Math.max(1, Math.floor(Number(maxFailures) || 5))) return 0;
-  return Math.min(30_000, Math.max(100, Number(baseDelay) || 1000) * (2 ** (count - 1)));
+  const cappedCount = Math.min(count, Math.max(1, Math.floor(Number(maxFailures) || 5)));
+  return Math.min(30_000, Math.max(100, Number(baseDelay) || 1000) * (2 ** (cappedCount - 1)));
 }
 
 export function canRemoveImportedLocalAsset(item) {

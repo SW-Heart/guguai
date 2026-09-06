@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimLegacyWorkspace, claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -1078,6 +1078,9 @@ const mediaArchive = createMediaArchiveService({
   generationAssetName,
   generationSourceHeaders,
   assetObjectKey,
+  download:downloadToFile,
+  put:putObject,
+  remove:deleteObject,
   now,
 });
 const { prepareGenerationAsset, archiveGenerationResult } = mediaArchive;
@@ -1640,7 +1643,7 @@ async function archiveGenerationWithRetry(userId, task) {
     current = findGeneration(userId, task.id) || current;
     if (current.localReadyAt || !current.archivePending) { Object.assign(task, current); return true; }
     const failures = (Number(current.archiveFailureCount) || 0) + 1;
-    current.status = 'running';
+    generationLifecycle.markArchivePending(current);
     current.archiveFailureCount = failures;
     current.lastArchiveError = error.message;
     current.lastArchiveErrorAt = now();
@@ -1849,14 +1852,11 @@ function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
     try {
-      task.status = 'running';
-      task.finishedAt = null;
-      await saveGenerationWithRetry(userId, task, 'generation-running');
       await archiveGenerationWithRetry(userId, task);
       task.creditStatus = 'charged';
     } finally {
       Object.assign(task, findGeneration(userId, task.id) || task);
-      task.finishedAt = task.status === 'completed' ? now() : null;
+      generationLifecycle.markArchivePending(task);
       try { await saveGenerationWithRetry(userId, task, 'archive-recovery-final'); }
       finally { activeGenerations.delete(task.id); }
     }
@@ -2015,7 +2015,8 @@ async function recoverPendingGenerations() {
       continue;
     } else {
       const kind = generationRecoveryKind(task);
-      enqueueGenerationJob({ userId, generationId:task.id, kind, nextRunAt:Date.now(), preserveScheduledTime:true });
+      const nextRunAt = kind === 'archive' ? generationJobNextRunAt(task, kind) : Date.now();
+      enqueueGenerationJob({ userId, generationId:task.id, kind, nextRunAt, preserveScheduledTime:true });
       scheduled++;
       if (!task.providerTaskId) awaitingReconciliation++;
     }
@@ -2157,6 +2158,7 @@ const dramaRoute = createDramaRouteHandler({
   requireUser,
   requireDesktopWorkspaceScope,
   listDramaProjects,
+  deleteDramaProject,
   setPageHeaders,
   publicDramaProject,
   normalizeDramaProject,

@@ -1493,7 +1493,7 @@ function registerIpc() {
   });
   handle('workspace:open', async () => {
     if (!workspace) return false;
-    await shell.openPath(workspace);
+    await shell.openPath(path.join(workspace, 'library'));
     return true;
   });
   handle('media:choose-and-import', (_event, options) => chooseAndImportFiles(options));

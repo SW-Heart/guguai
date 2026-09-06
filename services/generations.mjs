@@ -32,6 +32,13 @@ export function createGenerationLifecycleService({
     task.finishedAt = ['completed', 'failed'].includes(task.status) ? now() : null;
     return task;
   }
+  function markArchivePending(task) {
+    // Archiving is a delivery/backup concern after the provider result has
+    // already completed. Never move a terminal generation back to running.
+    task.status = 'completed';
+    task.finishedAt ||= now();
+    return task;
+  }
   function markSubmissionTimedOut(task) {
     task.lastSubmissionError ||= task.error || '';
     task.lastSubmissionErrorAt ||= task.submissionUncertainAt || task.updatedAt || now();
@@ -49,5 +56,5 @@ export function createGenerationLifecycleService({
   async function persist(userId, task, phase) {
     return saveGenerationWithRetry(userId, task, phase);
   }
-  return { markRunning, markSubmissionUncertain, markProviderTaskPaused, markFinished, markSubmissionTimedOut, isSubmissionTimedOut, persist };
+  return { markRunning, markSubmissionUncertain, markProviderTaskPaused, markFinished, markArchivePending, markSubmissionTimedOut, isSubmissionTimedOut, persist };
 }
