@@ -9,6 +9,14 @@ import { mergeProjectResponseWithNewerKeys } from '../public/features/drama/pure
 const source = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('empty storyboard state binds its create-shot action', () => {
+  const start = source.indexOf('  function bindStoryboardWorkbench(');
+  const end = source.indexOf('\n  function applyProjectAssetToShot', start);
+  const binding = source.slice(start, end);
+  assert.match(binding, /querySelector\('\.wb-empty-shot-action'\)/);
+  assert.match(binding, /void addProfessionalShot\(\)/);
+});
+
 function conflictHarness({ choose = async () => ({ title:'local' }) } = {}) {
   const calls = [];
   const labels = [];

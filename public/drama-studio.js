@@ -1685,6 +1685,22 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
         else if(button.matches('.wb-assembly-library'))openProfessionalAssemblyLibrary();
       });
     }
+    const emptyShotAction=root.querySelector('.wb-empty-shot-action');
+    if(emptyShotAction){
+      // The empty state is rendered without the bottom action bar. Keep its
+      // create button inside the same interaction boundary so a deferred
+      // refresh cannot detach it between pointerdown and click.
+      emptyShotAction.addEventListener('pointerdown',event=>{
+        event.stopPropagation();
+        deferredProfessionalRender=false;
+      });
+      emptyShotAction.addEventListener('click',event=>{
+        if(emptyShotAction.disabled)return;
+        event.preventDefault();
+        event.stopPropagation();
+        void addProfessionalShot();
+      });
+    }
     root.querySelector('.wb-shot-scroll')?.addEventListener('scroll',()=>{closeWorkbenchDropdowns();closeMentionPicker();scheduleVirtualShotWindow();},{passive:true});
     if(!mentionDismissBound||!workbenchDropdownDismissBound){document.addEventListener('pointerdown',event=>{const actionBar=event.target.closest?.('.wb-action-bar');if(!event.target.closest('#wbMentionPicker,.wb-rich-input'))closeMentionPicker();if(!event.target.closest('#wbDropdownPortal,.wb-dropdown,.wb-spec-control'))closeWorkbenchDropdowns();if(actionBar){deferredProfessionalRender=false;return;}scheduleFlushDeferredProfessionalRender();});document.addEventListener('focusout',event=>{if(root.contains(event.target)&&!event.relatedTarget?.closest?.('.wb-action-bar'))scheduleFlushDeferredProfessionalRender();});window.addEventListener('resize',()=>{closeWorkbenchDropdowns();closeMentionPicker();scheduleVirtualShotWindow();},{passive:true});mentionDismissBound=true;workbenchDropdownDismissBound=true;}
   }
