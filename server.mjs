@@ -5,14 +5,15 @@ import { promises as fs } from 'node:fs';
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
+import { validateDownloadedMedia } from './desktop/media-integrity.mjs';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimLegacyWorkspace, claimUploadIntent, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -874,11 +875,18 @@ async function downloadToFile(url, target, attempts = 4, options = {}) {
       const response = await fetch(url, { signal: AbortSignal.timeout(180_000), headers: { 'User-Agent': 'Model-Studio/1.0', Accept: '*/*', ...(options.headers || {}) } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!response.body) throw new Error('响应没有文件内容');
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(partial, { flags: 'w' }));
+      const hash = createHash('sha256');
+      let prefix = Buffer.alloc(0);
+      const digest = new Transform({ transform(chunk, _encoding, done) {
+        hash.update(chunk);
+        if (prefix.length < 512) prefix = Buffer.concat([prefix, chunk.subarray(0, 512 - prefix.length)]);
+        done(null, chunk);
+      } });
+      await pipeline(Readable.fromWeb(response.body), digest, createWriteStream(partial, { flags:'w' }));
       const stat = await fs.stat(partial);
-      if (!stat.size) throw new Error('模型返回了空文件');
+      const detectedType = validateDownloadedMedia(prefix, stat.size, { kind:options.kind, contentType:response.headers.get('content-type') || '' });
       await fs.rename(partial, target);
-      return { contentType: response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream', size: stat.size };
+      return { contentType: detectedType || response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream', size: stat.size, sha256:hash.digest('hex') };
     } catch (error) {
       lastError = error;
       await fs.unlink(partial).catch(() => {});
@@ -1021,9 +1029,16 @@ async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mim
   if (!Number.isSafeInteger(normalizedSize) || normalizedSize <= 0) return { status: 400, error: '本地文件大小无效' };
   if (!/^[a-f0-9]{64}$/.test(normalizedSha256)) return { status: 400, error: '本地文件 SHA-256 无效' };
   if (![...imageTypes, ...videoTypes, ...audioTypes].includes(normalizedMimeType)) return { status: 400, error: '本地文件类型无效' };
-  asset.size = normalizedSize;
-  asset.sha256 = normalizedSha256;
-  asset.mimeType = normalizedMimeType;
+  // Client receipt is evidence of local delivery, not a replacement for
+  // metadata already measured by the server while archiving.
+  if (asset.objectKey && ((asset.size > 0 && asset.size !== normalizedSize) || (asset.sha256 && asset.sha256 !== normalizedSha256))) {
+    return { status:409, error:'本地文件与云端文件不一致，请重新下载' };
+  }
+  if (!asset.objectKey) {
+    asset.size = normalizedSize;
+    asset.sha256 = normalizedSha256;
+    asset.mimeType = normalizedMimeType;
+  }
   asset.deliveryStatus = 'local_ready';
   asset.localReadyAt = now();
   asset.remoteStatus = asset.objectKey ? 'ready' : 'local_only';
@@ -1426,17 +1441,27 @@ async function servePendingGenerationSource(res, asset) {
     return true;
   }
   const task = asset.sourceGenerationId ? findGeneration(asset.ownerId, asset.sourceGenerationId) : null;
-  const response = await fetch(sourceUrl, { headers: generationSourceHeaders(task, sourceUrl.toString()), signal: AbortSignal.timeout(180_000) });
-  if (!response.ok || !response.body) {
-    sendJson(res, response.status || 502, { error: `成品下载暂时失败（${response.status || '无响应'}）` });
-    return true;
-  }
-  const contentType = response.headers.get('content-type')?.split(';')[0] || asset.mimeType || 'application/octet-stream';
-  const contentLength = response.headers.get('content-length');
-  const headers = { 'Content-Type': contentType, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
-  if (contentLength) headers['Content-Length'] = contentLength;
-  res.writeHead(200, headers);
-  Readable.fromWeb(response.body).pipe(res);
+  const controller = new AbortController();
+  const cancel = () => { if (!res.writableFinished) controller.abort(); };
+  res.once('close', cancel);
+  try {
+    const response = await fetch(sourceUrl, { headers:generationSourceHeaders(task, sourceUrl.toString()), signal:AbortSignal.any([controller.signal, AbortSignal.timeout(180_000)]) });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => {});
+      sendJson(res, 502, { error:`成品下载暂时失败（${response.status}）` });
+      return true;
+    }
+    const contentType = response.headers.get('content-type')?.split(';')[0] || asset.mimeType || 'application/octet-stream';
+    const contentLength = response.headers.get('content-length');
+    const headers = { 'Content-Type':contentType, 'Cache-Control':'private, no-store', 'X-Content-Type-Options':'nosniff' };
+    if (contentLength) headers['Content-Length'] = contentLength;
+    res.writeHead(200, headers);
+    await pipeline(Readable.fromWeb(response.body), res, { signal:controller.signal });
+  } catch (error) {
+    if (!res.destroyed && !res.headersSent) sendJson(res, 502, { error:'成品下载中断，请重试' });
+    else if (!res.destroyed) res.destroy();
+    if (!controller.signal.aborted) console.warn('[delivery] 上游传输中断', { assetId:asset.id, message:error.message });
+  } finally { res.off('close', cancel); }
   return true;
 }
 function progressPersistenceHooks(userId, task) {
@@ -1605,6 +1630,28 @@ function autodlPersistenceHooks(userId, task) {
     },
   };
 }
+function requestGenerationArchive(userId, asset) {
+  if (asset.objectKey) return { status:'ready' };
+  if (asset.localReadyAt || asset.deliveryStatus === 'local_ready') return { status:'local_ready' };
+  const task = asset.sourceGenerationId ? findGeneration(userId, asset.sourceGenerationId, { deviceId:asset.originDeviceId, workspaceId:asset.originWorkspaceId }) : null;
+  if (!task || task.assetId !== asset.id || task.status !== 'completed' || !asset.sourceUrl) return { error:'没有可恢复的生成结果' };
+  if (task.localReadyAt) return { status:'local_ready' };
+  tx(() => {
+    task.sourceUrl ||= asset.sourceUrl;
+    task.archivePending = true;
+    task.localReadyAt = '';
+    task.localDeliveryDeadlineAt = '';
+    asset.localReadyAt = '';
+    asset.deliveryStatus = 'awaiting_local';
+    asset.remoteStatus = 'pending';
+    saveAssetRecord(userId, { ...asset, updatedAt:now() });
+    saveGenerationRecord(userId, { ...task, updatedAt:now() });
+    enqueueGenerationJob({ userId, generationId:task.id, kind:'archive', nextRunAt:Date.now() });
+  });
+  drainGenerationJobs();
+  return { status:'pending' };
+}
+
 function scheduleGenerationArchive(userId, task) {
   if (generationRetryTimers.has(task.id)) return;
   const deadline = Date.parse(task.localDeliveryDeadlineAt || '');
@@ -1625,6 +1672,17 @@ function scheduleGenerationArchive(userId, task) {
 async function archiveGenerationWithRetry(userId, task) {
   let current = findGeneration(userId, task.id) || task;
   if (!current.archivePending || current.localReadyAt) { Object.assign(task, current); return true; }
+  let validSource = false;
+  try { validSource = typeof current.sourceUrl === 'string' && ['http:', 'https:'].includes(new URL(current.sourceUrl).protocol); } catch {}
+  if (!validSource) {
+    current.archivePending = false;
+    current.lastArchiveError = '生成结果链接缺失或无效，归档已停止，请联系支持';
+    current.lastArchiveErrorAt = now();
+    current.archiveErrorCode = 'INVALID_SOURCE_URL';
+    await saveGenerationWithRetry(userId, current, 'archive-invalid-source');
+    Object.assign(task, current);
+    return true;
+  }
   try {
     await archiveGenerationResult(userId, current, current.sourceUrl);
     current = findGeneration(userId, task.id) || current;
@@ -2197,6 +2255,8 @@ const filesRoute = createFilesRouteHandler({
   markAssetDeliveryPending,
   publicAsset,
   parseLimit,
+  encodeCursor,
+  decodeCursor,
   findAsset,
   listAssets,
   setPageHeaders,
@@ -2242,6 +2302,7 @@ const filesRoute = createFilesRouteHandler({
   signedAssetUrl,
   localReadyBatchLimit,
   applyLocalReadyAcknowledgement,
+  requestGenerationArchive,
   servePendingGenerationSource,
   safeId,
   saveAsset,
@@ -2312,7 +2373,7 @@ const generationRoute = createGenerationRouteHandler({
   activeGenerations,
 });
 
-export const __test = { hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

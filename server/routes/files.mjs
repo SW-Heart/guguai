@@ -14,6 +14,8 @@ export function createFilesRouteHandler({
   markAssetDeliveryPending,
   publicAsset,
   parseLimit,
+  encodeCursor,
+  decodeCursor,
   findAsset,
   listAssets,
   setPageHeaders,
@@ -59,6 +61,7 @@ export function createFilesRouteHandler({
   signedAssetUrl,
   localReadyBatchLimit,
   applyLocalReadyAcknowledgement,
+  requestGenerationArchive,
   servePendingGenerationSource,
   safeId,
   saveAsset,
@@ -75,7 +78,12 @@ export function createFilesRouteHandler({
       if (!deviceId) { sendJson(res, 400, { error:'设备标识无效' }); return true; }
       const page = listAssetChanges(user.id, { deviceId, workspaceId:scope.workspaceId, cursor:url.searchParams.get('cursor'), limit:parseLimit(url.searchParams.get('limit')) });
       const requestedAssetIds = [...new Set(String(url.searchParams.get('assetIds') || '').split(',').map(safeId).filter(Boolean))].slice(0, 500);
-      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { workspaceId:scope.workspaceId, limit:parseLimit(url.searchParams.get('limit')) });
+      const deliveryLimit = Math.min(200, parseLimit(url.searchParams.get('limit')));
+      const deliveryCursorScope = `delivery:${user.id}:${deviceId}:${scope.workspaceId}`;
+      const before = decodeCursor(deliveryCursorScope, url.searchParams.get('deliveryCursor'));
+      const pendingDeliveries = listPendingAssetDeliveries(user.id, deviceId, { workspaceId:scope.workspaceId, limit:deliveryLimit, before });
+      const lastDelivery = pendingDeliveries.at(-1);
+      const nextDeliveryCursor = lastDelivery ? encodeCursor(deliveryCursorScope, { t:lastDelivery.createdAt, i:lastDelivery.id }) : url.searchParams.get('deliveryCursor') || '';
       const requestedDeliveries = requestedAssetIds.length ? findCloudAssets(user.id, requestedAssetIds, { deviceId, workspaceId:scope.workspaceId }) : [];
       const deliveries = [...new Map([...pendingDeliveries, ...requestedDeliveries].map(asset => [asset.id, asset])).values()];
       deliveries.forEach(asset => markAssetDeliveryPending(user.id, deviceId, asset.id));
@@ -85,6 +93,8 @@ export function createFilesRouteHandler({
         deliveries:deliveries.map(publicAsset),
         nextCursor:page.nextCursor,
         hasMore:page.hasMore,
+        nextDeliveryCursor,
+        deliveriesHasMore:pendingDeliveries.length === deliveryLimit,
       });
       return true;
     }
@@ -245,13 +255,23 @@ export function createFilesRouteHandler({
       sendJson(res, 200, { deviceId, acknowledged:results.filter(result => result.ok).length, results });
       return true;
     }
+    const archiveMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/archive$/);
+    if (archiveMatch && req.method === 'POST') {
+      const user = requireUser(req, res); if (!user) return true;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+      const asset = findAsset(user.id, archiveMatch[1], scope);
+      if (!asset) { sendJson(res, 404, { error:'文件不存在' }); return true; }
+      const outcome = requestGenerationArchive(user.id, asset);
+      sendJson(res, outcome.error ? 409 : 200, outcome);
+      return true;
+    }
     const localReadyMatch = url.pathname.match(/^\/api\/files\/([\w-]+)\/local-ready$/);
     if (localReadyMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return true;
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+      const input = await bodyJson(req);
       const asset = findAsset(user.id, localReadyMatch[1], scope);
       if (!asset) { sendJson(res, 404, { error:'文件不存在' }); return true; }
-      const input = await bodyJson(req);
       const outcome = await applyLocalReadyAcknowledgement(user.id, asset, { ...input, deviceId:scope.deviceId || normalizeDeviceId(input.deviceId) });
       if (outcome.error) { sendJson(res, outcome.status, { error:outcome.error }); return true; }
       sendJson(res, 200, publicAsset(outcome.asset));

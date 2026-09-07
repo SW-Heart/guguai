@@ -543,3 +543,40 @@ test('generation request idempotency records preserve the request hash and task 
     cleanupDb();
   }
 });
+
+test('generation claim respects capacity even with many distinct due tasks', () => {
+  freshDb();
+  try {
+    const userId = makeUser('claim-capacity');
+    for (let i = 0; i < 8; i++) {
+      const generationId = `capacity-${i}`;
+      saveGenerationRecord(userId, { id:generationId, type:'video', status:'queued', createdAt:'2026-09-06T00:00:00Z', updatedAt:'2026-09-06T00:00:00Z' });
+      enqueueGenerationJob({ userId, generationId, nextRunAt:100 });
+    }
+    assert.equal(claimGenerationJobs({ owner:'worker', now:100, limit:1 }).length, 1);
+    assert.equal(claimGenerationJobs({ owner:'worker', now:100, limit:2 }).length, 2);
+  } finally { cleanupDb(); }
+});
+
+test('corrupt recovery documents do not discard valid work', () => {
+  freshDb();
+  try {
+    const userId = makeUser('recovery-corruption');
+    for (const id of ['bad-json', 'null-doc', 'good-doc']) saveGenerationRecord(userId, { id, type:'video', status:'queued', createdAt:'2026-09-06T00:00:00Z', updatedAt:'2026-09-06T00:00:00Z' });
+    sql("UPDATE generations SET doc_json = '{broken' WHERE id = 'bad-json'").run();
+    sql("UPDATE generations SET doc_json = 'null' WHERE id = 'null-doc'").run();
+    assert.deepEqual(listPendingGenerations().map(row => row.task.id), ['good-doc']);
+  } finally { cleanupDb(); }
+});
+
+test('pending delivery keysets reach older assets even when recent downloads fail', () => {
+  freshDb();
+  try {
+    const userId = makeUser('delivery-pages');
+    for (let i = 0; i < 5; i++) saveAssetRecord(userId, { id:`delivery-${i}`, kind:'video', sourceGenerationId:`g-${i}`, sourceUrl:'https://example.test/video', deliveryStatus:'awaiting_local', remoteStatus:'pending', createdAt:'2026-09-06T00:00:00Z', updatedAt:'2026-09-06T00:00:00Z' });
+    const first = listPendingAssetDeliveries(userId, 'device', { limit:2 });
+    const last = first.at(-1);
+    const second = listPendingAssetDeliveries(userId, 'device', { limit:2, before:{ t:last.createdAt, i:last.id } });
+    assert.deepEqual([...first,...second].map(asset => asset.id), ['delivery-0','delivery-1','delivery-2','delivery-3']);
+  } finally { cleanupDb(); }
+});

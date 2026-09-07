@@ -7,7 +7,7 @@ import path from 'node:path';
 import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { fetchRemoteMedia } from './media-download.mjs';
+import { downloadMediaToFile, validateDownloadedMedia } from './media-download.mjs';
 import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
   claimLocalAssetByPath,
@@ -588,7 +588,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     if (verifyResponse.ok) {
       const cloudAsset = await verifyResponse.json();
       assertActiveWorkspace(targetWorkspace, targetEpoch);
-      asset.remoteStatus = 'ready';
+      asset.remoteStatus = cloudAsset.remoteStatus || asset.remoteStatus;
       asset.localStatus = 'saved';
       upsertLocalAsset(asset);
       return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: true };
@@ -644,7 +644,18 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
   const existing = findLocalAssetByCloudId(cloudAssetId);
   if (existing) {
     const existingPath = path.resolve(targetWorkspace, existing.relativePath);
-    if (isInside(targetWorkspace, existingPath) && await fs.access(existingPath).then(() => true).catch(() => false)) {
+    const existingStat = isInside(targetWorkspace, existingPath) ? await fs.stat(existingPath).catch(() => null) : null;
+    let validExisting = false;
+    if (existingStat?.isFile() && existingStat.size > 0 && existingStat.size === existing.size) {
+      const handle = await fs.open(existingPath, 'r');
+      try {
+        const prefix = Buffer.alloc(512);
+        const { bytesRead } = await handle.read(prefix, 0, prefix.length, 0);
+        validateDownloadedMedia(prefix.subarray(0, bytesRead), existingStat.size, { kind:kind || existing.kind });
+        validExisting = true;
+      } catch {} finally { await handle.close(); }
+    }
+    if (validExisting) {
       assertActiveWorkspace(targetWorkspace, targetEpoch);
       existing.localStatus = 'saved';
       upsertLocalAsset(existing);
@@ -652,26 +663,26 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
     }
   }
   const targetUrl = trustedMediaDownloadUrl(url);
-  const response = await fetchRemoteMedia(session.defaultSession, targetUrl, { sameOriginHeaders:await cloudScopedHeaders(targetUrl) });
-  if (response.status === 404) {
-    return { unavailable: true, status: 404, cloudAssetId };
-  }
-  if (!response.ok || !response.body) {
-    console.warn('[desktop] 媒体下载被拒绝', { assetId:cloudAssetId, status:response.status, path:new URL(targetUrl).pathname });
-    throw new Error(`媒体下载失败（${response.status}）`);
-  }
   const originalName = safeName(name, `${kind === 'video' ? '生成视频' : '生成图片'}-${cloudAssetId}`);
   const extension = path.extname(originalName).toLowerCase() || ({ 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/webm': '.weba', 'audio/flac': '.flac' }[mimeType] || '');
   const temporary = path.join(targetWorkspace, '.gugu', 'transfers', `${cloudAssetId}.${randomUUID()}.part`);
   const output = path.join(targetWorkspace, 'library');
   assertActiveWorkspace(targetWorkspace, targetEpoch);
   await fs.mkdir(output, { recursive: true });
-  const hash = createHash('sha256');
-  let size = 0;
-  const digestTransform = new Transform({ transform(chunk, _encoding, callback) { size += chunk.length; hash.update(chunk); callback(null, chunk); } });
   try {
-    await pipeline(Readable.fromWeb(response.body), digestTransform, createWriteStream(temporary, { mode: 0o600 }));
-    const sha256 = hash.digest('hex');
+    let saved;
+    try {
+      saved = await downloadMediaToFile(session.defaultSession, targetUrl, temporary, { headers:await cloudScopedHeaders(targetUrl), kind, mimeType });
+    } catch (error) {
+      // A CDN/upstream 404 does not mean the asset itself has been deleted.
+      if (error.status === 404 || error.status === 410) {
+        const metadata = await cloudRequest(`/api/files/${encodeURIComponent(cloudAssetId)}`, { signal:AbortSignal.timeout(15_000) });
+        await metadata.body?.cancel().catch(() => {});
+        if (metadata.status === 404) return { unavailable:true, status:404, cloudAssetId };
+      }
+      throw error;
+    }
+    const { size, sha256 } = saved;
     const normalizedName = `${originalName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')}${extension && !path.extname(originalName) ? extension : ''}`;
     let targetName = `${sha256.slice(0, 16)}-${normalizedName}`;
     let relativePath = path.join('library', targetName);
@@ -700,7 +711,7 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
       cloudAssetId,
       name: originalName,
       relativePath,
-      mimeType: mimeType || response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream',
+      mimeType: saved.mimeType,
       kind: kind || 'image',
       size,
       sha256,
@@ -723,7 +734,10 @@ async function downloadRemoteAsset(payload = {}) {
   const inFlight = remoteDownloadLocks.get(cloudAssetId);
   if (inFlight) return inFlight;
   let task;
-  task = downloadRemoteAssetInternal(payload).finally(() => {
+  task = downloadRemoteAssetInternal(payload).catch(error => {
+    if (['ENOSPC', 'EACCES', 'EPERM', 'EROFS'].includes(error.code)) return { downloadError:'本地磁盘空间不足或目录不可写，请检查后重试', retryable:false };
+    throw error;
+  }).finally(() => {
     if (remoteDownloadLocks.get(cloudAssetId) === task) remoteDownloadLocks.delete(cloudAssetId);
   });
   remoteDownloadLocks.set(cloudAssetId, task);

@@ -73,3 +73,24 @@ test('generation archive does not persist an asset after lease loss during uploa
   assert.equal(removedObjects.length, 1);
   assert.match(removedObjects[0], new RegExp(assetId));
 });
+
+test('a local receipt during upload preserves the completed backup', async () => {
+  let asset = { id:'race-asset', sourceGenerationId:'race-task', deliveryStatus:'awaiting_local' };
+  const task = { id:'race-task', assetId:asset.id, type:'video', archivePending:true };
+  const removed = [];
+  const service = createMediaArchiveService({
+    assertGenerationJobLease:() => {}, findAsset:() => ({ ...asset }), findGeneration:() => ({ ...task }),
+    saveAsset:async () => {}, saveGenerationAsset:(_user, value) => { asset = value; },
+    withMediaTempDir:async (_name, callback) => callback('/tmp'),
+    generationAssetExtension:() => '.mp4', generationAssetName:() => 'video.mp4', generationSourceHeaders:() => ({}),
+    assetObjectKey:() => 'backup/video.mp4',
+    download:async () => ({ size:20, contentType:'video/mp4', sha256:'server-digest' }),
+    put:async () => { asset.deliveryStatus = 'local_ready'; task.localReadyAt = '2026-09-06T00:00:00Z'; },
+    remove:async key => { removed.push(key); }, now:() => '2026-09-06T00:00:00Z',
+  });
+  await service.archiveGenerationResult('user', task, 'https://example.test/video');
+  assert.equal(asset.objectKey, 'backup/video.mp4');
+  assert.equal(asset.deliveryStatus, 'local_ready');
+  assert.equal(asset.sha256, 'server-digest');
+  assert.deepEqual(removed, []);
+});

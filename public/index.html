@@ -7,7 +7,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=2">
-  <link rel="stylesheet" href="/styles.css?v=213">
+  <link rel="stylesheet" href="/styles.css?v=217">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
@@ -188,6 +188,11 @@
     <div id="modelPriceBody" class="model-price-body" aria-live="polite"><div class="price-catalog-loading"><span class="price-catalog-spinner" aria-hidden="true"></span>正在获取最新价格…</div></div>
     <footer class="model-price-foot"><span class="price-live-dot" aria-hidden="true"></span><span>实时同步 · 1 元 = 10 积分</span></footer>
   </dialog>
+  <dialog id="notificationDialog" class="notification-dialog" aria-labelledby="notificationDialogTitle" aria-describedby="notificationDialogBody" aria-hidden="true">
+    <header class="notification-dialog-head"><div class="notification-dialog-heading"><h2 id="notificationDialogTitle">消息通知</h2><time id="notificationDialogTime"></time></div><button id="closeNotificationDialog" class="notification-dialog-close" type="button" aria-label="关闭消息">×</button></header>
+    <div id="notificationDialogBody" class="notification-dialog-body"></div>
+    <footer class="notification-dialog-foot"><button id="notificationDialogDone" type="button">完成</button></footer>
+  </dialog>
   <dialog id="renameFileDialog" class="form-dialog" aria-labelledby="renameFileTitle" aria-describedby="renameFileHelp"><form id="renameFileForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">文件管理</span><h2 id="renameFileTitle">重命名素材</h2><p id="renameFileHelp">修改后会立即同步到文件库。</p></div><button id="closeRenameFile" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body"><label class="dialog-field" for="renameFileInput"><span>文件名</span><input id="renameFileInput" maxlength="200" autocomplete="off" required><small id="renameFileError" class="field-error hidden" role="alert"></small></label></div><footer class="dialog-footer"><button id="cancelRenameFile" class="secondary-button" type="button">取消</button><button id="saveRenameFile" class="gradient-button" type="submit">保存名称</button></footer></form></dialog>
   <dialog id="accountSettingsDialog" class="form-dialog account-settings-dialog" aria-labelledby="accountSettingsTitle" aria-describedby="accountSettingsHelp"><form id="accountSettingsForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">个人资料</span><h2 id="accountSettingsTitle">账号设置</h2><p id="accountSettingsHelp">设置昵称和密码后，可以使用昵称与密码登录。</p></div><button id="closeAccountSettings" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body account-settings-body"><label class="dialog-field" for="accountPhone"><span>手机号</span><input id="accountPhone" readonly></label><label class="dialog-field" for="accountNickname"><span>账号昵称</span><input id="accountNickname" maxlength="24" autocomplete="nickname" placeholder="2–24 位中文、字母、数字、下划线或短横线"><small>昵称可作为密码登录时的账号。</small></label><label class="dialog-field" for="accountNewPassword"><span>设置密码</span><input id="accountNewPassword" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="至少 8 位；不修改可留空"></label><label class="dialog-field" for="accountPasswordConfirm"><span>确认密码</span><input id="accountPasswordConfirm" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="再次输入新密码"><small id="accountSettingsError" class="field-error hidden" role="alert"></small></label></div><footer class="dialog-footer"><button id="cancelAccountSettings" class="secondary-button" type="button">取消</button><button id="saveAccountSettings" class="gradient-button" type="submit">保存设置</button></footer></form></dialog>
   <dialog id="supportLogDialog" class="form-dialog support-log-dialog" aria-labelledby="supportLogTitle" aria-describedby="supportLogHelp"><form id="supportLogForm" class="form-dialog-card"><div class="dialog-head"><div><span class="dialog-kicker">故障排查</span><h2 id="supportLogTitle">上传诊断日志</h2><p id="supportLogHelp">遇到客户端异常时，把本机运行日志发给我们，可以大幅加快定位问题。</p></div><button id="closeSupportLog" type="button" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div><div class="form-dialog-body account-settings-body"><label class="dialog-field" for="supportLogNote"><span>问题描述（可选）</span><textarea id="supportLogNote" maxlength="300" rows="3" placeholder="例如：点击生成视频后一直卡在排队，大约 14:30 出现"></textarea><small>日志包含客户端运行记录、版本与工作区路径，不包含你的账号密码或素材内容。</small></label><p id="supportLogResult" class="support-log-result hidden" role="status"></p><small id="supportLogError" class="field-error hidden" role="alert"></small></div><footer class="dialog-footer"><button id="openSupportLogFolder" class="secondary-button" type="button">打开日志文件夹</button><button id="submitSupportLog" class="gradient-button" type="submit">上传日志</button></footer></form></dialog>
@@ -208,6 +213,6 @@
     </div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script type="module" src="/app.js?v=247"></script>
+<script type="module" src="/app.js?v=252"></script>
 </body>
 </html>

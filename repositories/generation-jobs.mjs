@@ -181,6 +181,7 @@ export function claimGenerationJobs({ owner, now = Date.now(), limit = 4, leaseM
       if (!result.changes) continue;
       claimed.push({ ...candidate, state: 'leased', leaseOwner: normalizedOwner, leaseToken, leaseUntil: now + normalizedLeaseMs, attemptCount: Number(candidate.attemptCount) + 1 });
       claimedGenerationIds.add(candidate.generationId);
+      if (claimed.length >= normalizedLimit) break;
     }
     return claimed;
   });

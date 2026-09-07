@@ -63,12 +63,21 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
 
   function listPendingGenerations() {
     return sql(`
-      SELECT user_id AS userId, doc_json FROM generations
+      SELECT id, user_id AS userId, doc_json FROM generations
       WHERE status IN ('queued','running')
          OR (status = 'completed' AND instr(doc_json, '"archivePending":true') > 0)
          OR (status = 'failed' AND credit_status = 'refund_failed')
       ORDER BY created_at ASC`).all()
-      .map(row => ({ userId: row.userId, task: JSON.parse(row.doc_json) }));
+      .flatMap(row => {
+        try {
+          const task = JSON.parse(row.doc_json);
+          if (!task || typeof task !== 'object' || task.id !== row.id) throw new Error('生成记录标识无效');
+          return [{ userId:row.userId, task }];
+        } catch (error) {
+          console.error('[recovery] 跳过损坏的生成记录', { generationId:row.id, message:error.message });
+          return [];
+        }
+      });
   }
 
   return Object.freeze({ saveGenerationRecord, findGeneration, deleteGeneration, listGenerations, listPendingGenerations });

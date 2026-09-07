@@ -59,11 +59,12 @@ export function createMediaArchiveService({
       task.error = '';
       return;
     }
+    if (existing?.deliveryStatus === 'local_ready' || findGeneration(userId, task.id)?.localReadyAt) return;
     return withMediaTempDir(`generation-${task.id}`, async jobDir => {
       const extension = generationAssetExtension(task);
       const storageName = `${assetId}${extension}`;
       const localFile = path.join(jobDir, storageName);
-      const saved = await downloadFile(resultUrl, localFile, 4, { headers:generationSourceHeaders(task, resultUrl) });
+      const saved = await downloadFile(resultUrl, localFile, 4, { headers:generationSourceHeaders(task, resultUrl), kind:task.type });
       assertGenerationJobLease(task, leaseGuard);
       const beforeUpload = findAsset(userId, assetId);
       const currentTask = findGeneration(userId, task.id);
@@ -77,10 +78,6 @@ export function createMediaArchiveService({
       }
       const latest = findAsset(userId, assetId);
       const latestTask = findGeneration(userId, task.id);
-      if (latest?.deliveryStatus === 'local_ready' || latestTask?.localReadyAt) {
-        if (!beforeUpload?.objectKey) await removeFile(objectKey).catch(error => console.warn('[generation] 清理并发归档对象失败', { generationId:task.id, message:error.message }));
-        return;
-      }
       const asset = {
         ...(latest || beforeUpload || existing || {}),
         id: assetId,
@@ -89,6 +86,7 @@ export function createMediaArchiveService({
         kind: task.type,
         mimeType: saved.contentType,
         size: saved.size,
+        ...(saved.sha256 ? { sha256:saved.sha256 } : {}),
         storageName,
         source: 'generation',
         sourceGenerationId: task.id,
@@ -96,7 +94,7 @@ export function createMediaArchiveService({
         sourceRequiresAuth: Boolean(task.sourceRequiresAuth),
         originDeviceId: String(task.originDeviceId || ''),
         originWorkspaceId: String(task.originWorkspaceId || ''),
-        deliveryStatus: 'remote_backed_up',
+        deliveryStatus: latest?.deliveryStatus === 'local_ready' || latestTask?.localReadyAt ? 'local_ready' : 'remote_backed_up',
         remoteStatus: 'ready',
         objectKey,
         objectUploadedAt: now(),

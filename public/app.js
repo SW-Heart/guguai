@@ -1,6 +1,6 @@
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=10';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=11';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=2';
@@ -9,10 +9,10 @@ import { createGenerationPresentation } from './features/generation/presentation
 import { createCreditPresentation } from './features/credits/presentation.js?v=2';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
-import { createNotificationController } from './features/notifications/controller.js?v=3';
+import { createNotificationController } from './features/notifications/controller.js?v=6';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=4';
+import { createMediaController } from './features/media/controller.js?v=5';
 import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
@@ -150,7 +150,7 @@ function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding
   return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
 }
 function isDesktopAssetSyncing(file) {
-  return mediaController.isHydrating(file);
+  return Boolean(window.guguDesktop && file && file.localStatus !== 'saved' && !String(file.url || '').startsWith('gugu-media://')) || mediaController.isHydrating(file);
 }
 function taskLocalSyncing(task, file = fileById(task?.assetId)) {
   if (!window.guguDesktop || task?.status !== 'completed' || !task.assetId) return false;
@@ -220,8 +220,10 @@ function mergeTasksIntoLoadedHistory(tasks = []) {
   if (state.generationTab === 'history') renderGenerationHistory();
 }
 function desktopSyncMarkup(task) {
-  const label = task?.type === 'image' ? '图片' : '视频';
-  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}生成中"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>正在保存到本地…</span></div></div>`;
+  const delivery = mediaController.downloadState(task?.assetId);
+  if (delivery?.status === 'failed') return `<div class="skeleton-progress" role="status"><span>${esc(delivery.error || '下载失败')}</span><button type="button" class="retry-local-download" data-asset-id="${esc(task.assetId)}">重试下载</button></div>`;
+  const label = delivery?.status === 'retrying' ? '下载暂时失败，等待重试…' : '正在保存到本地…';
+  return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
 }
 function requireDesktopLocalAsset(file) {
   if (!isDesktopAssetSyncing(file)) return true;
@@ -1684,8 +1686,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=86').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+    dramaControllerPromise = import('./drama-studio.js?v=87').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
   }
@@ -2208,6 +2210,10 @@ function reconcileCards(container, records, { card, signature, bind, empty }) {
   desired.forEach((node, index) => { if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null); });
 }
 function bindTaskCard(card) {
+  card.querySelector('.retry-local-download')?.addEventListener('click', event => {
+    event.stopPropagation();
+    mediaController.retryDownload(event.currentTarget.dataset.assetId);
+  });
   card.querySelector('.open-task')?.addEventListener('click', event => openGenerationDetail(event.currentTarget.dataset.taskId));
   card.querySelectorAll('.task-action[data-action]').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); void handleTaskAction(button.dataset.action, button.dataset.taskId, button); }));
   card.querySelector('.show-in-folder')?.addEventListener('click', async event => {
@@ -2217,7 +2223,7 @@ function bindTaskCard(card) {
 }
 function taskRenderSignature(task) {
   const asset = fileById(task.assetId);
-  return `${recordSignature(task, taskCardSignatureFields)}|asset:${asset ? recordSignature(asset, fileCardSignatureFields) : ''}`;
+  return `${recordSignature(task, taskCardSignatureFields)}|asset:${asset ? recordSignature(asset, fileCardSignatureFields) : ''}|delivery:${JSON.stringify(mediaController.downloadState(task.assetId))}`;
 }
 function syncGenerationTab() {
   const history = state.generationTab === 'history';
@@ -2623,13 +2629,14 @@ function openGenerationDetail(id) {
   const displayStatus = taskDisplayStatus(task, asset);
   const detailFailure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localSyncing
-    ? '<div class="detail-placeholder running" role="status" aria-live="polite"><div class="loader-ring"></div><span>正在保存到本地…</span></div>'
+    ? desktopSyncMarkup(task)
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
     : detailFailure
       ? `<div class="detail-missing-file" role="alert"><b>${esc(detailFailure.message || '生成失败')}</b><span>${esc(detailFailure.suggestion || '请调整内容后重试')}</span></div>`
       : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
   $('#generationDetailMedia').innerHTML = media;
+  $('#generationDetailMedia').querySelector('.retry-local-download')?.addEventListener('click', () => mediaController.retryDownload(task.assetId));
   $('#generationDetailTitle').textContent = '文件详情';
   const status = $('#generationDetailStatus'); status.className = `detail-status ${displayStatus}`; status.textContent = statusText(displayStatus);
   $('#generationDetailPrompt').textContent = task.prompt;

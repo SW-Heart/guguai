@@ -3,7 +3,7 @@ export function createDeliveryRepository({ sql, scopeWhere, findAsset, defaultPa
     if (typeof dependency !== 'function') throw new TypeError(`交付仓储缺少 ${name} 依赖`);
   }
 
-  function listPendingAssetDeliveries(userId, deviceId, { workspaceId = '', limit = defaultPageLimit } = {}) {
+  function listPendingAssetDeliveries(userId, deviceId, { workspaceId = '', limit = defaultPageLimit, before = null } = {}) {
     const bounded = Math.max(1, Math.min(maxPageLimit, Number(limit) || defaultPageLimit));
     const scoped = scopeWhere({ deviceId, workspaceId }, 'a.doc_json');
     const rows = sql(`
@@ -26,8 +26,9 @@ export function createDeliveryRepository({ sql, scopeWhere, findAsset, defaultPa
           OR (json_extract(a.doc_json, '$.deliveryStatus') IS NULL AND json_extract(a.doc_json, '$.remoteStatus') = 'ready')
         )
         AND COALESCE(d.status, '') <> 'ready'
+        ${before ? 'AND (a.created_at < :beforeTime OR (a.created_at = :beforeTime AND a.id > :beforeId))' : ''}
       ORDER BY a.created_at DESC, a.id ASC
-      LIMIT :limit`).all({ userId, deviceId, ...scoped.params, limit: bounded });
+      LIMIT :limit`).all({ userId, deviceId, ...scoped.params, limit: bounded, ...(before ? { beforeTime:before.t, beforeId:before.i } : {}) });
     return rows.map(row => JSON.parse(row.docJson));
   }
 

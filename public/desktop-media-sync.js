@@ -56,16 +56,13 @@ export function shouldHydrateDesktopAsset(file, { force = false } = {}) {
   return Boolean(file?.id && (force || isAwaitingDesktopDelivery(file)) && !file.localOnly && file.localStatus !== 'saved');
 }
 
-export function desktopHydrationRetryDelay(failureCount, { baseDelay = 750, maxFailures = 3 } = {}) {
-  const count = Math.max(1, Math.floor(Number(failureCount) || 1));
-  const cappedCount = Math.min(count, Math.max(1, Math.floor(Number(maxFailures) || 3)));
-  return Math.min(5000, Math.max(100, Number(baseDelay) || 750) * (2 ** (cappedCount - 1)));
+export function desktopHydrationRetryDelay(failureCount) {
+  // Fast retries first, then leave time for the server backup to become ready.
+  return [1500, 5000, 15000, 45000, 120000, 300000][Math.max(0, Math.floor(Number(failureCount) || 1) - 1)] || 0;
 }
 
-export function desktopAcknowledgementRetryDelay(failureCount, { baseDelay = 1000, maxFailures = 5 } = {}) {
-  const count = Math.max(1, Math.floor(Number(failureCount) || 1));
-  const cappedCount = Math.min(count, Math.max(1, Math.floor(Number(maxFailures) || 5)));
-  return Math.min(30_000, Math.max(100, Number(baseDelay) || 1000) * (2 ** (cappedCount - 1)));
+export function desktopAcknowledgementRetryDelay(failureCount) {
+  return Math.min(300_000, 1000 * 2 ** Math.min(9, Math.max(0, (Number(failureCount) || 1) - 1)));
 }
 
 export function canRemoveImportedLocalAsset(item) {

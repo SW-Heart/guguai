@@ -45,3 +45,13 @@ test('announcement update uses optimistic version checking', () => {
   updateAnnouncement(announcement.id, { title: '新标题' }, { actorUserId: 'notification-admin', expectedVersion: announcement.version });
   assert.throws(() => updateAnnouncement(announcement.id, { title: '过期修改' }, { actorUserId: 'notification-admin', expectedVersion: announcement.version }), /已被其他操作更新/);
 });
+
+test('rich announcement content is sanitized and exposes a plain-text preview', () => {
+  const announcement = createAnnouncement({ title: '图文通知', content: '<p><strong>重点</strong><br><img src="https://example.com/banner.png" onerror="alert(1)"></p>', status: 'published' }, { actorUserId: 'notification-admin' });
+  assert.match(announcement.contentHtml, /<strong>重点<\/strong>/);
+  assert.match(announcement.contentHtml, /src="https:\/\/example\.com\/banner\.png"/);
+  assert.doesNotMatch(announcement.contentHtml, /onerror/);
+  assert.equal(announcement.contentText, '重点');
+  assert.equal(listNotifications('notification-user-a').items[0].contentHtml, announcement.contentHtml);
+  assert.equal(listNotifications('notification-user-a').items[0].contentText, '重点');
+});

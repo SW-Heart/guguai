@@ -49,14 +49,12 @@ test('desktop folder reveal payload distinguishes cloud, hydrated, and local-onl
   });
 });
 
-test('desktop hydration retries transient failures with bounded backoff', () => {
-  assert.equal(desktopHydrationRetryDelay(1), 750);
-  assert.equal(desktopHydrationRetryDelay(2), 1500);
-  assert.equal(desktopHydrationRetryDelay(3), 3000);
-  assert.equal(desktopHydrationRetryDelay(20), 3000);
-  assert.equal(desktopHydrationRetryDelay(1, { baseDelay:200, maxFailures:2 }), 200);
-  assert.equal(desktopHydrationRetryDelay(2, { baseDelay:200, maxFailures:2 }), 400);
-  assert.equal(desktopHydrationRetryDelay(20, { baseDelay:200, maxFailures:2 }), 400);
+test('desktop hydration retries leave time for backup and eventually stop', () => {
+  assert.equal(desktopHydrationRetryDelay(1), 1500);
+  assert.equal(desktopHydrationRetryDelay(5), 120000);
+  assert.equal(desktopHydrationRetryDelay(6), 300000);
+  assert.equal(desktopHydrationRetryDelay(7), 0);
+  assert.equal(desktopHydrationRetryDelay(20), 0);
 });
 
 test('desktop sync accepts only the canonical cloudAsset result', () => {

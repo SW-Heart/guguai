@@ -1,5 +1,5 @@
 function query(selector) {
-  return document.querySelector(selector);
+  return globalThis.document?.querySelector?.(selector) || null;
 }
 
 export function createNotificationController({ state, api, esc, toast, accountSnapshot, isAccountCurrent, render:renderOverride = null }) {
@@ -12,8 +12,42 @@ export function createNotificationController({ state, api, esc, toast, accountSn
   function dateText(value) {
     const date = new Date(value);
     return value && !Number.isNaN(date.getTime())
-      ? date.toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit' })
+      ? date.toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false })
       : '—';
+  }
+
+  function previewText(item) {
+    return String(item?.contentText || item?.content || '').replace(/\r\n?/g, '\n').trim();
+  }
+
+  function contentMarkup(item) {
+    if (item?.contentHtml) return String(item.contentHtml);
+    return `<p>${esc(item?.content || '').replace(/\n/g, '<br>')}</p>`;
+  }
+
+  let notificationDialogRestoreFocus = null;
+
+  function closeNotificationDialog() {
+    const dialog = query('#notificationDialog');
+    if (dialog?.open) dialog.close();
+  }
+
+  function openNotification(item, trigger) {
+    if (!item) return;
+    const dialog = query('#notificationDialog');
+    if (!dialog) { markRead(item.id); return; }
+    const title = query('#notificationDialogTitle');
+    const time = query('#notificationDialogTime');
+    const body = query('#notificationDialogBody');
+    if (!title || !time || !body) { markRead(item.id); return; }
+    notificationDialogRestoreFocus = trigger || globalThis.document?.activeElement || null;
+    title.textContent = item.title || '消息通知';
+    time.textContent = dateText(item.publishedAt);
+    body.innerHTML = contentMarkup(item);
+    dialog.hidden = false;
+    dialog.setAttribute('aria-hidden', 'false');
+    if (!dialog.open) dialog.showModal();
+    markRead(item.id);
   }
 
   function render() {
@@ -39,12 +73,11 @@ export function createNotificationController({ state, api, esc, toast, accountSn
       list.innerHTML = '<div class="notification-empty"><span aria-hidden="true">—</span><b>暂无消息</b><small>新的公告会出现在这里。</small></div>';
       return;
     }
-    list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(dateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(item.content)}</span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
-    list.querySelectorAll('[data-notification-id]').forEach(button => button.onclick = () => markRead(button.dataset.notificationId));
+    list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}" aria-label="查看消息：${esc(item.title)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(dateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(previewText(item))}</span><span class="notification-item-more">查看全文 <span aria-hidden="true">↗</span></span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
   }
 
   function setPanelOpen(open) {
-    const item = document.querySelector('.notification-menu-item');
+    const item = query('.notification-menu-item');
     const panel = query('#notificationPanel');
     const trigger = query('#notificationMenuButton');
     if (!item || !panel || !trigger) return;
@@ -53,14 +86,15 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     item.classList.toggle('is-open', open);
     panel.setAttribute('aria-hidden', String(!open));
     trigger.setAttribute('aria-expanded', String(open));
-    if (open) render();
+    // focusin opens this panel during mouse-down. Re-rendering here removes
+    // the pressed button before mouse-up, preventing its click from firing.
   }
 
   function schedulePanelClose() {
     window.clearTimeout(closeTimer);
     closeTimer = window.setTimeout(() => {
       closeTimer = 0;
-      const item = document.querySelector('.notification-menu-item');
+      const item = query('.notification-menu-item');
       if (!item?.matches(':hover') && !item?.matches(':focus-within')) setPanelOpen(false);
     }, 180);
   }
@@ -116,5 +150,23 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     }
   }
 
-  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead };
+  query('#notificationList')?.addEventListener('click', event => {
+    const button = event.target?.closest?.('[data-notification-id]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openNotification(state.notifications.find(item => item.id === button.dataset.notificationId), button);
+  });
+  query('#closeNotificationDialog')?.addEventListener('click', closeNotificationDialog);
+  query('#notificationDialogDone')?.addEventListener('click', closeNotificationDialog);
+  query('#notificationDialog')?.addEventListener('click', event => { if (event.target === event.currentTarget) closeNotificationDialog(); });
+  query('#notificationDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeNotificationDialog(); });
+  query('#notificationDialog')?.addEventListener('close', () => {
+    const dialog = query('#notificationDialog');
+    dialog?.setAttribute('aria-hidden', 'true');
+    requestAnimationFrame(() => { if (notificationDialogRestoreFocus?.isConnected && !notificationDialogRestoreFocus.disabled) notificationDialogRestoreFocus.focus(); });
+    notificationDialogRestoreFocus = null;
+  });
+
+  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead, openNotification, closeNotificationDialog };
 }

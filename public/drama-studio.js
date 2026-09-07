@@ -54,7 +54,7 @@ const stepNames = { script:'剧本设计', resources:'资源生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, confirmDelete, taskFailure, isAssetSyncing = () => false, showAssetInFolder = null, removeCloudAssets = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
+export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
   const root = document.querySelector('#dramaStage');
   let projects = [];
   let projectQuery = '';
@@ -374,15 +374,15 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   const taskDisplayStatus = id => {
     const generation = task(id);
     const state = videoPreviewVersionState(generation, { ready:taskLocallyReady(id), syncing:taskSyncing(id) });
-    return state === 'pending' || state === 'syncing' ? 'running' : generation?.status;
+    return state === 'pending' ? 'running' : generation?.status;
   };
   const taskDisplayLabel = id => {
     const generation = task(id);
     if (generation?.status === 'failed') return '视频生成失败，点击查看原因';
-    if (taskSyncing(id)) return '视频生成中…';
+    if (taskSyncing(id)) return '正在保存到本地…';
     if (generation?.status === 'running') return '视频生成中…';
     if (generation?.status === 'queued') return '视频排队中…';
-    if (generation?.status === 'completed' && generation.assetId) return '视频生成中…';
+    if (generation?.status === 'completed' && generation.assetId) return taskLocallyReady(id) ? '视频已完成' : '正在保存到本地…';
     return '生成后在这里预览';
   };
   const videoProgressStageLabel = generation => ({
@@ -1044,7 +1044,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const fileById = new Map(state.files.map(item => [item.id, item]));
     project.shots.slice(range.start, range.end).forEach(shot => {
       const previewTaskId = professionalPreviewTaskIds.get(shot.id) || shot.selectedVideoTaskId;
-      shotPreviewSignatures.set(shot.id, shotPreviewContentSignatureFromMaps(shot, taskById, fileById, assetSyncing, previewTaskId));
+      shotPreviewSignatures.set(shot.id, shotPreviewContentSignatureFromMaps(shot, taskById, fileById, assetSyncing, previewTaskId) + localDeliverySignature(task(previewTaskId)?.assetId));
     });
     bindStoryboardWorkbench({ focus:false, cardsOnly:true });
     updateVirtualSpacers(scroll);
@@ -1101,7 +1101,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const taskById=new Map(state.tasks.map(item=>[item.id,item]));const fileById=new Map(state.files.map(item=>[item.id,item]));
     project.shots.forEach(shot=>{
       const previewTaskId = professionalPreviewTaskIds.get(shot.id) || shot.selectedVideoTaskId;
-      shotPreviewSignatures.set(shot.id, shotPreviewContentSignatureFromMaps(shot, taskById, fileById, assetSyncing, previewTaskId));
+      shotPreviewSignatures.set(shot.id, shotPreviewContentSignatureFromMaps(shot, taskById, fileById, assetSyncing, previewTaskId) + localDeliverySignature(task(previewTaskId)?.assetId));
     });
     bindStoryboardWorkbench({focus:false});
     renderProfessionalShotWindow({ force:true });
@@ -1404,7 +1404,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const selectedState=videoPreviewVersionState(selectedTask,{ready:selectedReady,syncing:selectedSyncing});
     const showFailureDetails=selectedTask?.status==='failed'&&professionalPreviewTaskIds.get(shot?.id)===previewTaskId;
     const versions=(shot?.videoVersions||[]).map(id=>({id,file:taskAsset(id),task:task(id)}));
-    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:showFailureDetails?generationFailurePreviewMarkup(selectedTask):selectedState==='failed'?generationFailurePromptMarkup():selectedState==='syncing'?`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>视频生成中…</b></div>`:selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(previewTaskId)}</b></div>`:previewTaskId?`<div class="wb-preview-empty wb-preview-missing"><span class="wb-preview-missing-icon" aria-hidden="true">${generationFailureIcon}</span><b>${selectedTask?.status==='completed'&&selectedTask?.assetId?'视频文件未找到':'任务记录不可用'}</b><small>请刷新后重试，或重新生成此版本</small></div>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>生成后在这里预览</b></div>`;
+    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:showFailureDetails?generationFailurePreviewMarkup(selectedTask):selectedState==='failed'?generationFailurePromptMarkup():selectedState==='syncing'?localDeliveryMarkup(selectedTask)||`<div class="wb-preview-empty"><b>正在保存到本地…</b></div>`:selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(previewTaskId)}</b></div>`:previewTaskId?`<div class="wb-preview-empty wb-preview-missing"><span class="wb-preview-missing-icon" aria-hidden="true">${generationFailureIcon}</span><b>${selectedTask?.status==='completed'&&selectedTask?.assetId?'视频文件未找到':'任务记录不可用'}</b><small>请刷新后重试，或重新生成此版本</small></div>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>生成后在这里预览</b></div>`;
     const versionStrip=versions.length?`<div class="wb-preview-versions" aria-label="视频版本">${versions.map(item=>workbenchPreviewThumbMarkup(item,{selected:item.id===previewTaskId,shotId:shot.id,shotTitle:shot.title})).join('')}</div>`:'';
     return `<section class="wb-shot-preview" aria-label="${esc(shot?.title||'分镜')}预览"><header><b>预览</b><span>${versions.length?`${versions.length} 个版本`:'暂无视频'}</span></header><div class="wb-preview-stage" style="--video-ratio:${ratioCss(shot?.aspectRatio||'9:16')}">${media}</div>${versionStrip}</section>`;
   }
@@ -1462,7 +1462,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const selectedVideoFile=selectedReady?taskAsset(shot?.selectedVideoTaskId):null;
     const selectedFile=finalFile&&!assetSyncing(finalFile)?finalFile:selectedVideoFile;
     const fallbackRatio=ratioCss(shot?.aspectRatio||'9:16');
-    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:selectedState==='failed'?generationFailurePreviewMarkup(selectedTask):selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(shot?.selectedVideoTaskId)}</b><small>${shot?esc(shot.title):'选择一个分镜'}</small></div>`:selectedState==='syncing'?`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>视频生成中…</b><small>${shot?esc(shot.title):'选择一个分镜'}</small></div>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${finalFile&&assetSyncing(finalFile)?'成片生成中…':taskDisplayLabel(shot?.selectedVideoTaskId)}</b><small>${shot?esc(shot.title):'选择一个分镜'}</small></div>`;
+    const media=selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:selectedState==='failed'?generationFailurePreviewMarkup(selectedTask):selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask)||`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${taskDisplayLabel(shot?.selectedVideoTaskId)}</b><small>${shot?esc(shot.title):'选择一个分镜'}</small></div>`:selectedState==='syncing'?localDeliveryMarkup(selectedTask)||`<div class="wb-preview-empty"><b>正在保存到本地…</b></div>`:`<div class="wb-preview-empty"><span class="wb-preview-play">${PREVIEW_PLAY_ICON}</span><b>${finalFile&&assetSyncing(finalFile)?'成片生成中…':taskDisplayLabel(shot?.selectedVideoTaskId)}</b><small>${shot?esc(shot.title):'选择一个分镜'}</small></div>`;
     return `<header class="wb-preview-head"><div><span class="wb-eyebrow">PREVIEW</span><h2>预览</h2></div><span class="wb-preview-count">${completed}/${project.shots.length} 已生成</span></header><div class="wb-preview-stage" style="--video-ratio:${fallbackRatio}">${media}</div><section class="wb-preview-strip"><header><b>视频版本</b><span>点击查看大视频</span></header><div>${versions.length?versions.map(item=>workbenchPreviewThumbMarkup(item,{selected:item.shot.id===shot?.id&&item.id===shot?.selectedVideoTaskId,shotId:item.shot.id,shotTitle:item.shot.title})).join(''):'<p>生成视频后，缩略图会显示在这里</p>'}</div></section>${finalFile&&!assetSyncing(finalFile)?`<section class="wb-final-cut"><header><div><b>完整成片</b><span>已合成 ${project.shots.length} 个分镜</span></div><span class="wb-lock-mark">⌁ 已锁定</span></header><button type="button" class="wb-final-media" data-wb-preview-file="${esc(finalFile.id)}" aria-label="点击查看完整成片">${workbenchVideoMarkup(finalFile)}<span class="wb-preview-expand">点击查看完整成片</span></button></section>`:`<section class="wb-preview-tip"><span>⌁</span><p>${finalFile&&assetSyncing(finalFile)?'完整成片正在生成中，请稍后预览。':project.shots.length>1&&!locked?'所有分镜视频完成后，可点击缩略图查看大视频。':'生成多个分镜后，可点击缩略图查看大视频。'}</p></section>`}`;
   }
 
@@ -1535,6 +1535,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
 
   function bindWorkbenchPreviewActions(scope=root){
+    scope.querySelectorAll('.retry-local-download').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();retryLocalDownload(button.dataset.assetId);}));
     scope.querySelectorAll('[data-wb-preview-file]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();const file=asset(button.dataset.wbPreviewFile);if(file&&assetSyncing(file))return toast('素材正在保存到本地，请稍后再预览');openProfessionalMediaPreview(button.dataset.wbPreviewFile);}));
     scope.querySelectorAll('[data-wb-delete-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();void deletePreviewVideo(button.dataset.wbDeletePreviewShot,button.dataset.wbDeletePreviewVideo,button);}));
     scope.querySelectorAll('[data-wb-preview-video]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();professionalPreviewShotId=button.dataset.wbPreviewShot;professionalShotId=button.dataset.wbPreviewShot;const previewTaskId=button.dataset.wbPreviewVideo;const shot=project.shots.find(item=>item.id===professionalShotId);const generation=task(previewTaskId);const selectedFile=taskAsset(previewTaskId);const canPreview=taskLocallyReady(previewTaskId);activateProfessionalShot(professionalPreviewShotId);if(!shot)return;if(canPreview&&selectedFile){professionalPreviewTaskIds.delete(shot.id);shot.selectedVideoTaskId=previewTaskId;queueProfessionalSave();patchProfessionalTaskSurfaces();openProfessionalMediaPreview(selectedFile.id);return;}
@@ -1596,7 +1597,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       const generateLabel=card.querySelector('[data-wb-generate] span:last-child');
       if(generateLabel)generateLabel.textContent=selectedStatus==='completed'?'再次生成':'生成';
       const previewTaskId = professionalPreviewTaskIds.get(shot.id) || shot.selectedVideoTaskId;
-      const signature=shotPreviewContentSignatureFromMaps(shot,taskById,fileById,assetSyncing,previewTaskId);
+      const signature=shotPreviewContentSignatureFromMaps(shot,taskById,fileById,assetSyncing,previewTaskId) + localDeliverySignature(task(previewTaskId)?.assetId);
       if(signature===shotPreviewSignatures.get(shot.id)){
         patchWorkbenchPreviewProgress(card, shot);
         return;

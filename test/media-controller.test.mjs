@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createMediaController } from '../public/features/media/controller.js';
 
-function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => ({ items:[] }), acknowledgementFailures = 0, initialFiles = [], syncDeliveries = [], removeDramaAssemblyAssets = async () => {} } = {}) {
+function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => ({ items:[] }), acknowledgementFailures = 0, initialFiles = [], syncDeliveries = [], syncPages = null, removeDramaAssemblyAssets = async () => {} } = {}) {
   const state = { files:[...initialFiles], route:'files', initialSyncReady:true, fileKind:'all' };
   const pendingDownloads = new Map();
   let downloadCount = 0;
   const acknowledgements = [];
+  const apiCalls = [];
   const deliveryTaskPayloads = [];
   const completedDeliveryTasks = [];
   const timers = [];
@@ -25,6 +26,8 @@ function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => (
   const controller = createMediaController({
     state,
     api: async (path, options) => {
+      apiCalls.push(path);
+      if (path.startsWith('/api/files/sync?') && syncPages) return syncPages.shift();
       if (path.endsWith('/local-ready')) {
         acknowledgements.push({ path, options });
         if (acknowledgementFailures > 0) {
@@ -48,7 +51,7 @@ function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => (
     setTimeoutFn: windowObject.setTimeout,
     clearTimeoutFn: windowObject.clearTimeout,
   });
-  return { state, bridge, pendingDownloads, acknowledgements, deliveryTaskPayloads, completedDeliveryTasks, timers, controller, get downloadCount() { return downloadCount; }, setAccount: value => { account = value; }, setEpoch: value => { epoch = value; } };
+  return { state, bridge, pendingDownloads, apiCalls, acknowledgements, deliveryTaskPayloads, completedDeliveryTasks, timers, controller, get downloadCount() { return downloadCount; }, setAccount: value => { account = value; }, setEpoch: value => { epoch = value; } };
 }
 
 test('media hydration ignores a delayed download after account invalidation', async () => {
@@ -176,4 +179,62 @@ test('deleting a local library asset notifies the drama assembly history owner',
 
   assert.deepEqual(removed, [{ ids:['assembly-a'], projectId:'project-a' }]);
   assert.deepEqual(harness.state.files, []);
+});
+
+test('a stalled download leaves a second slot available, without exceeding two', async () => {
+  const harness = createHarness();
+  const files = ['a','b','c'].map(id => ({ id, kind:'video', deliveryStatus:'awaiting_local', remoteStatus:'pending' }));
+  harness.controller.queueDesktopHydration(files);
+  assert.equal(harness.downloadCount, 2);
+  harness.pendingDownloads.get('b')({ id:'local-b', size:20, sha256:'b', mimeType:'video/mp4' });
+  await new Promise(setImmediate);
+  assert.equal(harness.downloadCount, 3);
+  assert.equal(harness.controller.downloadState('a').status, 'downloading');
+  harness.controller.reset();
+});
+
+test('disk errors stop automatic downloads and explicit retry restarts them', async () => {
+  const harness = createHarness();
+  const file = { id:'disk', kind:'video', deliveryStatus:'awaiting_local', remoteStatus:'pending' };
+  harness.state.files.push(file);
+  harness.controller.queueDesktopHydration([file]);
+  harness.pendingDownloads.get('disk')({ downloadError:'磁盘已满', retryable:false });
+  await new Promise(setImmediate);
+  assert.equal(harness.timers.length, 0);
+  assert.equal(harness.controller.downloadState('disk').status, 'failed');
+  harness.controller.queueDesktopHydration([file]);
+  assert.equal(harness.downloadCount, 1);
+  harness.controller.retryDownload('disk');
+  assert.equal(harness.downloadCount, 2);
+  harness.controller.reset();
+});
+
+test('repeated download failure requests backup once and eventually stops', async () => {
+  const harness = createHarness();
+  const file = { id:'network', kind:'video', deliveryStatus:'awaiting_local', remoteStatus:'pending' };
+  harness.state.files.push(file);
+  harness.bridge.media.downloadRemote = async () => { throw new Error('temporary network failure'); };
+  harness.controller.queueDesktopHydration([file]);
+  await new Promise(setImmediate);
+  for (let i = 0; i < 6; i++) {
+    assert.equal(harness.timers.length, 1);
+    harness.timers.shift().callback();
+    await new Promise(setImmediate);
+  }
+  assert.equal(harness.timers.length, 0);
+  assert.equal(harness.controller.downloadState(file.id).status, 'failed');
+  assert.equal(harness.apiCalls.filter(url => url.endsWith('/archive')).length, 1);
+});
+
+test('startup consumes both change pages and pending delivery pages', async () => {
+  const harness = createHarness({ syncPages:[
+    { changes:[], deliveries:[], nextCursor:'change-1', hasMore:true, nextDeliveryCursor:'delivery-1', deliveriesHasMore:true },
+    { changes:[], deliveries:[], nextCursor:'change-2', hasMore:false, nextDeliveryCursor:'delivery-2', deliveriesHasMore:true },
+    { changes:[], deliveries:[{ id:'last', kind:'video', deliveryStatus:'awaiting_local', remoteStatus:'pending' }], nextCursor:'change-2', hasMore:false, deliveriesHasMore:false },
+  ] });
+  await harness.controller.syncDesktopDeliveries();
+  assert.equal(harness.apiCalls.length, 3);
+  assert.match(harness.apiCalls[2], /deliveryCursor=delivery-2/);
+  assert.equal(harness.downloadCount, 1);
+  harness.controller.reset();
 });

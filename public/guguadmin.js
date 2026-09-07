@@ -30,7 +30,7 @@ import { createApiClient } from './api-client.js?v=3';
     const duration = Number(seconds);
     return Number.isFinite(amount) && Number.isFinite(duration) && duration > 0 ? `¥${money(amount / duration)} / 秒 · 按 ${money(duration)} 秒换算` : '—';
   };
-  const date = value => value ? new Date(value).toLocaleString('zh-CN') : '—';
+  const date = value => value ? new Date(value).toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false }) : '—';
   const dateInput = value => value ? new Date(value).toISOString().slice(0, 16) : '';
   const status = value => ({ active: '正常', disabled: '已禁用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', draft: '草稿', published: '已发布', archived: '已归档', error: '错误', warning: '警告', info: '信息', success: '成功', PAID: '已支付', PARTIALLY_REFUNDED: '部分退款', REFUNDED: '已退款' }[value] || value || '—');
   const badge = (value, kind = '') => `<span class="badge ${kind || (['active', 'completed', 'enabled', 'available', 'success'].includes(value) ? 'ok' : ['failed', 'disabled', 'error', 'critical'].includes(value) ? 'bad' : 'warn')}">${esc(status(value))}</span>`;
@@ -81,7 +81,8 @@ import { createApiClient } from './api-client.js?v=3';
   function setAdminDialogBusy(busy) {
     const dialog = $('#adminDialog');
     dialog.setAttribute('aria-busy', busy ? 'true' : 'false');
-    dialog.querySelectorAll('input,select,textarea,#adminDialogClose,#adminDialogCancel').forEach(control => { control.disabled = busy; });
+    dialog.querySelectorAll('input,select,textarea,button[data-rich-command],button[data-rich-image],#adminDialogClose,#adminDialogCancel').forEach(control => { control.disabled = busy; });
+    dialog.querySelectorAll('[contenteditable]').forEach(editor => { editor.contentEditable = busy ? 'false' : 'true'; });
     const submit = $('#adminDialogSubmit');
     if (busy) { submit.disabled = true; submit.textContent = '保存中…'; } else { submit.disabled = false; submit.textContent = adminDialogSubmitLabel; }
   }
@@ -122,7 +123,7 @@ import { createApiClient } from './api-client.js?v=3';
   }
 
   function adminDialogValues() {
-    return Object.fromEntries([...$('#adminDialogForm').querySelectorAll('[data-admin-dialog-field]')].map(field => [field.dataset.adminDialogField, field.type === 'checkbox' ? field.checked : field.value]));
+    return Object.fromEntries([...$('#adminDialogForm').querySelectorAll('[data-admin-dialog-field]')].map(field => [field.dataset.adminDialogField, field.type === 'checkbox' ? field.checked : field.isContentEditable ? field.innerHTML : field.value]));
   }
 
   $('#adminDialogForm').addEventListener('submit', async event => {
@@ -551,9 +552,99 @@ import { createApiClient } from './api-client.js?v=3';
   }
 
   function announcementStatusKind(value) { return value === 'published' ? 'ok' : value === 'archived' ? 'bad' : 'warn'; }
+  function richTextPlainText(html) {
+    const node = document.createElement('div');
+    node.innerHTML = String(html || '').replace(/<br\s*\/?>/gi, '\n');
+    return String(node.textContent || '').replace(/\u00a0/g, ' ').trim();
+  }
+  function announcementEditorMarkup() {
+    return `<div class="announcement-editor-field"><label class="admin-dialog-field" for="adminAnnouncementTitle"><span>公告标题</span><input id="adminAnnouncementTitle" data-admin-dialog-field="title" maxlength="120" placeholder="例如：视频模型维护通知" required autocomplete="off"><small>标题会显示在通知列表和弹窗顶部。</small></label><div class="admin-dialog-field announcement-rich-field"><span>公告内容</span><div class="announcement-editor" data-announcement-editor><div class="announcement-editor-toolbar" role="toolbar" aria-label="公告格式工具"><button type="button" data-rich-command="bold" title="加粗"><b>B</b></button><button type="button" data-rich-command="italic" title="斜体"><i>I</i></button><button type="button" data-rich-command="underline" title="下划线"><u>U</u></button><span class="announcement-editor-divider" aria-hidden="true"></span><button type="button" data-rich-command="insertUnorderedList" title="无序列表">•</button><button type="button" data-rich-command="insertOrderedList" title="有序列表">1.</button><button type="button" data-rich-command="formatBlock" data-rich-value="blockquote" title="引用">❝</button><button type="button" data-rich-command="removeFormat" title="清除格式">Tx</button><span class="announcement-editor-divider" aria-hidden="true"></span><button type="button" data-rich-image title="插入图片">▧ 图片</button><input data-rich-image-input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden><div id="adminAnnouncementEditor" class="announcement-editor-input" data-admin-dialog-field="content" contenteditable="true" role="textbox" aria-multiline="true" aria-required="true" data-placeholder="输入通知内容，支持格式化和图片。"></div></div><div class="announcement-editor-meta"><small>支持加粗、斜体、下划线、列表、引用和图片；图片会自动压缩后插入。</small><small><b data-rich-count>0</b> / 500,000</small></div></div></div><label class="admin-dialog-field announcement-status-field" for="adminAnnouncementStatus"><span>发布状态</span><select id="adminAnnouncementStatus" data-admin-dialog-field="status"><option value="draft">草稿（用户不可见）</option><option value="published">已发布（用户可见）</option><option value="archived">已归档（用户不可见）</option></select></label></div>`;
+  }
+  function announcementPlainToHtml(value) {
+    return esc(String(value || '')).replace(/\n/g, '<br>');
+  }
+  function rememberAnnouncementSelection(editor) {
+    const selection = editor?.ownerDocument?.getSelection?.();
+    if (!selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode)) return;
+    editor._announcementRange = selection.getRangeAt(0).cloneRange();
+  }
+  function restoreAnnouncementSelection(editor) {
+    editor.focus({ preventScroll:true });
+    const selection = editor.ownerDocument.getSelection();
+    selection.removeAllRanges();
+    if (editor._announcementRange && editor.contains(editor._announcementRange.commonAncestorContainer)) selection.addRange(editor._announcementRange);
+    else { const range = editor.ownerDocument.createRange(); range.selectNodeContents(editor); range.collapse(false); selection.addRange(range); }
+  }
+  function insertAnnouncementHtml(editor, html) {
+    restoreAnnouncementSelection(editor);
+    editor.ownerDocument.execCommand('insertHTML', false, html);
+    rememberAnnouncementSelection(editor);
+    editor.dispatchEvent(new Event('input', { bubbles:true }));
+  }
+  function readAnnouncementImage(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('图片读取失败，请重试'));
+      reader.onload = () => {
+        const image = new Image();
+        image.onerror = () => reject(new Error('图片格式暂不支持'));
+        image.onload = () => {
+          const maxEdge = 1600;
+          const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+          canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+          canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob(blob => {
+            if (!blob) { resolve(String(reader.result)); return; }
+            const compressed = new FileReader();
+            compressed.onload = () => resolve(String(compressed.result));
+            compressed.onerror = () => reject(new Error('图片压缩失败，请重试'));
+            compressed.readAsDataURL(blob);
+          }, 'image/webp', .82);
+        };
+        image.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  function bindAnnouncementEditor(initialContent = '') {
+    const editor = $('#adminAnnouncementEditor');
+    if (!editor) return;
+    editor.innerHTML = /<\/?[a-z][^>]*>/i.test(String(initialContent || '')) ? String(initialContent) : announcementPlainToHtml(initialContent);
+    const updateCount = () => { const counter = editor.closest('[data-announcement-editor]')?.querySelector('[data-rich-count]'); if (counter) counter.textContent = richTextPlainText(editor.innerHTML).length.toLocaleString('zh-CN'); };
+    editor.addEventListener('keyup', () => rememberAnnouncementSelection(editor));
+    editor.addEventListener('mouseup', () => rememberAnnouncementSelection(editor));
+    editor.addEventListener('input', updateCount);
+    editor.closest('[data-announcement-editor]')?.querySelectorAll('[data-rich-command]').forEach(button => {
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => { restoreAnnouncementSelection(editor); editor.ownerDocument.execCommand(button.dataset.richCommand, false, button.dataset.richValue || null); rememberAnnouncementSelection(editor); updateCount(); });
+    });
+    const imageInput = editor.closest('[data-announcement-editor]')?.querySelector('[data-rich-image-input]');
+    editor.closest('[data-announcement-editor]')?.querySelector('[data-rich-image]')?.addEventListener('mousedown', event => event.preventDefault());
+    editor.closest('[data-announcement-editor]')?.querySelector('[data-rich-image]')?.addEventListener('click', () => { rememberAnnouncementSelection(editor); imageInput?.click(); });
+    imageInput?.addEventListener('change', async () => {
+      const file = imageInput.files?.[0];
+      imageInput.value = '';
+      if (!file) return;
+      if (!file.type.startsWith('image/')) { toast('请选择图片文件'); return; }
+      try {
+        const src = await readAnnouncementImage(file);
+        if (src.length > 420_000) throw new Error('图片压缩后仍然过大，请选择尺寸更小的图片');
+        insertAnnouncementHtml(editor, `<img src="${src}" alt="${esc(file.name.replace(/\.[^.]+$/, ''))}"><br>`);
+        toast('图片已插入');
+      } catch (error) { toast(error.message || '图片插入失败'); }
+    });
+    updateCount();
+    rememberAnnouncementSelection(editor);
+  }
   async function editAnnouncement(announcement = null) {
     const editing = Boolean(announcement);
-    await showAdminDialog({ kicker: editing ? '消息通知' : '新建内容', title: editing ? '编辑公告' : '新增公告', description: editing ? '更新后会立即同步到用户端；已读状态会保留。' : '发布后会出现在所有用户的消息通知中，并进入历史记录。', submit: editing ? '保存公告' : '创建公告', fields: [{ name: 'title', label: '公告标题', type: 'text', value: announcement?.title || '', maxLength: 120, placeholder: '例如：视频模型维护通知', required: true }, { name: 'content', label: '公告内容', type: 'textarea', value: announcement?.content || '', maxLength: 10000, placeholder: '输入用户需要了解的内容，支持换行。', required: true, help: '最多 10,000 个字符，按纯文本展示。' }, { name: 'status', label: '发布状态', type: 'select', value: announcement?.status || 'draft', options: [{ value: 'draft', label: '草稿（用户不可见）' }, { value: 'published', label: '已发布（用户可见）' }, { value: 'archived', label: '已归档（用户不可见）' }] }], onSubmit: async values => { const body = { title: values.title, content: values.content, status: values.status }; if (editing) await api(`/api/admin/announcements/${encodeURIComponent(announcement.id)}`, { method: 'PATCH', body: JSON.stringify({ ...body, expectedVersion: announcement.version }) }); else await api('/api/admin/announcements', { method: 'POST', body: JSON.stringify(body) }); toast(editing ? '公告已更新' : `公告已创建${values.status === 'published' ? '并发布' : ''}`); await fetchAnnouncements(); } });
+    const dialog = showAdminDialog({ kicker: editing ? '消息通知' : '新建内容', title: editing ? '编辑公告' : '新增公告', description: editing ? '更新后会立即同步到用户端；已读状态会保留。发布时间精确到秒。' : '发布后会出现在所有用户的消息通知中，并进入历史记录。支持富文本和图片。', submit: editing ? '保存公告' : '创建公告', html: announcementEditorMarkup(), validate: values => values.title.trim() ? (richTextPlainText(values.content) ? null : '公告内容不能为空') : '公告标题不能为空', onSubmit: async values => { const body = { title: values.title, content: values.content, status: values.status }; if (editing) await api(`/api/admin/announcements/${encodeURIComponent(announcement.id)}`, { method: 'PATCH', body: JSON.stringify({ ...body, expectedVersion: announcement.version }) }); else await api('/api/admin/announcements', { method: 'POST', body: JSON.stringify(body) }); toast(editing ? '公告已更新' : `公告已创建${values.status === 'published' ? '并发布' : ''}`); await fetchAnnouncements(); } });
+    $('#adminAnnouncementTitle').value = announcement?.title || '';
+    $('#adminAnnouncementStatus').value = announcement?.status || 'draft';
+    bindAnnouncementEditor(announcement?.contentHtml || announcement?.content || '');
+    await dialog;
   }
 
   async function loadAnnouncements() {
@@ -568,18 +659,18 @@ import { createApiClient } from './api-client.js?v=3';
     table.innerHTML = loadingMarkup('正在加载公告…');
     try {
       const data = await api('/api/admin/announcements'); const items = data.items || [];
-      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="公告列表"><thead><tr><th>公告</th><th>状态</th><th>发布时间</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td><b>${esc(item.title)}</b><div class="announcement-preview">${esc(item.content)}</div></td><td>${badge(item.status, announcementStatusKind(item.status))}</td><td>${date(item.publishedAt)}</td><td>${date(item.updatedAt)}</td><td><button class="small-button" data-edit-announcement="${esc(item.id)}" type="button">编辑</button></td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>共 ${money(items.length)} 条公告</span></div>` : emptyMarkup('暂无公告', '点击右上角新增一条消息。');
+      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="公告列表"><thead><tr><th>公告</th><th>状态</th><th>发布时间（精确到秒）</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${items.map(item => `<tr><td><b>${esc(item.title)}</b><div class="announcement-preview">${esc(item.contentText || item.content)}</div></td><td>${badge(item.status, announcementStatusKind(item.status))}</td><td>${date(item.publishedAt)}</td><td>${date(item.updatedAt)}</td><td><button class="small-button" data-edit-announcement="${esc(item.id)}" type="button">编辑</button></td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>共 ${money(items.length)} 条公告</span></div>` : emptyMarkup('暂无公告', '点击右上角新增一条消息。');
       table.querySelectorAll('[data-edit-announcement]').forEach(button => button.onclick = () => editAnnouncement(items.find(item => item.id === button.dataset.editAnnouncement)));
     } catch (error) { table.innerHTML = errorMarkup(error.message, 'announcements'); table.querySelector('[data-retry="announcements"]')?.addEventListener('click', fetchAnnouncements); }
   }
 
   function logDetailData(item, category) {
     const common = { id: item.id, createdAt: item.createdAt };
-    if (category === 'generations') return { ...common, userId: item.userId, type: item.type, status: item.status, creditCost: item.creditCost, creditStatus: item.creditStatus, pricingVersion: item.pricingVersion, modelId: item.modelId, provider: item.provider, assetId: item.assetId, updatedAt: item.updatedAt, details: item.details };
-    if (category === 'credits') return { ...common, userId: item.userId, actorUserId: item.actorUserId, type: item.type, reasonCode: item.reasonCode, note: item.note, amount: item.amount, balanceAfter: item.balanceAfter, generationId: item.generationId, requestId: item.requestId, details: item.details };
-    if (category === 'llm') return { ...common, userId: item.userId, status: item.status, modelId: item.modelId, inputTokens: item.inputTokens, outputTokens: item.outputTokens, charged: item.charged, details: item.details };
-    if (category === 'audit') return { ...common, actorUserId: item.actorUserId, action: item.action, targetType: item.targetType, targetId: item.targetId, requestId: item.requestId, status: item.status, before: item.before, after: item.after, metadata: item.metadata };
-    return { ...common, level: item.level, category: item.category, requestId: item.requestId, userId: item.userId, modelId: item.modelId, generationId: item.generationId, message: item.message, details: item.details };
+    if (category === 'generations') return { ...common, userId: item.userId, userNickname: item.userNickname, type: item.type, status: item.status, creditCost: item.creditCost, creditStatus: item.creditStatus, pricingVersion: item.pricingVersion, modelId: item.modelId, provider: item.provider, assetId: item.assetId, updatedAt: item.updatedAt, details: item.details };
+    if (category === 'credits') return { ...common, userId: item.userId, userNickname: item.userNickname, actorUserId: item.actorUserId, type: item.type, reasonCode: item.reasonCode, note: item.note, amount: item.amount, balanceAfter: item.balanceAfter, generationId: item.generationId, requestId: item.requestId, details: item.details };
+    if (category === 'llm') return { ...common, userId: item.userId, userNickname: item.userNickname, status: item.status, modelId: item.modelId, inputTokens: item.inputTokens, outputTokens: item.outputTokens, charged: item.charged, details: item.details };
+    if (category === 'audit') return { ...common, actorUserId: item.actorUserId, actorNickname: item.actorNickname, action: item.action, targetType: item.targetType, targetId: item.targetId, requestId: item.requestId, status: item.status, before: item.before, after: item.after, metadata: item.metadata };
+    return { ...common, level: item.level, category: item.category, requestId: item.requestId, userId: item.userId, userNickname: item.userNickname, modelId: item.modelId, generationId: item.generationId, message: item.message, details: item.details };
   }
   function compactLogDetailData(data) { return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined && value !== null && value !== '')); }
   function stringifyLogDetails(value, pretty = false) {
@@ -602,13 +693,13 @@ import { createApiClient } from './api-client.js?v=3';
     return `<tr class="log-row">${cells}${logDetailMarkup(item, category, index, colspan)}`;
   }
   function renderLogRows(category, items) {
-    if (category === 'generations') return `<table aria-label="生成任务日志"><thead><tr><th>时间</th><th>任务</th><th>状态</th><th>用户</th><th>模型</th><th>成本</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${item.creditCost === null ? '—' : money(item.creditCost)}</td>`, 7)).join('')}</tbody></table>`;
-    if (category === 'credits') return `<table aria-label="积分流水日志"><thead><tr><th>时间</th><th>流水</th><th>类型</th><th>用户</th><th>变动</th><th>余额</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${esc(item.type || item.reasonCode || '—')}</td><td>${esc(item.userId || '—')}</td><td class="${Number(item.amount) < 0 ? 'danger-text' : 'accent-text'}">${Number(item.amount) >= 0 ? '+' : ''}${money(item.amount)}</td><td>${money(item.balanceAfter)}</td>`, 7)).join('')}</tbody></table>`;
-    if (category === 'llm') return `<table aria-label="LLM 用量日志"><thead><tr><th>时间</th><th>请求</th><th>状态</th><th>用户</th><th>模型</th><th>Tokens</th><th>计费</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${money((item.inputTokens || 0) + (item.outputTokens || 0))}</td><td>${item.charged === null ? '—' : money(item.charged)}`, 8)).join('')}</tbody></table>`;
-    if (category === 'audit') return `<table aria-label="管理员审计日志"><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>管理员</th><th>状态</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td><b>${esc(item.action)}</b></td><td>${esc(item.targetType || '—')}<div class="detail">${esc(item.targetId || '—')}</div></td><td>${esc(item.actorUserId || '—')}</td><td>${badge(item.status)}`, 6)).join('')}</tbody></table>`;
+    if (category === 'generations') return `<table aria-label="生成任务日志"><thead><tr><th>时间</th><th>任务</th><th>状态</th><th>用户 ID</th><th>用户昵称</th><th>模型</th><th>成本</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.userNickname || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${item.creditCost === null ? '—' : money(item.creditCost)}</td>`, 8)).join('')}</tbody></table>`;
+    if (category === 'credits') return `<table aria-label="积分流水日志"><thead><tr><th>时间</th><th>流水</th><th>类型</th><th>用户 ID</th><th>用户昵称</th><th>变动</th><th>余额</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${esc(item.type || item.reasonCode || '—')}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.userNickname || '—')}</td><td class="${Number(item.amount) < 0 ? 'danger-text' : 'accent-text'}">${Number(item.amount) >= 0 ? '+' : ''}${money(item.amount)}</td><td>${money(item.balanceAfter)}</td>`, 8)).join('')}</tbody></table>`;
+    if (category === 'llm') return `<table aria-label="LLM 用量日志"><thead><tr><th>时间</th><th>请求</th><th>状态</th><th>用户 ID</th><th>用户昵称</th><th>模型</th><th>Tokens</th><th>计费</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.id)}</td><td>${badge(item.status)}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.userNickname || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${money((item.inputTokens || 0) + (item.outputTokens || 0))}</td><td>${item.charged === null ? '—' : money(item.charged)}`, 9)).join('')}</tbody></table>`;
+    if (category === 'audit') return `<table aria-label="管理员审计日志"><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>管理员 ID</th><th>管理员昵称</th><th>状态</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td><b>${esc(item.action)}</b></td><td>${esc(item.targetType || '—')}<div class="detail">${esc(item.targetId || '—')}</div></td><td>${esc(item.actorUserId || '—')}</td><td>${esc(item.actorNickname || '—')}</td><td>${badge(item.status)}`, 7)).join('')}</tbody></table>`;
     // 客户端日志包存在对象存储里，这一列给的是后端签名跳转，点开即下载 .log.gz。
-    if (category === 'client') return `<table aria-label="客户端诊断日志"><thead><tr><th>时间</th><th>编号</th><th>用户</th><th>版本 / 平台</th><th>问题描述</th><th>日志包</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.reference)}</td><td>${esc(item.username || item.userId || '—')}<div class="detail">${esc(item.userId || '—')}</div></td><td>${esc(item.appVersion || '—')}<div class="detail">${esc(item.platform || '—')}</div></td><td>${esc(item.note || '—')}<div class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</div></td><td>${item.downloadable ? `<a class="small-button" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">下载</a>` : '—'}</td>`, 7)).join('')}</tbody></table>`;
-    return `<table aria-label="系统异常日志"><thead><tr><th>时间</th><th>级别</th><th>分类</th><th>用户</th><th>模型</th><th>消息</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : 'warn')}</td><td>${esc(item.category || '—')}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${esc(item.message || '—')}`, 7)).join('')}</tbody></table>`;
+    if (category === 'client') return `<table aria-label="客户端诊断日志"><thead><tr><th>时间</th><th>编号</th><th>用户 ID</th><th>用户昵称</th><th>版本 / 平台</th><th>问题描述</th><th>日志包</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${esc(item.reference)}</td><td>${esc(item.userId || '—')}<div class="detail">${esc(item.username || '')}</div></td><td>${esc(item.userNickname || '—')}</td><td>${esc(item.appVersion || '—')}<div class="detail">${esc(item.platform || '—')}</div></td><td>${esc(item.note || '—')}<div class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</div></td><td>${item.downloadable ? `<a class="small-button" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">下载</a>` : '—'}</td>`, 8)).join('')}</tbody></table>`;
+    return `<table aria-label="系统异常日志"><thead><tr><th>时间</th><th>级别</th><th>分类</th><th>用户 ID</th><th>用户昵称</th><th>模型</th><th>消息</th><th>详情</th></tr></thead><tbody>${items.map((item, index) => logRowMarkup(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : 'warn')}</td><td>${esc(item.category || '—')}</td><td>${esc(item.userId || '—')}</td><td>${esc(item.userNickname || '—')}</td><td>${esc(item.modelId || '—')}</td><td>${esc(item.message || '—')}`, 8)).join('')}</tbody></table>`;
   }
   function bindLogDetails(root) {
     root.querySelectorAll('[data-log-expand]').forEach(button => button.addEventListener('click', () => {

@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=10';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=11';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
@@ -47,6 +47,7 @@ export function createMediaController({
   const desktopHydrationActive = new Set();
   const desktopHydrationForced = new Set();
   const desktopHydrationFailureCounts = new Map();
+  const desktopDownloadStates = new Map();
   const desktopHydrationRetryTimers = new Map();
   let desktopHydrationRunning = false;
   const desktopAcknowledgementQueue = [];
@@ -79,7 +80,7 @@ export function createMediaController({
   }
 
   async function acknowledgeDesktopAsset(file, localAsset, { deviceId = syncInfo().deviceId } = {}) {
-    await api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
+    return api(`/api/files/${encodeURIComponent(file.id)}/local-ready`, {
       method:'POST',
       responseShape:'object',
       body:JSON.stringify({ size:localAsset.size, sha256:localAsset.sha256, mimeType:localAsset.mimeType || file.mimeType, deviceId }),
@@ -114,11 +115,12 @@ export function createMediaController({
     notifyChanged();
   }
 
-  function markDesktopAssetReady(assetId) {
+  function markDesktopAssetReady(assetId, receipt) {
     const file = fileById(assetId);
     if (!file) return;
-    mergeStateFiles([{ ...file, deliveryStatus:'local_ready', remoteStatus:'ready' }]);
-    libraryFiles = libraryFiles.map(item => item.id === assetId ? { ...item, deliveryStatus:'local_ready', remoteStatus:'ready' } : item);
+    const remoteStatus = receipt?.remoteStatus || file.remoteStatus;
+    mergeStateFiles([{ ...file, deliveryStatus:'local_ready', remoteStatus }]);
+    libraryFiles = libraryFiles.map(item => item.id === assetId ? { ...item, deliveryStatus:'local_ready', remoteStatus } : item);
   }
 
   async function queueDesktopAcknowledgement(file, localAsset = file, { requestAccount = accountSnapshot(), requestEpoch = getAccountEpoch(), attempts = 0, nextAttemptAt = 0 } = {}) {
@@ -206,9 +208,9 @@ export function createMediaController({
           if (!requestIsCurrent(item.requestAccount, item.requestEpoch)) continue;
           const file = fileById(item.assetId) || item.file;
           if (!file || file.localOnly || file.localStatus !== 'saved' || file.deliveryStatus === 'local_ready') continue;
-          await acknowledgeDesktopAsset(file, item.localAsset, { deviceId:syncInfo().deviceId });
+          const receipt = await acknowledgeDesktopAsset(file, item.localAsset, { deviceId:syncInfo().deviceId });
           if (!requestIsCurrent(item.requestAccount, item.requestEpoch)) continue;
-          markDesktopAssetReady(item.assetId);
+          markDesktopAssetReady(item.assetId, receipt);
           try { await bridge()?.media?.completeDeliveryTask?.(item.assetId, syncInfo().workspaceId); }
           catch (error) { console.warn('[desktop] 清理已完成的本地确认任务失败', { assetId:item.assetId, message:error.message }); }
           desktopAcknowledgementFailureCounts.delete(item.assetId);
@@ -345,6 +347,7 @@ export function createMediaController({
     if (!requestIsCurrent(requestAccount, requestEpoch)) return null;
     const result = await localBridge.media.downloadRemote(desktopMediaPayload(file));
     if (!requestIsCurrent(requestAccount, requestEpoch)) return null;
+    if (result?.downloadError) throw Object.assign(new Error(result.downloadError), { retryable:result.retryable });
     if (result?.unavailable) throw Object.assign(new Error(`远端文件已不存在（${result.status || 404}）`), { unavailable:true });
     if (!result?.id) throw new Error('素材接收后未能写入本地工作区');
     if (merge) applyDesktopLocalAsset(file, result);
@@ -357,15 +360,18 @@ export function createMediaController({
     if (desktopHydrationRunning) return;
     const runEpoch = getAccountEpoch();
     desktopHydrationRunning = true;
-    try {
+    const worker = async () => {
       while (desktopHydrationQueue.length && runEpoch === getAccountEpoch()) {
         const file = desktopHydrationQueue.shift();
+        desktopDownloadStates.set(file.id, { status:'downloading' });
+        notifyChanged();
         try {
           await hydrateDesktopAsset(file);
           if (runEpoch !== getAccountEpoch()) continue;
           desktopHydrationAttempted.delete(file?.id);
           desktopHydrationForced.delete(file?.id);
           desktopHydrationFailureCounts.delete(file?.id);
+          desktopDownloadStates.delete(file?.id);
           const retryTimer = desktopHydrationRetryTimers.get(file?.id);
           if (retryTimer) clearTimer(retryTimer);
           desktopHydrationRetryTimers.delete(file?.id);
@@ -375,7 +381,11 @@ export function createMediaController({
           desktopHydrationAttempted.delete(assetId);
           const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
           desktopHydrationFailureCounts.set(assetId, failureCount);
-          const retryDelay = error?.unavailable ? 0 : desktopHydrationRetryDelay(failureCount);
+          const retryDelay = error?.unavailable || error?.retryable === false ? 0 : desktopHydrationRetryDelay(failureCount);
+          desktopDownloadStates.set(assetId, { status:retryDelay ? 'retrying' : 'failed', error:error.message });
+          if (failureCount === 2 && retryDelay) {
+            void api(`/api/files/${encodeURIComponent(assetId)}/archive`, { method:'POST', timeoutMs:15_000 }).catch(() => {});
+          }
           console.warn('[desktop] 自动同步素材失败', { assetId, message:error.message, failureCount, retryDelay });
           if (!retryDelay) desktopHydrationForced.delete(assetId);
           if (assetId && retryDelay && !desktopHydrationRetryTimers.has(assetId)) {
@@ -393,7 +403,9 @@ export function createMediaController({
           }
         }
       }
-    } finally {
+    };
+    try { await Promise.all([worker(), worker()]); }
+    finally {
       if (runEpoch === getAccountEpoch()) {
         desktopHydrationRunning = false;
         if (desktopHydrationQueue.length) void runDesktopHydrationQueue();
@@ -409,6 +421,7 @@ export function createMediaController({
       const assetId = String(file?.id || '');
       if (forcedIds.has(assetId)) desktopHydrationForced.add(assetId);
       const forced = desktopHydrationForced.has(assetId);
+      if (desktopDownloadStates.get(assetId)?.status === 'failed') continue;
       if (!shouldHydrateDesktopAsset(file, { force:forced }) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
       desktopHydrationAttempted.add(file.id);
       desktopHydrationQueued.add(file.id);
@@ -438,42 +451,51 @@ export function createMediaController({
       if (syncInfo().cursor) query.set('cursor', syncInfo().cursor);
       if (requestedAssetIds.length) query.set('assetIds', requestedAssetIds.join(','));
       let result;
-      try {
-        result = await api(`/api/files/sync?${query}`);
-      } catch (error) {
+      do {
+        const previousCursor = query.get('cursor') || '';
+        const previousDeliveryCursor = query.get('deliveryCursor') || '';
+        try {
+          result = await api(`/api/files/sync?${query}`);
+        } catch (error) {
+          if (!isCurrentRequest()) return null;
+          if (error.status !== 400 || !syncInfo().cursor) throw error;
+          updateSyncInfo({ cursor:'' });
+          await localBridge.sync.setCursor('');
+          query.delete('cursor');
+          result = await api(`/api/files/sync?${query}`);
+        }
         if (!isCurrentRequest()) return null;
-        if (error.status !== 400 || !syncInfo().cursor) throw error;
-        updateSyncInfo({ cursor:'' });
-        await localBridge.sync.setCursor('');
-        query.delete('cursor');
-        result = await api(`/api/files/sync?${query}`);
-      }
-      if (!isCurrentRequest()) return null;
-      const changes = result.changes || [];
-      const deletedCloudAssetIds = [...new Set(changes.filter(change => change?.action === 'delete' && change.assetId).map(change => String(change.assetId)))];
-      const changedAssets = changes.filter(change => change?.action === 'upsert' && change.asset?.id).map(change => change.asset);
-      if (deletedCloudAssetIds.length) {
-        await removeDesktopCloudAssets(deletedCloudAssetIds);
+        const changes = result.changes || [];
+        const deletedCloudAssetIds = [...new Set(changes.filter(change => change?.action === 'delete' && change.assetId).map(change => String(change.assetId)))];
+        const changedAssets = changes.filter(change => change?.action === 'upsert' && change.asset?.id).map(change => change.asset);
+        if (deletedCloudAssetIds.length) {
+          await removeDesktopCloudAssets(deletedCloudAssetIds);
+          if (!isCurrentRequest()) return null;
+          await refreshDramaProject({ quiet:true });
+          if (!isCurrentRequest()) return null;
+        }
+        const deliveries = [...new Map([...changedAssets, ...(result.deliveries || [])].filter(file => file?.id).map(file => [file.id, file])).values()];
+        if (deliveries.length && isCurrentRequest()) {
+          mergeStateFiles(deliveries);
+          const currentDeliveries = deliveries.map(file => fileById(file.id) || file);
+          queueSavedDesktopAcknowledgements(currentDeliveries);
+          queueDesktopHydration(currentDeliveries, { forceAssetIds:requestedAssetIds });
+          await restorePersistedDesktopAcknowledgements(currentDeliveries);
+          notifyChanged();
+        }
+        await restorePersistedDesktopAcknowledgements([...deliveries, ...state.files]);
         if (!isCurrentRequest()) return null;
-        await refreshDramaProject({ quiet:true });
-        if (!isCurrentRequest()) return null;
-      }
-      if (result.nextCursor) {
-        if (!isCurrentRequest()) return null;
-        updateSyncInfo({ cursor:result.nextCursor });
-        await localBridge.sync.setCursor(result.nextCursor);
-        if (!isCurrentRequest()) return null;
-      }
-      const deliveries = [...new Map([...changedAssets, ...(result.deliveries || [])].filter(file => file?.id).map(file => [file.id, file])).values()];
-      if (deliveries.length && isCurrentRequest()) {
-        mergeStateFiles(deliveries);
-        const currentDeliveries = deliveries.map(file => fileById(file.id) || file);
-        queueSavedDesktopAcknowledgements(currentDeliveries);
-        queueDesktopHydration(currentDeliveries, { forceAssetIds:requestedAssetIds });
-        await restorePersistedDesktopAcknowledgements(currentDeliveries);
-        notifyChanged();
-      }
-      await restorePersistedDesktopAcknowledgements([...deliveries, ...state.files]);
+        if (result.nextCursor) {
+          if (!isCurrentRequest()) return null;
+          updateSyncInfo({ cursor:result.nextCursor });
+          await localBridge.sync.setCursor(result.nextCursor);
+          if (!isCurrentRequest()) return null;
+        }
+        if (result.hasMore && (!result.nextCursor || result.nextCursor === previousCursor)) throw new Error('素材同步游标未前进，请重试');
+        if (result.nextCursor) query.set('cursor', result.nextCursor);
+        if (result.deliveriesHasMore && (!result.nextDeliveryCursor || result.nextDeliveryCursor === previousDeliveryCursor)) throw new Error('投递同步游标未前进，请重试');
+        if (result.nextDeliveryCursor) query.set('deliveryCursor', result.nextDeliveryCursor);
+      } while ((result.hasMore || result.deliveriesHasMore) && isCurrentRequest());
       return result;
     })();
     desktopSyncRequest = request;
@@ -580,6 +602,7 @@ export function createMediaController({
     desktopHydrationActive.clear();
     desktopHydrationForced.clear();
     desktopHydrationFailureCounts.clear();
+    desktopDownloadStates.clear();
     desktopHydrationRunning = false;
     desktopAcknowledgementQueue.length = 0;
     desktopAcknowledgementQueued.clear();
@@ -606,6 +629,17 @@ export function createMediaController({
     copyAssetToClipboard,
     hydrateDesktopAsset,
     queueDesktopHydration,
+    downloadState: assetId => desktopDownloadStates.get(assetId) || null,
+    retryDownload: assetId => {
+      const timer = desktopHydrationRetryTimers.get(assetId);
+      if (timer) clearTimer(timer);
+      desktopHydrationRetryTimers.delete(assetId);
+      desktopHydrationFailureCounts.delete(assetId);
+      desktopDownloadStates.delete(assetId);
+      const file = fileById(assetId);
+      if (file) queueDesktopHydration([file], { forceAssetIds:[assetId] });
+      else void syncDesktopDeliveries({ assetIds:[assetId] }).catch(error => onError(error, { action:'load-files' }));
+    },
     syncDesktopDeliveries,
     claimLegacyWorkspace,
     loadFiles,

@@ -61,7 +61,7 @@ test('admin HTTP permissions and core workflows', async t => {
   openDatabase({ file: path.join(workDir, 'studio.db') });
   const createdAt = new Date().toISOString();
   insertUser({ id: adminId, username: 'http_admin', role: 'admin', status: 'active', passwordHash: await hashPassword(adminPassword), credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
-  insertUser({ id: refundedUserId, username: 'refunded_user', role: 'user', status: 'active', passwordHash: 'scrypt:x:y', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  insertUser({ id: refundedUserId, username: 'refunded_user', nickname: '退款用户', role: 'user', status: 'active', passwordHash: 'scrypt:x:y', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   await adjustCredits(refundedUserId, 10_000_000, { actorUserId: adminId, idempotencyKey: 'seed-refund-user-balance', reasonCode: 'promotion' });
   await chargeGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
@@ -152,7 +152,7 @@ test('admin HTTP permissions and core workflows', async t => {
   const detailAfterAdjustment = await admin.call(`/api/admin/users/${target.id}`);
   assert.equal(detailAfterAdjustment.data.user.totalSpent, 1.25);
   const audit = await admin.call('/api/admin/logs/audit?limit=100');
-  assert.ok(audit.data.items.some(item => item.action === 'user.credit_adjustment'));
+  assert.equal(audit.data.items.find(item => item.action === 'user.credit_adjustment').actorNickname, 'http_admin');
 
   const disabled = await admin.call(`/api/admin/users/${target.id}/disable`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: {} });
   assert.equal(disabled.response.status, 200);
