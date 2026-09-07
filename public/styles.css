@@ -5055,3 +5055,33 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
 .wb-generation-cost svg{width:14px;height:14px;flex-shrink:0}
 .wb-generate-divider{width:1px;height:14px;background:currentColor;opacity:.35;flex-shrink:0}
 .wb-shot-controls .wb-generate-button{padding-inline:10px;gap:9px}
+
+/* Inline name editing: names read as quiet controls until the user asks to edit. */
+.drama-project-title-editor{position:relative;min-width:0;flex:1 1 auto;display:none;align-items:center}
+.app-shell.drama-project-open .drama-project-title-editor{display:flex}
+.drama-project-title-display{position:relative;min-width:0;max-width:100%;height:34px;padding:0 4px;border:1px solid transparent;border-radius:4px;color:var(--ink);background:transparent;display:block;overflow:hidden;text-align:left;text-overflow:ellipsis;white-space:nowrap;font-size:16px;font-weight:600;letter-spacing:-.025em;line-height:32px;cursor:text;transition:background var(--ease),border-color var(--ease),box-shadow var(--ease)}
+.drama-project-title-display:hover{border-color:#e1e3e9;background:#eef0f3;box-shadow:0 4px 13px rgba(30,35,58,.1)}
+.drama-project-title-display:focus-visible{border-color:rgba(99,102,241,.3);outline:2px solid rgba(99,102,241,.22);outline-offset:2px}
+.app-shell.drama-project-open .topbar #dramaProjectTitle.drama-project-title-input{min-width:0;width:100%;height:34px;padding:0 9px;border:1px solid rgba(99,102,241,.2);border-radius:6px;color:var(--ink);background:#fafbff;box-shadow:0 0 0 1px rgba(99,102,241,.045);font-size:16px;font-weight:600;letter-spacing:-.025em;cursor:text;transition:border-color var(--ease),box-shadow var(--ease)}
+.app-shell.drama-project-open .topbar #dramaProjectTitle.drama-project-title-input:focus,.app-shell.drama-project-open .topbar #dramaProjectTitle.drama-project-title-input:focus-visible{border:1px solid rgba(99,102,241,.36);outline:0;box-shadow:0 0 0 1px rgba(99,102,241,.08)}
+
+.wb-shot-title-display{position:relative;display:block;min-width:26px;max-width:100%;height:32px;padding:0 4px;border:0;border-radius:4px;color:#292b34;background:transparent;font-size:16px;font-weight:650;line-height:32px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:text;transition:background var(--ease),border-color var(--ease),box-shadow var(--ease)}
+.wb-shot-title-display:hover{border-color:#e0e2e8;background:#eef0f3;box-shadow:0 4px 12px rgba(30,35,58,.1)}
+.wb-shot-title-display:focus-visible{border-color:rgba(99,102,241,.3);outline:2px solid rgba(99,102,241,.2);outline-offset:2px}
+.wb-shot-title-input{height:32px;padding:0 7px;border:1px solid rgba(99,102,241,.2)!important;border-radius:5px;color:#292b34;background:#fafbff;box-shadow:0 0 0 1px rgba(99,102,241,.045);font-size:16px;font-weight:650;line-height:30px;text-align:center;cursor:text;transition:border-color var(--ease),box-shadow var(--ease)}
+.wb-shot-title-input:focus,.wb-shot-title-input:focus-visible{border:1px solid rgba(99,102,241,.36)!important;outline:0!important;box-shadow:0 0 0 1px rgba(99,102,241,.08)!important}
+.wb-shot-title-display:disabled,.wb-shot-title-input:disabled{cursor:not-allowed;opacity:.85}
+
+@media (hover:hover){
+  .drama-project-title-display[data-tooltip]::after,.wb-shot-title-display[data-tooltip]::after{position:absolute;z-index:40;left:50%;padding:6px 8px;border:1px solid rgba(255,255,255,.14);border-radius:6px;color:#fff;background:rgba(35,37,46,.94);box-shadow:0 6px 16px rgba(28,31,44,.18);content:attr(data-tooltip);font-size:10px;font-weight:500;line-height:1.2;opacity:0;pointer-events:none;transform:translate(-50%,4px);transition:opacity 150ms ease,transform 150ms ease;white-space:nowrap}
+  .drama-project-title-display[data-tooltip]::after{top:calc(100% + 7px)}
+  .wb-shot-title-display[data-tooltip]::after{top:calc(100% + 7px)}
+  .drama-project-title-display[data-tooltip]:hover::after,.drama-project-title-display[data-tooltip]:focus-visible::after,.wb-shot-title-display[data-tooltip]:hover::after,.wb-shot-title-display[data-tooltip]:focus-visible::after{opacity:1;transform:translate(-50%,0)}
+}
+
+@media (max-width:780px){
+  .app-shell.drama-project-open .drama-project-title-display{font-size:15px}
+}
+@media (max-width:560px){
+  .wb-shot-title-display,.wb-shot-title-input{font-size:14px}
+}

@@ -4,6 +4,14 @@ import { createApiClient } from './api-client.js?v=3';
   const { request: api } = createApiClient({ responseShapeFor: () => 'object' });
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
   const isHomePage = document.body.dataset.page === 'home';
+  const detectedPlatform = String(window.navigator.userAgentData?.platform || window.navigator.platform || window.navigator.userAgent || '');
+  const preferredDownloadPlatform = /mac|iphone|ipad/i.test(detectedPlatform) ? 'mac' : /win/i.test(detectedPlatform) ? 'windows' : '';
+  if (preferredDownloadPlatform) {
+    document.querySelectorAll('.nav-download, .nav-cta').forEach(link => {
+      const href = link.getAttribute('href') || '';
+      if (href === '#download' || href === '/#download') link.setAttribute('href', `/downloads/${preferredDownloadPlatform}`);
+    });
+  }
   if (!isHomePage) {
     const header = document.querySelector('#site-header');
     const setHeaderState = () => header?.classList.toggle('is-scrolled', window.scrollY > 16);

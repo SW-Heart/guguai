@@ -143,8 +143,8 @@
     .site-confirm-card p { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
     .site-confirm-card footer { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; }
     .site-confirm-card footer button { min-height: 42px; min-width: 86px; padding: 0 16px; border-radius: 12px; font-size: 13px; }
-    .nav-download:active, .primary-button:active, .secondary-button:active, .download-option:active { transform: scale(.97); }
-    .nav-download svg, .primary-button svg, .secondary-button svg, .download-option svg, .capability-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .nav-download:active, .primary-button:active, .secondary-button:active { transform: scale(.97); }
+    .nav-download svg, .primary-button svg, .secondary-button svg, .capability-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
     .hero { position: relative; z-index: 1; padding: 178px 0 106px; text-align: center; }
     .hero::before { position: absolute; z-index: -1; top: 28px; left: 50%; width: min(920px, 96vw); height: 590px; border-radius: 50%; background: radial-gradient(ellipse at 28% 38%, rgba(115, 116, 244, .17), transparent 48%), radial-gradient(ellipse at 77% 33%, rgba(84, 209, 235, .16), transparent 46%), radial-gradient(ellipse at 52% 82%, rgba(205, 137, 255, .12), transparent 52%); filter: blur(12px); opacity: .94; pointer-events: none; content: ""; transform: translateX(-50%); }
@@ -158,6 +158,13 @@
     .primary-button:hover { box-shadow: 0 20px 38px rgba(91,92,232,.34), 0 4px 10px rgba(91,92,232,.14), inset 0 1px rgba(255,255,255,.32); transform: translateY(-3px); }
     .secondary-button { min-width: 126px; border: 1px solid rgba(18,20,28,.09); background: rgba(255,255,255,.66); color: var(--ink-2); box-shadow: 0 10px 24px rgba(49,52,76,.06), inset 0 1px rgba(255,255,255,.9); backdrop-filter: blur(18px); }
     .secondary-button:hover { background: rgba(255,255,255,.9); transform: translateY(-3px); }
+    .hero-download-choice { display: flex; flex: 0 1 276px; width: min(276px, 100%); flex-direction: column; align-items: stretch; gap: 7px; }
+    .hero-download-button { width: 100%; min-width: 0; min-height: 64px; padding-inline: 26px; }
+    .hero-download-button.is-recommended { border-color: rgba(255,255,255,.25); background: linear-gradient(135deg, #5659e9 0%, #7060ec 58%, #9367ed 100%); color: #fff; box-shadow: 0 15px 28px rgba(91,92,232,.25), 0 3px 8px rgba(91,92,232,.12), inset 0 1px rgba(255,255,255,.28); }
+    .hero-download-button.is-recommended:hover { background: linear-gradient(135deg, #6265ee 0%, #7969ef 58%, #9c70f0 100%); box-shadow: 0 20px 38px rgba(91,92,232,.34), 0 4px 10px rgba(91,92,232,.14), inset 0 1px rgba(255,255,255,.32); transform: translateY(-3px); }
+    .hero-download-button svg { flex: 0 0 auto; width: 27px; height: 27px; }
+    .hero-download-title { font-size: 15px; font-weight: 680; white-space: nowrap; }
+    .hero-download-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.35; text-align: center; white-space: nowrap; }
     .product-stage { position: relative; max-width: 1100px; margin: 79px auto 0; perspective: 1600px; }
     .stage-glow { position: absolute; z-index: -1; inset: 6% 5% -12%; border-radius: 45%; background: linear-gradient(112deg, rgba(69,190,234,.34), rgba(101,92,232,.32) 48%, rgba(178,102,244,.28)); filter: blur(78px); opacity: .82; }
     .window {
@@ -255,46 +262,6 @@
     .statement-mark { position: relative; z-index: 1; display: grid; width: 104px; height: 104px; place-items: center; border: 1px solid rgba(255,255,255,.8); border-radius: 30px; background: rgba(255,255,255,.5); box-shadow: 0 20px 45px rgba(66,62,130,.12), inset 0 1px rgba(255,255,255,.9); backdrop-filter: blur(18px); transform: rotate(5deg); }
     .statement-mark img { width: 58px; height: 58px; border-radius: 15px; box-shadow: 0 12px 25px rgba(18,18,22,.2); }
 
-    .download-section { position: relative; padding: 126px 0 100px; }
-    .download-shell {
-      position: relative;
-      overflow: hidden;
-      padding: clamp(38px, 7vw, 82px);
-      border: 1px solid rgba(255,255,255,.86);
-      border-radius: 40px;
-      background:
-        radial-gradient(circle at 82% 12%, rgba(139,105,244,.19), transparent 23rem),
-        radial-gradient(circle at 8% 90%, rgba(78,199,239,.14), transparent 21rem),
-        rgba(255,255,255,.6);
-      box-shadow: var(--shadow), inset 0 1px rgba(255,255,255,.96);
-      backdrop-filter: blur(28px) saturate(1.2);
-      -webkit-backdrop-filter: blur(28px) saturate(1.2);
-      text-align: center;
-    }
-    .download-shell h2 { max-width: 780px; margin: 0 auto; font-size: clamp(40px, 5.3vw, 66px); font-weight: 720; letter-spacing: -.075em; line-height: 1.05; }
-    .download-shell > p { max-width: 500px; margin: 22px auto 0; color: var(--muted); font-size: 16px; }
-    .download-grid { position: relative; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-width: 650px; margin: 44px auto 0; }
-    .download-option {
-      position: relative;
-      display: grid;
-      grid-template-columns: 50px 1fr 18px;
-      align-items: center;
-      gap: 14px;
-      min-height: 92px;
-      padding: 15px 18px;
-      border: 1px solid rgba(22,24,34,.08);
-      border-radius: 20px;
-      background: rgba(255,255,255,.62);
-      box-shadow: 0 9px 24px rgba(48,52,80,.06), inset 0 1px rgba(255,255,255,.9);
-      text-align: left;
-      transition: transform .28s var(--spring), background .25s ease, border-color .25s ease, box-shadow .25s ease;
-    }
-    .download-option:hover { border-color: rgba(91,92,232,.23); background: rgba(255,255,255,.9); box-shadow: 0 14px 30px rgba(48,52,80,.1), inset 0 1px rgba(255,255,255,.95); transform: translateY(-4px); }
-    .download-icon { display: grid; width: 50px; height: 50px; place-items: center; border-radius: 15px; background: linear-gradient(145deg, rgba(91,92,232,.11), rgba(140,92,245,.07)); color: var(--blue-deep); }
-    .download-icon svg { width: 22px; height: 22px; }
-    .download-option strong { display: block; font-size: 16px; font-weight: 660; }
-    .download-option > svg { color: var(--blue); }
-
     .site-footer { display: flex; align-items: center; justify-content: space-between; gap: 25px; padding: 24px 0 calc(34px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); color: var(--quiet); font-size: 11px; }
     .footer-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-weight: 650; }
     .footer-brand img { width: 20px; height: 20px; border-radius: 6px; }
@@ -318,7 +285,6 @@
       .capability-card { min-height: 235px; }
       .capability-card h3 { margin-top: 55px; }
       .statement-card { padding: 38px; }
-      .download-grid { grid-template-columns: 1fr; max-width: 470px; }
     }
 
     @media (max-width: 620px) {
@@ -356,11 +322,6 @@
       .statement-copy h2 { font-size: 36px; }
       .statement-mark { width: 76px; height: 76px; margin: 27px 0 0 auto; border-radius: 22px; }
       .statement-mark img { width: 43px; height: 43px; border-radius: 12px; }
-      .download-section { padding: 86px 0 70px; }
-      .download-shell { padding: 40px 18px 28px; border-radius: 28px; }
-      .download-shell h2 { font-size: 44px; }
-      .download-grid { margin-top: 30px; }
-      .download-option { min-height: 72px; }
       .site-footer { display: block; line-height: 2; }
       .site-footer p { margin-top: 5px; }
     }
@@ -398,7 +359,7 @@
             <button id="siteLogoutButton" type="button" role="menuitem">退出登录</button>
           </div>
         </div>
-        <a class="nav-download" href="#download">下载客户端
+        <a class="nav-download" id="siteDownloadLink" href="#download">下载客户端
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
         </a>
       </nav>
@@ -411,13 +372,21 @@
         <h1 id="hero-title">让每个灵感，<span>自然长成作品。</span></h1>
         <p class="hero-description">在一个简洁、专注的桌面空间里，完成<strong>图片、视频与短剧创作</strong>。从生成第一帧，到交付完整作品，不再切换工具。</p>
       </div>
-      <div class="hero-actions reveal delay-1">
-        <a class="primary-button" href="#download">免费下载
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 11.5 12 16l4.5-4.5M5 20h14"/></svg>
-        </a>
-        <a class="secondary-button" href="#product">了解 GuGu
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13.5 7.5 18 12l-4.5 4.5"/></svg>
-        </a>
+      <div class="hero-actions reveal delay-1" id="download" aria-label="下载桌面客户端">
+        <div class="hero-download-choice" data-platform="windows">
+          <a class="secondary-button hero-download-button" href="/downloads/windows">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 5 7-1v8H4V5ZM13 3.7 20 3v9h-7V3.7ZM4 13h7v8l-7-1v-7ZM13 13h7v8.3l-7-1V13Z"/></svg>
+            <strong class="hero-download-title">下载 Windows 版</strong>
+          </a>
+          <small class="hero-download-note">适配 Windows · x64</small>
+        </div>
+        <div class="hero-download-choice" data-platform="mac">
+          <a class="secondary-button hero-download-button" href="/downloads/mac">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 12.7c0-2 1.6-3 1.7-3.1-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.3.7-2.9.7-.6 0-1.5-.7-2.5-.7-1.3 0-2.5.8-3.2 1.9-1.4 2.4-.4 6 1 8 .7 1 1.5 2.1 2.6 2.1 1 0 1.4-.6 2.7-.6s1.7.6 2.7.6c1.1 0 1.8-1 2.5-2 .8-1.1 1.1-2.2 1.1-2.2s-2.1-.8-2.1-3.1ZM14.8 6.8c.5-.6.9-1.5.8-2.4-.8 0-1.7.5-2.2 1.1-.5.5-.9 1.4-.8 2.3.8.1 1.7-.4 2.2-1Z"/></svg>
+            <strong class="hero-download-title">下载 macOS 版</strong>
+          </a>
+          <small class="hero-download-note">适配 macOS · Apple Silicon</small>
+        </div>
       </div>
 
       <div class="product-stage reveal delay-2" id="product" aria-label="GuGu AI 产品工作台预览">
@@ -489,24 +458,6 @@
       </div>
     </section>
 
-    <section class="download-section" id="download" aria-labelledby="download-title">
-      <div class="download-shell wrap reveal">
-        <h2 id="download-title">准备好，把灵感变成作品。</h2>
-        <p>选择你的平台，下载 GuGu AI 桌面客户端。</p>
-        <div class="download-grid" aria-label="选择客户端平台">
-          <a class="download-option" data-download="macOS" data-platform="mac" href="/downloads/mac">
-            <span class="download-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16.5 12.7c0-2 1.6-3 1.7-3.1-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.3.7-2.9.7-.6 0-1.5-.7-2.5-.7-1.3 0-2.5.8-3.2 1.9-1.4 2.4-.4 6 1 8 .7 1 1.5 2.1 2.6 2.1 1 0 1.4-.6 2.7-.6s1.7.6 2.7.6c1.1 0 1.8-1 2.5-2 .8-1.1 1.1-2.2 1.1-2.2s-2.1-.8-2.1-3.1ZM14.8 6.8c.5-.6.9-1.5.8-2.4-.8 0-1.7.5-2.2 1.1-.5.5-.9 1.4-.8 2.3.8.1 1.7-.4 2.2-1Z"/></svg></span>
-            <strong>macOS</strong>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13.5 7.5 18 12l-4.5 4.5"/></svg>
-          </a>
-          <a class="download-option" data-download="Windows" data-platform="windows" href="/downloads/windows">
-            <span class="download-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 5 7-1v8H4V5ZM13 3.7 20 3v9h-7V3.7ZM4 13h7v8l-7-1v-7ZM13 13h7v8.3l-7-1V13Z"/></svg></span>
-            <strong>Windows</strong>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13.5 7.5 18 12l-4.5 4.5"/></svg>
-          </a>
-        </div>
-      </div>
-    </section>
   </main>
 
   <footer class="site-footer wrap">
@@ -522,6 +473,20 @@
       const setHeaderState = () => header?.classList.toggle('is-scrolled', window.scrollY > 16);
       setHeaderState();
       window.addEventListener('scroll', setHeaderState, { passive: true });
+
+      const downloadGroup = document.querySelector('#download');
+      const downloadChoices = [...downloadGroup?.querySelectorAll('[data-platform]') ?? []];
+      const detectedPlatform = String(window.navigator.userAgentData?.platform || window.navigator.platform || window.navigator.userAgent || '');
+      const preferredPlatform = /mac|iphone|ipad/i.test(detectedPlatform) ? 'mac' : /win/i.test(detectedPlatform) ? 'windows' : '';
+      const siteDownloadLink = document.querySelector('#siteDownloadLink');
+      if (preferredPlatform) siteDownloadLink?.setAttribute('href', `/downloads/${preferredPlatform}`);
+      const preferredDownload = downloadChoices.find(choice => choice.dataset.platform === preferredPlatform);
+      if (preferredDownload) {
+        const preferredButton = preferredDownload.querySelector('.hero-download-button');
+        preferredButton?.classList.add('is-recommended');
+        preferredButton?.setAttribute('aria-label', `${preferredButton.textContent.trim()}，适配当前系统`);
+        downloadGroup.prepend(preferredDownload);
+      }
 
       const reveals = [...document.querySelectorAll('.reveal')].filter(node => !node.closest('.hero'));
       if ('IntersectionObserver' in window && !reducedMotion) {

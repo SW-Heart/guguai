@@ -17,3 +17,9 @@
 - 不要仅凭 `gh auth status` 的警告宣布阻塞；先尝试实际需要的 `git push` 或 `gh workflow run`，只有目标命令真实失败后才报告凭据问题。
 - CI 成功后必须核验 Windows Artifact 包含 EXE、EXE blockmap 和 `latest.yml`，macOS Artifact 包含 DMG、ZIP、各自 blockmap 和 `latest-mac.yml`。OSS 上传与稳定下载别名更新属于独立发布阶段，必须得到用户明确授权。
 - 本地 `release/` 保留旧版本是增量更新所需行为。检查本地预览时必须核对 feed 内的版本号；macOS 构建后残留的旧 `latest.yml` 不能被当作当前 Windows feed。
+
+## Computer Use 界面验证
+
+- 涉及当前工作区代码的界面验证，必须使用测试客户端：优先运行 `npm run desktop:dev`，并在其启动的 Electron 窗口中核验。
+- 禁止使用 `/Applications/GuGu AI.app` 等已安装正式版替代测试客户端；正式版可能没有当前工作区的未发布改动。
+- 如果用户明确表示自行验收，不要自动启动或操作任何客户端窗口；完成代码检查后交由用户使用测试客户端验收。

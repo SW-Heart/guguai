@@ -57,12 +57,14 @@ test('admin HTTP permissions and core workflows', async t => {
   const port = await freePort();
   const adminId = randomUUID();
   const refundedUserId = randomUUID();
+  const phoneUserId = randomUUID();
   const adminPassword = 'admin-http-password-123';
   resetForTests();
   openDatabase({ file: path.join(workDir, 'studio.db') });
   const createdAt = new Date().toISOString();
   insertUser({ id: adminId, username: 'http_admin', role: 'admin', status: 'active', passwordHash: await hashPassword(adminPassword), credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   insertUser({ id: refundedUserId, username: 'refunded_user', nickname: '退款用户', role: 'user', status: 'active', passwordHash: 'scrypt:x:y', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
+  insertUser({ id: phoneUserId, username: '13800138000', phoneNumber: '13800138000', nickname: '手机号用户', role: 'user', status: 'active', passwordHash: 'scrypt:x:y', credits: 0, creditBalanceMicro: 0, creditHeldMicro: 0, createdAt, updatedAt: createdAt });
   await adjustCredits(refundedUserId, 10_000_000, { actorUserId: adminId, idempotencyKey: 'seed-refund-user-balance', reasonCode: 'promotion' });
   await chargeGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
@@ -116,6 +118,8 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(rangedPaidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1']);
   const refundedUser = await admin.call('/api/admin/users?query=refunded_user');
   assert.equal(refundedUser.data.items[0].totalSpent, 0);
+  const phoneUser = await admin.call('/api/admin/users?query=13800138000');
+  assert.deepEqual({ nickname: phoneUser.data.items[0].nickname, phoneNumber: phoneUser.data.items[0].phoneNumber }, { nickname: '手机号用户', phoneNumber: '13800138000' });
   const refundedUserDetail = await admin.call(`/api/admin/users/${refundedUserId}`);
   assert.equal(refundedUserDetail.data.user.totalSpent, 0);
   const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });

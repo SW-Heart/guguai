@@ -64,6 +64,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   const deletingProjectIds = new Set();
   let project = null;
   let projectBaseSnapshot = null;
+  let projectTitleEditing = false;
+  let projectTitleDraft = '';
   let viewStep = null;
   let busy = false;
   let busyAccount = null;
@@ -638,10 +640,16 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     document.querySelector('#appView')?.classList.toggle('drama-professional-open',open&&routeActive&&project?.mode==='professional');
     if(!routeActive)return;
     const routeTitle=document.querySelector('#routeTitle');
+    const titleDisplay=document.querySelector('#dramaProjectTitleDisplay');
     const titleInput=document.querySelector('#dramaProjectTitle');
     routeTitle.textContent=open?project.title:'短剧创作';
     document.title=`${routeTitle.textContent} · GuGu AI`;
-    if(titleInput)titleInput.value=open?project.title:'';
+    if(titleDisplay){
+      const title=open?project.title:'';
+      titleDisplay.textContent=title;
+      titleDisplay.setAttribute('aria-label',title?`修改项目名称：${title}`:'修改项目名称');
+    }
+    if(titleInput&&!projectTitleEditing)titleInput.value=open?project.title:'';
   }
   function setStudioVisible(open) { document.querySelector('#dramaProjects')?.classList.toggle('hidden',open); document.querySelector('#dramaStudio')?.classList.toggle('hidden',!open); }
   function projectCardMarkup(item) {
@@ -831,6 +839,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       professionalGenerationPending.clear();
 
       project=restoreLocalProjectOutputs(normalizeProjectData(result.project));
+      projectTitleEditing=false;
+      projectTitleDraft='';
       projectBaseSnapshot=cloneProjectValue(project);
       projectAssetIds=[...project.projectAssetIds];
       projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{}));
@@ -858,7 +868,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     }
     projectLoadToken+=1;projectEpoch+=1;
     document.querySelector('#professionalAssemblyDialog')?.close();document.querySelector('#professionalAssemblyLibraryDialog')?.close();
-    resetWorkbenchVideoObserver();resetVirtualShotWindow();virtualShotHeights.clear();virtualShotProjectId='';professionalPreviewTaskIds.clear();professionalGenerationPending.clear();deferredProfessionalRender=false;pendingKeys.clear();projectKeyVersions.clear();project=null;projectBaseSnapshot=null;viewStep=null;scriptDraft=null;assetPickerShotId='';state.dramaProject=null;syncProjectHeader();renderProjects();
+    resetWorkbenchVideoObserver();resetVirtualShotWindow();virtualShotHeights.clear();virtualShotProjectId='';professionalPreviewTaskIds.clear();professionalGenerationPending.clear();deferredProfessionalRender=false;pendingKeys.clear();projectKeyVersions.clear();projectTitleEditing=false;projectTitleDraft='';document.querySelector('#dramaProjectTitle')?.classList.add('hidden');document.querySelector('#dramaProjectTitleDisplay')?.classList.remove('hidden');project=null;projectBaseSnapshot=null;viewStep=null;scriptDraft=null;assetPickerShotId='';state.dramaProject=null;syncProjectHeader();renderProjects();
   }
   async function patch(changes,{quiet=false,keysAlreadyMarked=false}={}) {
     if(!project)return null;
@@ -1465,7 +1475,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
   function fitWorkbenchTitle(input){
     if(!input)return;
-    const width=workbenchTitleWidth(input.value);
+    const value=input.value||input.textContent||'';
+    const width=workbenchTitleWidth(value);
     input.style.width=`${width}px`;
   }
   function workbenchShotCard(shot,index,locked){
@@ -1490,7 +1501,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const editorContent=shot.script.trim()?renderMentionEditorContent(shot):richEditorEmptyChar;
     const tooltip=capability.message||cost.message||'';
     return `<article class="wb-shot-card ${active?'is-active':''} ${status==='completed'?'is-generated':''} ${status==='failed'?'is-failed':''}" data-wb-shot="${shot.id}" data-wb-shot-index="${index}">
-      <div class="wb-shot-legend"><input class="wb-shot-title" data-wb-field="title" value="${esc(shot.title)}" maxlength="120" aria-label="分镜${index+1}名称" title="${esc(shot.title)}" style="width:${workbenchTitleWidth(shot.title)}px" ${locked?'disabled':''}></div><button type="button" class="wb-shot-delete" data-wb-delete-shot="${shot.id}" aria-label="删除${esc(shot.title)}" title="删除分镜" ${locked?'disabled':''}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
+      <div class="wb-shot-legend"><button type="button" class="wb-shot-title-display" data-wb-edit-title data-tooltip="点击修改名称" title="点击修改名称" aria-label="修改分镜${index+1}名称：${esc(shot.title)}" style="width:${workbenchTitleWidth(shot.title)}px" ${locked?'disabled':''}>${esc(shot.title)}</button><input class="wb-shot-title wb-shot-title-input hidden" data-wb-field="title" value="${esc(shot.title)}" maxlength="120" aria-label="分镜${index+1}名称" style="width:${workbenchTitleWidth(shot.title)}px" ${locked?'disabled':''}></div><button type="button" class="wb-shot-delete" data-wb-delete-shot="${shot.id}" aria-label="删除${esc(shot.title)}" title="删除分镜" ${locked?'disabled':''}><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg></button>
       <div class="wb-shot-layout"><section class="wb-shot-edit-column"><label class="wb-prompt-label" for="wb-script-${shot.id}">输入分镜内容</label><div id="wb-script-${shot.id}" class="wb-rich-input ${references?'has-reference':''}" data-wb-rich-editor="script" data-shot-id="${shot.id}" data-empty="${shot.script.trim()?'false':'true'}" data-placeholder="${esc(placeholder)}" contenteditable="${locked?'false':'true'}" role="textbox" aria-multiline="true" aria-label="分镜${index+1}内容">${references}${editorContent}</div><footer class="wb-shot-controls"><button type="button" class="wb-control-plus" data-wb-add-reference="${shot.id}" aria-label="添加分镜参考素材" ${locked?'disabled':''}>＋</button><div class="wb-control-select wb-model-select">${modelSelect}</div><div class="wb-dropdown-control wb-mode-control">${modeSelect}</div><div class="wb-dropdown-control wb-specs-control">${specs}</div><button type="button" class="wb-generate-button" data-wb-generate="${shot.id}" ${locked||!capability.ok||professionalGenerationPending.has(shot.id)?'disabled':''} title="${esc(tooltip)}"><span class="wb-generation-cost" aria-label="${cost.credits===null?esc(cost.label):`预计 ${cost.label} 积分`}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></svg><span data-wb-credit-value>${cost.credits===null?'—':cost.label}</span></span><span class="wb-generate-divider" aria-hidden="true"></span><span data-wb-generate-label>${status==='completed'?'再次生成':'生成'}</span></button></footer></section>${workbenchShotPreview(shot)}</div>
     </article>`;
   }
@@ -1675,7 +1686,16 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       const selectShot=event=>{if(event.target.closest('[data-wb-delete-shot]'))return;activateProfessionalShot(id);};
       card.addEventListener('focusin',selectShot);
       card.addEventListener('click',selectShot);
-      card.querySelectorAll('[data-wb-field]').forEach(field=>{const syncTitleUi=value=>{fitWorkbenchTitle(field);if(field.dataset.wbField==='title')field.setAttribute('title',value||DEFAULT_SHOT_TITLE);root.querySelector(`[data-professional-shot="${id}"] b`)?.replaceChildren(document.createTextNode(value));const deleteButton=card.querySelector('[data-wb-delete-shot]');if(deleteButton)deleteButton.setAttribute('aria-label',`删除${value||DEFAULT_SHOT_TITLE}`);};const commitTitle=()=>{const value=field.value.trim()||DEFAULT_SHOT_TITLE;if(field.value!==value)field.value=value;const shot=project.shots.find(item=>item.id===id);if(shot?.title!==value)updateShot(id,'title',value);syncTitleUi(value);};field.addEventListener('input',()=>{const key=field.dataset.wbField;if(key==='generation.type')return;updateShot(id,key,field.value);if(key==='title')syncTitleUi(field.value);const generate=card.querySelector('[data-wb-generate]');if(generate)generate.disabled=Boolean(project.finalAssetId||professionalProductionWarning(project.shots.find(item=>item.id===id)));});if(field.dataset.wbField==='title')field.addEventListener('blur',commitTitle);});
+      const titleDisplay=card.querySelector('[data-wb-edit-title]');
+      const titleInput=card.querySelector('[data-wb-field="title"]');
+      const shot=project.shots.find(item=>item.id===id);
+      const syncTitleUi=value=>{const title=value||DEFAULT_SHOT_TITLE;if(titleDisplay){titleDisplay.textContent=title;fitWorkbenchTitle(titleDisplay);titleDisplay.setAttribute('aria-label',`修改分镜名称：${title}`);}if(titleInput){titleInput.value=title;fitWorkbenchTitle(titleInput);}root.querySelector(`[data-professional-shot="${id}"] b`)?.replaceChildren(document.createTextNode(title));const deleteButton=card.querySelector('[data-wb-delete-shot]');if(deleteButton)deleteButton.setAttribute('aria-label',`删除${title}`);};
+      const leaveTitleEdit=({focusDisplay=false}={})=>{if(!titleInput)return;titleInput.value=shot?.title||DEFAULT_SHOT_TITLE;titleInput.classList.add('hidden');titleDisplay?.classList.remove('hidden');card.classList.remove('is-editing-title');syncTitleUi(titleInput.value);if(focusDisplay)titleDisplay?.focus();};
+      const commitTitle=()=>{if(!titleInput||!card.classList.contains('is-editing-title'))return;const value=titleInput.value.trim()||DEFAULT_SHOT_TITLE;if(titleInput.value!==value)titleInput.value=value;if(shot?.title!==value)updateShot(id,'title',value);leaveTitleEdit();};
+      titleDisplay?.addEventListener('click',event=>{event.stopPropagation();if(titleInput?.disabled||!shot)return;titleInput.value=shot.title||DEFAULT_SHOT_TITLE;titleDisplay.classList.add('hidden');titleInput.classList.remove('hidden');card.classList.add('is-editing-title');requestAnimationFrame(()=>{titleInput.focus();titleInput.select();});});
+      titleInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();leaveTitleEdit({focusDisplay:true});return;}if(event.key==='Enter'){event.preventDefault();event.stopPropagation();commitTitle();}});
+      titleInput?.addEventListener('blur',commitTitle);
+      card.querySelectorAll('[data-wb-field]').forEach(field=>{field.addEventListener('input',()=>{const key=field.dataset.wbField;if(key==='generation.type'||key==='title')return;updateShot(id,key,field.value);const generate=card.querySelector('[data-wb-generate]');if(generate)generate.disabled=Boolean(project.finalAssetId||professionalProductionWarning(project.shots.find(item=>item.id===id)));});});
       const richEditor=card.querySelector('[data-wb-rich-editor]');
       const syncRichEditorInput=()=>{if(!richEditor?.isConnected||richEditor.dataset.composing==='true')return;normalizeEmptyRichEditor(richEditor);updateShotScriptFromEditor(id,richEditor);if(mentionTriggerAtCaret(richEditor))openMentionPicker(id,richEditor);};
       richEditor?.addEventListener('compositionstart',()=>{richEditor.dataset.composing='true';});
@@ -2727,10 +2747,55 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   async function assemble(){const button=document.querySelector('#assembleProject');button.disabled=true;button.textContent='正在拼接成片…';try{await assembleDramaLocally();render();toast('完整成片已生成并保存在本地文件库');}catch(error){if(error.stale)return;toast(error.message);button.disabled=false;button.textContent='重新一键成片';}}
 
   document.querySelector('#dramaTopBack').onclick=closeProject;
-  async function saveProjectTitle(input=document.querySelector('#dramaProjectTitle')){if(!project||!input)return;const request=projectRequest();const title=input.value.trim()||'未命名剧本';input.value=title;if(title===project.title){syncProjectHeader();return;}try{await patch({title},{quiet:true});assertProjectRequest(request);syncProjectHeader();}catch(error){if(error.stale)return;syncProjectHeader();}}
+  function leaveProjectTitleEdit({focusDisplay=false}={}){
+    const display=document.querySelector('#dramaProjectTitleDisplay');
+    const input=document.querySelector('#dramaProjectTitle');
+    projectTitleEditing=false;
+    projectTitleDraft='';
+    input?.classList.add('hidden');
+    display?.classList.remove('hidden');
+    syncProjectHeader();
+    if(focusDisplay)display?.focus();
+  }
+  function beginProjectTitleEdit(){
+    const display=document.querySelector('#dramaProjectTitleDisplay');
+    const input=document.querySelector('#dramaProjectTitle');
+    if(!project||!display||!input||projectTitleEditing)return;
+    projectTitleEditing=true;
+    projectTitleDraft=project.title||'未命名剧本';
+    input.value=projectTitleDraft;
+    display.classList.add('hidden');
+    input.classList.remove('hidden');
+    requestAnimationFrame(()=>{input.focus();input.select();});
+  }
+  async function saveProjectTitle(input=document.querySelector('#dramaProjectTitle')){
+    if(!project||!input||!projectTitleEditing)return;
+    const request=projectRequest();
+    const previous=projectTitleDraft||project.title||'未命名剧本';
+    const title=input.value.trim()||'未命名剧本';
+    input.value=title;
+    projectTitleEditing=false;
+    projectTitleDraft='';
+    input.classList.add('hidden');
+    document.querySelector('#dramaProjectTitleDisplay')?.classList.remove('hidden');
+    if(title===previous){syncProjectHeader();return;}
+    project.title=title;
+    state.dramaProject=project;
+    syncProjectHeader();
+    try{
+      await patch({title},{quiet:true});
+      assertProjectRequest(request);
+      syncProjectHeader();
+    }catch(error){
+      if(error.stale)return;
+      if(project?.id===request.projectId){project.title=previous;state.dramaProject=project;syncProjectHeader();}
+    }
+  }
   const projectTitleInput=document.querySelector('#dramaProjectTitle');
-  projectTitleInput.onchange=()=>{void saveProjectTitle(projectTitleInput);};
-  projectTitleInput.onkeydown=event=>{if(event.key!=='Enter')return;event.preventDefault();event.stopPropagation();void saveProjectTitle(projectTitleInput);};
+  const projectTitleDisplay=document.querySelector('#dramaProjectTitleDisplay');
+  projectTitleDisplay?.addEventListener('click',beginProjectTitleEdit);
+  projectTitleInput?.addEventListener('blur',()=>{if(projectTitleEditing)void saveProjectTitle(projectTitleInput);});
+  projectTitleInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();leaveProjectTitleEdit({focusDisplay:true});return;}if(event.key==='Enter'){event.preventDefault();event.stopPropagation();void saveProjectTitle(projectTitleInput);}});
   function suspend(){
     clearInterval(priceRefreshTimer);priceRefreshTimer=0;
     priceRefreshEpoch+=1;priceRefreshPromise=null;priceRefreshAt=0;
