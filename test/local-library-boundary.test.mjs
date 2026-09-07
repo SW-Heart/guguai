@@ -62,7 +62,7 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=259/);
+  assert.match(index, /\/app\.js\?v=260/);
   assert.match(index, /\/styles\.css\?v=223/);
   assert.match(index, /\/styles\/base\.css\?v=2/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=12/);
@@ -89,7 +89,7 @@ test('account-scoped loaders ignore responses from an older session', () => {
   assert.match(marketing, /const paymentOrderStorageKey = user =>/);
   assert.doesNotMatch(marketing, /sessionStorage\.(?:getItem|setItem|removeItem)\('gugu_alipay_order'/);
   assert.match(marketing, /sessionStorage\.setItem\(paymentOrderStorageKey\(purchaseUser\)/);
-  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=9/));
+  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=10/));
   assert.match(app, /const requestAccount = accountScope\.snapshot\(\);\n  const button = \$\('#alipayTopupButton'\)/);
   assert.match(app, /const result = await api\(`\/api\/payments\/alipay\/orders\/\$\{encodeURIComponent\(state\.alipayOrderNo\)\}\/query`[\s\S]*?if \(!accountScope\.isCurrent\(requestAccount\)\) return;/);
   const loadTasksStart = app.indexOf('async function loadTasks(');
