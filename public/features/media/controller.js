@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=11';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=12';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
@@ -94,6 +94,38 @@ export function createMediaController({
     const incomingIds = new Set(incoming.map(file => file.id));
     state.files = [...incoming, ...state.files.filter(file => !incomingIds.has(file.id))];
     recordIndexes.invalidateFiles();
+    const missingIds = incoming.filter(file => file.localStatus === 'missing').map(file => file.id);
+    if (missingIds.length) {
+      const missing = new Set(missingIds);
+      localFileTotal = Math.max(0, localFileTotal - libraryFiles.filter(file => missing.has(file.id) && file.localStatus !== 'missing').length);
+      libraryFiles = libraryFiles.filter(file => !missing.has(file.id));
+      clearFileReferencesForIds(missingIds);
+      for (const id of missingIds) {
+        const timer = desktopHydrationRetryTimers.get(id);
+        if (timer) clearTimer(timer);
+        desktopHydrationRetryTimers.delete(id);
+        desktopDownloadStates.delete(id);
+      }
+    }
+  }
+
+  async function reconcileLocalFiles() {
+    const localBridge = bridge();
+    if (!localBridge?.media?.listLocalByCloudIds) return;
+    const requestAccount = accountSnapshot();
+    const requestEpoch = getAccountEpoch();
+    const ids = [...new Set(state.files.filter(file => !file.localOnly && file.localStatus !== 'missing').map(file => file.cloudAssetId || file.id))];
+    for (let index = 0; index < ids.length; index += 500) {
+      const items = await localBridge.media.listLocalByCloudIds(ids.slice(index, index + 500));
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      mergeLocalAssets(items.map(desktopLocalClientAsset).filter(Boolean));
+    }
+    const localIds = state.files.filter(file => file.localOnly && file.localStatus !== 'missing').map(file => file.localId || file.id);
+    for (let index = 0; index < localIds.length; index += 500) {
+      const page = await listDesktopFiles({ localAssetIds:localIds.slice(index, index + 500) });
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      mergeLocalAssets(page.items);
+    }
   }
 
   function mergeLocalAssets(files) {
@@ -102,6 +134,7 @@ export function createMediaController({
   }
 
   function applyDesktopLocalAsset(remoteFile, localAsset) {
+    if (fileById(remoteFile.id)?.localStatus === 'missing') return;
     const local = desktopLocalClientAsset(localAsset);
     if (!local) return;
     const file = { ...remoteFile, ...local, id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
@@ -343,10 +376,15 @@ export function createMediaController({
     const requestAccount = accountSnapshot();
     const requestEpoch = getAccountEpoch();
     const localBridge = bridge();
-    if (!localBridge || !file || file.localOnly || file.localStatus === 'saved') return;
+    if (!localBridge || !file || file.localOnly || ['saved', 'missing'].includes((fileById(file.id) || file).localStatus)) return;
     if (!requestIsCurrent(requestAccount, requestEpoch)) return null;
     const result = await localBridge.media.downloadRemote(desktopMediaPayload(file));
     if (!requestIsCurrent(requestAccount, requestEpoch)) return null;
+    if (result?.localMissing) {
+      mergeLocalAssets([desktopLocalClientAsset(result)].filter(Boolean));
+      notifyChanged();
+      return null;
+    }
     if (result?.downloadError) throw Object.assign(new Error(result.downloadError), { retryable:result.retryable });
     if (result?.unavailable) throw Object.assign(new Error(`远端文件已不存在（${result.status || 404}）`), { unavailable:true });
     if (!result?.id) throw new Error('素材接收后未能写入本地工作区');
@@ -476,6 +514,11 @@ export function createMediaController({
         }
         const deliveries = [...new Map([...changedAssets, ...(result.deliveries || [])].filter(file => file?.id).map(file => [file.id, file])).values()];
         if (deliveries.length && isCurrentRequest()) {
+          if (localBridge.media?.listLocalByCloudIds) {
+            const local = await localBridge.media.listLocalByCloudIds(deliveries.map(file => file.id));
+            if (!isCurrentRequest()) return null;
+            mergeLocalAssets(local.map(desktopLocalClientAsset).filter(Boolean));
+          }
           mergeStateFiles(deliveries);
           const currentDeliveries = deliveries.map(file => fileById(file.id) || file);
           queueSavedDesktopAcknowledgements(currentDeliveries);
@@ -540,7 +583,7 @@ export function createMediaController({
     const queryKey = `${getFileKind()}|${search}`;
     const reset = !loadMore || queryKey !== fileQueryKey;
     const requestVersion = reset ? ++fileLoadVersion : fileLoadVersion;
-    const requestLocalStateRevision = localFileStateRevision;
+    let requestLocalStateRevision = localFileStateRevision;
     const cursor = reset ? '' : localFileCursor;
     if (reset) {
       fileQueryKey = queryKey;
@@ -548,6 +591,9 @@ export function createMediaController({
       localFileHasMore = true;
     }
     try {
+      await reconcileLocalFiles();
+      if (!isAccountCurrent(requestAccount) || requestVersion !== fileLoadVersion) return state.files;
+      requestLocalStateRevision = localFileStateRevision;
       const page = await listDesktopFiles({ limit:200, cursor, kind:getFileKind() === 'all' ? '' : getFileKind(), search });
       if (!isAccountCurrent(requestAccount) || requestVersion !== fileLoadVersion || queryKey !== fileQueryKey) return state.files;
       const localStateChanged = requestLocalStateRevision !== localFileStateRevision;
@@ -564,6 +610,7 @@ export function createMediaController({
         // valid completed assets beyond that page temporarily disappear.
         mergeStateFiles(page.items);
       } else mergeStateFiles(page.items);
+      libraryFiles = libraryFiles.filter(file => file.localStatus !== 'missing' && fileById(file.id)?.localStatus !== 'missing');
       notifyChanged();
       return state.files;
     } catch (error) {
@@ -643,6 +690,10 @@ export function createMediaController({
     syncDesktopDeliveries,
     claimLegacyWorkspace,
     loadFiles,
+    refreshLocalAvailability: async () => {
+      try { await reconcileLocalFiles(); notifyChanged(); }
+      catch (error) { console.warn('[desktop] 本地文件检查暂不可用', error.message); }
+    },
     removeLocalAsset,
     reset,
     isHydrating: file => Boolean(bridge() && desktopHydrationActive.has(file?.id) && !String(file?.url || '').startsWith('gugu-media://')),

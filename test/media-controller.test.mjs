@@ -37,7 +37,7 @@ function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => (
       }
       return { changes:[], deliveries:syncDeliveries };
     },
-    desktopScope: { localAsset: item => ({ ...item, localId:item.id, localStatus:'saved', url:`gugu-media://${item.id}` }) },
+    desktopScope: { localAsset: item => ({ ...item, localId:item.id, localStatus:item.localStatus === 'missing' ? 'missing' : 'saved', url:item.localStatus === 'missing' ? '' : `gugu-media://${item.id}` }) },
     recordIndexes:indexes,
     fileById: id => state.files.find(file => file.id === id),
     accountSnapshot: () => account,
@@ -53,6 +53,45 @@ function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => (
   });
   return { state, bridge, pendingDownloads, apiCalls, acknowledgements, deliveryTaskPayloads, completedDeliveryTasks, timers, controller, get downloadCount() { return downloadCount; }, setAccount: value => { account = value; }, setEpoch: value => { epoch = value; } };
 }
+
+test('deleted local assets disappear from the library and remain missing after cloud sync', async () => {
+  const saved = { id:'a', kind:'image', localStatus:'saved', url:'gugu-media://a' };
+  const missing = { ...saved, localStatus:'missing', url:'' };
+  let items = [saved];
+  const harness = createHarness({ initialFiles:[saved], listLocal:async () => ({ items, total:items[0].localStatus === 'missing' ? 0 : 1 }), syncDeliveries:[{ id:'a', localStatus:'remote', deliveryStatus:'awaiting_local', remoteStatus:'pending' }] });
+  harness.bridge.media.listLocalByCloudIds = async () => items;
+  await harness.controller.loadFiles();
+  assert.equal(harness.controller.libraryState().files.length, 1);
+  items = [missing];
+  await harness.controller.refreshLocalAvailability();
+  assert.equal(harness.controller.libraryState().files.length, 0);
+  assert.equal(harness.state.files[0].localStatus, 'missing');
+  await harness.controller.syncDesktopDeliveries({ assetIds:['a'] });
+  assert.equal(harness.downloadCount, 0);
+  assert.equal(harness.controller.downloadState('a'), null);
+  assert.equal(harness.state.files[0].localStatus, 'missing');
+  assert.equal(harness.state.files[0].url, '');
+});
+
+test('startup pages exclude missing files without subtracting the live count twice', async () => {
+  const items = [{ id:'gone', kind:'image', localStatus:'missing', url:'' }, { id:'present', kind:'image', localStatus:'saved' }];
+  const harness = createHarness({ listLocal:async () => ({ items, total:1 }) });
+  await harness.controller.loadFiles();
+  assert.deepEqual(harness.controller.libraryState().files.map(file => file.id), ['present']);
+  assert.equal(harness.controller.libraryState().total, 1);
+  assert.equal(harness.state.files.find(file => file.id === 'gone').localStatus, 'missing');
+});
+
+test('a file deleted between queueing and downloading is not acknowledged or retried', async () => {
+  const harness = createHarness();
+  harness.controller.queueDesktopHydration([{ id:'a', deliveryStatus:'awaiting_local', remoteStatus:'pending' }]);
+  harness.pendingDownloads.get('a')({ id:'a', kind:'image', localStatus:'missing', localMissing:true, url:'' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.state.files[0].localStatus, 'missing');
+  assert.equal(harness.acknowledgements.length, 0);
+  assert.equal(harness.timers.length, 0);
+  assert.equal(harness.controller.downloadState('a'), null);
+});
 
 test('media hydration ignores a delayed download after account invalidation', async () => {
   const harness = createHarness();

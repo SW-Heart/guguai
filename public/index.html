@@ -7,7 +7,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=2">
-  <link rel="stylesheet" href="/styles.css?v=217">
+  <link rel="stylesheet" href="/styles.css?v=222">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到工作区</a>
@@ -104,7 +104,7 @@
       <button class="rail-button" data-route="drama"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM4 9h16M8 5l2 4M14 5l2 4"/><path d="m10 12 5 2.5-5 2.5z"/></svg><span>短剧创作</span><em class="rail-beta" aria-hidden="true">内测</em></button>
       <button class="rail-button" data-route="files"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></svg><span>文件库</span></button>
       <div class="rail-spacer"></div>
-      <button id="desktopUpdateButton" class="rail-button rail-update-button hidden" type="button" title="检查更新"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0 1 4"/><path d="M20 5v6h-6"/><path d="M12 8v5l3 2"/></svg><span>更新</span></button>
+      <button id="desktopUpdateButton" class="rail-button rail-update-button hidden" type="button" title="检查更新"><span class="rail-update-icon" aria-hidden="true"><svg data-update-icon="download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><svg data-update-icon="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg><svg data-update-icon="alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span class="rail-update-label">更新</span></button>
     </nav>
 
     <aside id="creatorPanel" class="creator-panel">
@@ -202,17 +202,16 @@
   <dialog id="desktopUpdateDialog" class="desktop-update-dialog" aria-labelledby="desktopUpdateTitle" aria-describedby="desktopUpdateMessage" hidden>
     <div class="desktop-update-card">
       <button id="closeDesktopUpdate" class="desktop-update-close" type="button" aria-label="关闭更新提示" title="稍后提醒"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-      <div class="desktop-update-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/><path d="M5 5.5A8.5 8.5 0 0 1 19 8"/></svg></div>
-      <span class="desktop-update-kicker">GUGU AI · DESKTOP UPDATE</span>
+      <div class="desktop-update-mark" aria-hidden="true"><span class="desktop-update-logo brand-gem"></span></div>
       <h2 id="desktopUpdateTitle">发现新版本</h2>
-      <p id="desktopUpdateMessage">新版本正在后台下载，完成后会提醒你重启更新。</p>
+      <p id="desktopUpdateMessage">更新正在后台下载。</p>
       <div class="desktop-update-versions" aria-label="版本信息"><span><small>当前版本</small><strong id="desktopUpdateCurrentVersion">—</strong></span><i aria-hidden="true"></i><span><small>新版本</small><strong id="desktopUpdateVersion">—</strong></span></div>
-      <div id="desktopUpdateProgressWrap" class="desktop-update-progress-wrap" aria-live="polite"><div class="desktop-update-progress-track"><div id="desktopUpdateProgress" class="desktop-update-progress"></div></div><span id="desktopUpdateProgressLabel">准备下载…</span></div>
-      <p id="desktopUpdateHint" class="desktop-update-hint">更新会在后台下载，你可以先继续使用 GuGu AI。</p>
+      <div id="desktopUpdateProgressWrap" class="desktop-update-progress-wrap" aria-live="polite" aria-label="准备下载"><div class="desktop-update-progress-track"><div id="desktopUpdateProgress" class="desktop-update-progress"></div></div></div>
+      <p id="desktopUpdateHint" class="desktop-update-hint">下载完成后可重启更新。</p>
       <footer class="desktop-update-actions"><button id="laterDesktopUpdate" class="desktop-update-later" type="button">稍后提醒</button><button id="desktopUpdateAction" class="gradient-button" type="button" disabled>正在下载…</button></footer>
     </div>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<script type="module" src="/app.js?v=252"></script>
+  <script type="module" src="/app.js?v=259"></script>
 </body>
 </html>

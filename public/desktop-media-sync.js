@@ -21,6 +21,8 @@ export function desktopMediaPayload(file) {
 // or readiness fields and make a completed generation look unsynced again.
 export function mergeDesktopAssetRecord(existing, incoming) {
   if (!existing || !incoming) return incoming;
+  if (incoming.localStatus === 'missing') return { ...existing, ...incoming, url:'', previewUrl:'' };
+  if (existing.localStatus === 'missing') return { ...existing, ...incoming, localStatus:'missing', url:'', previewUrl:'' };
   const locallySaved = existing.localStatus === 'saved' && String(existing.url || '').startsWith('gugu-media://');
   if (!locallySaved) return incoming;
   const remoteUrl = String(incoming.remoteUrl || incoming.url || existing.remoteUrl || '');
@@ -53,7 +55,7 @@ export function isAwaitingDesktopDelivery(file) {
 }
 
 export function shouldHydrateDesktopAsset(file, { force = false } = {}) {
-  return Boolean(file?.id && (force || isAwaitingDesktopDelivery(file)) && !file.localOnly && file.localStatus !== 'saved');
+  return Boolean(file?.id && (force || isAwaitingDesktopDelivery(file)) && !file.localOnly && !['saved', 'missing'].includes(file.localStatus));
 }
 
 export function desktopHydrationRetryDelay(failureCount) {

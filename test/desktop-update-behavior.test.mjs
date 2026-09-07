@@ -15,6 +15,11 @@ test('desktop updates prompt on launch or window restore and stay silent while d
   assert.match(bridgeSource, /const shouldPrompt = payload\?\.promptOnStartup === true \|\| payload\?\.promptOnOpen === true/);
   assert.match(bridgeSource, /if \(status === 'available' \|\| status === 'downloading'\) \{\s+if \(shouldPrompt\) showUpdateButton\(\);\s+else hideUpdateButton\(\);/);
   assert.match(bridgeSource, /renderDesktopUpdateDialog\(payload, \{ open: shouldPrompt \}\)/);
+  assert.match(bridgeSource, /if \(status === 'downloaded'\) \{[^}]*updateButton\.onclick = openDesktopUpdateDialog;/s);
+  const statusSubscription = bridgeSource.indexOf('desktopUpdateUnsubscribe = bridge.updates.onStatus(applyUpdateStatus);');
+  const initialStatusRead = bridgeSource.indexOf('bridge.updates.getStatus?.()', statusSubscription);
+  assert.ok(statusSubscription >= 0 && initialStatusRead > statusSubscription);
+  assert.doesNotMatch(bridgeSource.slice(statusSubscription, initialStatusRead), /updateButton\.onclick = \(\) => bridge\.updates\.check\(\)/);
   assert.match(app, /function closeDesktopUpdateDialog\(\{ dismiss = false \} = \{\}\)/);
   assert.match(app, /if \(desktopUpdateDialogDismissed \|\| !dialog/);
 });

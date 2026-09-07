@@ -1,9 +1,9 @@
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=11';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=12';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
-import { createDesktopScope } from './platform/desktop-scope.js?v=2';
+import { createDesktopScope } from './platform/desktop-scope.js?v=3';
 import { createTaskPoller } from './features/generation/polling.js?v=2';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
 import { createCreditPresentation } from './features/credits/presentation.js?v=2';
@@ -12,7 +12,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=6';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=5';
+import { createMediaController } from './features/media/controller.js?v=6';
 import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
@@ -71,6 +71,8 @@ function clearFileReferencesForIds(assetIds) {
   }
 }
 function renderAfterDesktopAssetHydration() {
+  if (fileById(state.previewFileId)?.localStatus === 'missing') $('#previewDialog')?.close();
+  if (fileById(taskById(state.detailTaskId)?.assetId)?.localStatus === 'missing' && $('#generationDetailDialog')?.open) closeGenerationDetail();
   if (state.route === 'files') {
     if (state.initialSyncReady) scheduleRouteContentRender('files', false);
   }
@@ -150,9 +152,11 @@ function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding
   return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
 }
 function isDesktopAssetSyncing(file) {
+  if (file?.localStatus === 'missing') return false;
   return Boolean(window.guguDesktop && file && file.localStatus !== 'saved' && !String(file.url || '').startsWith('gugu-media://')) || mediaController.isHydrating(file);
 }
 function taskLocalSyncing(task, file = fileById(task?.assetId)) {
+  if (file?.localStatus === 'missing') return false;
   if (!window.guguDesktop || task?.status !== 'completed' || !task.assetId) return false;
   const localReady = Boolean(file && file.localStatus === 'saved' && !isDesktopAssetSyncing(file));
   // A completed cloud task can be rendered before startup recovery has found
@@ -226,6 +230,7 @@ function desktopSyncMarkup(task) {
   return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
 }
 function requireDesktopLocalAsset(file) {
+  if (file?.localStatus === 'missing') { toast('本地文件不存在，请重新选择'); return false; }
   if (!isDesktopAssetSyncing(file)) return true;
   toast('素材正在保存到本地，请稍后再预览');
   return false;
@@ -1082,11 +1087,11 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   const next = $('#desktopUpdateVersion');
   const progressWrap = $('#desktopUpdateProgressWrap');
   const progress = $('#desktopUpdateProgress');
-  const progressLabel = $('#desktopUpdateProgressLabel');
   const hint = $('#desktopUpdateHint');
   const action = $('#desktopUpdateAction');
   const later = $('#laterDesktopUpdate');
-  if (!title || !message || !current || !next || !progressWrap || !progress || !progressLabel || !hint || !action || !later) return;
+  if (!title || !message || !current || !next || !progressWrap || !progress || !hint || !action || !later) return;
+  const setProgressLabel = text => progressWrap.setAttribute('aria-label', text);
   current.textContent = currentVersion;
   next.textContent = version;
   dialog.classList.toggle('update-ready', status === 'downloaded');
@@ -1096,38 +1101,38 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   later.disabled = status === 'installing';
   if (status === 'available') {
     title.textContent = '发现新版本';
-    message.textContent = `GuGu AI ${version} 正在准备下载，完成后会提醒你重启更新。`;
+    message.textContent = `GuGu AI ${version} 可更新。`;
     progress.style.width = '0%';
     progress.classList.add('is-indeterminate');
-    progressLabel.textContent = '准备下载…';
-    hint.textContent = '更新会在后台下载，你可以先继续使用 GuGu AI。';
-    action.textContent = '正在下载…';
+    setProgressLabel('准备下载…');
+    hint.textContent = '下载完成后可重启更新。';
+    action.textContent = '准备下载…';
     action.disabled = true;
   } else if (status === 'downloading') {
     const percent = Number(desktopUpdateState.percent);
     const hasProgress = Number.isFinite(percent) && percent >= 0;
     title.textContent = '正在下载更新';
-    message.textContent = `GuGu AI ${version} 正在下载，完成后会提醒你重启更新。`;
+    message.textContent = `GuGu AI ${version} 正在下载。`;
     progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
     if (!hasProgress) progress.classList.add('is-indeterminate');
-    progressLabel.textContent = hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…';
-    hint.textContent = '更新会在后台下载，你可以先继续使用 GuGu AI。';
+    setProgressLabel(hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…');
+    hint.textContent = '下载完成后可重启更新。';
     action.textContent = '正在下载…';
     action.disabled = true;
   } else if (status === 'downloaded') {
-    title.textContent = '更新已下载';
-    message.textContent = `GuGu AI ${version} 已下载完成，可以重启客户端更新。`;
+    title.textContent = '下载已完成';
+    message.textContent = `GuGu AI ${version} 已下载。`;
     progress.style.width = '100%';
-    progressLabel.textContent = '下载完成';
-    hint.textContent = '点击“重启更新”后客户端会关闭，请按系统提示重新安装新版本。';
+    setProgressLabel('下载完成');
+    hint.textContent = '重启后立即应用。';
     action.textContent = '重启更新';
     action.disabled = false;
   } else if (status === 'installing') {
     title.textContent = '正在退出客户端';
-    message.textContent = `GuGu AI ${version} 即将关闭，请在安装程序中完成更新。`;
+    message.textContent = `GuGu AI ${version} 正在安装。`;
     progress.style.width = '100%';
-    progressLabel.textContent = '正在退出…';
-    hint.textContent = '客户端关闭后，请按安装程序提示完成覆盖安装。';
+    setProgressLabel('正在退出…');
+    hint.textContent = '请稍候。';
     action.textContent = '正在退出…';
     action.disabled = true;
   } else if (status === 'error') {
@@ -1168,12 +1173,13 @@ function initDesktopUpdateDialog(bridge) {
     if (desktopUpdateState.status !== 'downloaded') return;
     const action = $('#desktopUpdateAction');
     action.disabled = true;
+    renderDesktopUpdateDialog({ status: 'installing', version: desktopUpdateState.version });
     try {
       const started = await bridge.updates.install();
       if (!started) throw new Error('更新安装包尚未准备好，请稍后再试');
     } catch (error) {
       action.disabled = false;
-      renderDesktopUpdateDialog({ status: 'error', message: error.message, version: desktopUpdateState.version });
+      renderDesktopUpdateDialog({ status: 'error', message: error.message, version: desktopUpdateState.version }, { open: true });
     }
   };
   dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
@@ -1362,9 +1368,10 @@ async function initDesktopBridge() {
     });
     const updateButton = $('#desktopUpdateButton');
     if (updateButton && bridge.updates && info.updateUrl) {
-      const updateLabel = updateButton.querySelector('span') || updateButton;
+      const updateLabel = updateButton.querySelector('.rail-update-label') || updateButton.querySelector('span') || updateButton;
       const setUpdateLabel = text => { updateLabel.textContent = text; };
       const setUpdateTitle = text => { updateButton.title = text; };
+      const setUpdateState = state => { if (state) updateButton.dataset.updateState = state; else delete updateButton.dataset.updateState; };
       const hideUpdateButton = () => {
         updateButton.classList.add('hidden');
         updateButton.classList.remove('has-update');
@@ -1401,15 +1408,14 @@ async function initDesktopBridge() {
           showUpdateButton();
         }
         renderDesktopUpdateDialog(payload, { open: shouldPrompt });
-        if (status === 'available') { setUpdateLabel('后台下载中'); setUpdateTitle(`正在后台下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'downloading') { setUpdateLabel(`后台下载 ${payload.percent || 0}%`); setUpdateTitle('正在后台下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'downloaded') { setUpdateLabel('重启更新'); setUpdateTitle('重启客户端并重新安装更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'installing') { setUpdateLabel('正在退出…'); setUpdateTitle('退出后将打开安装程序'); updateButton.disabled = true; }
-        else if (status === 'error') { setUpdateLabel('检查更新'); setUpdateTitle('更新暂不可用'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        if (status === 'available') { setUpdateState('available'); setUpdateLabel('有新版本'); setUpdateTitle(`下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        else if (status === 'downloading') { setUpdateState('downloading'); setUpdateLabel(`${Math.round(Number(payload.percent) || 0)}%`); setUpdateTitle('正在下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        else if (status === 'downloaded') { setUpdateState('downloaded'); setUpdateLabel('重启更新'); setUpdateTitle('重启客户端并安装更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        else if (status === 'installing') { setUpdateState('installing'); setUpdateLabel('更新中'); setUpdateTitle('正在安装更新'); updateButton.disabled = true; }
+        else if (status === 'error') { setUpdateState('error'); setUpdateLabel('重试'); setUpdateTitle('更新暂不可用'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
       };
       desktopUpdateUnsubscribe?.();
       desktopUpdateUnsubscribe = bridge.updates.onStatus(applyUpdateStatus);
-      updateButton.onclick = () => bridge.updates.check();
       Promise.resolve(bridge.updates.getStatus?.()).then(payload => {
         if (payload?.status && payload.status !== 'idle') applyUpdateStatus(payload);
       }).catch(() => {});
@@ -1686,7 +1692,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=87').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=88').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -2249,6 +2255,7 @@ function compareTasksByRecency(left, right) {
 }
 function historyTaskThumbnail(task) {
   const asset = fileById(task.assetId);
+  if (asset?.localStatus === 'missing') return '<span class="history-missing-mark">本地文件已移除</span>';
   const localReady = Boolean(asset && asset.localStatus === 'saved' && !taskLocalSyncing(task, asset));
   if (localReady) return task.type === 'image' ? assetImageMarkup(asset, assetDisplayName(asset)) : videoPreviewMarkup(asset, 'history-video-placeholder');
   if (task.status === 'failed') return '<span class="history-failure-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7 3 2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg></span>';
@@ -2368,6 +2375,7 @@ function renderTasks() {
   // is resolved. Hiding them here made the generation page show only the
   // failed sibling versions while the drama page showed a spinner forever.
   let tasks = [...state.generationPreparations, ...state.tasks].filter(task => task.type === state.route
+    && fileById(task.assetId)?.localStatus !== 'missing'
     && (task.status !== 'completed' || Boolean(task.assetId))
     && (task.status !== 'failed' || transientFailureVisible(task)));
   tasks.sort(compareTasksByRecency);
@@ -2632,6 +2640,8 @@ function openGenerationDetail(id) {
     ? desktopSyncMarkup(task)
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
+    : asset?.localStatus === 'missing'
+      ? '<div class="detail-missing-file"><b>本地文件已移除</b><span>请重新选择素材或重新生成</span></div>'
     : detailFailure
       ? `<div class="detail-missing-file" role="alert"><b>${esc(detailFailure.message || '生成失败')}</b><span>${esc(detailFailure.suggestion || '请调整内容后重试')}</span></div>`
       : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
@@ -2700,7 +2710,7 @@ function uploadJobCard(job, variant='file') {
   return `<article class="file-card upload-job-file-card upload-job-card ${failed ? 'failed' : ''} ${completed ? 'completed' : ''}" data-upload-id="${esc(job.id)}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div class="file-preview upload-job-visual">${media}<span class="upload-job-shade">${ring}</span>${selected}</div></article>`;
 }
 function renderUploadJobCards(container, jobs, variant='file') { container.querySelectorAll('[data-upload-id]').forEach(node => node.remove()); if (jobs.length) container.prepend(...jobs.map(job => elementFromHtml(uploadJobCard(job, variant)))); }
-function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) { renderReferenceDialog(); resetReferenceDialogScroll(); } renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
+function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) renderReferenceDialog(); renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
 function createUploadJob(file, context, { previewUrl='', mimeType='', deferUpload=false, localAssetId='', removeLocalOnDiscard=false } = {}) {
   const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:String(previewUrl || ''), revokePreview:false, localAssetId, removeLocalOnDiscard, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已加入，创作时上传' : '准备上传', error:'', selected:false, assetId:'' };
   state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
@@ -3047,7 +3057,7 @@ function openReferenceDialog(target, { mentionRequest = null } = {}) {
   referenceDialogOriginal={ target, value:[...state.refs[target]] };
   imagePromptMentionRequest = target === 'image' ? mentionRequest : null;
   videoPromptMentionRequest = target === 'video' ? mentionRequest : null;
-  state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal();
+  state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
 }
 function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
@@ -3055,7 +3065,7 @@ function openVideoFrameDialog(frame) {
   referenceDialogOriginal={ target:'video-frame', frame, value:state.videoFrames[frame] || '' };
   imagePromptMentionRequest = null;
   videoPromptMentionRequest = null;
-  state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.referenceKind = 'all'; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal();
+  state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.referenceKind = 'all'; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
 }
 function closeReferenceDialog() { imagePromptMentionRequest = null; videoPromptMentionRequest = null; $('#referenceDialog').close(); }
 $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDialog;
@@ -3110,7 +3120,7 @@ function renderReferenceDialog() {
   const confirmLabel = isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
-  const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, state.files.filter(file => allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === 'reference' && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
+  const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === 'reference' && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
   $('#referenceKindFilter').innerHTML = [['all', '全部'], ...['image', 'video', 'audio'].filter(kind => allowedKinds.has(kind)).map(kind => [kind, kindLabels[kind]])].map(([kind, label]) => `<button type="button" role="tab" class="${visibleKind === kind ? 'active' : ''}" data-reference-kind="${kind}" aria-selected="${visibleKind === kind}"><span>${label}</span><small>${kind === 'all' ? kindCounts.image + kindCounts.video + kindCounts.audio : kindCounts[kind]}</small></button>`).join('');
   $$('#referenceKindFilter [data-reference-kind]').forEach(button => button.onclick = () => { state.referenceKind = button.dataset.referenceKind; renderReferenceDialog(); });
   const uploadJobs = state.uploadJobs.filter(job => job.context === 'reference');
@@ -3122,10 +3132,9 @@ function renderReferenceDialog() {
   }).join('');
   const uploadMarkup = uploadJobs.filter(job => !job.deferUpload && (visibleKind === 'all' || job.kind === visibleKind)).map(job => uploadJobCard(job, 'reference')).join('');
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
-  const files = state.files.filter(file => allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id)));
+  const files = state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id)));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
   $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState('没有可用参考素材', '先上传当前模型支持的素材类型。'));
-  requestAnimationFrame(resetReferenceDialogScroll);
   $$('.reference-option').forEach(button => button.onclick = () => {
     let id = button.dataset.id;
     let file = referenceFileById(id);
@@ -3843,6 +3852,14 @@ document.addEventListener('visibilitychange', () => {
     });
   }
 });
+let localReconcileRequest = null;
+function refreshLocalFileAvailability() {
+  if (!window.guguDesktop || !state.user || document.hidden || localReconcileRequest) return;
+  localReconcileRequest = mediaController.refreshLocalAvailability().finally(() => { localReconcileRequest = null; });
+}
+window.addEventListener('focus', refreshLocalFileAvailability);
+document.addEventListener('visibilitychange', refreshLocalFileAvailability);
+window.setInterval(refreshLocalFileAvailability, 15000);
 await bootstrap();
 scheduleTaskPoll();
 scheduleNotificationPoll();

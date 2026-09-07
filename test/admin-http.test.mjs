@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { hashPassword } from '../lib/auth.mjs';
 import { adjustCredits, chargeGenerationMicro, refundGenerationMicro } from '../lib/ledger.mjs';
+import { appendSystemEvent } from '../lib/audit.mjs';
 import { insertUser } from '../lib/store.mjs';
 
 async function freePort() {
@@ -65,6 +66,13 @@ test('admin HTTP permissions and core workflows', async t => {
   await adjustCredits(refundedUserId, 10_000_000, { actorUserId: adminId, idempotencyKey: 'seed-refund-user-balance', reasonCode: 'promotion' });
   await chargeGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
   await refundGenerationMicro(refundedUserId, 'failed-generation-refund', 5_000_000);
+  const taskId = 'admin-task-filter';
+  sql(`INSERT INTO generations(id, user_id, type, status, created_at, updated_at, doc_json)
+       VALUES(:id, :userId, 'video', 'failed', :createdAt, :createdAt, :docJson)`)
+    .run({ id: taskId, userId: refundedUserId, createdAt, docJson: JSON.stringify({ id: taskId, status: 'failed' }) });
+  await chargeGenerationMicro(refundedUserId, taskId, 1_000_000);
+  await refundGenerationMicro(refundedUserId, taskId, 1_000_000);
+  appendSystemEvent({ level: 'error', category: 'generation', userId: refundedUserId, generationId: taskId, message: '任务失败测试日志' });
   const paymentDoc = JSON.stringify({ source: 'admin-http-test' });
   sql(`INSERT INTO alipay_payment_orders(out_trade_no, user_id, status, subject, total_amount_fen, credits_micro, refunded_amount_fen, alipay_trade_no, paid_at, created_at, updated_at, doc_json)
        VALUES('ORDER-PAID-1', :userId, 'PAID', 'GuGu AI 50 积分', 500, 50000000, 0, 'ALI-PAID-1', '2026-08-20T10:00:00.000Z', '2026-08-20T09:59:00.000Z', '2026-08-20T10:00:00.000Z', :docJson),
@@ -153,6 +161,13 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(detailAfterAdjustment.data.user.totalSpent, 1.25);
   const audit = await admin.call('/api/admin/logs/audit?limit=100');
   assert.equal(audit.data.items.find(item => item.action === 'user.credit_adjustment').actorNickname, 'http_admin');
+  const taskGenerations = await admin.call(`/api/admin/logs/generations?taskId=${taskId}`);
+  assert.deepEqual(taskGenerations.data.items.map(item => item.id), [taskId]);
+  const taskCredits = await admin.call(`/api/admin/logs/credits?taskId=${taskId}`);
+  assert.equal(taskCredits.data.items.length, 2);
+  assert.ok(taskCredits.data.items.every(item => item.generationId === taskId));
+  const taskSystem = await admin.call(`/api/admin/logs/system?taskId=${taskId}`);
+  assert.deepEqual(taskSystem.data.items.map(item => item.generationId), [taskId]);
 
   const disabled = await admin.call(`/api/admin/users/${target.id}/disable`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: {} });
   assert.equal(disabled.response.status, 200);

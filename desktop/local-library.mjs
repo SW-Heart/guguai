@@ -244,7 +244,7 @@ export function listLocalAssets({ limit = defaultLimit, cursor = null, kind = ''
   const countWhere = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const totalParams = { ...params };
   delete totalParams.limit;
-  const total = Number(db().prepare(`SELECT COUNT(*) AS count FROM assets ${countWhere}`).get(totalParams).count);
+  const total = Number(db().prepare(`SELECT COALESCE(SUM(CASE WHEN local_status != 'missing' THEN 1 ELSE 0 END), 0) AS count FROM assets ${countWhere}`).get(totalParams).count);
   const rows = db().prepare(`
     SELECT doc_json, created_at AS createdAt, id
     FROM assets

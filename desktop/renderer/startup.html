@@ -84,8 +84,96 @@
     .update-action:disabled { color: var(--faint); background: rgba(255,255,255,.42); border-color: rgba(255,255,255,.58); box-shadow: none; cursor: wait; }
     .update-card.ready .update-mark { color: #397052; border-color: rgba(77,124,90,.18); background: linear-gradient(145deg, rgba(237,246,239,.88), rgba(214,239,220,.68)); }
     .update-card.error .update-mark { color: #b24d55; border-color: rgba(178,77,85,.18); background: linear-gradient(145deg, rgba(255,241,242,.9), rgba(255,224,227,.7)); }
+    /* Update surfaces follow the same liquid-glass language as the main
+       workspace. Icon geometry is taken from Lucide's mature line set. */
+    .update-card,
+    .restart-card { border-color: rgba(255,255,255,.82); background: linear-gradient(145deg, rgba(255,255,255,.88), rgba(239,241,255,.72)); box-shadow: 0 30px 90px rgba(51,55,111,.2), 0 0 0 1px rgba(255,255,255,.55) inset; backdrop-filter: blur(30px) saturate(1.18); -webkit-backdrop-filter: blur(30px) saturate(1.18); }
+    .update-mark,
+    .restart-icon { width: 58px; height: 58px; margin-bottom: 18px; border-color: rgba(255,255,255,.78); border-radius: 18px; color: #555be0; background: linear-gradient(145deg, rgba(255,255,255,.74), rgba(220,224,255,.6)); box-shadow: 0 12px 25px rgba(91,92,232,.12), inset 0 1px rgba(255,255,255,.9); }
+    .update-mark svg,
+    .restart-icon svg { width: 27px; height: 27px; stroke-width: 1.7; }
+    .update-mark .update-icon-refresh { display: none; }
+    .update-card.ready .update-mark .update-icon-download { display: none; }
+    .update-card.ready .update-mark .update-icon-refresh { display: block; }
+    .update-card h2,
+    .restart-card h2 { color: #272b4c; font-size: 24px; font-weight: 700; letter-spacing: -.045em; }
+    .update-card > p,
+    .restart-card > p { color: #747991; }
+    .update-kicker,
+    .restart-kicker { display: block; color: #676bd3; font-size: 11px; font-weight: 650; letter-spacing: .03em; }
+    .update-versions,
+    .restart-summary { border-color: rgba(255,255,255,.72); border-radius: 15px; background: rgba(255,255,255,.42); box-shadow: inset 0 1px rgba(255,255,255,.72); }
+    .update-versions strong,
+    .restart-summary strong { color: #454b69; }
+    .update-progress-track { height: 6px; background: rgba(99,102,241,.1); box-shadow: inset 0 1px rgba(99,102,241,.05); }
+    .update-progress { background: linear-gradient(90deg, #6166e9, #a178ee); box-shadow: 0 0 14px rgba(99,102,241,.26); }
+    .update-actions,
+    .restart-actions { border-top-color: rgba(99,102,241,.1); }
+    .update-later,
+    .restart-later { min-height: 42px; padding: 8px 12px; border: 1px solid transparent; border-radius: 10px; color: #777d98; }
+    .update-later:hover,
+    .restart-later:hover { color: #4c51b5; border-color: rgba(255,255,255,.7); background: rgba(255,255,255,.46); }
+    .update-actions .update-action,
+    .restart-actions .update-action { min-width: 146px; min-height: 42px; border-color: rgba(255,255,255,.56); border-radius: 11px; background: linear-gradient(135deg, #5d63df, #8b6de7); box-shadow: 0 10px 22px rgba(91,92,232,.2), inset 0 1px rgba(255,255,255,.32); }
+    .update-actions .update-action svg,
+    .restart-actions .update-action svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+    .restart-dialog { position: fixed; z-index: 45; inset: 0; padding: 24px; background: rgba(61,64,105,.28); display: grid; place-items: center; backdrop-filter: blur(12px) saturate(1.12); -webkit-backdrop-filter: blur(12px) saturate(1.12); }
+    .restart-card { position: relative; width: min(430px, 100%); padding: 30px 32px 27px; border: 1px solid rgba(255,255,255,.82); border-radius: 26px; color: var(--ink); text-align: left; overflow: hidden; }
+    .restart-card::before { position: absolute; top: -150px; left: 58%; width: 290px; height: 290px; border-radius: 50%; background: rgba(141,145,255,.23); content: ""; filter: blur(30px); pointer-events: none; transform: translateX(-50%); }
+    .restart-icon { position: relative; z-index: 1; display: grid; place-items: center; }
+    .restart-icon svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+    .restart-card h2,
+    .restart-card > p,
+    .restart-kicker,
+    .restart-summary,
+    .restart-actions { position: relative; z-index: 1; }
+    .restart-card h2 { margin: 9px 0 7px; }
+    .restart-card > p { max-width: 360px; margin: 0; font-size: 12px; line-height: 1.75; }
+    .restart-summary { margin: 22px 0 4px; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 13px; }
+    .restart-summary span { min-width: 0; display: grid; gap: 5px; }
+    .restart-summary span:last-child { text-align: right; }
+    .restart-summary small { color: #969bb0; font-size: 10px; }
+    .restart-summary i { width: 22px; height: 1px; flex: 0 0 22px; background: rgba(99,102,241,.22); }
+    .restart-actions { margin-top: 21px; padding-top: 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    @media (max-width: 560px) { .update-card, .restart-card { padding: 26px 21px 23px; } .restart-summary { gap: 9px; padding-inline: 11px; } .restart-summary strong { font-size: 12px; } }
     @media (prefers-reduced-motion: reduce) { .startup-spinner, .startup-trace::after, .update-progress.is-indeterminate { animation: none; } }
     @media (max-width: 560px) { .startup-shell { padding: 22px; } .startup-stage { width: 180px; height: 144px; } .startup-corner.top-left, .startup-corner.bottom-left { left: 4px; } .startup-corner.top-right, .startup-corner.bottom-right { right: 4px; } .update-card { padding: 24px 21px 22px; } .update-versions { gap: 9px; padding-inline: 10px; } }
+    /* Compact update UI: centered iconography, short copy, explicit actions. */
+    .update-card,
+    .restart-card { width: min(466px, 100%); box-sizing: border-box; padding: 28px 30px 24px; text-align: center; }
+    .update-mark,
+    .restart-icon { margin: 0 auto 15px; }
+    .update-logo { position: relative; display: block; width: 32px; height: 32px; border-radius: 9px; background: #18181b; box-shadow: 0 7px 14px rgba(24,24,27,.16); }
+    .update-logo::before, .update-logo::after { position: absolute; width: 15px; height: 4.5px; border-radius: 2px; background: #fff; content: ""; transform: rotate(-38deg); }
+    .update-logo::before { top: 8px; left: 5px; }
+    .update-logo::after { right: 5px; bottom: 8px; }
+    .update-card h2,
+    .restart-card h2 { margin: 8px 0 6px; font-size: 22px; letter-spacing: -.035em; text-align: center; }
+    .update-card > p,
+    .restart-card > p { max-width: 300px; margin: 0 auto; font-size: 11px; line-height: 1.55; text-align: center; cursor: default; }
+    .update-kicker,
+    .restart-kicker { text-align: center; }
+    .update-versions,
+    .restart-summary { margin: 18px 0 16px; text-align: left; cursor: default; }
+    .update-progress-wrap { min-height: 6px; text-align: center; cursor: default; }
+    .update-progress-wrap > span { text-align: center; }
+    .update-hint { display: none; }
+    .update-actions,
+    .restart-actions { justify-content: center; gap: 10px; margin-top: 18px; padding-top: 16px; }
+    .update-later,
+    .restart-later { min-width: 112px; min-height: 42px; padding: 8px 14px; border: 1px solid rgba(112,116,150,.24); border-radius: 11px; color: #626780; background: rgba(255,255,255,.54); font-size: 11px; font-weight: 600; cursor: pointer; }
+    .update-later:hover,
+    .restart-later:hover { color: #4c51b5; border-color: rgba(99,102,241,.28); background: rgba(255,255,255,.78); }
+    .update-actions .update-action,
+    .restart-actions .update-action { min-width: 138px; min-height: 42px; padding: 9px 16px; border-radius: 11px; font-size: 11px; font-weight: 700; cursor: pointer; }
+    .update-actions .update-action:disabled { color: #9a9eb4; border-color: rgba(255,255,255,.7); background: rgba(255,255,255,.58); box-shadow: none; cursor: default; }
+    .update-card > :not(button),
+    .restart-card > :not(button) { cursor: default; }
+    @media (max-width: 560px) {
+      .update-card, .restart-card { padding: 24px 20px 21px; }
+      .update-actions, .restart-actions { gap: 8px; }
+      .update-later, .restart-later, .update-actions .update-action, .restart-actions .update-action { min-width: 0; flex: 1 1 0; }
+    }
   </style>
 </head>
 <body>
@@ -122,12 +210,12 @@
   <section id="updateDialog" class="update-dialog hidden" role="dialog" aria-modal="true" aria-labelledby="updateTitle" aria-describedby="updateMessage">
     <div class="update-card">
       <button id="closeUpdate" class="update-close" type="button" aria-label="关闭更新提示" title="稍后提醒"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
-      <div class="update-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4v10M8 10l4 4 4-4M5 19h14"/><path d="M5 5.5A8.5 8.5 0 0 1 19 8"/></svg></div>
+      <div class="update-mark" aria-hidden="true"><span class="update-logo brand-gem"></span></div>
       <h2 id="updateTitle">发现新版本</h2>
-      <p id="updateMessage">准备下载最新版本。</p>
+      <p id="updateMessage">更新正在下载。</p>
       <div class="update-versions" aria-label="版本信息"><span><small>当前版本</small><strong id="currentVersion">—</strong></span><i aria-hidden="true"></i><span><small>新版本</small><strong id="nextVersion">—</strong></span></div>
-      <div id="progressWrap" class="update-progress-wrap" aria-live="polite"><div class="update-progress-track"><div id="progress" class="update-progress"></div></div><span id="progressLabel">准备下载…</span></div>
-      <p id="updateHint" class="update-hint">下载完成后重启更新。</p>
+      <div id="progressWrap" class="update-progress-wrap" aria-live="polite" aria-label="准备下载"><div class="update-progress-track"><div id="progress" class="update-progress"></div></div></div>
+      <p id="updateHint" class="update-hint">下载完成后可重启。</p>
       <footer class="update-actions"><button id="laterUpdate" class="update-later" type="button">稍后</button><button id="updateAction" class="update-action" type="button" disabled>正在下载…</button></footer>
     </div>
   </section>
@@ -186,35 +274,35 @@
       progressWrap.classList.remove('hidden');
       if (status === 'available') {
         $('#updateTitle').textContent = '发现新版本';
-        $('#updateMessage').textContent = '新版本已就绪。';
+        $('#updateMessage').textContent = '新版本可更新。';
         progress.style.width = '0%';
         progress.classList.add('is-indeterminate');
-        $('#progressLabel').textContent = '准备下载…';
+        progressWrap.setAttribute('aria-label', '准备下载…');
         $('#updateHint').textContent = '下载完成后重启更新。';
-        $('#updateAction').textContent = '正在下载…';
+        $('#updateAction').textContent = '准备下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloading') {
         $('#updateTitle').textContent = '正在下载更新';
-        $('#updateMessage').textContent = '正在获取最新版本。';
+        $('#updateMessage').textContent = '正在下载最新版本。';
         progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
         if (!hasProgress) progress.classList.add('is-indeterminate');
-        $('#progressLabel').textContent = hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…';
+        progressWrap.setAttribute('aria-label', hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…');
         $('#updateHint').textContent = '下载完成后重启更新。';
         $('#updateAction').textContent = '正在下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloaded') {
-        $('#updateTitle').textContent = '更新已下载';
-        $('#updateMessage').textContent = '新版本已准备好。';
+        $('#updateTitle').textContent = '下载已完成';
+        $('#updateMessage').textContent = '新版本已下载。';
         progress.style.width = '100%';
-        $('#progressLabel').textContent = '下载完成';
+        progressWrap.setAttribute('aria-label', '下载完成');
         $('#updateHint').textContent = '重启客户端完成更新。';
         $('#updateAction').textContent = '重启更新';
         $('#updateAction').disabled = false;
       } else if (status === 'installing') {
         $('#updateTitle').textContent = '正在退出客户端';
-        $('#updateMessage').textContent = '客户端即将关闭。';
+        $('#updateMessage').textContent = '正在安装新版本。';
         progress.style.width = '100%';
-        $('#progressLabel').textContent = '正在退出…';
+        progressWrap.setAttribute('aria-label', '正在退出…');
         $('#updateHint').textContent = '按安装程序提示完成更新。';
         $('#updateAction').textContent = '正在退出…';
         $('#updateAction').disabled = true;
@@ -238,12 +326,12 @@
         return;
       }
       if (updateState.status !== 'downloaded') return;
-      $('#updateAction').disabled = true;
+      renderUpdate({ status: 'installing', version: updateState.version }, { open: false });
       try {
         const started = await bridge?.updates?.install?.();
         if (!started) throw new Error('更新安装包尚未准备好，请稍后再试');
       } catch (error) {
-        renderUpdate({ status: 'error', message: error.message, version: updateState.version });
+        renderUpdate({ status: 'error', message: error.message, version: updateState.version }, { open: true });
       }
     };
 

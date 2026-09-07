@@ -15,10 +15,10 @@ export function createDesktopScope({ getWindow, getSyncInfo, getMediaKind = item
   function localAsset(item) {
     const cloudAssetId = String(item?.cloudAssetId || '');
     const id = cloudAssetId || String(item?.id || '');
-    if (!id || !item?.url) return null;
+    if (!id || (!item?.url && item?.localStatus !== 'missing')) return null;
     const kind = item.kind || getMediaKind(item);
     if (!kind) return null;
-    return { ...item, id, localId: item.id, cloudAssetId, kind, url: item.url, remoteUrl: item.remoteUrl || (cloudAssetId ? `/api/files/${encodeURIComponent(cloudAssetId)}/content` : ''), localStatus: 'saved', localOnly: !cloudAssetId, updatedAt: item.updatedAt || item.createdAt };
+    return { ...item, id, localId: item.id, cloudAssetId, kind, url: item.url, remoteUrl: item.remoteUrl || (cloudAssetId ? `/api/files/${encodeURIComponent(cloudAssetId)}/content` : ''), localStatus: item.localStatus === 'missing' ? 'missing' : 'saved', localOnly: !cloudAssetId, updatedAt: item.updatedAt || item.createdAt };
   }
   return { headers, localAsset };
 }

@@ -8,6 +8,7 @@ import { Transform, Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { downloadMediaToFile, validateDownloadedMedia } from './media-download.mjs';
+import { inspectLocalMedia } from './local-media-state.mjs';
 import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
   claimLocalAssetByPath,
@@ -643,6 +644,13 @@ async function downloadRemoteAssetInternal({ assetId, url, name, kind, mimeType 
   if (!cloudAssetId) throw new Error('缺少云端素材 ID');
   const existing = findLocalAssetByCloudId(cloudAssetId);
   if (existing) {
+    const inspected = await inspectLocalMedia(existing, targetWorkspace);
+    assertActiveWorkspace(targetWorkspace, targetEpoch);
+    if (inspected.localStatus === 'missing') {
+      upsertLocalAsset(inspected);
+      completeLocalDeliveryTask(cloudAssetId);
+      return { ...inspected, localMissing:true };
+    }
     const existingPath = path.resolve(targetWorkspace, existing.relativePath);
     const existingStat = isInside(targetWorkspace, existingPath) ? await fs.stat(existingPath).catch(() => null) : null;
     let validExisting = false;
@@ -836,9 +844,13 @@ async function materializeLocalAssets(items) {
     if (!relativePath) return null;
     const target = path.resolve(targetWorkspace, relativePath);
     if (!isInside(targetWorkspace, target)) return null;
-    const stat = await fs.stat(target).catch(() => null);
-    if (!stat?.isFile()) return null;
-    return { ...item, localStatus: 'saved', url: `gugu-media://asset/${encodeURIComponent(item.id)}` };
+    const result = await inspectLocalMedia(item, targetWorkspace);
+    if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return null;
+    if (result.localStatus === 'missing' && item.localStatus !== 'missing') {
+      upsertLocalAsset(result);
+      if (item.cloudAssetId) completeLocalDeliveryTask(item.cloudAssetId);
+    }
+    return result;
   }, localAssetStatConcurrency);
   if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return [];
   return assets.filter(Boolean);
@@ -848,8 +860,12 @@ async function listLocalAssets(options = {}) {
   if (!workspace) return { items: [], total: 0, nextCursor: '' };
   const page = Array.isArray(options.cloudAssetIds)
     ? { items: listLocalAssetsByCloudIds(options.cloudAssetIds), total: options.cloudAssetIds.length, nextCursor: '' }
+    : Array.isArray(options.localAssetIds)
+    ? { items: options.localAssetIds.slice(0, 500).map(getLocalAsset).filter(Boolean), total:0, nextCursor:'' }
     : queryLocalAssets(options);
-  return { items: await materializeLocalAssets(page.items), total: page.total, nextCursor: page.nextCursor };
+  const items = await materializeLocalAssets(page.items);
+  const newlyMissing = items.filter(item => item.localStatus === 'missing' && page.items.find(previous => previous.id === item.id)?.localStatus !== 'missing').length;
+  return { items, total: Math.max(0, page.total - newlyMissing), nextCursor: page.nextCursor };
 }
 
 async function serveLocalMedia(request) {
