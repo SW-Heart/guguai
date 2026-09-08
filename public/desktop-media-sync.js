@@ -22,7 +22,7 @@ export function desktopMediaPayload(file) {
 export function mergeDesktopAssetRecord(existing, incoming) {
   if (!existing || !incoming) return incoming;
   if (incoming.localStatus === 'missing') return { ...existing, ...incoming, url:'', previewUrl:'' };
-  if (existing.localStatus === 'missing') return { ...existing, ...incoming, localStatus:'missing', url:'', previewUrl:'' };
+  if (existing.localStatus === 'missing' && !(incoming.localStatus === 'saved' && String(incoming.url || '').startsWith('gugu-media://'))) return { ...existing, ...incoming, localStatus:'missing', url:'', previewUrl:'' };
   const locallySaved = existing.localStatus === 'saved' && String(existing.url || '').startsWith('gugu-media://');
   if (!locallySaved) return incoming;
   const remoteUrl = String(incoming.remoteUrl || incoming.url || existing.remoteUrl || '');
@@ -72,5 +72,5 @@ export function canRemoveImportedLocalAsset(item) {
 }
 
 export function shouldRemoveUploadJobLocalAsset(job) {
-  return Boolean(job?.localAssetId && job.removeLocalOnDiscard && !job.assetId);
+  return Boolean(job?.localAssetId && job.removeLocalOnDiscard && !job.assetId && !job.inUse);
 }

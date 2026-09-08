@@ -464,7 +464,24 @@ async function importFile(filePath, { dedupe = true } = {}) {
   assertActiveWorkspace(targetWorkspace, targetEpoch);
   if (dedupe) {
     const existing = findLocalAssetByDigest(digest.sha256, digest.size);
-    if (existing) return { ...existing, reused: true };
+    if (existing) {
+      const target = localAssetPath(existing, targetWorkspace);
+      const info = await fs.stat(target).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (!info?.isFile() || info.size !== digest.size) {
+        const temporary = `${target}.${randomUUID()}.part`;
+        try {
+          await fs.mkdir(path.dirname(target), { recursive:true });
+          await fs.copyFile(filePath, temporary);
+          assertActiveWorkspace(targetWorkspace, targetEpoch);
+          await fs.rename(temporary, target);
+        } finally { await fs.unlink(temporary).catch(() => {}); }
+        console.info('[media] 恢复本地素材副本', { assetId:existing.id, relativePath:existing.relativePath });
+      }
+      assertActiveWorkspace(targetWorkspace, targetEpoch);
+      const restored = { ...existing, localStatus:'saved', sourcePath:filePath, updatedAt:new Date().toISOString() };
+      upsertLocalAsset(restored);
+      return { ...restored, reused:true };
+    }
   }
 
   const originalName = safeName(path.basename(filePath));
@@ -579,6 +596,17 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
   if (!asset) throw new Error('本地素材不存在');
   const source = path.resolve(targetWorkspace, asset.relativePath);
   if (!isInside(targetWorkspace, source)) throw new Error('本地素材路径不受信任');
+  // Read before creating an upload intent: missing files must not consume
+  // pending-upload slots, and later cleanup cannot invalidate these bytes.
+  let bytes;
+  try { bytes = await fs.readFile(source); }
+  catch (error) {
+    console.warn('[media] 读取同步素材失败', { assetId:asset.id, relativePath:asset.relativePath, code:error.code });
+    if (error.code === 'ENOENT') throw new Error(`本地素材“${asset.name}”文件未找到，请从原图重新导入`);
+    throw error;
+  }
+  assertActiveWorkspace(targetWorkspace, targetEpoch);
+  if (bytes.length !== asset.size) throw new Error(`本地素材“${asset.name}”大小异常，请从原图重新导入`);
   const payload = JSON.stringify({ name: asset.name, mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 });
   if (asset.cloudAssetId && !uploadForReference) {
     const verifyResponse = await cloudRequest(`/api/files/${encodeURIComponent(asset.cloudAssetId)}/local-ready`, {
@@ -601,7 +629,10 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     upsertLocalAsset(asset);
   }
   const initResponse = await cloudRequest('/api/files/uploads/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
-  if (!initResponse.ok) throw new Error(`上传初始化失败（${initResponse.status}）`);
+  if (!initResponse.ok) {
+    const detail = await initResponse.json().catch(() => ({}));
+    throw new Error(`上传初始化失败（${initResponse.status}）：${String(detail.error || '请稍后重试').slice(0, 300)}`);
+  }
   const intent = await initResponse.json();
   assertActiveWorkspace(targetWorkspace, targetEpoch);
   if (intent.mode === 'reuse' && intent.asset) {
@@ -616,7 +647,6 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
   if (String(intent.method || '').toUpperCase() !== 'PUT' || !intent.uploadUrl || !intent.uploadId) {
     throw new Error('上传协议无效，仅支持 PUT');
   }
-  const bytes = await fs.readFile(source);
   assertActiveWorkspace(targetWorkspace, targetEpoch);
   const storageResponse = await net.fetch(intent.uploadUrl, {
     method: 'PUT',

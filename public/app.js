@@ -1,6 +1,6 @@
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=4';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=12';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, shouldRemoveUploadJobLocalAsset } from './desktop-media-sync.js?v=13';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=3';
@@ -12,7 +12,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=6';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=6';
+import { createMediaController } from './features/media/controller.js?v=7';
 import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
@@ -2718,7 +2718,16 @@ function createUploadJob(file, context, { previewUrl='', mimeType='', deferUploa
 function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
 function finishUploadJob(job, asset, selected=false, afterAsset=null) { if (!job || !asset) return; mediaController.mergeLocalAssets([asset]); const finalSelected=afterAsset ? Boolean(afterAsset(asset)) : selected; job.assetId=asset.id; job.progress=100; job.status='completed'; job.label=finalSelected ? '上传完成，已选中' : '上传完成'; job.selected=finalSelected; notifyUploadSurfaceChanged(); window.setTimeout(() => removeUploadJob(job.id), 1200); }
 function failUploadJob(job, error) { if (!job) return; job.status='failed'; job.progress=0; job.error=error?.message || '上传失败'; job.label=job.error; notifyUploadSurfaceChanged(); }
-function removeUploadJob(id) { const index=state.uploadJobs.findIndex(job=>job.id===id); if (index<0) return; const [job]=state.uploadJobs.splice(index,1); if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl); if (shouldRemoveUploadJobLocalAsset(job) && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error)); notifyUploadSurfaceChanged(); }
+function removeUploadJob(id) {
+  const index = state.uploadJobs.findIndex(job => job.id === id);
+  if (index < 0 || state.uploadJobs[index].inUse) return;
+  const [job] = state.uploadJobs.splice(index, 1);
+  if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
+  const other = state.uploadJobs.find(item => job.localAssetId && item.localAssetId === job.localAssetId);
+  if (other && job.removeLocalOnDiscard) other.removeLocalOnDiscard = true;
+  if (!other && shouldRemoveUploadJobLocalAsset(job) && window.guguDesktop?.media?.removeLocal) void window.guguDesktop.media.removeLocal(job.localAssetId).then(() => loadFiles({ background:true })).catch(error => console.warn('[desktop] 清理待上传本地素材失败', error));
+  notifyUploadSurfaceChanged();
+}
 function autoSelectUploadedReference(asset, kind, job) {
   if (!asset || job?.context !== 'reference') return false;
   const referenceTarget=job.referenceTarget || state.referenceTarget; const isFrame=referenceTarget==='video-frame'; const isVideo=referenceTarget==='video';
@@ -2847,6 +2856,13 @@ function desktopMediaKind(item) {
   if (mimeType.startsWith('audio/')) return 'audio';
   return '';
 }
+async function verifyImportedImagePreview(url) {
+  if (!url) throw new Error('本地图片无法读取，请重新选择原图');
+  const preview = new Image();
+  preview.src = url;
+  try { await preview.decode(); }
+  catch { throw new Error('本地图片无法读取或解码，请确认原图能正常打开后重新导入'); }
+}
 async function desktopImportToContext(context, { multiple = true } = {}) {
   const bridge = window.guguDesktop;
   if (!bridge?.media?.chooseAndImport) throw new Error('桌面导入能力尚未就绪，请重启客户端后再试');
@@ -2884,6 +2900,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
     let job=null;
     try {
       const previewUrl=await bridge.media.url(item.id).catch(()=> '');
+      if (kind === 'image') await verifyImportedImagePreview(previewUrl);
       job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id, removeLocalOnDiscard:!item.reused });
       if (inDialog) {
         if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到当前模型限制');
@@ -2900,6 +2917,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
       processedFiles.push(file);
       synced += 1;
     } catch (error) {
+      console.warn('[desktop] 导入素材处理失败', { assetId:item.id, name:item.name, stage:job ? 'sync' : 'preview', message:error.message });
       if (job) failUploadJob(job,error);
       toast(`${item.name || '文件'} ${inDialog ? '加入参考区' : '云端同步'}失败：${error.message}`);
     }
@@ -3042,7 +3060,7 @@ function setVideoGenerationType(type) {
 }
 function cleanupUncommittedReferenceJobs() {
   const committed = new Set([...state.refs.image, ...state.refs.video, state.videoFrames.first, state.videoFrames.last].filter(Boolean));
-  state.uploadJobs.filter(job => job.context === 'reference' && job.deferUpload && !job.assetId && !committed.has(job.id)).map(job => job.id).forEach(removeUploadJob);
+  state.uploadJobs.filter(job => job.context === 'reference' && job.deferUpload && !job.assetId && !job.inUse && !committed.has(job.id)).map(job => job.id).forEach(removeUploadJob);
 }
 function restoreReferenceDialogOriginal() {
   if (!referenceDialogOriginal) return;
@@ -3403,7 +3421,7 @@ async function submitGeneration(type, form, payload) {
   if (generationSubmissionForms.has(form)) return;
   generationSubmissionForms.add(form);
   const requestAccount = accountScope.snapshot();
-  const requestedReferenceIds = type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type];
+  const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const referenceCounts = referenceCountsForIds(requestedReferenceIds);
   const deferredReferences = hasUnresolvedReference(requestedReferenceIds);
   const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(payload.modelId);
@@ -3422,7 +3440,20 @@ async function submitGeneration(type, form, payload) {
   state.generationPreparations = [...preparations, ...state.generationPreparations];
   renderTasks();
   let chargedTasks = [];
+  const referenceJobs = requestedReferenceIds.map(pendingReferenceJob).filter(Boolean);
+  referenceJobs.forEach(job => { job.inUse = (job.inUse || 0) + 1; });
   try {
+    const localAssetIds = [...new Set(requestedReferenceIds.map(id => {
+      const file = state.files.find(item => item.id === id);
+      return pendingReferenceJob(id)?.localAssetId || (needsReferenceUpload(file) ? file.localId || (file.localOnly ? file.id : '') : '');
+    }).filter(Boolean))];
+    if (localAssetIds.length && window.guguDesktop?.media?.listLocal) {
+      const page = await window.guguDesktop.media.listLocal({ localAssetIds });
+      if (!accountScope.isCurrent(requestAccount)) return;
+      const items = Array.isArray(page) ? page : page.items || [];
+      const unavailable = localAssetIds.find(id => !items.some(item => item.id === id && item.localStatus === 'saved'));
+      if (unavailable) throw new Error('参考素材本地文件未找到，请从原图重新导入后再创作');
+    }
     let expectedPriceVersion = '';
     if (routedVideo) {
       if (state.modelQuote?.signature !== quoteSignature) {
@@ -3477,7 +3508,7 @@ async function submitGeneration(type, form, payload) {
     }
     renderTasks(); renderReferences(); toast(error.message); await loadCredits();
   }
-  finally { generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
+  finally { referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); }); generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
 $('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptInput(); const prompt = imagePromptText(); if (!prompt.trim()) return toast('请填写创作描述'); if (Array.from(prompt).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:replaceAssetMentions(prompt, state.imagePromptMentions), size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
