@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import { openLocalLibrary, closeLocalLibrary, upsertLocalAsset, getLocalAsset } from '../desktop/local-library.mjs';
 import { mergeDesktopAssetRecord, shouldRemoveUploadJobLocalAsset } from '../public/desktop-media-sync.js';
 
 const main = await fs.readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
@@ -19,6 +20,7 @@ test('batch import skips an unreadable image and still selects the next decodabl
     window:{ guguDesktop:{ media:{ chooseAndImport:async () => items, url:async id => `gugu-media://asset/${id}` } } },
     Image:class { async decode() { if (this.src.endsWith('/broken')) throw new Error('decode failed'); } },
     state:{ referenceTarget:'video' },
+    desktopScope:{ localAsset:item => item }, mediaController:{ mergeLocalAssets:() => {} }, loadFiles:async () => {},
     referenceFileKinds:() => new Set(['image']), referenceLimits:() => ({ image:9 }),
     desktopMediaKind:() => 'image', videoReferenceCounts:() => ({ image:0 }),
     createUploadJob:(_file, _context, options) => { const job = { ...options }; jobs.push(job); return job; },
@@ -37,7 +39,7 @@ test('batch import skips an unreadable image and still selects the next decodabl
 test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=262'));
+  assert.ok(html.includes('/app.js?v=264'));
   assert.ok(frontend.includes('./features/media/controller.js?v=7'));
   for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=13'));
 });
@@ -89,5 +91,34 @@ test('dialog cleanup and direct removal retain references used by a submission',
   context.cleanupUncommittedReferenceJobs();
   context.removeUploadJob('active');
   assert.deepEqual(state.uploadJobs.map(job => job.id), ['active']);
-  assert.deepEqual(removed, ['local-b']);
+  assert.deepEqual(removed, []);
+});
+
+test('removing a reference then cancelling the remaining batch preserves files and records across reopen', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'gugu-reference-retain-'));
+  try {
+    await fs.mkdir(path.join(root, 'library'));
+    openLocalLibrary(root);
+    const files = Array.from({ length:6 }, (_, index) => ({ id:`local-${index}`, name:`中文图${index}.webp`, relativePath:`library/中文图${index}.webp`, kind:'image', size:5, localStatus:'saved', url:`gugu-media://asset/local-${index}` }));
+    for (const file of files) { await fs.writeFile(path.join(root, file.relativePath), 'image'); upsertLocalAsset(file); }
+    const jobs = files.map(file => ({ id:`job-${file.id}`, localAssetId:file.id, context:'reference', deferUpload:true, removeLocalOnDiscard:true }));
+    const state = { files, uploadJobs:jobs, refs:{ image:[], video:[] }, videoFrames:{} };
+    let deletes = 0;
+    const context = vm.createContext({ state, shouldRemoveUploadJobLocalAsset,
+      window:{ guguDesktop:{ media:{ removeLocal:async () => { deletes++; } } } }, notifyUploadSurfaceChanged:() => {} });
+    vm.runInContext(extract(frontend, 'function removeUploadJob(', 'function autoSelectUploadedReference('), context);
+    vm.runInContext(extract(frontend, 'function cleanupUncommittedReferenceJobs(', 'function restoreReferenceDialogOriginal('), context);
+    vm.runInContext(extract(frontend, 'function pendingReferenceJob(', 'function videoReferenceCounts('), context);
+    context.removeUploadJob(jobs[0].id);
+    context.cleanupUncommittedReferenceJobs();
+    assert.equal(state.uploadJobs.length, 0);
+    assert.equal(deletes, 0);
+    for (const file of files) assert.equal(context.referenceFileById(file.id).url, file.url);
+    closeLocalLibrary();
+    openLocalLibrary(root);
+    for (const file of files) {
+      assert.equal(getLocalAsset(file.id).relativePath, file.relativePath);
+      assert.equal(await fs.readFile(path.join(root, file.relativePath), 'utf8'), 'image');
+    }
+  } finally { closeLocalLibrary(); await fs.rm(root, { recursive:true, force:true }); }
 });

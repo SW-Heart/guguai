@@ -284,7 +284,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const dramaAssetAfterDelete = await fetch(`${base}/api/files/${dramaAssetId}`, { headers });
   assert.equal(dramaAssetAfterDelete.status, 404);
   const dramaTaskAfterDelete = await fetch(`${base}/api/generations?ids=${dramaTaskId}`, { headers });
-  assert.deepEqual(await dramaTaskAfterDelete.json(), []);
+  assert.deepEqual((await dramaTaskAfterDelete.json()).map(task => ({ id:task.id, assetId:task.assetId })), [{ id:dramaTaskId, assetId:'' }]);
 
   const deletedWholeShot = await fetch(`${base}/api/drama/projects/${dramaProjectId}/shots/${wholeShotId}`, {
     method: 'DELETE', headers,
@@ -297,7 +297,7 @@ test('desktop delivery prefers local copies, falls back upstream, and acknowledg
   const wholeShotAssetAfterDelete = await fetch(`${base}/api/files/${wholeShotAssetId}`, { headers });
   assert.equal(wholeShotAssetAfterDelete.status, 404);
   const wholeShotTaskAfterDelete = await fetch(`${base}/api/generations?ids=${wholeShotTaskId}`, { headers });
-  assert.deepEqual(await wholeShotTaskAfterDelete.json(), []);
+  assert.deepEqual((await wholeShotTaskAfterDelete.json()).map(task => ({ id:task.id, assetId:task.assetId })), [{ id:wholeShotTaskId, assetId:'' }]);
 
   const staleProjectSave = await fetch(`${base}/api/drama/projects/${dramaProjectId}`, {
     method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' },

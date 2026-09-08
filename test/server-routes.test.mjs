@@ -91,6 +91,18 @@ test('generation routes keep paged bare-array responses in the route module', as
   assert.equal(res.nextCursor, 'next');
 });
 
+test('generation routes reject deletion so audit records remain immutable', async () => {
+  const route = createGenerationRouteHandler({
+    requireUser:() => ({ id:'user-a' }),
+    requireDesktopWorkspaceScope:() => ({ deviceId:'device-a', workspaceId:'workspace-a' }),
+    sendJson:(res, status, value) => { res.status = status; res.value = value; },
+  });
+  const res = response();
+  assert.equal(await route({ method:'DELETE' }, res, new URL('http://localhost/api/generations/generation-a')), true);
+  assert.equal(res.status, 405);
+  assert.deepEqual(res.value, { error:'生成日志不可删除', code:'GENERATION_LOG_IMMUTABLE' });
+});
+
 test('system routes expose readiness and drain state without touching application routes', async () => {
   const calls = [];
   const route = createSystemRouteHandler({

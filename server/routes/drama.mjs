@@ -22,7 +22,7 @@ export function createDramaRouteHandler({
   isLlmConfigured,
   llmConfig,
   runSmartDirector,
-  deleteGenerationRecord,
+  removeGenerationOutput,
   activeGenerations,
   now,
   charLength,
@@ -202,7 +202,7 @@ export function createDramaRouteHandler({
       const task = findGeneration(user.id, id, scope);
       if (!task || task.type !== 'video') { sendJson(res, 404, { error:'视频任务不存在' }); return true; }
       if (activeGenerations.has(id) || ['queued', 'running'].includes(task.status)) { sendJson(res, 409, { error:'任务正在生成中，完成后才能删除' }); return true; }
-      const deleted = await deleteGenerationRecord(user.id, task, { project });
+      const deleted = await removeGenerationOutput(user.id, task, { project });
       sendJson(res, 200, { project:publicDramaProject(project), ...deleted });
       return true;
     }
@@ -222,7 +222,7 @@ export function createDramaRouteHandler({
       await saveDramaProject(user.id, project);
       const deletedAssetIds = [];
       for (const task of tasks) {
-        const deleted = await deleteGenerationRecord(user.id, task);
+        const deleted = await removeGenerationOutput(user.id, task);
         if (deleted.deletedAssetId) deletedAssetIds.push(deleted.deletedAssetId);
       }
       const latest = await loadDramaProject(user.id, project.id, scope);

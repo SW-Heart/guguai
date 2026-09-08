@@ -32,7 +32,6 @@ export function createGenerationRouteHandler({
   enqueueGenerationJob,
   saveGeneration,
   failGeneration,
-  deleteGenerationRecord,
   saveDramaProject,
   ensureUserDirs,
   randomId,
@@ -153,11 +152,7 @@ export function createGenerationRouteHandler({
     if (generationMatch && req.method === 'DELETE') {
       const user = await requireUser(req, res); if (!user) return true;
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
-      const id = safeId(generationMatch[1]);
-      const task = findGeneration(user.id, id, scope); if (!task) return sendJson(res, 404, { error:'生成记录不存在' }), true;
-      if (activeGenerations.has(id) || ['queued','running'].includes(task.status)) return sendJson(res, 409, { error:'任务正在生成中，完成后才能删除' }), true;
-      const deleted = await deleteGenerationRecord(user.id, task);
-      return sendJson(res, 200, { ok:true, ...deleted }), true;
+      return sendJson(res, 405, { error:'生成日志不可删除', code:'GENERATION_LOG_IMMUTABLE' }), true;
     }
     return false;
   }

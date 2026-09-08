@@ -44,11 +44,6 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
       .get({ id, userId, ...scoped.params }));
   }
 
-  function deleteGeneration(userId, id) {
-    return sql('DELETE FROM generations WHERE id = :id AND user_id = :userId')
-      .run({ id, userId }).changes > 0;
-  }
-
   function listGenerations(userId, { type = null, deviceId = '', workspaceId = '', view = 'all', limit = defaultPageLimit, cursor = null, includeTotal = true } = {}) {
     if (!['all', 'works', 'history'].includes(view)) throw Object.assign(new Error('生成记录视图无效'), { statusCode:400 });
     const scoped = scopeWhere({ deviceId, workspaceId });
@@ -80,5 +75,5 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
       });
   }
 
-  return Object.freeze({ saveGenerationRecord, findGeneration, deleteGeneration, listGenerations, listPendingGenerations });
+  return Object.freeze({ saveGenerationRecord, findGeneration, listGenerations, listPendingGenerations });
 }

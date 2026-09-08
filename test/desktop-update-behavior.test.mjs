@@ -23,3 +23,9 @@ test('desktop updates prompt on launch or window restore and stay silent while d
   assert.match(app, /function closeDesktopUpdateDialog\(\{ dismiss = false \} = \{\}\)/);
   assert.match(app, /if \(desktopUpdateDialogDismissed \|\| !dialog/);
 });
+
+test('Windows update hands the installer to electron-updater for automatic app shutdown', () => {
+  assert.match(desktopMain, /if \(process\.platform === 'win32'\) \{[\s\S]*autoUpdater\.quitAndInstall\(false, true\);[\s\S]*return true;/);
+  assert.match(desktopMain, /autoUpdater\.quitAndInstall\(false, true\);[\s\S]*?\n\s*return true;/);
+  assert.doesNotMatch(desktopMain.slice(desktopMain.indexOf("if (process.platform === 'win32')"), desktopMain.indexOf("const installerPath =", desktopMain.indexOf("if (process.platform === 'win32')"))), /spawn\(installerPath/);
+});

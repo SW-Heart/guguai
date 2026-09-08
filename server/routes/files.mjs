@@ -67,7 +67,7 @@ export function createFilesRouteHandler({
   saveAsset,
   findGeneration,
   activeGenerations,
-  deleteGenerationRecord,
+  removeGenerationOutput,
   deleteAssetRecord,
 } = {}) {
   return async function handleFilesRoute(req, res, url) {
@@ -317,7 +317,7 @@ export function createFilesRouteHandler({
         const task = asset.sourceGenerationId ? findGeneration(user.id, asset.sourceGenerationId, scope) : null;
         if (task) {
           if (activeGenerations.has(task.id) || ['queued', 'running'].includes(task.status)) { sendJson(res, 409, { error:'任务正在生成中，完成后才能删除' }); return true; }
-          const deleted = await deleteGenerationRecord(user.id, task);
+          const deleted = await removeGenerationOutput(user.id, task);
           sendJson(res, 200, { ok:true, ...deleted });
           return true;
         }

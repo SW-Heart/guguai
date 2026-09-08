@@ -1055,6 +1055,22 @@ function startMacUpdateDownload(updateInfo) {
 async function launchDownloadedUpdateInstaller() {
   if (updateInstallStarted) return true;
   await configureAutoUpdater();
+  if (process.platform === 'win32') {
+    if (!autoUpdater || typeof autoUpdater.quitAndInstall !== 'function') throw new Error('Windows 更新安装器不可用');
+    try {
+      updateInstallStarted = true;
+      sendUpdateStatus('installing', { version: downloadedUpdateVersion });
+      // Let electron-updater own the Windows install handoff. It launches the
+      // NSIS installer with --updated, which tells the installer to wait for
+      // this process to exit and close it automatically instead of showing the
+      // generic “GuGu AI is running” prompt.
+      autoUpdater.quitAndInstall(false, true);
+      return true;
+    } catch (error) {
+      updateInstallStarted = false;
+      throw error;
+    }
+  }
   const installerPath = downloadedUpdatePath || String(autoUpdater.installerPath || '').trim();
   if (!installerPath) throw new Error('更新安装包尚未准备好，请稍后再试');
   await fs.access(installerPath);
