@@ -52,7 +52,7 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
       : [];
     return keysetPage({
       table: 'generations', timeColumn: 'created_at', scope: 'gen',
-      userId, filters: { type }, extraWhere: [...scoped.where, ...viewWhere], extraParams: scoped.params, limit, cursor, includeTotal,
+      userId, filters: { type }, extraWhere: [...scoped.where, "COALESCE(json_extract(doc_json, '$.userDeleted'), 0) != 1", ...viewWhere], extraParams: scoped.params, limit, cursor, includeTotal,
     });
   }
 

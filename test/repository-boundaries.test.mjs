@@ -6,6 +6,7 @@ import { createAssetRepository } from '../repositories/assets.mjs';
 import { createUploadRepository } from '../repositories/uploads.mjs';
 import { createAccountRepository } from '../repositories/accounts.mjs';
 import { createDeliveryRepository } from '../repositories/deliveries.mjs';
+import { createGenerationRepository } from '../repositories/generations.mjs';
 import { createProjectService } from '../services/projects.mjs';
 import { createDirectorService } from '../services/director.mjs';
 import * as store from '../lib/store.mjs';
@@ -24,6 +25,19 @@ test('generation job repository has a direct entrypoint and a compatible legacy 
   ]) {
     assert.equal(store[name], generationJobsRepository[name], name);
   }
+});
+
+test('generation repository excludes user-deleted records only from client lists', () => {
+  let pageOptions;
+  const repository = createGenerationRepository({
+    sql:() => ({ run:() => ({}), get:() => null, all:() => [] }),
+    keysetPage:options => { pageOptions = options; return { items:[], total:0, nextCursor:null }; },
+    scopeWhere:() => ({ where:[], params:{} }),
+    parseDoc:value => value,
+  });
+  repository.listGenerations('user-a');
+  assert.ok(pageOptions.extraWhere.includes("COALESCE(json_extract(doc_json, '$.userDeleted'), 0) != 1"));
+  assert.equal(typeof repository.findGeneration, 'function');
 });
 
 test('asset repository exposes a direct factory while the legacy store keeps its exports', () => {

@@ -1024,6 +1024,13 @@ async function removeGenerationOutput(userId, task, { project = null } = {}) {
   else await removeGenerationFromDramaProjects(userId, task);
   return { deletedAssetId: asset?.id || null, generationLogPreserved: true };
 }
+async function hideGenerationForUser(userId, task) {
+  const deleted = await removeGenerationOutput(userId, task);
+  task.userDeleted = true;
+  task.userDeletedAt = now();
+  saveGeneration(userId, task);
+  return { ...deleted, userRecordDeleted: true };
+}
 // 单条与批量的本地接收确认共用同一套校验和副作用：写回素材元数据、标记该设备投递完成、
 // 结束对应生成任务的归档重试。返回 { error, status } 表示这一条被拒绝，调用方决定是整个
 // 请求失败（单条入口）还是只记录该条结果（批量入口）。
@@ -2351,6 +2358,7 @@ const generationRoute = createGenerationRouteHandler({
   enqueueGenerationJob,
   saveGeneration,
   failGeneration,
+  hideGenerationForUser,
   saveDramaProject,
   ensureUserDirs,
   randomId:randomUUID,

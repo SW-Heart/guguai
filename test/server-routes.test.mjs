@@ -91,16 +91,27 @@ test('generation routes keep paged bare-array responses in the route module', as
   assert.equal(res.nextCursor, 'next');
 });
 
-test('generation routes reject deletion so audit records remain immutable', async () => {
+test('generation routes soft-delete user records while preserving the audit row', async () => {
+  const task = { id:'generation-a', status:'failed', assetId:'' };
+  const calls = [];
   const route = createGenerationRouteHandler({
     requireUser:() => ({ id:'user-a' }),
     requireDesktopWorkspaceScope:() => ({ deviceId:'device-a', workspaceId:'workspace-a' }),
+    safeId:value => String(value),
+    findGeneration:() => task,
+    activeGenerations:new Map(),
+    hideGenerationForUser:async (userId, value) => {
+      calls.push({ userId, value });
+      value.userDeleted = true;
+      return { deletedAssetId:null, generationLogPreserved:true, userRecordDeleted:true };
+    },
     sendJson:(res, status, value) => { res.status = status; res.value = value; },
   });
   const res = response();
   assert.equal(await route({ method:'DELETE' }, res, new URL('http://localhost/api/generations/generation-a')), true);
-  assert.equal(res.status, 405);
-  assert.deepEqual(res.value, { error:'生成日志不可删除', code:'GENERATION_LOG_IMMUTABLE' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.value, { ok:true, deletedAssetId:null, generationLogPreserved:true, userRecordDeleted:true });
+  assert.deepEqual(calls, [{ userId:'user-a', value:task }]);
 });
 
 test('system routes expose readiness and drain state without touching application routes', async () => {

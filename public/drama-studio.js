@@ -1328,6 +1328,83 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const mention={id:file.id,label:file.name,kind:file.kind}; const holder=document.createElement('span'); holder.innerHTML=mentionChipMarkup(mention); const chip=holder.firstElementChild; range.insertNode(chip); const spacer=document.createTextNode(' '); chip.after(spacer); /* Keep the caret inside the editable spacer so the next IME composition includes its first key. */ range.setStart(spacer,spacer.nodeValue.length); range.collapse(true); selection.removeAllRanges();selection.addRange(range); bindMentionChipInteractions(editor);
     projectAssetIds=[...new Set([...projectAssetIds,file.id])]; project.projectAssetIds=[...projectAssetIds]; project.projectAssetCategories=Object.fromEntries(projectAssetCategories); updateShotScriptFromEditor(shot.id,editor); closeMentionPicker({restoreFocus:true,range:range.cloneRange()});
   }
+  // 自动 @ 引用：仅短剧创作的分镜输入框、仅项目资产内的素材参与匹配。
+  // 素材名允许写不带后缀的写法（@小美 命中 小美.png），因此索引同时收录完整文件名与去后缀名。
+  // 只有邮箱式的 ASCII 前缀会阻止引用；中文正文里的 @ 必须能触发匹配。
+  const autoMentionWordChar=/[A-Za-z0-9._%+-]/;
+  const autoMentionBaseName=name=>String(name||'').trim().replace(/\.[A-Za-z0-9]{1,8}$/,'').trim();
+  const autoMentionKey=text=>String(text||'').trim().toLocaleLowerCase('zh-CN');
+  function autoMentionIndex(){
+    const index=new Map();
+    projectAssetIds.map(id=>asset(id)).filter(file=>file&&['image','video','audio'].includes(file.kind)&&!assetSyncing(file)).forEach(file=>{
+      const name=String(file.name||'').trim(); if(!name)return;
+      new Set([name,autoMentionBaseName(name)||name]).forEach(text=>{
+        const key=autoMentionKey(text); if(!key)return;
+        const entry=index.get(key)||{key,label:text,files:[]};
+        if(!entry.files.some(item=>item.id===file.id))entry.files.push(file);
+        index.set(key,entry);
+      });
+    });
+    // 长名优先，保证 @小美丽 不会被 @小美 抢先命中。
+    return [...index.values()].sort((a,b)=>b.key.length-a.key.length);
+  }
+  function autoMentionMatchAt(text,index,entries){
+    return entries.find(entry=>autoMentionKey(text.slice(index,index+entry.key.length))===entry.key)||null;
+  }
+  function autoMentionFragment(text){
+    const source=String(text||'').replace(/\r\n?/g,'\n');
+    const entries=source.includes('@')?autoMentionIndex():[];
+    const fragment=document.createDocumentFragment();
+    const mentionIds=[]; const ambiguous=[];
+    let buffer=''; let position=0;
+    const flush=()=>{if(buffer){fragment.append(document.createTextNode(buffer));buffer='';}};
+    while(position<source.length){
+      const char=source[position];
+      // 前一个字符是字母数字时视为邮箱等普通文本，不触发引用。
+      const boundary=position===0||!autoMentionWordChar.test(source[position-1]);
+      const match=char==='@'&&entries.length&&boundary?autoMentionMatchAt(source,position+1,entries):null;
+      if(!match){buffer+=char;position+=1;continue;}
+      position+=1+match.key.length;
+      if(match.files.length>1){buffer+=`@${match.label}`;ambiguous.push(match.label);continue;}
+      const holder=document.createElement('span');
+      holder.innerHTML=mentionChipMarkup({id:match.files[0].id,label:match.label,kind:match.files[0].kind});
+      const chip=holder.firstElementChild;
+      if(!chip?.classList.contains('wb-mention-chip')){buffer+=`@${match.label}`;continue;}
+      flush(); fragment.append(chip); mentionIds.push(match.files[0].id);
+    }
+    flush();
+    return {fragment,mentionIds,ambiguous:[...new Set(ambiguous)]};
+  }
+  function pasteIntoRichEditor(id,editor,event){
+    if(!editor||project.finalAssetId||editor.getAttribute('contenteditable')!=='true')return;
+    const text=event.clipboardData?.getData('text/plain');
+    if(typeof text!=='string')return;
+    event.preventDefault();
+    closeMentionPicker();
+    const selection=window.getSelection();
+    if(!selection?.rangeCount||!editor.contains(selection.anchorNode))setRichEditorCaret(editor);
+    const active=window.getSelection(); if(!active?.rangeCount)return;
+    const range=active.getRangeAt(0);
+    range.deleteContents();
+    // 参考素材行不可编辑，插入点必须落在它之后。
+    const referenceRow=editor.querySelector('.wb-input-reference-row');
+    if(referenceRow&&range.startContainer===editor&&range.startOffset===0){range.setStartAfter(referenceRow);range.collapse(true);}
+    const {fragment,mentionIds,ambiguous}=autoMentionFragment(text);
+    const last=fragment.lastChild;
+    if(last){
+      range.insertNode(fragment);
+      if(last.nodeType===Node.TEXT_NODE)setRichEditorCaret(editor,last,last.nodeValue.length);
+      else{const spacer=document.createTextNode(' ');last.after(spacer);setRichEditorCaret(editor,spacer,spacer.nodeValue.length);}
+    }
+    bindMentionChipInteractions(editor);
+    normalizeEmptyRichEditor(editor);
+    updateShotScriptFromEditor(id,editor);
+    // 粘贴内容以裸 @ 结尾时，沿用输入时的手动选择器。
+    if(mentionTriggerAtCaret(editor))openMentionPicker(id,editor);
+    const imported=new Set(mentionIds).size;
+    if(imported)toast(`已自动引用 ${imported} 个项目资产`);
+    if(ambiguous.length)toast(`@${ambiguous[0]} 对应多个同名素材，请补全文件后缀`);
+  }
   function updateShotScriptFromEditor(id,editor){
     const shot=project.shots.find(item=>item.id===id); if(!shot||project.finalAssetId)return;
     const previousReferenceIds=shotReferenceIds(shot);
@@ -1496,7 +1573,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const specs=workbenchSpecsMarkup(shot,ratioOptions,qualityOptions,durationOptions,countOptions,locked);
     const capability=professionalCapabilityState(shot);
     const cost=professionalVideoCostState(shot);
-    const placeholder='描述当前分镜的内容，可使用 @ 引用项目资产中的素材';
+    const placeholder='描述当前分镜的内容，可使用 @ 引用项目资产中的素材；粘贴含 @素材名 的文字会自动引用';
     const references=workbenchReferenceRow(shot);
     const editorContent=shot.script.trim()?renderMentionEditorContent(shot):richEditorEmptyChar;
     const tooltip=capability.message||cost.message||'';
@@ -1701,6 +1778,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       richEditor?.addEventListener('compositionstart',()=>{richEditor.dataset.composing='true';});
       richEditor?.addEventListener('compositionend',()=>{richEditor.dataset.composing='false';requestAnimationFrame(syncRichEditorInput);});
       richEditor?.addEventListener('input',event=>{if(event.isComposing||event.inputType==='insertCompositionText'||richEditor.dataset.composing==='true')return;syncRichEditorInput();});
+      richEditor?.addEventListener('paste',event=>pasteIntoRichEditor(id,richEditor,event));
       richEditor?.addEventListener('keydown',event=>{if(removeMentionAtCaret(id,richEditor,event))return;if(event.key==='Escape')closeMentionPicker();if(event.key==='ArrowDown'&&document.querySelector('#wbMentionPicker')){event.preventDefault();document.querySelector('#wbMentionPicker [data-mention-option]')?.focus();}});
       bindMentionChipInteractions(richEditor);
       card.querySelectorAll('[data-wb-field="generation.modelId"]').forEach(field=>field.addEventListener('change',event=>{updateShot(id,'generation.modelId',event.target.value);render(true,{focus:false});}));

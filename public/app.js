@@ -1692,7 +1692,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=89').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=90').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -2135,9 +2135,10 @@ function taskCard(task) {
         <button class="task-action" type="button" data-action="regenerate" data-task-id="${task.id}" data-tooltip="再次生成" aria-label="再次生成"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
         <button class="task-action" type="button" data-action="copy" data-task-id="${task.id}" data-tooltip="${copyLabel}" aria-label="${copyLabel}"><svg viewBox="0 0 24 24" aria-hidden="true">${copyIcon}</svg></button>
         ${localFileAction(asset)}
+        <button class="task-action danger-action" type="button" data-action="delete" data-task-id="${task.id}" data-tooltip="删除" aria-label="删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
       </div>`
     : '';
-  const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败任务操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button></div>` : '';
+  const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败任务操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button><button class="failure-delete task-action" type="button" data-action="delete" data-task-id="${task.id}" title="删除失败任务" aria-label="删除失败任务"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div>` : '';
   const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '图片' : '视频'}详情"></button>` : '';
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedActions}</div></article>`;
 }
@@ -2567,6 +2568,45 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
   $('#creatorPanel').scrollTo({ top:0, behavior:'smooth' }); prompt.focus();
   toast(includeReference ? (carryPrompt ? '已带入参考素材和创作描述' : target === 'image' ? '已添加为参考图' : '已带入视频参考素材') : '已带入创作描述，可调整后重新生成');
 }
+async function deleteGenerationTask(task, button = null) {
+  if (!task) return false;
+  const active = taskLocalSyncing(task) || ['queued','running'].includes(task.status);
+  if (active) { toast('任务生成中，完成后才能删除'); return false; }
+  if (!await confirmGenerationDeletion(task)) return false;
+  const card = button?.closest('.task-card');
+  const originalButtonMarkup = button?.innerHTML || '';
+  if (button) {
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.innerHTML = '<span>删除中…</span>';
+  }
+  card?.classList.add('is-removing');
+  try {
+    const id = task.id;
+    const result = await api(`/api/generations/${id}`, { method:'DELETE', body:'{}' });
+    if (result.deletedAssetId || task.assetId) await removeDesktopCloudAssets([result.deletedAssetId || task.assetId]);
+    else if (task.assetId) clearFileReferences(task.assetId);
+    if (state.route === 'drama') await Promise.resolve(dramaController?.refreshProject?.({ quiet:true })).catch(error => console.warn('[drama] 刷新项目删除状态失败', error));
+    for (const entry of Object.values(state.generationHistory)) entry.items = entry.items.filter(item => item.id !== id);
+    if (state.generationTab === 'history') renderGenerationHistory();
+    clearTransientFailureTimer(id);
+    transientFailureDeadlines.delete(id);
+    if ($('#generationDetailDialog')?.open && state.detailTaskId === id) closeGenerationDetail();
+    await Promise.all([loadTasks(), loadFiles()]);
+    toast(task.status === 'failed' ? '失败任务已删除' : '作品及关联文件已删除');
+    return true;
+  } catch (error) {
+    toast(error.message);
+    return false;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.innerHTML = originalButtonMarkup;
+    }
+    card?.classList.remove('is-removing');
+  }
+}
 async function copyTaskAsset(task, button = null) {
   const file = fileById(task?.assetId);
   if (!file || !requireDesktopLocalAsset(file)) return;
@@ -2583,6 +2623,7 @@ function handleTaskAction(action, id, button = null) {
   if (action === 'regenerate') { continueFromTask(task, task.type, true, { replaceReferences:true, restoreMentions:true }); return; }
   if (action === 'copy') { void copyTaskAsset(task, button); return; }
   if (action === 'retry' || action === 'continue') { continueFromTask(task); return; }
+  if (action === 'delete') return deleteGenerationTask(task, button);
 }
 function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); }
 function resetDetailFit(dialog) { dialog.classList.remove('portrait-detail'); dialog.style.removeProperty('--portrait-dialog-width'); }
@@ -2617,6 +2658,7 @@ function openGenerationDetail(id) {
   const fileAction = $('#downloadGeneration'); fileAction.classList.toggle('hidden', !localReady); configureLocalFileAction(fileAction, localReady ? asset : null);
   $('#useGenerationReference').classList.toggle('hidden', !localReady || task.type !== 'image');
   const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !localReady); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
+  const deleteButton = $('#deleteGeneration'); const active = localSyncing || ['queued','running'].includes(task.status); deleteButton.disabled = active; deleteButton.title = active ? '任务生成中，完成后才能删除' : '';
   $('#generationDetailDialog').showModal();
   if (localReady) {
     if (task.type === 'image') {
@@ -2637,10 +2679,15 @@ $('#generationDetailDialog').addEventListener('click', event => { if (event.targ
 $('#generationDetailDialog').addEventListener('close', () => { $('#generationDetailMedia').innerHTML = ''; $('#generationDetailPrompt').classList.remove('expanded'); $('#generationDetailPromptToggle').classList.add('hidden'); state.detailTaskId = null; });
 $('#generationDetailPromptToggle').onclick = () => { const prompt = $('#generationDetailPrompt'); const toggle = $('#generationDetailPromptToggle'); const expanded = prompt.classList.toggle('expanded'); toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? '收起描述' : '展开全部'; };
 $('#copyGenerationPrompt').onclick = copyGenerationPrompt;
-// Generation rows are audit records and no longer expose a delete action.
-$('#deleteGeneration')?.remove();
+const deleteGenerationButton = document.createElement('button');
+deleteGenerationButton.id = 'deleteGeneration';
+deleteGenerationButton.className = 'danger-text-button';
+deleteGenerationButton.type = 'button';
+deleteGenerationButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>删除作品';
+$('#downloadGeneration').before(deleteGenerationButton);
 $('#useGenerationReference').onclick = () => continueFromTask(taskById(state.detailTaskId), 'image', true, { forceOutput:true, carryPrompt:false });
 $('#deriveGeneration').onclick = () => { const task = taskById(state.detailTaskId); continueFromTask(task, 'video', true, { forceOutput:task?.type === 'image', carryPrompt:task?.type === 'video' }); };
+$('#deleteGeneration').onclick = async () => { if ($('#deleteGeneration').disabled) return; const task = taskById(state.detailTaskId); if (!task) return; await deleteGenerationTask(task, $('#deleteGeneration')); };
 
 function assetDisplayName(file) {
   const stem = String(file.name || '').replace(/\.[^.]+$/, '').trim();
