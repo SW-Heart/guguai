@@ -24,8 +24,13 @@ test('desktop updates prompt on launch or window restore and stay silent while d
   assert.match(app, /if \(desktopUpdateDialogDismissed \|\| !dialog/);
 });
 
-test('Windows update hands the installer to electron-updater for automatic app shutdown', () => {
-  assert.match(desktopMain, /if \(process\.platform === 'win32'\) \{[\s\S]*autoUpdater\.quitAndInstall\(false, true\);[\s\S]*return true;/);
-  assert.match(desktopMain, /autoUpdater\.quitAndInstall\(false, true\);[\s\S]*?\n\s*return true;/);
-  assert.doesNotMatch(desktopMain.slice(desktopMain.indexOf("if (process.platform === 'win32')"), desktopMain.indexOf("const installerPath =", desktopMain.indexOf("if (process.platform === 'win32')"))), /spawn\(installerPath/);
+test('Windows update starts a detached handoff before allowing the tray app to quit', () => {
+  const installer = desktopMain.slice(desktopMain.indexOf('async function launchDownloadedUpdateInstaller()'), desktopMain.indexOf('function configureAutoUpdater()'));
+  const helperSpawn = installer.indexOf('const helper = spawn(launcher.command, launcher.args');
+  const helperReady = installer.indexOf("helper.once('spawn', resolve)");
+  const allowQuit = installer.indexOf('isQuitting = true;');
+  const quit = installer.indexOf('app.quit();');
+  assert.ok(helperSpawn >= 0 && helperReady > helperSpawn && allowQuit > helperReady && quit > allowQuit);
+  assert.match(installer, /helper\.unref\(\)/);
+  assert.doesNotMatch(installer, /quitAndInstall/);
 });

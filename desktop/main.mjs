@@ -31,6 +31,7 @@ import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
 import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
 import { normalizeControlledUrl } from './remote-settings.mjs';
+import { windowsNsisInstallerLauncher } from './windows-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -1055,25 +1056,36 @@ function startMacUpdateDownload(updateInfo) {
 async function launchDownloadedUpdateInstaller() {
   if (updateInstallStarted) return true;
   await configureAutoUpdater();
+  const installerPath = downloadedUpdatePath || String(autoUpdater.installerPath || '').trim();
+  if (!installerPath) throw new Error('更新安装包尚未准备好，请稍后再试');
+  await fs.access(installerPath);
   if (process.platform === 'win32') {
-    if (!autoUpdater || typeof autoUpdater.quitAndInstall !== 'function') throw new Error('Windows 更新安装器不可用');
+    const launcher = windowsNsisInstallerLauncher(installerPath);
+    const helper = spawn(launcher.command, launcher.args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, ...launcher.env },
+    });
     try {
+      await new Promise((resolve, reject) => {
+        helper.once('spawn', resolve);
+        helper.once('error', reject);
+      });
+      helper.unref();
       updateInstallStarted = true;
       sendUpdateStatus('installing', { version: downloadedUpdateVersion });
-      // Let electron-updater own the Windows install handoff. It launches the
-      // NSIS installer with --updated, which tells the installer to wait for
-      // this process to exit and close it automatically instead of showing the
-      // generic “GuGu AI is running” prompt.
-      autoUpdater.quitAndInstall(false, true);
+      // The detached helper is already alive and waiting before the client is
+      // allowed to quit. It starts NSIS only after this process has completely
+      // exited, so closing the tray process cannot interrupt the installer.
+      isQuitting = true;
+      app.quit();
       return true;
     } catch (error) {
       updateInstallStarted = false;
       throw error;
     }
   }
-  const installerPath = downloadedUpdatePath || String(autoUpdater.installerPath || '').trim();
-  if (!installerPath) throw new Error('更新安装包尚未准备好，请稍后再试');
-  await fs.access(installerPath);
   if (!path.isAbsolute(installerPath) || installerPath.includes('\0')) throw new Error('更新安装包路径无效');
   const child = spawn(installerPath, [], { detached: true, stdio: 'ignore', windowsHide: false });
   await new Promise((resolve, reject) => {

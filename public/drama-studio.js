@@ -1090,6 +1090,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     virtualShotResizeObserver?.disconnect();
     virtualShotResizeObserver = null;
     scroll.querySelectorAll('[data-wb-video-src]').forEach(video => workbenchVideoObserver?.unobserve(video));
+    if(mentionPicker.editor&&scroll.contains(mentionPicker.editor))closeMentionPicker();
+    removeOrphanMentionChips();
     const finalCut=locked&&range.end===project.shots.length?workbenchFinalCut(project.finalAssetId):'';
     scroll.innerHTML = `<div data-wb-virtual-spacer="top" aria-hidden="true"></div><div data-wb-virtual-items>${cards}</div><div data-wb-virtual-spacer="bottom" aria-hidden="true"></div>${finalCut}`;
     // Set the spacer geometry before restoring scrollTop; otherwise the browser
@@ -1126,6 +1128,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
 
   function renderProfessionalWorkspace({focus=true}={}){
+    closeMentionPicker();
+    removeOrphanMentionChips();
     if (virtualShotProjectId !== project.id) {
       virtualShotHeights.clear();
       virtualShotProjectId = project.id;
@@ -1256,6 +1260,24 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     node=child; while(node.lastChild)node=node.lastChild;
     return node.nodeType===Node.TEXT_NODE?{node,offset:node.nodeValue.length}:null;
   }
+  function richEditorContainsRange(editor,range){
+    if(!editor?.isConnected||!range)return false;
+    try{return editor.contains(range.startContainer)&&editor.contains(range.endContainer);}catch{return false;}
+  }
+  function richEditorRange(editor,preferredRange=null){
+    if(!editor?.isConnected)return null;
+    if(richEditorContainsRange(editor,preferredRange))return preferredRange;
+    const selection=window.getSelection?.();
+    if(selection?.rangeCount){const currentRange=selection.getRangeAt(0);if(richEditorContainsRange(editor,currentRange))return currentRange.cloneRange();}
+    const fallback=document.createRange();fallback.selectNodeContents(editor);fallback.collapse(false);return fallback;
+  }
+  function resolveRichEditor(shotId,preferredEditor=null){
+    if(preferredEditor?.isConnected&&root.contains(preferredEditor))return preferredEditor;
+    return [...root.querySelectorAll('[data-wb-rich-editor="script"]')].find(editor=>String(editor.dataset.shotId||'')===String(shotId||''))||null;
+  }
+  function removeOrphanMentionChips(){
+    document.querySelectorAll('.wb-mention-chip').forEach(chip=>{if(!chip.closest('.wb-rich-input'))chip.remove();});
+  }
   function mentionTriggerAtCaret(editor){
     const selection=window.getSelection(); if(!selection?.rangeCount||!selection.isCollapsed||!editor.contains(selection.anchorNode))return false;
     const previous=previousTextPosition(selection.getRangeAt(0));
@@ -1323,8 +1345,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const selection=window.getSelection(); mentionPicker={shotId,editor,range:selection?.rangeCount?selection.getRangeAt(0).cloneRange():null,query:''}; paintMentionPicker();
   }
   function insertMention(assetId){
-    const shot=project.shots.find(item=>item.id===mentionPicker.shotId); const file=asset(assetId); const editor=mentionPicker.editor; if(!shot||!file||!editor)return;
-    const range=mentionPicker.range||document.createRange(); if(!mentionPicker.range){range.selectNodeContents(editor);range.collapse(false);} editor.focus(); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range); removeTriggerAt(range);
+    const shot=project.shots.find(item=>item.id===mentionPicker.shotId); const file=asset(assetId); const editor=resolveRichEditor(mentionPicker.shotId,mentionPicker.editor); if(!shot||!file||!editor)return;
+    const range=richEditorRange(editor,mentionPicker.range); if(!range)return; editor.focus(); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range); removeTriggerAt(range);
     const mention={id:file.id,label:file.name,kind:file.kind}; const holder=document.createElement('span'); holder.innerHTML=mentionChipMarkup(mention); const chip=holder.firstElementChild; range.insertNode(chip); const spacer=document.createTextNode(' '); chip.after(spacer); /* Keep the caret inside the editable spacer so the next IME composition includes its first key. */ range.setStart(spacer,spacer.nodeValue.length); range.collapse(true); selection.removeAllRanges();selection.addRange(range); bindMentionChipInteractions(editor);
     projectAssetIds=[...new Set([...projectAssetIds,file.id])]; project.projectAssetIds=[...projectAssetIds]; project.projectAssetCategories=Object.fromEntries(projectAssetCategories); updateShotScriptFromEditor(shot.id,editor); closeMentionPicker({restoreFocus:true,range:range.cloneRange()});
   }
@@ -1382,9 +1404,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     event.preventDefault();
     closeMentionPicker();
     const selection=window.getSelection();
-    if(!selection?.rangeCount||!editor.contains(selection.anchorNode))setRichEditorCaret(editor);
-    const active=window.getSelection(); if(!active?.rangeCount)return;
-    const range=active.getRangeAt(0);
+    if(!selection?.rangeCount||!richEditorContainsRange(editor,selection.getRangeAt(0)))setRichEditorCaret(editor);
+    const range=richEditorRange(editor); if(!range)return;
     range.deleteContents();
     // 参考素材行不可编辑，插入点必须落在它之后。
     const referenceRow=editor.querySelector('.wb-input-reference-row');
