@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/files']);
+const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/lab', '/files']);
 const marketingRouteFiles = new Map([
   ['/features', 'features.html'],
   ['/features/', 'features.html'],

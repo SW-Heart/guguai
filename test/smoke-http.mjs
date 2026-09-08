@@ -183,13 +183,15 @@ try {
     created.push(r.body.project.id);
   }
   check('创建 7 个项目', () => assert.equal(created.length, 7));
-  check('新建项目默认创建一个分镜', () => {
-    assert.equal(r.body.project.shots.length, 1);
-    assert.equal(r.body.project.shots[0].title, '分镜 1');
+  check('智能导演从空白画布开始，默认采用导演模式', () => {
+    assert.equal(r.body.project.shots.length, 0);
+    assert.equal(r.body.project.directorWorkspace.autonomy, 'director');
   });
   await new Promise(resolve => setTimeout(resolve, 5));
   r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, { title: '最近更新项目' });
   check('更新最后一个项目', () => assert.equal(r.status, 200));
+  r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, {directorWorkspace:{autonomy:'assist',lockedIds:['story'],positions:{story:{x:0,y:60}},messages:[{id:'m',role:'user',text:'保留剧情'}]}});
+  check('导演画布与对话状态往返保存',()=>{assert.equal(r.body.project.directorWorkspace.autonomy,'assist');assert.equal(r.body.project.directorWorkspace.positions.story.x,0);assert.equal(r.body.project.directorWorkspace.messages[0].text,'保留剧情');});
   r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, {
     assemblyVideos:[
       { id:'local-assembly-1', assetId:'local-assembly-1', name:'第一版', shotCount:2, shotIds:['shot-1'] },

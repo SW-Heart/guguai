@@ -1,4 +1,5 @@
 export function createGenerationRouteHandler({
+  prepareViralGeneration,
   bodyJson,
   sendJson,
   requireUser,
@@ -42,6 +43,7 @@ export function createGenerationRouteHandler({
   isModelEnabled,
   fixedModels,
   imageSizes,
+  imageModelIds,
   videoModelIds,
   legacyVideoModelIds,
   storyboardEngineVersion,
@@ -62,6 +64,43 @@ export function createGenerationRouteHandler({
       return providerAvailability.oai;
     }
     return type === 'image' ? providerAvailability.duomi : true;
+  }
+
+  const supportedImageModelSet = new Set([
+    fixedModels?.image,
+    ...(imageModelIds ? [...imageModelIds] : []),
+  ].filter(Boolean));
+  const midjourneyModelId = 'midjourney';
+  const imageQualities = new Set(['low', 'medium', 'high']);
+  const midjourneyVersions = new Set(['6', '6.1', '7', '8', '8.1', '8.2']);
+  const midjourneyQualities = new Set(['0.25', '0.5', '1', '2', '4']);
+  function normalizeMidjourneyOptions(value) {
+    const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const aspectRatio = String(input.aspectRatio || '1:1').trim();
+    if (!imageSizes.has(aspectRatio)) throw Object.assign(new Error('不支持的 Midjourney 画幅'), { statusCode:400 });
+    const version = String(input.version || '8.2').trim();
+    if (!midjourneyVersions.has(version)) throw Object.assign(new Error('不支持的 Midjourney 版本'), { statusCode:400 });
+    const quality = String(input.quality || '1').trim();
+    if (!midjourneyQualities.has(quality)) throw Object.assign(new Error('不支持的 Midjourney 质量参数'), { statusCode:400 });
+    const integerOption = (name, fallback, min, max) => {
+      const raw = input[name] === undefined || input[name] === '' ? fallback : Number(input[name]);
+      if (!Number.isInteger(raw) || raw < min || raw > max) throw Object.assign(new Error(`Midjourney ${name} 参数无效`), { statusCode:400 });
+      return raw;
+    };
+    const stylize = integerOption('stylize', 100, 0, 1000);
+    const chaos = integerOption('chaos', 0, 0, 100);
+    const weird = integerOption('weird', 0, 0, 3000);
+    const seedValue = input.seed === undefined || input.seed === '' ? '' : Number(input.seed);
+    if (seedValue !== '' && (!Number.isSafeInteger(seedValue) || seedValue < 0 || seedValue > 4_294_967_295)) throw Object.assign(new Error('Midjourney seed 参数无效'), { statusCode:400 });
+    const imageWeight = input.imageWeight === undefined || input.imageWeight === '' ? 1 : Number(input.imageWeight);
+    if (!Number.isFinite(imageWeight) || imageWeight < 0 || imageWeight > 3) throw Object.assign(new Error('Midjourney 图片权重参数无效'), { statusCode:400 });
+    const negativePrompt = String(input.negativePrompt || '').trim().slice(0, 500);
+    return {
+      aspectRatio, version, quality, stylize, chaos, weird,
+      seed: seedValue === '' ? '' : Math.trunc(seedValue), negativePrompt,
+      imageWeight: Number(imageWeight.toFixed(2)),
+      tile: Boolean(input.tile), raw: Boolean(input.raw), draft: Boolean(input.draft),
+    };
   }
 
   async function handleModelQuote(req, res, url) {
@@ -85,7 +124,7 @@ export function createGenerationRouteHandler({
       : null;
     if (request.provider === 'route' && !route) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     if (route) {
-      const displayRoute = request.modelId === videoModelIds.SEEDANCE_2
+      const displayRoute = request.modelId === videoModelIds.SEEDANCE_2 && !input.exactReferencePrice
         ? selectModelRoute({ logicalModelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, referenceCounts:{} })
         : route;
       const visiblePrice = displayRoute || route;
@@ -165,7 +204,9 @@ export function createGenerationRouteHandler({
   async function handleGenerationSubmit(req, res) {
     const user = await requireUser(req, res); if (!user) return true;
     const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
-    const input = await bodyJson(req); const type = input.type;
+    const input = await bodyJson(req);
+    if (input.viralProjectId) Object.assign(input, prepareViralGeneration(user.id, scope, input));
+    const type = input.type;
     const headerRequestId = String(req.headers['idempotency-key'] || '').trim();
     const bodyRequestId = String(input.requestId || '').trim();
     if (headerRequestId && bodyRequestId && headerRequestId !== bodyRequestId) return sendJson(res, 400, { error:'请求幂等键不一致' }), true;
@@ -211,6 +252,10 @@ export function createGenerationRouteHandler({
     }
     if (!prompt.trim()) return sendJson(res, 400, { error:'请输入提示词' }), true;
     const requestedVideoModelId = String(input.modelId ?? input.videoModel ?? '').trim().toLowerCase();
+    const requestedImageModelId = type === 'image' ? String(input.modelId ?? fixedModels.image).trim().toLowerCase() : '';
+    if (type === 'image' && !supportedImageModelSet.has(requestedImageModelId)) return sendJson(res, 400, { error:'不支持的图片模型' }), true;
+    const isMidjourney = requestedImageModelId === midjourneyModelId;
+    const midjourneyOptions = isMidjourney ? normalizeMidjourneyOptions(input.midjourneyOptions) : null;
     const promptMaxLength = type === 'image' ? 5000 : [videoModelIds.MINIMAX_H3_15S, legacyVideoModelIds.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
     if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error:`${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` }), true;
     if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error:'请选择视频模型' }), true;
@@ -219,8 +264,9 @@ export function createGenerationRouteHandler({
       if (!Number.isFinite(requestedDuration) || requestedDuration !== Number(dramaShot.duration)) return sendJson(res, 409, { error:`分镜时长已保存为 ${dramaShot.duration} 秒，请刷新页面后再生成` }), true;
       input.duration = Number(dramaShot.duration);
     }
-    const size = type === 'image' ? String(input.size || '16:9') : null;
+    const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || '16:9')) : null;
     if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
+    if (type === 'image' && !isMidjourney && !imageQualities.has(String(input.quality || 'medium'))) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
     const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
@@ -231,7 +277,7 @@ export function createGenerationRouteHandler({
     const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
     assertReferenceCountsWithinLimits(referenceCounts, videoRequest?.referenceLimits);
     if (referenceCounts.image && !r2ReferenceConfigured) return sendJson(res, 503, { error:`${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` }), true;
-    const modelId = type === 'image' ? fixedModels.image : videoRequest.modelId;
+    const modelId = type === 'image' ? requestedImageModelId : videoRequest.modelId;
     if (!isModelEnabled(modelId)) return sendJson(res, 503, { error:'当前模型暂不可用' }), true;
     const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
@@ -251,9 +297,11 @@ export function createGenerationRouteHandler({
     if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error:'当前价格已变化，请刷新价格后重试', code:'PRICE_CHANGED', price:{ credits:pricingSnapshotValue.total, yuan:pricingSnapshotValue.salePriceYuan, priceVersion:pricingSnapshotValue.priceVersion } }), true;
     const batchId = quantity > 1 ? randomId() : '';
     const tasks = Array.from({ length:quantity }, (_, index) => ({
+      ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
       id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
-      model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : fixedModels.image, modelId, size,
-      quality:type === 'image' ? String(input.quality || 'medium') : videoRequest.quality, aspectRatio, duration,
+      model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
+      quality:type === 'image' ? (isMidjourney ? midjourneyOptions.quality : String(input.quality || 'medium')) : videoRequest.quality, aspectRatio, duration,
+      ...(isMidjourney ? { midjourneyOptions } : {}),
       ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
       ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
       ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),

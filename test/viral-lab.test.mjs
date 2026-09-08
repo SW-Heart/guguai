@@ -1,0 +1,104 @@
+import test, { after } from 'node:test';
+import assert from 'node:assert/strict';
+import { openDatabase, closeDatabase, sql } from '../lib/db.mjs';
+import { normalizeViralInput, assetSnapshot, assetApprovalHash, planApprovalHash, assertViralReady } from '../lib/viral-lab.mjs';
+import { createViralProject, findViralProject, saveViralProject } from '../repositories/viral-projects.mjs';
+import { createViralLabRouteHandler } from '../server/routes/viral-lab.mjs';
+import { readFileSync } from 'node:fs';
+import { staticEntryFile } from '../server/static.mjs';
+
+openDatabase({ file: ':memory:' });
+after(() => closeDatabase());
+for (const id of ['a','b']) sql('INSERT INTO users(id,username,password_hash,created_at,doc_json) VALUES(?,?,?,?,?)').run(id,id,'x',new Date().toISOString(),'{}');
+const scope = { deviceId:'device-a', workspaceId:'workspace-a' };
+const assets = { source:{id:'source',kind:'video',sha256:'a'.repeat(64)}, product:{id:'product',kind:'image',sha256:'b'.repeat(64)}, person:{id:'person',kind:'image',sha256:'c'.repeat(64)} };
+const fixture = () => ({ title:'测试复刻', type:'replica', sourceAssetId:'source', productName:'商品', sourceNotes:'0–30秒，固定商品特写，无口播。', materials:[{assetId:'product',role:'product',label:'商品',lookId:''}], units:[{id:'unit1',prompt:'保留固定商品特写，@图片1定义商品外观。无口播。',duration:30,modelId:'seedance-2.5',referenceAssetIds:['product']}] });
+const snap = p => assetSnapshot(p,id=>assets[id]);
+
+test('完整提示词不静默截断，错误引用与重复分段被拒绝', () => {
+  const input = fixture();input.units[0].prompt='字'.repeat(12000);
+  assert.equal(normalizeViralInput(input).units[0].prompt.length,12000);
+  input.units[0].prompt='字'.repeat(30001);
+  assert.throws(()=>normalizeViralInput(input),/没有被截断/);
+  input.units[0].prompt='正常';input.units[0].referenceAssetIds=['other'];
+  assert.throws(()=>normalizeViralInput(input),/项目素材/);
+  input.units[0].referenceAssetIds=['product'];input.units.push({...input.units[0]});
+  assert.throws(()=>normalizeViralInput(input),/编号不能重复/);
+});
+test('项目保存按账号和设备工作区隔离，CAS 拒绝旧稿覆盖', () => {
+  const p=createViralProject('a',scope,fixture());
+  assert.equal(findViralProject('b',p.id,scope),null);
+  assert.equal(findViralProject('a',p.id,{...scope,workspaceId:'other'}),null);
+  assert.equal(findViralProject('a',p.id,{...scope,deviceId:'other'}),null);
+  assert.throws(()=>saveViralProject('b',scope,p,p.revision),/项目已更新/);
+  const next=saveViralProject('a',scope,{...p,title:'新稿'},p.revision);
+  assert.equal(next.revision,2);
+  assert.throws(()=>saveViralProject('a',scope,p,p.revision),/项目已更新/);
+});
+test('内容 hash 与真实引用控制确认失效，改台词不撤销资产确认', () => {
+  const p={...normalizeViralInput(fixture()),workflowVersion:'1'};
+  p.assetApproval={hash:assetApprovalHash(p,snap(p))};p.planApproval={hash:planApprovalHash(p,snap(p))};
+  assert.doesNotThrow(()=>assertViralReady(p,snap(p),{forGeneration:true}));
+  p.units[0].prompt+=' 新要求';
+  assert.equal(p.assetApproval.hash,assetApprovalHash(p,snap(p)));
+  assert.throws(()=>assertViralReady(p,snap(p),{forGeneration:true}),/制作方案已变化/);
+  const changed=snap(p).map(f=>f.id==='product'?{...f,sha256:'d'.repeat(64)}:f);
+  assert.throws(()=>assertViralReady(p,changed),/检查并确认当前资产/);
+  assert.throws(()=>assetSnapshot(p,()=>null),/已删除/);
+});
+
+let settles=0,releases=0,llmResult={text:'{}',usage:{inputTokens:10,outputTokens:10}};
+const deps = { bodyJson:async req=>req.body, sendJson:(res,status,body)=>Object.assign(res,{status,body}), requireUser:()=>({id:'a'}), requireDesktopWorkspaceScope:()=>scope,
+  findAsset:(_user,id)=>assets[id],publicAsset:x=>x,publicGeneration:x=>x,llmConfig:{model:'test'},isLlmConfigured:()=>true,
+  conservativeInputTokenUpperBound:()=>100,llmReservationMicro:()=>1000,llmRates:{},reserveLlmCredits:async()=>({}),
+  settleLlmCredits:async()=>{settles++;return{chargedCredits:.001,wallet:{balance:10}};},releaseLlmCredits:async()=>{releases++;},markLlmBillingReconcile:async()=>{},callLlm:async()=>llmResult };
+const handler=createViralLabRouteHandler(deps);
+async function invoke(method,path,body={}) {const res={};await handler.route({method,body},res,new URL(`http://localhost/api/viral-lab/${path}`));return res;}
+test('服务端确认生成内容，重复确认不扩大付费授权，输入改动撤销方案',async()=>{
+  let p=(await invoke('POST','projects',fixture())).body.project;
+  const path=`projects/${p.id}`;
+  await assert.rejects(()=>invoke('POST',`${path}/plan-confirm`,{revision:p.revision}),/确认当前资产/);
+  p=(await invoke('POST',`${path}/assets-confirm`,{revision:p.revision})).body.project;
+  p=(await invoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
+  const first=p.planApproval.requests.unit1;
+  p=(await invoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
+  assert.equal(p.planApproval.requests.unit1,first);
+  const input={viralProjectId:p.id,viralUnitId:'unit1',viralPlanHash:p.planApproval.hash,requestId:first,expectedPriceVersion:'quoted',prompt:'篡改',duration:15,referenceAssetIds:['other'],videoModel:'evil'};
+  const generated=handler.prepareGeneration('a',scope,input);
+  assert.equal(generated.prompt,p.units[0].prompt);assert.equal(generated.duration,30);assert.deepEqual(generated.referenceAssetIds,['product']);assert.equal(generated.videoModel,'seedance-2.5');
+  assert.throws(()=>handler.prepareGeneration('b',scope,input),/不存在/);
+  assert.throws(()=>handler.prepareGeneration('a',scope,{...input,requestId:'new-id'}),/授权已失效/);
+  p=(await invoke('PATCH',path,{...p,sourceNotes:'新记录'})).body.project;
+  assert.ok(p.assetApproval);assert.equal(p.planApproval,null);
+  assert.throws(()=>handler.prepareGeneration('a',scope,input),/制作方案已变化/);
+});
+test('草稿可以分步填写，未完成时不提前计算方案确认 hash',async()=>{
+  let p=(await invoke('POST','projects',{type:'replica',title:'分步草稿'})).body.project;
+  const path=`projects/${p.id}`;
+  p=(await invoke('PATCH',path,{...p,brief:'先记下创作方向'})).body.project;
+  assert.equal(p.sourceAssetId,'');
+  assert.equal(p.productName,'');
+  assert.equal(p.planApproval,null);
+});
+test('真人参考不能绕过未接入的审核；AI 无效结果已计费不释放已结算费用',async()=>{
+  const input=fixture();input.materials.push({assetId:'person',role:'identity',label:'身份'});
+  let p=(await invoke('POST','projects',input)).body.project;
+  const path=`projects/${p.id}`;
+  p=(await invoke('POST',`${path}/assets-confirm`,{revision:p.revision})).body.project;
+  p=(await invoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
+  assert.throws(()=>handler.prepareGeneration('a',scope,{viralProjectId:p.id}),/真人素材审核/);
+  const q=(await invoke('POST',`${path}/plan-quote`,{revision:p.revision})).body;
+  await assert.rejects(()=>invoke('POST',`${path}/plan`,{revision:p.revision,quoteId:'wrong'}),/报价已变化/);
+  settles=0;releases=0;
+  await assert.rejects(()=>invoke('POST',`${path}/plan`,{revision:p.revision,quoteId:q.quoteId}),/数量不一致/);
+  p=findViralProject('a',p.id,scope);assert.equal(p.planning,null);assert.equal(p.units[0].prompt,input.units[0].prompt);assert.equal(settles,1);assert.equal(releases,0);
+});
+test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
+  assert.equal(staticEntryFile('/lab',{desktop:true}),'index.html');
+  const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+  const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+  assert.match(html,/app\.js\?v=\d+/);assert.doesNotMatch(html,/app\.js\?v=260\b/);
+  assert.match(html,/features\/viral-lab\/styles\.css\?v=1/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=1/);
+  assert.match(html,/id="viralLabView"/);assert.match(html,/data-route="lab"/);
+});

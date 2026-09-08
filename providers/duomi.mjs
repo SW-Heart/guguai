@@ -26,7 +26,31 @@ export function createDuomiProvider({
     }
   }
 
-  async function pollImage(taskId, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false, pollOnce = false } = {}) {
+  const MIDJOURNEY_MODEL_ID = 'midjourney';
+  const isMidjourneyTask = task => task?.modelId === MIDJOURNEY_MODEL_ID || task?.model === MIDJOURNEY_MODEL_ID;
+  function midjourneyPrompt(task, refs) {
+    const options = task.midjourneyOptions || {};
+    // The editor stores image mentions as Image1/Image2 tokens. MJ expects the
+    // staged image URLs at the beginning of the prompt instead.
+    const prompt = String(task.prompt || '').replace(/\bImage\s*\d+\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    const flags = [];
+    if (options.aspectRatio) flags.push(`--ar ${options.aspectRatio}`);
+    if (options.chaos !== undefined && options.chaos !== '') flags.push(`--c ${options.chaos}`);
+    if (options.quality !== undefined && options.quality !== '') flags.push(`--q ${options.quality}`);
+    if (options.stylize !== undefined && options.stylize !== '') flags.push(`--s ${options.stylize}`);
+    if (options.weird !== undefined && options.weird !== '') flags.push(`--w ${options.weird}`);
+    if (options.seed !== undefined && options.seed !== '') flags.push(`--seed ${options.seed}`);
+    if (options.negativePrompt) flags.push(`--no ${String(options.negativePrompt).trim()}`);
+    if (refs.length && options.imageWeight !== undefined && options.imageWeight !== '') flags.push(`--iw ${options.imageWeight}`);
+    if (options.version) flags.push(`--v ${options.version}`);
+    if (options.tile) flags.push('--tile');
+    if (options.raw) flags.push('--raw');
+    if (options.draft) flags.push('--draft');
+    return [...refs.slice(0, 7), prompt, flags.join(' ')].filter(Boolean).join(' ').trim();
+  }
+
+  async function pollImage(taskId, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false, pollOnce = false, modelId = '' } = {}) {
+    const midjourney = modelId === MIDJOURNEY_MODEL_ID;
     let consecutiveErrors = 0;
     let firstRequest = true;
     for (;;) {
@@ -39,7 +63,10 @@ export function createDuomiProvider({
       firstRequest = false;
       let state;
       try {
-        state = await fetchJson(`${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`, {
+        const url = midjourney
+          ? `${baseUrl}/api/midjourney/feed?task_id=${encodeURIComponent(taskId)}`
+          : `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`;
+        state = await fetchJson(url, {
           headers: { Authorization: apiKey },
           signal: remainingMs > 0
             ? videoPollRequestSignal('图片', taskId, pollStartedAt, imageMaxPollDurationMs, 60_000)
@@ -58,12 +85,21 @@ export function createDuomiProvider({
         if (pollOnce) return { pending: true, provider: 'duomi', taskId };
         continue;
       }
-      const status = String(state.state || state.status || '').toLowerCase();
-      if (['succeeded', 'completed', 'success', 'done'].includes(status)) {
-        return { provider: 'duomi', taskId, url: state.data?.images?.[0]?.url || state.data?.url || state.url };
+      if (midjourney && Number(state.code) >= 400) {
+        throw Object.assign(new Error(errorMessage(state.msg || state.message || state.data || state, '图片生成失败')), {
+          provider: 'duomi', providerTaskId: taskId, upstreamTerminal: true,
+        });
       }
-      if (['error', 'failed', 'failure', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) {
-        throw Object.assign(new Error(errorMessage(state.message || state.error || state, '图片生成失败')), {
+      const result = midjourney && state.data && typeof state.data === 'object' ? state.data : state;
+      const rawStatus = String(result.state || result.status || '').toLowerCase();
+      const status = rawStatus === '3' ? 'succeeded' : rawStatus;
+      if (['succeeded', 'completed', 'success', 'done'].includes(status)) {
+        const url = result.image_url || result.data?.images?.[0]?.url || result.data?.url || result.url;
+        if (!url) throw Object.assign(new Error('图片任务已完成，但没有返回结果地址'), { provider: 'duomi', providerTaskId: taskId, upstreamTerminal: true });
+        return { provider: 'duomi', taskId, url };
+      }
+      if (['error', 'failed', 'failure', 'cancelled', 'canceled', 'rejected', 'expired', '4'].includes(status)) {
+        throw Object.assign(new Error(errorMessage(result.msg || result.message || result.error || result, '图片生成失败')), {
           provider: 'duomi', providerTaskId: taskId, upstreamTerminal: true,
         });
       }
@@ -75,22 +111,26 @@ export function createDuomiProvider({
   }
 
   async function createImage(task, refs, hooks = {}) {
-    const payload = { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality };
-    if (refs.length) payload.image = refs.slice(0, 7);
+    const midjourney = isMidjourneyTask(task);
+    const payload = midjourney
+      ? { action: 'generate', prompt: midjourneyPrompt(task, refs) }
+      : { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality };
+    if (!midjourney && refs.length) payload.image = refs.slice(0, 7);
     const submission = await trackProviderSubmission((async () => {
-      const created = await fetchJson(`${baseUrl}/v1/images/generations?async=true`, {
+      const created = await fetchJson(midjourney ? `${baseUrl}/api/midjourney/imagine/fast` : `${baseUrl}/v1/images/generations?async=true`, {
         method: 'POST',
         headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const submittedTaskId = created.id || created.task_id;
+      if (midjourney && created.code !== undefined && Number(created.code) !== 200) throw new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败'));
+      const submittedTaskId = midjourney ? created.data?.task_id : (created.id || created.task_id);
       if (!submittedTaskId) throw new Error('图片任务没有返回任务 ID');
       await hooks.onSubmitted?.({ provider: 'duomi', taskId: String(submittedTaskId) });
       if (hooks.deferPolling) return { pending: true, provider: 'duomi', taskId: String(submittedTaskId) };
       return String(submittedTaskId);
     })());
     if (submission?.pending) return submission;
-    return pollImage(submission, hooks, videoPollStartedAt(task));
+    return pollImage(submission, hooks, videoPollStartedAt(task), { modelId: midjourney ? MIDJOURNEY_MODEL_ID : '' });
   }
 
   async function pollVideo(task, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false, pollOnce = false } = {}) {

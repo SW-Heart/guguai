@@ -22,6 +22,7 @@ export function createDramaRouteHandler({
   isLlmConfigured,
   llmConfig,
   runSmartDirector,
+  planDirectorActions,
   deleteGenerationRecord,
   activeGenerations,
   now,
@@ -48,7 +49,7 @@ export function createDramaRouteHandler({
       const input = await bodyJson(req);
       const mode = input.mode === 'professional' ? 'professional' : 'smart';
       const title = String(input.title || '未命名短剧').trim().slice(0, 80);
-      const project = normalizeDramaProject({ id:randomId(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
+      const project = normalizeDramaProject({ id:randomId(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:mode==='smart'?[]:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
       await saveDramaProject(user.id, project, { create:true });
       sendJson(res, 201, { project:publicDramaProject(project) });
       return true;
@@ -92,6 +93,7 @@ export function createDramaRouteHandler({
       }
       for (const key of ['input', 'synopsis', 'script']) if (input[key] !== undefined) project[key] = String(input[key]).slice(0, key === 'script' ? 120000 : 10000);
       if (input.finalAssetId !== undefined) project.finalAssetId = String(input.finalAssetId || '').trim().slice(0, 200);
+      if (input.directorWorkspace) project.directorWorkspace = input.directorWorkspace;
       if (input.settings) project.settings = { ...project.settings, ...input.settings };
       if (Array.isArray(input.scenes)) project.scenes = input.scenes;
       if (Array.isArray(input.resources)) project.resources = input.resources;
@@ -125,6 +127,18 @@ export function createDramaRouteHandler({
       // A project is only metadata. Its generations and media assets are
       // intentionally kept so deleting a project never deletes produced video.
       sendJson(res, 200, { deleted:true, id:dramaProjectMatch[1] });
+      return true;
+    }
+    const agentMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/agent-plan$/);
+    if (agentMatch && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return true;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+      if (!isLlmConfigured(llmConfig)) { sendJson(res,503,{error:'导演服务尚未配置'}); return true; }
+      const project = await loadDramaProject(user.id,agentMatch[1],scope);
+      if (!project) { sendJson(res,404,{error:'短剧项目不存在'}); return true; }
+      const input = await bodyJson(req);
+      if (!String(input.message||'').trim()) { sendJson(res,400,{error:'请输入创作目标'}); return true; }
+      sendJson(res,200,await planDirectorActions({userId:user.id,project,message:String(input.message).slice(0,10000)}));
       return true;
     }
     const directorMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/direct$/);

@@ -32,10 +32,10 @@ let lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:nu
 const failedWorkRetentionMs = 5 * 60 * 1000;
 const transientFailureDeadlines = new Map();
 const transientFailureTimers = new Map();
-const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', files:'/files' });
+const routePaths = Object.freeze({ image:'/image', video:'/video', drama:'/drama', lab:'/lab', files:'/files' });
 const authPath = '/login';
 const routeFromPath = pathname => Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'image';
-const taskSignatureFields = ['id','type','status','progress','progressStage','awaitingReferences','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','createdAt','submittedAt','finishedAt'];
+const taskSignatureFields = ['id','type','status','progress','progressStage','awaitingReferences','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','midjourneyOptions','createdAt','submittedAt','finishedAt'];
 const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','referenceSourceAvailable','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
 const fileCardSignatureFields = fileSignatureFields.filter(field => field !== 'updatedAt');
@@ -1297,6 +1297,7 @@ function clearDesktopAccountState() {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
   });
   dramaController?.resetForAccount?.();
+  viralController?.resetForAccount?.();
   resetAccountState(state);
   desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
   desktopWorkspacePath = '';
@@ -1546,11 +1547,13 @@ async function enterApp(user) {
     { label:'读取生成记录', run:loadTasks },
   ];
   let completedLoadSteps = 0;
+  let startupFailed = false;
   updateBootCopy('正在加载工作区', '正在准备创作数据，请稍候。');
   await Promise.all(initialLoadSteps.map(async step => {
     if (!isStartupCurrent()) return;
-    await step.run();
-    if (!isStartupCurrent()) return;
+    try { await step.run(); }
+    catch (error) { startupFailed = true; throw error; }
+    if (startupFailed || !isStartupCurrent()) return;
     completedLoadSteps += 1;
     const progress = 8 + ((100 - 8) * completedLoadSteps / initialLoadSteps.length);
     setBootProgress(progress, completedLoadSteps === initialLoadSteps.length ? '工作区即将打开' : step.label);
@@ -1687,12 +1690,23 @@ $('#closeRenameFile').onclick = $('#cancelRenameFile').onclick = closeRenameFile
 $('#renameFileDialog').addEventListener('cancel', event => { event.preventDefault(); closeRenameFileDialog(); });
 $('#renameFileDialog').addEventListener('close', () => { const restore = renameFileRestoreFocus; renameFileId = ''; renameFileRestoreFocus = null; renameFileError(); requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
 
+let viralController = null;
+let viralControllerPromise = null;
+function ensureViralController() {
+  if (viralController) return Promise.resolve(viralController);
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=1').then(({createViralLab}) => {
+    viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
+    return viralController;
+  }).catch(error => { viralControllerPromise = null; throw error; });
+  return viralControllerPromise;
+}
+
 let dramaController = null;
 let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=89').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=91').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -1751,6 +1765,13 @@ function scheduleRouteContentRender(route, routeChanged) {
         renderFiles();
         return;
       }
+      if (route === 'lab') {
+        void ensureViralController().then(controller => {
+          if (epoch !== routeRenderEpoch || state.route !== 'lab') return;
+          return controller.load();
+        }).catch(error => toast(`爆款实验室加载失败：${error.message}`));
+        return;
+      }
       if (route === 'drama') {
         void ensureDramaController().then(controller => {
           if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
@@ -1767,33 +1788,36 @@ function scheduleRouteContentRender(route, routeChanged) {
 function navigate(route, { historyMode = 'push' } = {}) {
   const nextRoute = routePaths[route] ? route : 'image';
   const routeChanged = state.route !== nextRoute;
+  if (state.route === 'lab' && nextRoute !== 'lab') viralController?.suspend?.();
   if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
   if (historyMode !== 'none' && window.location.pathname !== routePaths[nextRoute]) {
     window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]);
   }
   state.route = nextRoute;
-  const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' };
+  const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', lab:'爆款实验室', files:'文件库' };
   $('#routeTitle').textContent = routeTitles[nextRoute];
   document.title = `${routeTitles[nextRoute]} · GuGu AI`;
   $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute));
   const files = nextRoute === 'files';
   const drama = nextRoute === 'drama';
-  const wide = files || drama;
+  const lab = nextRoute === 'lab';
+  const wide = files || drama || lab;
   toggleClass($('#appView'), 'library-mode', files);
-  toggleClass($('#appView'), 'wide-mode', drama);
+  toggleClass($('#appView'), 'wide-mode', drama || lab);
   toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject));
   toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional');
   toggleClass($('#creatorPanel'), 'hidden', wide);
   toggleClass($('#generationView'), 'hidden', wide);
   toggleClass($('#filesView'), 'hidden', !files);
   toggleClass($('#dramaView'), 'hidden', !drama);
+  toggleClass($('#viralLabView'), 'hidden', !lab);
   cancelRouteContentRender();
   if (!wide) {
     $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute));
     renderRouteLoadingShell(nextRoute);
   } else if (files) {
     renderRouteLoadingShell('files');
-  } else {
+  } else if (drama) {
     renderRouteLoadingShell('drama');
   }
   scheduleRouteContentRender(nextRoute, routeChanged);
@@ -1849,12 +1873,14 @@ async function loadConfig() {
     if (!accountScope.isCurrent(requestAccount)) return;
     state.config = config;
     if (config.pricing) state.pricing = { ...state.pricing, image: config.pricing.imagePerRequest, videoPerSecond: config.pricing.videoPerSecond };
+    syncImageModelOptions();
     syncVideoModelOptions();
     updateServiceState(config.imageGeneration);
     updateDramaModelState();
   } catch {
     if (!accountScope.isCurrent(requestAccount)) return;
-    state.config = { videoCapabilities: { models: [] } };
+    state.config = { imageModels: fallbackImageModels, videoCapabilities: { models: [] } };
+    syncImageModelOptions();
     syncVideoModelOptions();
     updateServiceState(false);
     updateDramaModelState();
@@ -2403,6 +2429,7 @@ function generationModelName(task) {
   const modelId = String(task?.videoModelId || task?.modelId || task?.model || '').trim();
   if (!modelId) return '—';
   if (modelId === 'gpt-image-2') return 'GPT Image 2';
+  if (modelId === 'midjourney') return 'Midjourney';
   const configuredModels = Array.isArray(state.config?.videoCapabilities?.models) ? state.config.videoCapabilities.models : [];
   const model = [...configuredModels, ...fallbackVideoModels].find(item => item.id === modelId);
   if (model?.label) return model.label;
@@ -2428,8 +2455,17 @@ function generationParameterRows(task) {
   if (!task) return '';
   const rows = [detailRow('使用模型', generationModelName(task))];
   if (task.type === 'image') {
-    rows.push(detailRow('画布比例', task.size || '—'));
-    rows.push(detailRow('质量', imageQualityLabels[task.quality] || task.quality || '—'));
+    if (task.modelId === 'midjourney') {
+      const options = task.midjourneyOptions || {};
+      rows.push(detailRow('画幅', options.aspectRatio || task.size || '—'));
+      rows.push(detailRow('版本', options.version ? `V${options.version}` : '—'));
+      rows.push(detailRow('质量', options.quality || '—'));
+      rows.push(detailRow('风格化 / 混乱度', `${options.stylize ?? 100} / ${options.chaos ?? 0}`));
+      if (options.negativePrompt) rows.push(detailRow('排除内容', options.negativePrompt));
+    } else {
+      rows.push(detailRow('画布比例', task.size || '—'));
+      rows.push(detailRow('质量', imageQualityLabels[task.quality] || task.quality || '—'));
+    }
     if (Number(task.batchSize) > 1) rows.push(detailRow('生成数量', `${task.batchSize} 张`));
   } else {
     rows.push(detailRow('生成模式', generationModeName(task)));
@@ -2547,7 +2583,30 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
     if (target === 'video') setVideoPromptText(task.prompt || '');
     else setImagePromptText(task.prompt || '');
   }
-  if (carryPrompt && target === 'image' && task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); } }
+  if (carryPrompt && target === 'image') {
+    const taskModelId = task.modelId || 'gpt-image-2';
+    if (imageModelOptions().some(model => model.id === taskModelId && model.enabled !== false)) $('#imageModel').value = taskModelId;
+    refreshProductSelect('imageModel');
+    syncImageModelParameters();
+    if (taskModelId === 'midjourney') {
+      const options = task.midjourneyOptions || {};
+      if (options.aspectRatio) $('#imageMjAspect').value = options.aspectRatio;
+      if (options.version) $('#imageMjVersion').value = options.version;
+      if (options.quality) $('#imageMjQuality').value = options.quality;
+      if (options.stylize !== undefined) $('#imageMjStylize').value = options.stylize;
+      if (options.chaos !== undefined) $('#imageMjChaos').value = options.chaos;
+      if (options.weird !== undefined) $('#imageMjWeird').value = options.weird;
+      if (options.seed !== undefined) $('#imageMjSeed').value = options.seed;
+      if (options.imageWeight !== undefined) $('#imageMjImageWeight').value = options.imageWeight;
+      $('#imageMjNegative').value = options.negativePrompt || '';
+      $('#imageMjRaw').checked = Boolean(options.raw); $('#imageMjTile').checked = Boolean(options.tile); $('#imageMjDraft').checked = Boolean(options.draft);
+      ['imageMjAspect','imageMjVersion','imageMjQuality'].forEach(refreshProductSelect);
+      syncMidjourneyRangeLabels();
+    } else {
+      if (task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } }
+      if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); }
+    }
+  }
   if (carryPrompt && target === 'image' && task.batchSize) commitImageQuantity(task.batchSize);
   if (target === 'video' && task.type === 'video') {
     const taskModelId = task.videoModelId || task.modelId;
@@ -3242,16 +3301,77 @@ function videoModelOptions() {
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
 function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s' : ''; }
-const modelIconUrls = Object.freeze({ 'gpt-image-2':'/favicon.svg?v=2', grok:'/favicon.svg?v=2', 'minimax-h3-15s':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
+const fallbackImageModels = Object.freeze([
+  { id:'gpt-image-2', label:'GPT Image 2', description:'从文字或参考图快速探索画面。', enabled:true },
+  { id:'midjourney', label:'Midjourney', description:'通过参数精细控制艺术风格。', enabled:true },
+]);
+function imageModelOptions() {
+  const models = Array.isArray(state.config?.imageModels) ? state.config.imageModels : fallbackImageModels;
+  return models.filter(model => model.enabled !== false || model.id === 'gpt-image-2');
+}
+function imageModelPromo() { return ''; }
+const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'/favicon.svg?v=2', 'minimax-h3-15s':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
-function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? videoModelOptions().find(item => item.id === option?.value) : null; const promo = model ? videoModelPromo(model.id) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
-function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; const model = widget.dataset.model ? videoModelOptions().find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label">${modelTitleMarkup(widget, option)}${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
-function selectSubtitle(widget, option = null) { if (!widget?.dataset.model) return ''; const selected = option || $(`#${widget.dataset.for}`)?.selectedOptions[0]; const model = selected ? videoModelOptions().find(item => item.id === selected.value) : null; return model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''; }
+function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
+function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? selectModelOptions(widget).find(item => item.id === option?.value) : null; const promo = model ? (widget.dataset.imageModel ? imageModelPromo(model.id) : videoModelPromo(model.id)) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
+function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; const model = widget.dataset.model ? selectModelOptions(widget).find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label">${modelTitleMarkup(widget, option)}${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
+function selectSubtitle(widget, option = null) { if (!widget?.dataset.model) return ''; const selected = option || $(`#${widget.dataset.for}`)?.selectedOptions[0]; const model = selected ? selectModelOptions(widget).find(item => item.id === selected.value) : null; return model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''; }
 function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); if (!option || !trigger || !menu) return; trigger.innerHTML = `${productSelectIcon(widget, option)}<span>${modelTitleMarkup(widget, option)}${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') menu.innerHTML = productSelectMarkup(widget, select); }
 function setProductSelectEnabled(id, enabled) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; select.disabled = !enabled; const trigger = widget.querySelector('.product-select-trigger'); if (trigger) trigger.disabled = !enabled; widget.classList.toggle('is-disabled', !enabled); if (!enabled) closeProductSelects(); }
 function setVideoSelectOptions(id, values, label, preferred, { preserveCurrent = true } = {}) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const current = select.value; const options = Array.isArray(values) ? values : []; select.innerHTML = options.map(value => `<option value="${esc(value)}">${esc(label(value))}</option>`).join(''); const supported = options.map(String); const desired = preserveCurrent && supported.includes(String(current)) ? current : supported.includes(String(preferred)) ? String(preferred) : String(options[0] || ''); select.value = desired; widget.dataset.dynamicOptions = 'true'; refreshProductSelect(id); }
-function syncVideoModelOptions() { const select = $('#videoModel'); const widget = $('.product-select[data-for="videoModel"]'); if (!select || !widget) return; const current = select.value; const models = videoModelOptions(); select.innerHTML = models.map(model => `<option value="${esc(model.id)}" ${model.availability === 'coming-soon' ? 'disabled data-availability="coming-soon"' : ''}>${esc(model.label)}</option>`).join(''); const selectableModels = models.filter(model => model.availability !== 'coming-soon'); select.value = selectableModels.some(model => model.id === current) ? current : String(selectableModels[0]?.id || ''); widget.dataset.dynamicOptions = 'true'; refreshProductSelect('videoModel'); syncVideoModelParameters(); }
+function syncImageModelOptions() {
+  const select = $('#imageModel');
+  const widget = $('.product-select[data-for="imageModel"]');
+  if (!select || !widget) return;
+  const current = select.value;
+  const models = imageModelOptions();
+  select.innerHTML = models.map(model => `<option value="${esc(model.id)}">${esc(model.label)}</option>`).join('');
+  select.value = models.some(model => model.id === current) ? current : String(models[0]?.id || '');
+  widget.dataset.dynamicOptions = 'true';
+  refreshProductSelect('imageModel');
+  syncImageModelParameters();
+}
+function syncVideoModelOptions() {
+  const select = $('#videoModel');
+  const widget = $('.product-select[data-for="videoModel"]');
+  if (!select || !widget) return;
+  const current = select.value;
+  const models = videoModelOptions();
+  select.innerHTML = models.map(model => `<option value="${esc(model.id)}" ${model.availability === 'coming-soon' ? 'disabled data-availability="coming-soon"' : ''}>${esc(model.label)}</option>`).join('');
+  const selectableModels = models.filter(model => model.availability !== 'coming-soon');
+  select.value = selectableModels.some(model => model.id === current) ? current : String(selectableModels[0]?.id || '');
+  widget.dataset.dynamicOptions = 'true';
+  refreshProductSelect('videoModel');
+  syncVideoModelParameters();
+}
+function syncImageModelParameters() {
+  const isMidjourney = $('#imageModel')?.value === 'midjourney';
+  $('#imageGptOptions')?.classList.toggle('hidden', isMidjourney);
+  $('#imageMidjourneyOptions')?.classList.toggle('hidden', !isMidjourney);
+  syncImagePromptState();
+  updateImageCost();
+}
+function currentMidjourneyOptions() {
+  return {
+    aspectRatio:$('#imageMjAspect').value,
+    version:$('#imageMjVersion').value,
+    quality:$('#imageMjQuality').value,
+    stylize:Number($('#imageMjStylize').value),
+    chaos:Number($('#imageMjChaos').value),
+    weird:Number($('#imageMjWeird').value),
+    seed:$('#imageMjSeed').value.trim(),
+    negativePrompt:$('#imageMjNegative').value.trim(),
+    imageWeight:Number($('#imageMjImageWeight').value),
+    raw:$('#imageMjRaw').checked,
+    tile:$('#imageMjTile').checked,
+    draft:$('#imageMjDraft').checked,
+  };
+}
+function syncMidjourneyRangeLabels() {
+  [['imageMjStylize','imageMjStylizeValue'], ['imageMjChaos','imageMjChaosValue'], ['imageMjWeird','imageMjWeirdValue']].forEach(([inputId, valueId]) => { const input = $(`#${inputId}`); const value = $(`#${valueId}`); if (input && value) value.textContent = input.value; });
+}
+
 function syncVideoModelParameters({ reset = false } = {}) {
   const modelId = $('#videoModel')?.value || '';
   const modes = videoModelModes(modelId);
@@ -3276,7 +3396,7 @@ const videoPromptMaxLength = 4096;
 function videoPromptLimit(modelId=$('#videoModel')?.value) { return modelId === 'minimax-h3-15s' ? 10000 : videoPromptMaxLength; }
 const promptMaxHeight = 200;
 function autoResizePrompt(prompt) { if (!prompt) return; prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, promptMaxHeight)}px`; }
-function syncImagePromptState() { const prompt = imagePromptEditor(); autoResizePrompt(prompt); const count = Array.from(imagePromptText()).length; const countElement = $('#imagePromptCount'); const overLimit = count > imagePromptMaxLength; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setAttribute('aria-invalid', String(overLimit)); prompt.dataset.maxLength = String(imagePromptMaxLength); $('#imageForm .generate').disabled = overLimit; }
+function syncImagePromptState() { const prompt = imagePromptEditor(); autoResizePrompt(prompt); const count = Array.from(imagePromptText()).length; const countElement = $('#imagePromptCount'); const overLimit = count > imagePromptMaxLength; countElement.textContent = count; countElement.classList.toggle('over-limit', overLimit); prompt.setAttribute('aria-invalid', String(overLimit)); prompt.dataset.maxLength = String(imagePromptMaxLength); $('#imageForm .generate').disabled = overLimit || !$('#imageModel')?.value; }
 function syncVideoPromptState() {
   const prompt = videoPromptEditor();
   autoResizePrompt(prompt);
@@ -3479,7 +3599,26 @@ async function submitGeneration(type, form, payload) {
   }
   finally { generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
-$('#imageForm').onsubmit = event => { event.preventDefault(); syncImagePromptInput(); const prompt = imagePromptText(); if (!prompt.trim()) return toast('请填写创作描述'); if (Array.from(prompt).length > imagePromptMaxLength) return; const quantity = commitImageQuantity($('#imageQuantity').value); submitGeneration('image', event.currentTarget, { prompt:replaceAssetMentions(prompt, state.imagePromptMentions), size:$('#imageSize').value, quality:$('#imageQuality').value, quantity }); };
+$('#imageModel').addEventListener('change', () => syncImageModelParameters());
+['imageMjStylize', 'imageMjChaos', 'imageMjWeird'].forEach(id => $(`#${id}`)?.addEventListener('input', syncMidjourneyRangeLabels));
+$('#imageForm').onsubmit = event => {
+  event.preventDefault();
+  syncImagePromptInput();
+  const prompt = imagePromptText();
+  if (!prompt.trim()) return toast('请填写创作描述');
+  if (Array.from(prompt).length > imagePromptMaxLength) return;
+  const modelId = $('#imageModel').value || 'gpt-image-2';
+  const midjourneyOptions = modelId === 'midjourney' ? currentMidjourneyOptions() : null;
+  const quantity = commitImageQuantity($('#imageQuantity').value);
+  submitGeneration('image', event.currentTarget, {
+    modelId,
+    prompt:replaceAssetMentions(prompt, state.imagePromptMentions),
+    size:modelId === 'midjourney' ? midjourneyOptions.aspectRatio : $('#imageSize').value,
+    quality:modelId === 'midjourney' ? midjourneyOptions.quality : $('#imageQuality').value,
+    quantity,
+    ...(midjourneyOptions ? { midjourneyOptions } : {}),
+  });
+};
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
 $('#imageQuantity').onchange = () => commitImageQuantity($('#imageQuantity').value);
 $('#imageQuantityDecrease').onclick = () => changeImageQuantity(-1);

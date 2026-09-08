@@ -125,3 +125,17 @@ test('director service preserves wallet details when an LLM reservation is rejec
     },
   );
 });
+
+test('director agent returns a validated plan without changing project contents', async () => {
+  const project={id:'p',resources:[],shots:[{id:'s',duration:8}],directorWorkspace:{lockedIds:[]}};
+  const original=JSON.stringify(project);
+  const service=createDirectorService(directorServiceDependencies({reserveLlmCredits:async()=>({status:200}),callLlm:async()=>({text:JSON.stringify({summary:'调整时长',actions:[{type:'update_shot',targetId:'s',data:{duration:10}}]})})}));
+  const result=await service.planDirectorActions({userId:'u',project,message:'改成10秒'});
+  assert.equal(result.plan.actions[0].status,'queued');assert.equal(result.balance,9);assert.equal(JSON.stringify(project),original);
+});
+test('invalid director output preserves billed usage rather than releasing settled credits', async () => {
+  let released=false;
+  const service=createDirectorService(directorServiceDependencies({reserveLlmCredits:async()=>({status:200}),releaseLlmCredits:async()=>{released=true;},callLlm:async()=>({text:JSON.stringify({summary:'bad',actions:[{type:'arbitrary_code'}]})})}));
+  await assert.rejects(service.planDirectorActions({userId:'u',project:{resources:[],shots:[]},message:'test'}),error=>error.publicData.balance===9);
+  assert.equal(released,false);
+});

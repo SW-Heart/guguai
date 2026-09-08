@@ -1,3 +1,4 @@
+import { createViralLabRouteHandler } from './server/routes/viral-lab.mjs';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -237,6 +238,12 @@ const videoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2' });
+const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', midjourney: 'midjourney' });
+const supportedImageModelIds = new Set(Object.values(imageModelIds));
+const imageModelCatalog = Object.freeze([
+  { id:imageModelIds.gptImage2, label:'GPT Image 2', description:'从文字或参考图快速探索画面。' },
+  { id:imageModelIds.midjourney, label:'Midjourney', description:'通过 Midjourney 参数精细控制艺术风格。' },
+]);
 const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
 
@@ -462,7 +469,7 @@ function generationFailure(task) {
 }
 const publicGenerationFields = Object.freeze([
   'id', 'type', 'status', 'prompt', 'referenceAssetIds', 'modelId', 'size', 'quality', 'aspectRatio', 'duration',
-  'videoModelId', 'generationType', 'assetId', 'creditCost', 'creditStatus', 'createdAt', 'updatedAt', 'submittedAt',
+  'videoModelId', 'generationType', 'midjourneyOptions', 'assetId', 'creditCost', 'creditStatus', 'createdAt', 'updatedAt', 'submittedAt',
   'finishedAt', 'progress', 'awaitingReferences', 'batchSize',
 ]);
 function publicGeneration(task) {
@@ -524,6 +531,7 @@ function currentUser(req) {
 function requireUser(req, res) { const user = currentUser(req); if (!user) { sendJson(res, 401, { error: '请先登录' }); return null; } return user; }
 const publicCreditModelIds = new Set([
   fixedModels.image,
+  imageModelIds.midjourney,
   ...Object.values(VIDEO_MODEL_IDS),
   ...Object.values(LEGACY_VIDEO_MODEL_IDS),
 ]);
@@ -596,7 +604,10 @@ function publicPlatformPrices(pricing, videoCapabilities) {
       items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
-  if (isModelEnabled(fixedModels.image)) items.push({ modelId: fixedModels.image, label: 'GuGu 图像', quality: '标准', duration: null, available: true, enabled: true, availability: 'available', credits: pricing.imagePerRequest, yuan: pricing.imagePerRequest * 0.1, unit: 'request', priceVersion: `v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:image`).digest('hex').slice(0, 32)}` });
+  for (const imageModel of imageModelCatalog) {
+    if (!isModelEnabled(imageModel.id)) continue;
+    items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GuGu 图像' : imageModel.label, quality:'标准', duration:null, available:true, enabled:true, availability:'available', credits:pricing.imagePerRequest, yuan:pricing.imagePerRequest * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}`).digest('hex').slice(0, 32)}` });
+  }
   return items;
 }
 
@@ -605,6 +616,7 @@ function configState() {
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY),
+    imageModels: imageModelCatalog.map(model => ({ ...model, availability:'available', enabled:isModelEnabled(model.id) })),
     smsLogin: smsConfig.configured,
     mediaStorageReady: r2Configured,
     directUpload: r2Configured && directUploadEnabled,
@@ -628,6 +640,7 @@ function publicModelPriceState() {
   const pricedModelIds = new Set(items.map(item => item.modelId));
   const models = [
     { id: fixedModels.image, label: 'GuGu 图像', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
+    { id: imageModelIds.midjourney, label: 'Midjourney', description: '通过 Midjourney 参数精细控制艺术风格。', availability: 'available', qualityOptions: ['标准'] },
     ...(videoCapabilities.models || []).map(model => ({
       id: model.id,
       label: model.label,
@@ -800,7 +813,7 @@ const directorService = createDirectorService({
   publicDramaProject,
   normalizeDramaProject,
 });
-const { runSmartDirector, analyzeScript, createStoryboard } = directorService;
+const { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions } = directorService;
 async function createVideo(task, refs, hooks = {}) {
   const adapter = videoProviderAdapters.forTask(task);
   if (!adapter) throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
@@ -1860,7 +1873,7 @@ function resumeDuomiImageGeneration(userId, task, options = {}) {
     startPhase: 'duomi-image-recovery-running',
     finalPhase: 'duomi-image-recovery-final',
     useRetryForStart: true,
-    poll: ({ pollOnce }) => duomiProvider.pollImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce }),
+    poll: ({ pollOnce }) => duomiProvider.pollImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce, modelId:task.modelId }),
     missingUrlMessage: '图片任务完成，但没有返回结果地址',
     logScope: 'image',
     logContext: () => ({ providerTaskId:task.providerTaskId }),
@@ -2210,6 +2223,8 @@ const accountRoute = createAccountRouteHandler({
   markNotificationRead,
   markAllNotificationsRead,
 });
+const viralLab = createViralLabRouteHandler({ bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, findAsset, publicAsset, publicGeneration,
+  llmConfig, isLlmConfigured, callLlm, llmRates, conservativeInputTokenUpperBound, llmReservationMicro, reserveLlmCredits, settleLlmCredits, releaseLlmCredits, markLlmBillingReconcile });
 const dramaRoute = createDramaRouteHandler({
   bodyJson,
   sendJson,
@@ -2234,6 +2249,7 @@ const dramaRoute = createDramaRouteHandler({
   isLlmConfigured,
   llmConfig,
   runSmartDirector,
+  planDirectorActions,
   deleteGenerationRecord,
   activeGenerations,
   now,
@@ -2312,6 +2328,7 @@ const filesRoute = createFilesRouteHandler({
   deleteAssetRecord,
 });
 const generationRoute = createGenerationRouteHandler({
+  prepareViralGeneration: viralLab.prepareGeneration,
   bodyJson,
   sendJson,
   requireUser,
@@ -2355,6 +2372,7 @@ const generationRoute = createGenerationRouteHandler({
   isModelEnabled,
   fixedModels,
   imageSizes,
+  imageModelIds:supportedImageModelIds,
   videoModelIds:VIDEO_MODEL_IDS,
   legacyVideoModelIds:LEGACY_VIDEO_MODEL_IDS,
   storyboardEngineVersion:STORYBOARD_ENGINE_VERSION,
@@ -2419,6 +2437,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok:true, ...result });
     }
 
+    if (await viralLab.route(req, res, url)) return;
     if (await dramaRoute(req, res, url)) return;
 
     if (await generationRoute(req, res, url)) return;

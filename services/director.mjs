@@ -1,3 +1,4 @@
+import { validateDirectorPlan } from '../public/features/drama/director-actions.js';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -526,5 +527,26 @@ export function createDirectorService({
     }
   }
 
-  return { runSmartDirector, analyzeScript, createStoryboard };
+  async function planDirectorActions({ userId, project, message }) {
+    const system = `你是短剧导演控制器。只返回 JSON {summary,actions:[{type,targetId,label,data}]}。summary 是给用户的简短决策摘要，不包含思考过程或逐步日志。
+允许操作：design_story(data.input 创作目标，data.settings 包含 shotCount,totalDuration,shotDuration,aspectRatio；按用户要求设置总长与镜头数量，shotDuration 使用8/10/15/20秒，仅在空项目使用)，add_resource/update_resource(data: name,type character/location/prop,description,prompt,bible)，add_shot/update_shot(data: title,script,prompt,duration,resourceIds,generation)，generate_resource，generate_video，read_tail(读取目标镜头尾帧用于下一镜)，check_continuity，assemble。
+更新或生成必须引用已有 targetId。新增内容与生成分两轮计划，不能编造 ID。尊重 lockedIds；保留已有台词、已选版本和用户指定首尾帧。修改只提交变化字段。没有必要操作时 actions 可为空。
+用户委托剩余制作时：先补齐故事，再为缺失素材生成角色与场景图，然后生成未完成镜头，检查并拼接；不要重复生成已完成内容。单次最多 80 个操作。所有模型调用与生成会按项目现有积分规则计费。画布项目数据是唯一事实来源。`;
+    const prompt = JSON.stringify({message,project});
+    const requestId=randomId(); const maxOutputTokens=6000;
+    const reserved=await reserveLlmCredits(userId,requestId,llmReservationMicro(conservativeInputTokenUpperBound(system,prompt),maxOutputTokens,llmRates),{projectId:project.id,skillName:'director-agent',skillVersion:'1.0.0'});
+    if(reserved.error)throwReservationError(reserved,true);
+    let settled;
+    try {
+      const result=await callLlm({system,prompt,maxOutputTokens,jsonMode:true,config:llmConfig});
+      settled=await settleLlmCredits(userId,requestId,result,{projectId:project.id,skillName:'director-agent',skillVersion:'1.0.0'});
+      return {plan:validateDirectorPlan(parseJsonObject(result.text),project),balance:settled.wallet.balance};
+    } catch(error) {
+      if(!settled) { if(error.billingReconcileRequired)await markLlmBillingReconcile(userId,requestId,error); else await releaseLlmCredits(userId,requestId,error.message); }
+      if(settled)error.publicData={balance:settled.wallet.balance};
+      throw error;
+    }
+  }
+  return { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions };
+
 }

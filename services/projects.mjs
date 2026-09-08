@@ -1,3 +1,5 @@
+import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
+
 import { randomUUID } from 'node:crypto';
 
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary } from '../lib/storyboard-engine.mjs';
@@ -6,7 +8,7 @@ const publicDramaProjectFields = Object.freeze([
   'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings',
   'analysis', 'analysisUsage', 'storyboard', 'storyboardUsage', 'resources', 'scenes', 'shots',
   'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'assemblyVideos', 'workflowVersion',
-  'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
+  'directorWorkspace', 'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
 ]);
 
 export function createProjectService({
@@ -56,6 +58,7 @@ export function createProjectService({
   function normalizeDramaProject(project) {
     const legacyMaxStep = !dramaStepOrder.includes(project.maxStep);
     project.schemaVersion = 5;
+    project.directorWorkspace = normalizeDirectorWorkspace(project.directorWorkspace);
     project.revision = Math.max(1, Number(project.revision) || 1);
     project.workflowVersion = Number(project.workflowVersion) || 1;
     project.mode ||= 'smart';
