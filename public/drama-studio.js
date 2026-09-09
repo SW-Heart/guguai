@@ -1,4 +1,4 @@
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=2';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=4';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=2';
 import { buildShotVideoPrompt } from './video-prompt.js?v=3';
 import {
@@ -55,7 +55,7 @@ const stepNames = { script:'剧本设计', resources:'资源生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
+export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -1006,7 +1006,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     directorWorkspaceView ||= createDirectorWorkspace(root, {
       project:()=>project, task, toast, images:()=>state.files.filter(f=>f.kind==='image'&&f.localStatus!=='missing'),
       imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
-      importAsset:async()=>{const request=projectRequest();const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});assertProjectRequest(request);if(!file)return null;state.files=[file,...state.files.filter(f=>f.id!==file.id)];await patch({projectAssetIds:[...new Set([...project.projectAssetIds,file.id])]},{quiet:true});assertProjectRequest(request);return file;},
+      importAsset:async()=>{const request=projectRequest();const file=importCanvasAsset?await importCanvasAsset():null;assertProjectRequest(request);if(!file)return null;state.files=[file,...state.files.filter(f=>f.id!==file.id)];await patch({projectAssetIds:[...new Set([...project.projectAssetIds,file.id])]},{quiet:true});assertProjectRequest(request);return file;},
       media:id=>{const f=taskAsset(id);return f?{kind:f.kind,url:assetPreviewUrl(f)}:null;},
       patch:changes=>patch(changes,{quiet:true}),
       plan:async message=>{const request=projectRequest();const result=await api(`/api/drama/projects/${project.id}/agent-plan`,{method:'POST',body:JSON.stringify({message})});assertProjectRequest(request);setCreditBalance(result.balance);return result;},

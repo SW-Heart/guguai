@@ -1706,8 +1706,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=91').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+    dramaControllerPromise = import('./drama-studio.js?v=93').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
   }
@@ -2912,11 +2912,13 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
   const imported = await bridge.media.chooseAndImport({ multiple });
   if (!imported.length) return [];
   const inDialog = context === 'reference';
+  const canvasOnly = context === 'director-canvas';
   const isFrame = inDialog && state.referenceTarget === 'video-frame';
   const isVideoReference = inDialog && state.referenceTarget === 'video';
-  const allowedKinds = inDialog ? (isFrame ? new Set(['image']) : referenceFileKinds()) : new Set(['image', 'video', 'audio']);
+  const allowedKinds = inDialog ? (isFrame ? new Set(['image']) : referenceFileKinds()) : canvasOnly ? new Set(['image', 'video']) : new Set(['image', 'video', 'audio']);
   const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideoReference ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
   let synced = 0;
+  let localImported = 0;
   let selected = 0;
   const processedFiles = [];
   for (const item of imported) {
@@ -2929,7 +2931,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
       toast(`${item.name || '文件'} 超过 ${kind === 'image' ? '20' : '25'} MB`);
       continue;
     }
-    if (!kind || (inDialog && (!allowedKinds.has(kind) || limits[kind] <= 0))) {
+    if (!kind || ((inDialog || canvasOnly) && (!allowedKinds.has(kind) || (inDialog && limits[kind] <= 0)))) {
       discardImported();
       toast(`${item.name || '文件'} 不符合当前入口支持的素材类型`);
       continue;
@@ -2943,6 +2945,20 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
     let job=null;
     try {
       const previewUrl=await bridge.media.url(item.id).catch(()=> '');
+      if (canvasOnly) {
+        if (!previewUrl) throw new Error('本地素材预览地址创建失败');
+        processedFiles.push({
+          ...item,
+          url: previewUrl,
+          previewUrl,
+          localId: item.id,
+          localOnly: true,
+          localStatus: 'saved',
+          remoteStatus: 'local_only',
+        });
+        localImported += 1;
+        continue;
+      }
       job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id, removeLocalOnDiscard:!item.reused });
       if (inDialog) {
         if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到当前模型限制');
@@ -2965,6 +2981,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
   }
   renderReferenceDialog(); resetReferenceDialogScroll(); renderReferences();
   if (!inDialog) await loadFiles();
+  if (localImported) toast(`${localImported} 个素材已加入画布，仅保存在本机`);
   if (synced) toast(`${synced} 个素材已保存到本地并同步到云端`);
   else if (selected) toast(`${selected} 个参考素材已加入，发起创作时同步`);
   return processedFiles;
@@ -2979,6 +2996,10 @@ async function pickAndUploadDramaImage({ context='professional' } = {}) {
 async function pickAndUploadDramaAsset({ context='professional-project' } = {}) {
   const files = await desktopImportToContext(context, { multiple:false });
   return files[0] || null;
+}
+async function pickAndImportDramaCanvasAsset() {
+  const files = await desktopImportToContext('director-canvas', { multiple:false });
+  return files.find(file => file?.kind === 'image' || file?.kind === 'video') || null;
 }
 $('#uploadButton').onclick = () => openUploadPicker('library');
 function videoGenerationParameters(modelId=$('#videoModel')?.value) {

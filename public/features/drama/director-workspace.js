@@ -1,11 +1,12 @@
-import { CanvasApi } from '../../vendor/director/whiteboard.js?v=1';
-import { normalizeDirectorWorkspace, applyDirectorEdit } from './director-actions.js?v=1';
+import { CanvasApi } from '../../vendor/director/whiteboard.js?v=2';
+import { normalizeDirectorWorkspace, applyDirectorEdit } from './director-actions.js?v=2';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
 const paid=new Set(['generate_resource','generate_video','assemble','read_tail']);
 export function createDirectorWorkspace(host, bridge) {
   let canvas, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
+  const assetSizes=new Map(), assetSizeLoads=new Map();
   const get=()=>bridge.project();
   const workspace=()=>{const p=get();return p.directorWorkspace ||= normalizeDirectorWorkspace();};
   const save=async()=>{const result=await bridge.patch({directorWorkspace:workspace()});if(!result)throw new Error('工作台状态未保存，请重试');};
@@ -13,12 +14,40 @@ export function createDirectorWorkspace(host, bridge) {
   function nodes() {
     const p=get();return [...bridge.imported().map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),{id:'story',kind:'story',title:'剧情',text:p.synopsis||p.script||'写下一句话，让故事从这里开始。'},...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
   }
-  function position(n,i) {if(n.kind==='asset')return workspace().positions[n.id]||{x:40+i*330,y:-140};i-=bridge.imported().length;return workspace().positions[n.id]||{x:n.kind==='story'?40:n.kind==='resource'?410:790+Math.floor((i-1-get().resources.length)/3)*350,y:n.kind==='story'?160:n.kind==='resource'?40+(i-1)*300:40+((i-1-get().resources.length)%3)*300};}
+  function position(n,i) {if(n.kind==='asset')return workspace().positions[n.id]||{x:40+i*300,y:-140};i-=bridge.imported().length;return workspace().positions[n.id]||{x:n.kind==='story'?40:n.kind==='resource'?360:700+Math.floor((i-1-get().resources.length)/3)*320,y:n.kind==='story'?160:n.kind==='resource'?40+(i-1)*260:40+((i-1-get().resources.length)%3)*260};}
+  function assetBounds(url){
+    const size=assetSizes.get(url);
+    if(!size)return {width:280,height:220};
+    const scale=Math.min(280/size.width,220/size.height,1);
+    return {width:Math.max(24,Math.round(size.width*scale)),height:Math.max(24,Math.round(size.height*scale))};
+  }
+  function loadAssetSize(id,url){
+    if(assetSizes.has(url)||assetSizeLoads.has(url))return;
+    const image=new Image();
+    assetSizeLoads.set(url,image);
+    image.onload=()=>{
+      assetSizeLoads.delete(url);
+      if(!image.naturalWidth||!image.naturalHeight)return;
+      assetSizes.set(url,{width:image.naturalWidth,height:image.naturalHeight});
+      const current=canvas?.getNodeConfigById(id);
+      if(current?.$_type==='image'&&current.$_imageUrl===url){
+        const bounds=assetBounds(url);
+        canvas.updateNodes([id],bounds);
+      }
+    };
+    image.onerror=()=>assetSizeLoads.delete(url);
+    image.src=url;
+  }
   function nodeContent(n) {
+    // Imported images are real whiteboard image nodes. They intentionally have
+    // no business card chrome; the canvas owns their selection, resize, crop
+    // and layer interactions. Videos still use the media card below because
+    // this bundled whiteboard has no native video node type.
+    if(n.kind==='asset'&&n.media?.kind==='image')return '';
     const t=bridge.task(n.taskId);const media=n.media||bridge.media(n.taskId);const action=workspace().plan?.actions?.find(a=>a.targetId===n.id&&['running','failed'].includes(a.status));
     const status=action?labels[action.status]:t?(labels[t.status]||t.status):n.kind==='asset'?'已导入':n.kind==='story'&&get().script?'已设计':'待制作';
     const locked=workspace().lockedIds.includes(n.id);
-    return `<article style="box-sizing:border-box;width:300px;height:250px;border:1px solid ${action?.status==='failed'?'#d66b64':'#dfe2ee'};border-radius:16px;background:#fff;color:#24283d;overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #26345b0b"><header style="padding:14px 16px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #eef0f6"><b>${escape(n.title)}</b><span style="font-size:12px;color:#535c86">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} style="width:100%;height:142px;object-fit:contain;background:#f1f2f8" >${media.kind==='video'?'</video>':''}`:`<p style="padding:0 16px;height:142px;overflow:auto;white-space:pre-wrap;line-height:1.7">${escape(n.text)}</p>`}<footer style="padding:8px 16px;font-size:12px;color:#636b83">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':'故事蓝图'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></article>`;
+    return `<article class="dw-node${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}" style="box-sizing:border-box;width:280px;height:228px;border:1px solid ${action?.status==='failed'?'#d66b64':'#dfe2ee'};border-radius:16px;background:#fff;color:#24283d;overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #26345b0b"><header style="padding:12px 14px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #eef0f6"><b>${escape(n.title)}</b><span style="font-size:12px;color:#535c86">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} style="width:100%;height:124px;object-fit:contain;background:#f1f2f8" >${media.kind==='video'?'</video>':''}`:`<p style="padding:0 14px;height:124px;overflow:auto;white-space:pre-wrap;line-height:1.65">${escape(n.text)}</p>`}<footer style="padding:7px 14px;font-size:12px;color:#636b83">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':'故事蓝图'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></article>`;
   }
   function syncCanvas() {
     if(!canvas)return;syncing=true;
@@ -26,14 +55,53 @@ export function createDirectorWorkspace(host, bridge) {
     const links=ns.filter(n=>n.kind!=='story'&&n.kind!=='asset').map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id}));
     const valid=new Set([...ns.map(n=>n.id),...links.map(l=>`edge-${l.to}`)]);
     canvas.deleteNodes([...existing.keys()].filter(id=>!valid.has(id)));
-    ns.forEach((n,i)=>{const html=nodeContent(n);const old=existing.get(n.id);const pos=position(n,i);if(!old)canvas.createNodes([{id:n.id,$_type:'html',$_actualType:'director',$_htmlContent:html,width:300,height:250,...pos,draggable:true}],false);else if(old.$_htmlContent!==html)canvas.updateNodes([n.id],{$_htmlContent:html});});
-    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:[from.x+300,from.y+125,to.x,to.y+125],stroke:'#b7bad4',fill:'#b7bad4',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
+    ns.forEach((n,i)=>{
+      const old=existing.get(n.id);const pos=position(n,i);
+      if(n.kind==='asset'&&n.media?.kind==='image'){
+        const url=n.media?.url;
+        if(!url)return;
+        loadAssetSize(n.id,url);
+        const bounds=assetBounds(url);
+        // Replace the old custom HTML card in place.  Keeping the project id
+        // as the canvas id means selections and saved positions remain stable.
+        if(old && (old.$_type!=='image'||old.$_imageUrl!==url)){
+          canvas.deleteNodes([n.id]);
+          canvas.createNodes([{id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,...bounds,...pos,draggable:true}],false);
+        }else if(!old){
+          canvas.createNodes([{id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,...bounds,...pos,draggable:true}],false);
+        }else if(old.x!==pos.x||old.y!==pos.y){
+          canvas.updateNodes([n.id],{x:pos.x,y:pos.y});
+        }
+        return;
+      }
+      const html=nodeContent(n);
+      if(!old)canvas.createNodes([{id:n.id,$_type:'html',$_actualType:'director',$_htmlContent:html,width:280,height:228,...pos,draggable:true}],false);
+      else if(old.$_type==='html'&&old.$_htmlContent!==html)canvas.updateNodes([n.id],{$_htmlContent:html});
+    });
+    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:[from.x+280,from.y+114,to.x,to.y+114],stroke:'#b7bad4',fill:'#b7bad4',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
+    syncing=false;
+  }
+  function syncEdges(snapshotNodes=canvas?.getState().nodes||[]) {
+    if(!canvas)return;
+    const ns=nodes();
+    const links=ns.filter(n=>n.kind!=='story'&&n.kind!=='asset').map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id}));
+    const byId=new Map(snapshotNodes.map(node=>[node.id,node]));
+    const updates=[];
+    links.forEach(link=>{
+      const from=byId.get(link.from),to=byId.get(link.to);
+      if(!from||!to)return;
+      updates.push({id:`edge-${link.to}`,points:[from.x+280,from.y+114,to.x,to.y+114]});
+    });
+    if(!updates.length)return;
+    syncing=true;
+    updates.forEach(({id,points})=>{if(canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});});
     syncing=false;
   }
   function drawPanels() {
     if(!canvas)return;
     const w=workspace(),p=get(),plan=w.plan;
     host.querySelector('[data-director-mode]').value=w.autonomy;
+    host.querySelector('[data-director-mode]').disabled=busy;
     host.querySelector('[data-director-delegate]').disabled=busy;
     host.querySelector('[data-director-stop]').hidden=!busy;
     const messages=host.querySelector('.dw-messages');const stickToBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<60;
@@ -44,7 +112,10 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('.dw-plan').innerHTML=plan?`<b>${escape(plan.summary)}</b><p>${plan.actions.filter(a=>a.status==='succeeded').length} / ${plan.actions.length} 项已完成</p><details><summary>查看制作计划</summary>${plan.actions.map(a=>`<p>${escape(a.label)} · ${labels[a.status]||a.status}${a.error?`：${escape(a.error)}`:''}</p>`).join('')}</details>${!busy&&plan.actions.some(a=>a.status!=='succeeded')?'<button data-confirm class="dw-primary">确认并继续制作</button>':''}`:'';
     if(planOpen&&host.querySelector('.dw-plan details'))host.querySelector('.dw-plan details').open=true;
     host.querySelector('[data-confirm]')?.addEventListener('click',()=>void resume());
-    host.querySelector('[data-director-send]').disabled=busy;
+    const sendButton=host.querySelector('[data-director-send]');
+    sendButton.disabled=busy;
+    sendButton.textContent=busy?'处理中…':'发送';
+    sendButton.setAttribute('aria-busy',String(busy));
     if(stickToBottom)messages.scrollTop=messages.scrollHeight;
     if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();syncCanvas();
   }
@@ -85,7 +156,7 @@ export function createDirectorWorkspace(host, bridge) {
     const token=epoch;busy=true;stopped=false;
     if(!automatic)workspace().messages.push({id:crypto.randomUUID(),role:'user',text:messageText});
     drawPanels();
-    try {await save();const result=await bridge.plan(messageText+(selected?`\n当前选中节点 ID：${selected}`:''));if(token!==epoch)return;workspace().plan=result.plan;message(result.plan.summary);await save();busy=false;drawPanels();if(!stopped&&workspace().autonomy!=='assist')await run(false);}
+    try {await save();const result=await bridge.plan(messageText+(selected?`\n当前选中节点 ID：${selected}`:''));if(token!==epoch)return;workspace().plan=result.plan;message(result.plan.summary);await save();const shouldRun=!stopped&&workspace().autonomy!=='assist';busy=false;if(shouldRun)await run(false);else drawPanels();}
     catch(e){if(token===epoch){message(e.message);busy=false;await save().catch(()=>{});drawPanels();}}
   }
   async function run(confirmed=false) {
@@ -128,26 +199,36 @@ export function createDirectorWorkspace(host, bridge) {
   function mount() {
     if(projectId===get().id&&canvas&&host.querySelector('.dw-canvas')){drawPanels();return;}
     dispose();projectId=get().id;
-    host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas" aria-label="无限分镜画布"></div><div class="dw-canvas-actions"><button data-import title="导入素材到画布">＋ 导入素材</button><button data-show-agent hidden>打开导演</button></div><section class="dw-inspector" hidden></section><footer class="dw-tools"><button data-select-tool aria-label="选择节点" title="选择并移动节点">选择</button><button data-hand-tool aria-label="平移画布" title="拖动画布">平移</button><span class="dw-tool-divider"></span><button data-zoom-out aria-label="缩小">−</button><output>75%</output><button data-zoom-in aria-label="放大">＋</button><button data-fit title="自动排列并查看全部节点">整理</button><button data-layout-undo title="撤销上次整理">撤销</button></footer></section><aside class="dw-agent"><header><b>导演</b><select data-director-mode aria-label="导演自治等级"><option value="assist">辅助模式</option><option value="director">导演模式</option><option value="auto">全自动模式</option></select><button data-hide-agent aria-label="收起导演对话" title="收起对话，扩大画布">→</button></header><div class="dw-messages" aria-live="polite"></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉导演你的目标</label><textarea id="directorMessage" placeholder="想拍什么？或选中画面告诉我怎么改…" rows="3"></textarea><div><button data-director-delegate type="button" title="接管当前项目，完成剩余制作">委托导演</button><button data-director-stop type="button" hidden>暂停</button><button data-director-send class="dw-primary" type="submit" aria-label="发送给导演">发送</button></div></form></aside></section>`;
+    host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas" aria-label="无限分镜画布"></div><div class="dw-canvas-actions"><button data-import title="导入素材到画布">＋ 导入素材</button><button data-show-agent hidden>打开导演</button></div><section class="dw-inspector" hidden></section><footer class="dw-tools" aria-label="画布工具"><button data-tool="select" aria-label="选择节点" title="选择并移动节点">选择</button><button data-tool="hand" aria-label="平移画布" title="拖动画布">平移</button><button data-tool="text" aria-label="添加文字" title="在画布上添加文字">文字</button><button data-tool="rectangle" aria-label="添加形状" title="绘制形状">形状</button><button data-tool="arrow" aria-label="添加箭头" title="连接节点">箭头</button><button data-tool="brush" aria-label="画笔" title="自由绘制">画笔</button><span class="dw-tool-divider"></span><button data-zoom-out aria-label="缩小">−</button><output>75%</output><button data-zoom-in aria-label="放大">＋</button><button data-fit title="自动排列并查看全部节点">整理</button><button data-layout-undo title="撤销上次整理">撤销</button></footer></section><aside class="dw-agent"><header><b>导演</b><select data-director-mode aria-label="导演自治等级"><option value="assist">辅助模式</option><option value="director">导演模式</option><option value="auto">全自动模式</option></select><button data-hide-agent aria-label="收起导演对话" title="收起对话，扩大画布">→</button></header><div class="dw-messages" aria-live="polite"></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉导演你的目标</label><textarea id="directorMessage" placeholder="想拍什么？或选中画面告诉我怎么改…" rows="3"></textarea><div><button data-director-delegate type="button" title="接管当前项目，完成剩余制作">委托导演</button><button data-director-stop type="button" hidden>暂停</button><button data-director-send class="dw-primary" type="submit" aria-label="发送给导演">发送</button></div></form></aside></section>`;
     canvas=new CanvasApi(host.querySelector('.dw-canvas'));canvas.updateViewport(workspace().viewport);
-    canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';if(next!==selected)inspectorOpen=false;selected=next;drawInspector();});
-    canvas.on('state:change',snapshot=>{if(syncing)return;const positions=Object.fromEntries(snapshot.nodes.filter(n=>nodes().some(x=>x.id===n.id)).map(n=>[n.id,{x:n.x,y:n.y}]));workspace().positions=positions;workspace().viewport=snapshot.viewport;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
+    canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';if(next!==selected)inspectorOpen=false;selected=next;drawInspector();syncCanvas();});
+    let edgeFrame=0;
+    let latestSnapshot=null;
+    const queueEdgeSync=snapshot=>{latestSnapshot=snapshot;if(edgeFrame)return;edgeFrame=requestAnimationFrame(()=>{edgeFrame=0;const next=latestSnapshot;latestSnapshot=null;if(next)syncEdges(next.nodes);});};
+    canvas.on('state:change',snapshot=>{if(syncing)return;queueEdgeSync(snapshot);const visibleIds=new Set(nodes().map(item=>item.id));const positions=Object.fromEntries(snapshot.nodes.filter(n=>visibleIds.has(n.id)).map(n=>[n.id,{x:n.x,y:n.y}]));workspace().positions=positions;workspace().viewport=snapshot.viewport;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
     canvas.on('viewport:change',v=>{workspace().viewport=v;host.querySelector('output').textContent=`${Math.round(v.scale*100)}%`;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
     host.querySelector('[data-director-mode]').onchange=async e=>{workspace().autonomy=e.target.value;stopped=busy;await save();};
     host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim();if(text){draft='';input.value='';void submit(text);}};
     host.querySelector('#directorMessage').value=draft;
-    host.querySelector('#directorMessage').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!busy)host.querySelector('.dw-composer').requestSubmit();}};
+    const composerInput=host.querySelector('#directorMessage');
+    const resizeComposer=()=>{composerInput.style.height='auto';composerInput.style.height=`${Math.min(180,Math.max(76,composerInput.scrollHeight))}px`;};
+    composerInput.addEventListener('input',resizeComposer);
+    composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!busy)host.querySelector('.dw-composer').requestSubmit();}};
+    composerInput.addEventListener('focus',()=>host.querySelector('.dw-composer').classList.add('is-focused'));
+    composerInput.addEventListener('blur',()=>host.querySelector('.dw-composer').classList.remove('is-focused'));
+    resizeComposer();
     host.querySelector('.dw-canvas').addEventListener('dblclick',event=>{if(selected&&!event.target.closest('video,input,textarea,button')){inspectorOpen=true;drawInspector();}});
     host.querySelector('.director-workspace').addEventListener('keydown',event=>{if(event.key==='Escape'){inspectorOpen=false;selected='';canvas.selectNodes([]);drawInspector();}});
 
-    const toggleAgent=collapsed=>{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed;};
+    const toggleAgent=collapsed=>{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed; if(!collapsed)requestAnimationFrame(()=>composerInput.focus());};
     host.querySelector('[data-hide-agent]').onclick=()=>toggleAgent(true);
     host.querySelector('[data-show-agent]').onclick=()=>toggleAgent(false);
     host.querySelector('[data-import]').onclick=async()=>{try{const file=await bridge.importAsset();if(!file)return;const v=canvas.getState().viewport;workspace().positions[file.id]={x:(80-v.x)/v.scale,y:(100-v.y)/v.scale};await save();syncCanvas();canvas.selectNodes([file.id]);}catch(e){bridge.toast(e.message);}};
     host.querySelector('[data-director-delegate]').onclick=()=>void delegate();
     host.querySelector('[data-director-stop]').onclick=()=>{stopped=true;message('将在当前任务结束后暂停，你可以接管继续修改。');drawPanels();};
-    host.querySelector('[data-select-tool]').onclick=()=>canvas.setToolType('select');
-    host.querySelector('[data-hand-tool]').onclick=()=>canvas.setToolType('hand');
+    const setTool=type=>{canvas.setToolType(type);host.querySelectorAll('[data-tool]').forEach(button=>{const active=button.dataset.tool===type;button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active));});};
+    host.querySelectorAll('[data-tool]').forEach(button=>{button.onclick=()=>setTool(button.dataset.tool);});
+    setTool('select');
     host.querySelector('[data-zoom-in]').onclick=()=>canvas.updateViewport({scale:Math.min(3,canvas.getState().viewport.scale*1.2)});
     host.querySelector('[data-zoom-out]').onclick=()=>canvas.updateViewport({scale:Math.max(.1,canvas.getState().viewport.scale/1.2)});
     host.querySelector('[data-fit]').onclick=()=>{layoutHistory.push(structuredClone(workspace().positions));layoutHistory=layoutHistory.slice(-30);workspace().positions={};syncing=true;nodes().forEach((n,i)=>canvas.updateNodes([n.id],position(n,i)));syncing=false;canvas.scrollToContent({padding:40,scale:true});void save();};

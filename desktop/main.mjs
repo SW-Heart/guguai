@@ -890,6 +890,10 @@ async function serveLocalMedia(request) {
     'Cache-Control': 'private, max-age=0, must-revalidate',
     'Content-Length': String(Math.max(0, end - start + 1)),
     'Content-Type': localMediaMimeType(asset, target),
+    // CanvasApi loads images with crossOrigin="anonymous" so it can resize,
+    // crop and export them. The local protocol needs an explicit CORS
+    // response for that browser image element to accept the bytes.
+    'Access-Control-Allow-Origin': '*',
     'X-Content-Type-Options': 'nosniff',
   };
   const status = range ? 206 : 200;
