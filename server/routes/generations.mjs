@@ -44,6 +44,10 @@ export function createGenerationRouteHandler({
   fixedModels,
   imageSizes,
   imageModelIds,
+  tuziImageModelId,
+  tuziImageSizes,
+  tuziImageTiers,
+  tuziImageCredits,
   videoModelIds,
   legacyVideoModelIds,
   storyboardEngineVersion,
@@ -55,6 +59,7 @@ export function createGenerationRouteHandler({
 }) {
   function providerReady(provider, type, videoRequest) {
     if (provider === 'duomi') return providerAvailability.duomi;
+    if (provider === 'tuzi') return providerAvailability.tuzi;
     if (provider === 'ttapi') return providerAvailability.ttapi;
     if (provider === 'cntcn') return providerAvailability.cntcn;
     if (provider === 'autodl') return providerAvailability.autodl;
@@ -71,6 +76,8 @@ export function createGenerationRouteHandler({
     ...(imageModelIds ? [...imageModelIds] : []),
   ].filter(Boolean));
   const midjourneyModelId = 'midjourney';
+  const midjourneyOutputCount = 4;
+  const midjourneyImageCredits = 4;
   const imageQualities = new Set(['low', 'medium', 'high']);
   const midjourneyVersions = new Set(['6', '6.1', '7', '8', '8.1', '8.2']);
   const midjourneyQualities = new Set(['0.25', '0.5', '1', '2', '4']);
@@ -101,6 +108,9 @@ export function createGenerationRouteHandler({
       imageWeight: Number(imageWeight.toFixed(2)),
       tile: Boolean(input.tile), raw: Boolean(input.raw), draft: Boolean(input.draft),
     };
+  }
+  function isMidjourneyOutputChild(task) {
+    return task?.modelId === midjourneyModelId && Number(task.midjourneyOutputIndex) > 0;
   }
 
   async function handleModelQuote(req, res, url) {
@@ -169,7 +179,7 @@ export function createGenerationRouteHandler({
         task.awaitingReferences = false;
         task.progressStage = 'submitting';
         saveGeneration(user.id, task);
-        enqueueGenerationJob({ userId:user.id, generationId:task.id });
+        if (!isMidjourneyOutputChild(task)) enqueueGenerationJob({ userId:user.id, generationId:task.id });
       }
       return sendJson(res, 202, { tasks:tasks.map(publicGeneration), balance:walletOf(user.id).balance }), true;
     }
@@ -255,6 +265,7 @@ export function createGenerationRouteHandler({
     const requestedImageModelId = type === 'image' ? String(input.modelId ?? fixedModels.image).trim().toLowerCase() : '';
     if (type === 'image' && !supportedImageModelSet.has(requestedImageModelId)) return sendJson(res, 400, { error:'不支持的图片模型' }), true;
     const isMidjourney = requestedImageModelId === midjourneyModelId;
+    const isTuziImage = requestedImageModelId === tuziImageModelId;
     const midjourneyOptions = isMidjourney ? normalizeMidjourneyOptions(input.midjourneyOptions) : null;
     const promptMaxLength = type === 'image' ? 5000 : [videoModelIds.MINIMAX_H3_15S, legacyVideoModelIds.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
     if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error:`${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` }), true;
@@ -264,9 +275,12 @@ export function createGenerationRouteHandler({
       if (!Number.isFinite(requestedDuration) || requestedDuration !== Number(dramaShot.duration)) return sendJson(res, 409, { error:`分镜时长已保存为 ${dramaShot.duration} 秒，请刷新页面后再生成` }), true;
       input.duration = Number(dramaShot.duration);
     }
-    const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || '16:9')) : null;
-    if (type === 'image' && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
-    if (type === 'image' && !isMidjourney && !imageQualities.has(String(input.quality || 'medium'))) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
+    const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || (isTuziImage ? 'auto' : '16:9'))) : null;
+    if (type === 'image' && isTuziImage && !tuziImageSizes.has(size)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 图片尺寸' }), true;
+    if (type === 'image' && !isTuziImage && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
+    const imageQuality = String(input.quality || (isTuziImage ? '1k' : 'medium')).toLowerCase();
+    if (type === 'image' && isTuziImage && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 清晰度' }), true;
+    if (type === 'image' && !isMidjourney && !isTuziImage && !imageQualities.has(imageQuality)) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
     const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
@@ -281,14 +295,24 @@ export function createGenerationRouteHandler({
     if (!isModelEnabled(modelId)) return sendJson(res, 503, { error:'当前模型暂不可用' }), true;
     const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
-    const provider = type === 'image' ? 'duomi' : routeSelection?.provider || videoRequest.provider;
+    const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;
-    if (!providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:provider === 'cntcn' ? `${type === 'image' ? '图片' : '视频'}生成服务尚未配置` : '视频生成服务尚未配置' }), true;
+    if (!providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:type === 'image' ? '图片生成服务尚未配置' : '视频生成服务尚未配置' }), true;
     const pricing = currentPricing();
-    const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second' ? { ...pricing, videoPerSecondMicro:creditsToMicro(videoRequest.pricing.amount) } : pricing;
-    const quantity = input.quantity === undefined ? 1 : Number(input.quantity);
-    const maxQuantity = type === 'image' ? 10 : 4;
-    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantity) return sendJson(res, 400, { error:`${type === 'image' ? '图片' : '视频'}生成数量需为 1–${maxQuantity} 的整数` }), true;
+    const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
+      ? { ...pricing, videoPerSecondMicro:creditsToMicro(videoRequest.pricing.amount) }
+      : isMidjourney
+        ? { ...pricing, imagePerRequestMicro:creditsToMicro(midjourneyImageCredits) }
+      : isTuziImage
+        ? { ...pricing, imagePerRequestMicro:creditsToMicro(tuziImageCredits[imageQuality]) }
+        : pricing;
+    const quantity = input.quantity === undefined ? (isMidjourney ? midjourneyOutputCount : 1) : Number(input.quantity);
+    const maxQuantity = type === 'image' ? (isMidjourney ? 8 : 10) : 4;
+    const invalidMidjourneyQuantity = isMidjourney && quantity % midjourneyOutputCount !== 0;
+    if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantity || invalidMidjourneyQuantity) {
+      const message = isMidjourney ? 'Midjourney 生成数量需为 4 的倍数（4–8）' : `${type === 'image' ? '图片' : '视频'}生成数量需为 1–${maxQuantity} 的整数`;
+      return sendJson(res, 400, { error:message }), true;
+    }
     const taskIds = generationRequestId ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`) : Array.from({ length:quantity }, () => randomId());
     const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
     const pricingSnapshotValue = routeSelection
@@ -296,18 +320,35 @@ export function createGenerationRouteHandler({
       : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
     if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error:'当前价格已变化，请刷新价格后重试', code:'PRICE_CHANGED', price:{ credits:pricingSnapshotValue.total, yuan:pricingSnapshotValue.salePriceYuan, priceVersion:pricingSnapshotValue.priceVersion } }), true;
     const batchId = quantity > 1 ? randomId() : '';
-    const tasks = Array.from({ length:quantity }, (_, index) => ({
-      ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
-      id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
-      model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
-      quality:type === 'image' ? (isMidjourney ? midjourneyOptions.quality : String(input.quality || 'medium')) : videoRequest.quality, aspectRatio, duration,
-      ...(isMidjourney ? { midjourneyOptions } : {}),
-      ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
-      ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
-      ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),
-      creditCost:pricingSnapshotValue.total, creditCostMicro:pricingSnapshotValue.totalMicro, pricingVersion:pricingSnapshotValue.version, pricingSnapshot:pricingSnapshotValue,
-      creditStatus:'charged', status:'queued', providerTaskId:'', assetId:'', error:'', ...(deferredReferences ? { awaitingReferences:true, expectedReferenceCounts:referenceCounts, progressStage:'preparing_references' } : {}), createdAt:now(), updatedAt:now(), finishedAt:null,
-    }));
+    const tasks = Array.from({ length:quantity }, (_, index) => {
+      const outputIndex = isMidjourney ? index % midjourneyOutputCount : null;
+      const groupIndex = isMidjourney ? Math.floor(index / midjourneyOutputCount) : null;
+      const outputIds = isMidjourney
+        ? taskIds.slice(groupIndex * midjourneyOutputCount, (groupIndex + 1) * midjourneyOutputCount)
+        : [];
+      const isIncludedOutput = isMidjourney && outputIndex > 0;
+      return {
+        ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
+        id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
+        model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
+        quality:type === 'image' ? (isMidjourney ? midjourneyOptions.quality : imageQuality) : videoRequest.quality, aspectRatio, duration,
+        ...(isMidjourney ? {
+          midjourneyOptions,
+          midjourneyOutputGroupIndex:groupIndex + 1,
+          midjourneyOutputIndex:outputIndex,
+          midjourneyOutputCount,
+          midjourneyOutputIds:outputIds,
+          midjourneyPrimaryId:outputIds[0],
+        } : {}),
+        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
+        ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
+        ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),
+        creditCost:isIncludedOutput ? 0 : pricingSnapshotValue.total,
+        creditCostMicro:isIncludedOutput ? 0 : pricingSnapshotValue.totalMicro,
+        pricingVersion:pricingSnapshotValue.version, pricingSnapshot:pricingSnapshotValue,
+        creditStatus:isIncludedOutput ? 'included' : 'charged', status:'queued', providerTaskId:'', assetId:'', error:'', ...(deferredReferences ? { awaitingReferences:true, expectedReferenceCounts:referenceCounts, progressStage:'preparing_references' } : {}), createdAt:now(), updatedAt:now(), finishedAt:null,
+      };
+    });
     const existingTasks = tasks.map(task => findGeneration(user.id, task.id, scope));
     if (existingTasks.some(Boolean)) {
       if (!existingTasks.every(Boolean)) return sendJson(res, 409, { error:'重复生成请求的任务记录不完整，请联系支持' }), true;
@@ -317,12 +358,12 @@ export function createGenerationRouteHandler({
       if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(existingTasks[0]), balance:walletOf(user.id).balance, ...boundProject }), true;
       return sendJson(res, 202, { tasks:existingTasks.map(publicGeneration), quantity, balance:walletOf(user.id).balance, ...boundProject }), true;
     }
-    const chargeItems = tasks.map((task, index) => ({ generationId:task.id, costMicro:task.creditCostMicro, metadata:{ modelId, contentType:type, provider, pricingVersion:task.pricingVersion, onCharged:() => { saveGeneration(user.id, task); if (generationRequestId && index === 0) createGenerationRequest({ userId:user.id, idempotencyKey:generationRequestId, requestHash:requestFingerprint, generationIds:taskIds }); if (!task.awaitingReferences) enqueueGenerationJob({ userId:user.id, generationId:task.id }); } } }));
+    const chargeItems = tasks.map((task, index) => ({ generationId:task.id, costMicro:task.creditCostMicro, metadata:{ modelId, contentType:type, provider, pricingVersion:task.pricingVersion, onCharged:() => { saveGeneration(user.id, task); if (generationRequestId && index === 0) createGenerationRequest({ userId:user.id, idempotencyKey:generationRequestId, requestHash:requestFingerprint, generationIds:taskIds }); if (!task.awaitingReferences && !isMidjourneyOutputChild(task)) enqueueGenerationJob({ userId:user.id, generationId:task.id }); } } }));
     const charged = quantity === 1 ? await chargeGenerationMicro(user.id, tasks[0].id, tasks[0].creditCostMicro, chargeItems[0].metadata) : await chargeGenerationBatchMicro(user.id, chargeItems);
     if (charged.error) return sendJson(res, charged.status, { error:charged.error, balance:charged.balance }), true;
     const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id, scope) || task);
     if (bindDramaTasks) { for (const task of effectiveTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id); dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id; await saveDramaProject(user.id, dramaProject); }
-    effectiveTasks.forEach(task => { if (task.status === 'queued' && !task.awaitingReferences) enqueueGenerationJob({ userId:user.id, generationId:task.id }); });
+    effectiveTasks.forEach(task => { if (task.status === 'queued' && !task.awaitingReferences && !isMidjourneyOutputChild(task)) enqueueGenerationJob({ userId:user.id, generationId:task.id }); });
     const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
     if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(effectiveTasks[0]), balance:charged.balance, ...boundProject }), true;
     return sendJson(res, 202, { tasks:effectiveTasks.map(publicGeneration), quantity, balance:charged.balance, ...boundProject }), true;

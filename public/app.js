@@ -1694,7 +1694,7 @@ let viralController = null;
 let viralControllerPromise = null;
 function ensureViralController() {
   if (viralController) return Promise.resolve(viralController);
-  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=1').then(({createViralLab}) => {
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=8').then(({createViralLab}) => {
     viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
     return viralController;
   }).catch(error => { viralControllerPromise = null; throw error; });
@@ -1706,7 +1706,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=93').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=94').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -2297,6 +2297,7 @@ function historyTaskMeta(task) {
   return `${type} · ${generationModelName(task)} · ${parameter}`;
 }
 function historyTaskCredit(task) {
+  if (task.creditStatus === 'included') return '';
   const cost = Number(task.creditCost);
   if (!Number.isFinite(cost)) return '';
   if (task.creditStatus === 'refunded') return `${cost} 积分 · 已退回`;
@@ -2429,6 +2430,7 @@ function generationModelName(task) {
   const modelId = String(task?.videoModelId || task?.modelId || task?.model || '').trim();
   if (!modelId) return '—';
   if (modelId === 'gpt-image-2') return 'GPT Image 2';
+  if (modelId === 'gpt-image-2.5') return 'GPT Image 2.5';
   if (modelId === 'midjourney') return 'Midjourney';
   const configuredModels = Array.isArray(state.config?.videoCapabilities?.models) ? state.config.videoCapabilities.models : [];
   const model = [...configuredModels, ...fallbackVideoModels].find(item => item.id === modelId);
@@ -2457,13 +2459,18 @@ function generationParameterRows(task) {
   if (task.type === 'image') {
     if (task.modelId === 'midjourney') {
       const options = task.midjourneyOptions || {};
-      rows.push(detailRow('画幅', options.aspectRatio || task.size || '—'));
+      rows.push(detailRow('画面比例', options.aspectRatio || task.size || '—'));
       rows.push(detailRow('版本', options.version ? `V${options.version}` : '—'));
       rows.push(detailRow('质量', options.quality || '—'));
       rows.push(detailRow('风格化 / 混乱度', `${options.stylize ?? 100} / ${options.chaos ?? 0}`));
       if (options.negativePrompt) rows.push(detailRow('排除内容', options.negativePrompt));
+    } else if (task.modelId === 'gpt-image-2.5') {
+      const selection = tuziSelectionForSize(task.size, task.quality);
+      rows.push(detailRow('画面比例', selection.aspect === 'auto' ? '自动' : selection.aspect));
+      rows.push(detailRow('输出尺寸', task.size === 'auto' ? '自动' : String(task.size || '—').replace('x', ' × ')));
+      rows.push(detailRow('清晰度', String(task.quality || '1k').toUpperCase()));
     } else {
-      rows.push(detailRow('画布比例', task.size || '—'));
+      rows.push(detailRow('画面比例', task.size || '—'));
       rows.push(detailRow('质量', imageQualityLabels[task.quality] || task.quality || '—'));
     }
     if (Number(task.batchSize) > 1) rows.push(detailRow('生成数量', `${task.batchSize} 张`));
@@ -2479,7 +2486,7 @@ function generationParameterRows(task) {
 function generationSupplementalRows(task, fileText, fileInfoId='generationDetailFile') {
   if (!task) return '';
   const credit = Number.isFinite(Number(task.creditCost)) ? `${task.creditCost} 积分` : '—';
-  const creditText = task.creditStatus === 'refunded' ? `${credit} · 已退回` : task.creditStatus === 'refund_failed' ? `${credit} · 退款异常` : credit;
+  const creditText = task.creditStatus === 'included' ? '已包含在本次 Midjourney 生成中' : task.creditStatus === 'refunded' ? `${credit} · 已退回` : task.creditStatus === 'refund_failed' ? `${credit} · 退款异常` : credit;
   return detailRow('内容类型', task.type === 'image' ? '图片' : '视频')
     + detailRow('参考素材', generationReferenceText(task))
     + detailRow('文件信息', fileText, fileInfoId)
@@ -2591,7 +2598,7 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
     if (taskModelId === 'midjourney') {
       const options = task.midjourneyOptions || {};
       if (options.aspectRatio) $('#imageMjAspect').value = options.aspectRatio;
-      if (options.version) $('#imageMjVersion').value = options.version;
+      $('#imageMjVersion').value = '8.2';
       if (options.quality) $('#imageMjQuality').value = options.quality;
       if (options.stylize !== undefined) $('#imageMjStylize').value = options.stylize;
       if (options.chaos !== undefined) $('#imageMjChaos').value = options.chaos;
@@ -2600,11 +2607,19 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
       if (options.imageWeight !== undefined) $('#imageMjImageWeight').value = options.imageWeight;
       $('#imageMjNegative').value = options.negativePrompt || '';
       $('#imageMjRaw').checked = Boolean(options.raw); $('#imageMjTile').checked = Boolean(options.tile); $('#imageMjDraft').checked = Boolean(options.draft);
-      ['imageMjAspect','imageMjVersion','imageMjQuality'].forEach(refreshProductSelect);
+      syncRatioGridSelection($('.ratio-grid[data-select="imageMjAspect"]'), $('#imageMjAspect').value);
+      syncSegmentedControl('imageMjQuality');
       syncMidjourneyRangeLabels();
+    } else if (taskModelId === 'gpt-image-2.5') {
+      const selection = tuziSelectionForSize(task.size, task.quality);
+      $('#imageTuziAspect').value = selection.aspect;
+      $('#imageTuziQuality').value = selection.quality;
+      syncRatioGridSelection($('.ratio-grid[data-select="imageTuziAspect"]'), selection.aspect);
+      syncSegmentedControl('imageTuziQuality');
+      syncTuziImageParameters();
     } else {
-      if (task.size) { $('#imageSize').value = task.size; $$('.ratio-grid [data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === task.size)); const extra = $(`.ratio-extra[data-value="${CSS.escape(task.size)}"]`); if (extra) { extra.classList.remove('hidden'); $('#moreRatios').setAttribute('aria-expanded', 'true'); } }
-      if (task.quality) { $('#imageQuality').value = task.quality; $$('.segmented[data-select="imageQuality"] button').forEach(button => button.classList.toggle('selected', button.dataset.value === task.quality)); }
+      if (task.size) { $('#imageSize').value = task.size; syncRatioGridSelection($('.ratio-grid[data-select="imageSize"]'), task.size); }
+      if (task.quality) { $('#imageQuality').value = task.quality; syncSegmentedControl('imageQuality'); }
     }
   }
   if (carryPrompt && target === 'image' && task.batchSize) commitImageQuantity(task.batchSize);
@@ -3243,9 +3258,35 @@ function renderReferenceDialog() {
   });
 }
 
+function syncSegmentedControl(id) {
+  const select = $(`#${id}`);
+  const group = $(`.segmented[data-select="${id}"]`);
+  if (!select || !group) return;
+  group.querySelectorAll('button[data-value]').forEach(button => button.classList.toggle('selected', button.dataset.value === select.value));
+}
+function syncRatioGridSelection(group, value) {
+  if (!group) return;
+  const selected = group.querySelector(`button[data-value="${CSS.escape(String(value))}"]`);
+  group.querySelectorAll('button[data-value]').forEach(button => {
+    const active = button === selected;
+    button.classList.toggle('selected', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (selected?.classList.contains('ratio-extra')) {
+    selected.classList.remove('hidden');
+    group.querySelector('.ratio-more-toggle')?.setAttribute('aria-expanded', 'true');
+  }
+}
 $$('.segmented').forEach(group => group.querySelectorAll('button').forEach(button => button.onclick = () => { group.querySelectorAll('button').forEach(x => x.classList.toggle('selected', x === button)); $(`#${group.dataset.select}`).value = button.dataset.value; }));
-$$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { group.querySelectorAll('button[data-value]').forEach(x => { const active = x === button; x.classList.toggle('selected', active); x.setAttribute('aria-selected', String(active)); }); $(`#${group.dataset.select}`).value = button.dataset.value; }));
-$('#moreRatios').onclick = () => { const opening = $('#moreRatios').getAttribute('aria-expanded') !== 'true'; $('#moreRatios').setAttribute('aria-expanded', String(opening)); $$('.ratio-extra').forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
+$$('.ratio-grid').forEach(group => group.querySelectorAll('button[data-value]').forEach(button => button.onclick = () => { const select = $(`#${group.dataset.select}`); if (!select) return; select.value = button.dataset.value; syncRatioGridSelection(group, button.dataset.value); }));
+$('.ratio-grid[data-select="imageTuziAspect"]')?.addEventListener('click', event => { if (event.target.closest('button[data-value]')) syncTuziImageParameters(); });
+$('.segmented[data-select="imageTuziQuality"]')?.addEventListener('click', event => { if (event.target.closest('button[data-value]')) syncTuziImageParameters(); });
+function bindRatioMoreToggle(toggle, extras) {
+  if (!toggle) return;
+  toggle.onclick = () => { const opening = toggle.getAttribute('aria-expanded') !== 'true'; toggle.setAttribute('aria-expanded', String(opening)); extras.forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
+}
+bindRatioMoreToggle($('#moreRatios'), $$('.ratio-grid[data-select="imageSize"] .ratio-extra'));
+bindRatioMoreToggle($('#imageMjMoreRatios'), $$('.ratio-grid[data-select="imageMjAspect"] .ratio-extra'));
 function ratioIcon(value) { const [width, height] = value.split(':').map(Number); const scale = Math.min(27 / width, 22 / height); return `<span class="select-ratio-icon" aria-hidden="true"><i style="width:${Math.round(width*scale)}px;height:${Math.round(height*scale)}px"></i></span>`; }
 function resolutionIcon(value) {
   const lineCount = value === '1080p' ? 4 : value === '720p' ? 3 : 2;
@@ -3253,6 +3294,41 @@ function resolutionIcon(value) {
   return `<span class="select-resolution-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="14" rx="2"/>${detailLines}<path d="M8 21h8"/></svg></span>`;
 }
 function clockIcon() { return '<span class="select-clock" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3.5 2"></path></svg></span>'; }
+const tuziImageDimensions = Object.freeze({
+  '1:1':Object.freeze({ '1k':'1024x1024', '2k':'2048x2048', '4k':'2880x2880' }),
+  '2:3':Object.freeze({ '1k':'816x1232', '2k':'1360x2048', '4k':'2352x3520' }),
+  '3:2':Object.freeze({ '1k':'1232x816', '2k':'2048x1360', '4k':'3520x2352' }),
+  '3:4':Object.freeze({ '1k':'880x1184', '2k':'1552x2080', '4k':'2336x3120' }),
+  '4:3':Object.freeze({ '1k':'1184x880', '2k':'2080x1552', '4k':'3120x2336' }),
+  '16:9':Object.freeze({ '1k':'1360x768', '2k':'2048x1152', '4k':'3536x1984' }),
+  '9:16':Object.freeze({ '1k':'768x1360', '2k':'1152x2048', '4k':'1984x3536' }),
+});
+const tuziImageCredits = Object.freeze({ '1k':1, '2k':2, '4k':4 });
+const midjourneyImageCredits = 4;
+function tuziImageSize(aspect=$('#imageTuziAspect')?.value, quality=$('#imageTuziQuality')?.value) {
+  return aspect === 'auto' ? 'auto' : tuziImageDimensions[aspect]?.[quality] || tuziImageDimensions['1:1']['1k'];
+}
+function tuziSelectionForSize(size, quality='1k') {
+  const normalizedQuality = Object.hasOwn(tuziImageCredits, String(quality).toLowerCase()) ? String(quality).toLowerCase() : '1k';
+  if (size === 'auto') return { aspect:'auto', quality:'1k' };
+  for (const [aspect, tiers] of Object.entries(tuziImageDimensions)) {
+    for (const [tier, dimensions] of Object.entries(tiers)) if (dimensions === size) return { aspect, quality:tier };
+  }
+  return { aspect:'1:1', quality:normalizedQuality };
+}
+function syncTuziImageParameters() {
+  const aspect = $('#imageTuziAspect')?.value || '1:1';
+  const qualitySelect = $('#imageTuziQuality');
+  const automatic = aspect === 'auto';
+  if (automatic && qualitySelect) qualitySelect.value = '1k';
+  const quality = qualitySelect?.value || '1k';
+  const group = $('.segmented[data-select="imageTuziQuality"]');
+  group?.querySelectorAll('button').forEach(button => {
+    button.disabled = automatic && button.dataset.value !== '1k';
+    button.classList.toggle('selected', button.dataset.value === quality);
+  });
+  updateImageCost();
+}
 const fallbackVideoModels = Object.freeze([
   // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for GuGu 1.5.
   { id:'grok', label:'GuGu 1.5', description:'全能视频模型，支持最长20秒视频，7张参考图', modes:[
@@ -3324,6 +3400,7 @@ function videoModelParameters(modelId, generationType) { return videoModelOption
 function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s' : ''; }
 const fallbackImageModels = Object.freeze([
   { id:'gpt-image-2', label:'GPT Image 2', description:'从文字或参考图快速探索画面。', enabled:true },
+  { id:'gpt-image-2.5', label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', enabled:true },
   { id:'midjourney', label:'Midjourney', description:'通过参数精细控制艺术风格。', enabled:true },
 ]);
 function imageModelOptions() {
@@ -3331,7 +3408,7 @@ function imageModelOptions() {
   return models.filter(model => model.enabled !== false || model.id === 'gpt-image-2');
 }
 function imageModelPromo() { return ''; }
-const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'/favicon.svg?v=2', 'minimax-h3-15s':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
+const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', 'gpt-image-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'/favicon.svg?v=2', 'minimax-h3-15s':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
@@ -3367,9 +3444,14 @@ function syncVideoModelOptions() {
   syncVideoModelParameters();
 }
 function syncImageModelParameters() {
-  const isMidjourney = $('#imageModel')?.value === 'midjourney';
-  $('#imageGptOptions')?.classList.toggle('hidden', isMidjourney);
+  const modelId = $('#imageModel')?.value;
+  const isMidjourney = modelId === 'midjourney';
+  const isTuzi = modelId === 'gpt-image-2.5';
+  $('#imageGptOptions')?.classList.toggle('hidden', isMidjourney || isTuzi);
+  $('#imageTuziOptions')?.classList.toggle('hidden', !isTuzi);
   $('#imageMidjourneyOptions')?.classList.toggle('hidden', !isMidjourney);
+  if (isTuzi) syncTuziImageParameters();
+  syncImageQuantityControl();
   syncImagePromptState();
   updateImageCost();
 }
@@ -3591,7 +3673,7 @@ async function submitGeneration(type, form, payload) {
     if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
     renderReferences();
     const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0);
-    toast(tasks.length > 1 ? `已提交 ${tasks.length} 个图像任务，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
+    toast(tasks.length > 1 ? `已提交 ${tasks.length} 张图片，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
     if (deferredReferences) {
       const uploadedReferenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
       if (!accountScope.isCurrent(requestAccount)) return;
@@ -3630,12 +3712,13 @@ $('#imageForm').onsubmit = event => {
   if (Array.from(prompt).length > imagePromptMaxLength) return;
   const modelId = $('#imageModel').value || 'gpt-image-2';
   const midjourneyOptions = modelId === 'midjourney' ? currentMidjourneyOptions() : null;
+  const tuziQuality = modelId === 'gpt-image-2.5' ? ($('#imageTuziQuality').value || '1k') : '';
   const quantity = commitImageQuantity($('#imageQuantity').value);
   submitGeneration('image', event.currentTarget, {
     modelId,
     prompt:replaceAssetMentions(prompt, state.imagePromptMentions),
-    size:modelId === 'midjourney' ? midjourneyOptions.aspectRatio : $('#imageSize').value,
-    quality:modelId === 'midjourney' ? midjourneyOptions.quality : $('#imageQuality').value,
+    size:modelId === 'midjourney' ? midjourneyOptions.aspectRatio : modelId === 'gpt-image-2.5' ? tuziImageSize() : $('#imageSize').value,
+    quality:modelId === 'midjourney' ? midjourneyOptions.quality : modelId === 'gpt-image-2.5' ? tuziQuality : $('#imageQuality').value,
     quantity,
     ...(midjourneyOptions ? { midjourneyOptions } : {}),
   });
@@ -3659,11 +3742,55 @@ $('#videoForm').onsubmit = event => {
 };
 const imageQuantityMin = 1;
 const imageQuantityMax = 10;
-function imageQuantityValue(value) { const text = String(value ?? '').trim(); if (!text) return null; const quantity = Number(text); return Number.isInteger(quantity) ? Math.min(imageQuantityMax, Math.max(imageQuantityMin, quantity)) : null; }
-function updateImageQuantityButtons(value=imageQuantityValue($('#imageQuantity')?.value)) { const quantity = value ?? imageQuantityMin; $('#imageQuantityDecrease').disabled = quantity <= imageQuantityMin; $('#imageQuantityIncrease').disabled = quantity >= imageQuantityMax; }
-function updateImageCost() { const cost = $('#imageCost'); const quantity = $('#imageQuantity'); if (!cost || !quantity) return; const count = imageQuantityValue(quantity.value) ?? imageQuantityMin; cost.textContent = creditText(count * (Number(state.pricing.image) || 1)); updateImageQuantityButtons(count); }
-function commitImageQuantity(value) { const input = $('#imageQuantity'); const quantity = imageQuantityValue(value) ?? imageQuantityMin; input.value = String(quantity); updateImageCost(); return quantity; }
-function changeImageQuantity(delta) { const input = $('#imageQuantity'); const current = imageQuantityValue(input.value) ?? imageQuantityMin; commitImageQuantity(current + delta); }
+function imageQuantityConfig(modelId=$('#imageModel')?.value) { return modelId === 'midjourney' ? { min:4, max:8, step:4 } : { min:imageQuantityMin, max:imageQuantityMax, step:1 }; }
+function imageQuantityValue(value, modelId=$('#imageModel')?.value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const quantity = Number(text);
+  if (!Number.isInteger(quantity)) return null;
+  const config = imageQuantityConfig(modelId);
+  const stepped = config.min + Math.round((quantity - config.min) / config.step) * config.step;
+  return Math.min(config.max, Math.max(config.min, stepped));
+}
+function syncImageQuantityControl() {
+  const input = $('#imageQuantity');
+  if (!input) return;
+  const config = imageQuantityConfig();
+  input.min = String(config.min);
+  input.max = String(config.max);
+  input.step = String(config.step);
+  const quantity = imageQuantityValue(input.value);
+  if (quantity !== null) input.value = String(quantity);
+}
+function updateImageQuantityButtons(value=imageQuantityValue($('#imageQuantity')?.value)) {
+  const config = imageQuantityConfig();
+  const quantity = value ?? config.min;
+  $('#imageQuantityDecrease').disabled = quantity <= config.min;
+  $('#imageQuantityIncrease').disabled = quantity >= config.max;
+}
+function updateImageCost() {
+  const cost = $('#imageCost');
+  const quantity = $('#imageQuantity');
+  if (!cost || !quantity) return;
+  const count = imageQuantityValue(quantity.value) ?? imageQuantityConfig().min;
+  const isMidjourney = $('#imageModel')?.value === 'midjourney';
+  const unitPrice = isMidjourney ? midjourneyImageCredits : $('#imageModel')?.value === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1;
+  cost.textContent = creditText((isMidjourney ? count / 4 : count) * unitPrice);
+  updateImageQuantityButtons(count);
+}
+function commitImageQuantity(value) {
+  const input = $('#imageQuantity');
+  const quantity = imageQuantityValue(value) ?? imageQuantityConfig().min;
+  input.value = String(quantity);
+  updateImageCost();
+  return quantity;
+}
+function changeImageQuantity(delta) {
+  const input = $('#imageQuantity');
+  const config = imageQuantityConfig();
+  const current = imageQuantityValue(input.value) ?? config.min;
+  commitImageQuantity(current + delta * config.step);
+}
 function videoPricingFor(modelId, parameters, quality) {
   const selectedPricing = parameters?.pricingByQuality?.[quality] || parameters?.pricing;
   if (selectedPricing) return selectedPricing;

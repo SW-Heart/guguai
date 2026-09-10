@@ -1,11 +1,12 @@
-import { CanvasApi } from '../../vendor/director/whiteboard.js?v=2';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=1';
 import { normalizeDirectorWorkspace, applyDirectorEdit } from './director-actions.js?v=2';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
 const paid=new Set(['generate_resource','generate_video','assemble','read_tail']);
 export function createDirectorWorkspace(host, bridge) {
-  let canvas, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
+  let canvas, canvasMount, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
+  let mainLayer, lastNodeGeometry='', edgeRenderFrame=0;
   const assetSizes=new Map(), assetSizeLoads=new Map();
   const get=()=>bridge.project();
   const workspace=()=>{const p=get();return p.directorWorkspace ||= normalizeDirectorWorkspace();};
@@ -47,12 +48,61 @@ export function createDirectorWorkspace(host, bridge) {
     const t=bridge.task(n.taskId);const media=n.media||bridge.media(n.taskId);const action=workspace().plan?.actions?.find(a=>a.targetId===n.id&&['running','failed'].includes(a.status));
     const status=action?labels[action.status]:t?(labels[t.status]||t.status):n.kind==='asset'?'已导入':n.kind==='story'&&get().script?'已设计':'待制作';
     const locked=workspace().lockedIds.includes(n.id);
-    return `<article class="dw-node${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}" style="box-sizing:border-box;width:280px;height:228px;border:1px solid ${action?.status==='failed'?'#d66b64':'#dfe2ee'};border-radius:16px;background:#fff;color:#24283d;overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,sans-serif;box-shadow:0 8px 24px #26345b0b"><header style="padding:12px 14px;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #eef0f6"><b>${escape(n.title)}</b><span style="font-size:12px;color:#535c86">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} style="width:100%;height:124px;object-fit:contain;background:#f1f2f8" >${media.kind==='video'?'</video>':''}`:`<p style="padding:0 14px;height:124px;overflow:auto;white-space:pre-wrap;line-height:1.65">${escape(n.text)}</p>`}<footer style="padding:7px 14px;font-size:12px;color:#636b83">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':'故事蓝图'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></article>`;
+    return `<div class="dw-node-content${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}"><header class="dw-node-title"><b>${escape(n.title)}</b><span class="dw-node-status${action?.status==='failed'?' is-failed':''}">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} class="dw-node-media" >${media.kind==='video'?'</video>':''}`:`<p class="dw-node-copy">${escape(n.text)}</p>`}<footer class="dw-node-meta">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':'故事蓝图'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></div>`;
+  }
+  function nodeBounds(node) {
+    const width=Math.max(1,Number(node?.width)||280)*(Number(node?.scaleX)||1);
+    const height=Math.max(1,Number(node?.height)||228)*(Number(node?.scaleY)||1);
+    return {width,height};
+  }
+  function edgePoints(from,to) {
+    const a=nodeBounds(from), b=nodeBounds(to);
+    const fromRight=(Number(from.x)||0)+a.width;
+    const fromMid=(Number(from.y)||0)+a.height/2;
+    const toLeft=Number(to.x)||0;
+    const toMid=(Number(to.y)||0)+b.height/2;
+    return [fromRight,fromMid,toLeft,toMid];
+  }
+  function edgeLinks() {
+    const ns=nodes();
+    return ns.filter(n=>n.kind!=='story'&&n.kind!=='asset').map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id}));
+  }
+  function findLayerNode(id) {
+    let found=null;
+    mainLayer?.children?.forEach?.(node=>{if(!found&&node.id?.()===id)found=node;});
+    return found;
+  }
+  function liveCanvasNodes() {
+    const state=canvas?.getState();
+    if(!state)return [];
+    return (state.nodes||[]).map(node=>{
+      const shape=findLayerNode(node.id), attrs=shape?.getAttrs?.();
+      return attrs?{...node,x:attrs.x??node.x,y:attrs.y??node.y,width:attrs.width??node.width,height:attrs.height??node.height,scaleX:attrs.scaleX??node.scaleX,scaleY:attrs.scaleY??node.scaleY}:node;
+    });
+  }
+  function renderEdges(snapshotNodes=canvas?.getState().nodes||[], persist=false) {
+    if(!canvas||!mainLayer)return;
+    const byId=new Map(snapshotNodes.map(node=>[node.id,node]));
+    const updates=[];
+    edgeLinks().forEach(link=>{
+      const from=byId.get(link.from),to=byId.get(link.to);
+      if(!from||!to)return;
+      const points=edgePoints(from,to),id=`edge-${link.to}`,shape=findLayerNode(id);
+      if(shape?.points)shape.points(points);
+      updates.push({id,points});
+    });
+    mainLayer.batchDraw?.();
+    if(!persist)return;
+    updates.forEach(({id,points})=>{if(canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});});
+  }
+  function scheduleEdgeRender(snapshotNodes) {
+    if(edgeRenderFrame)return;
+    edgeRenderFrame=requestAnimationFrame(()=>{edgeRenderFrame=0;renderEdges(snapshotNodes);});
   }
   function syncCanvas() {
     if(!canvas)return;syncing=true;
     const ns=nodes();const existing=new Map(canvas.getState().nodes.map(n=>[n.id,n]));
-    const links=ns.filter(n=>n.kind!=='story'&&n.kind!=='asset').map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id}));
+    const links=edgeLinks();
     const valid=new Set([...ns.map(n=>n.id),...links.map(l=>`edge-${l.to}`)]);
     canvas.deleteNodes([...existing.keys()].filter(id=>!valid.has(id)));
     ns.forEach((n,i)=>{
@@ -78,24 +128,12 @@ export function createDirectorWorkspace(host, bridge) {
       if(!old)canvas.createNodes([{id:n.id,$_type:'html',$_actualType:'director',$_htmlContent:html,width:280,height:228,...pos,draggable:true}],false);
       else if(old.$_type==='html'&&old.$_htmlContent!==html)canvas.updateNodes([n.id],{$_htmlContent:html});
     });
-    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:[from.x+280,from.y+114,to.x,to.y+114],stroke:'#b7bad4',fill:'#b7bad4',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
+    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:edgePoints(from,to),stroke:'#9b99c9',fill:'#9b99c9',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
     syncing=false;
+    renderEdges(canvas.getState().nodes);
   }
   function syncEdges(snapshotNodes=canvas?.getState().nodes||[]) {
-    if(!canvas)return;
-    const ns=nodes();
-    const links=ns.filter(n=>n.kind!=='story'&&n.kind!=='asset').map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id}));
-    const byId=new Map(snapshotNodes.map(node=>[node.id,node]));
-    const updates=[];
-    links.forEach(link=>{
-      const from=byId.get(link.from),to=byId.get(link.to);
-      if(!from||!to)return;
-      updates.push({id:`edge-${link.to}`,points:[from.x+280,from.y+114,to.x,to.y+114]});
-    });
-    if(!updates.length)return;
-    syncing=true;
-    updates.forEach(({id,points})=>{if(canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});});
-    syncing=false;
+    renderEdges(snapshotNodes,true);
   }
   function drawPanels() {
     if(!canvas)return;
@@ -199,14 +237,33 @@ export function createDirectorWorkspace(host, bridge) {
   function mount() {
     if(projectId===get().id&&canvas&&host.querySelector('.dw-canvas')){drawPanels();return;}
     dispose();projectId=get().id;
-    host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas" aria-label="无限分镜画布"></div><div class="dw-canvas-actions"><button data-import title="导入素材到画布">＋ 导入素材</button><button data-show-agent hidden>打开导演</button></div><section class="dw-inspector" hidden></section><footer class="dw-tools" aria-label="画布工具"><button data-tool="select" aria-label="选择节点" title="选择并移动节点">选择</button><button data-tool="hand" aria-label="平移画布" title="拖动画布">平移</button><button data-tool="text" aria-label="添加文字" title="在画布上添加文字">文字</button><button data-tool="rectangle" aria-label="添加形状" title="绘制形状">形状</button><button data-tool="arrow" aria-label="添加箭头" title="连接节点">箭头</button><button data-tool="brush" aria-label="画笔" title="自由绘制">画笔</button><span class="dw-tool-divider"></span><button data-zoom-out aria-label="缩小">−</button><output>75%</output><button data-zoom-in aria-label="放大">＋</button><button data-fit title="自动排列并查看全部节点">整理</button><button data-layout-undo title="撤销上次整理">撤销</button></footer></section><aside class="dw-agent"><header><b>导演</b><select data-director-mode aria-label="导演自治等级"><option value="assist">辅助模式</option><option value="director">导演模式</option><option value="auto">全自动模式</option></select><button data-hide-agent aria-label="收起导演对话" title="收起对话，扩大画布">→</button></header><div class="dw-messages" aria-live="polite"></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉导演你的目标</label><textarea id="directorMessage" placeholder="想拍什么？或选中画面告诉我怎么改…" rows="3"></textarea><div><button data-director-delegate type="button" title="接管当前项目，完成剩余制作">委托导演</button><button data-director-stop type="button" hidden>暂停</button><button data-director-send class="dw-primary" type="submit" aria-label="发送给导演">发送</button></div></form></aside></section>`;
-    canvas=new CanvasApi(host.querySelector('.dw-canvas'));canvas.updateViewport(workspace().viewport);
-    canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';if(next!==selected)inspectorOpen=false;selected=next;drawInspector();syncCanvas();});
-    let edgeFrame=0;
-    let latestSnapshot=null;
-    const queueEdgeSync=snapshot=>{latestSnapshot=snapshot;if(edgeFrame)return;edgeFrame=requestAnimationFrame(()=>{edgeFrame=0;const next=latestSnapshot;latestSnapshot=null;if(next)syncEdges(next.nodes);});};
-    canvas.on('state:change',snapshot=>{if(syncing)return;queueEdgeSync(snapshot);const visibleIds=new Set(nodes().map(item=>item.id));const positions=Object.fromEntries(snapshot.nodes.filter(n=>visibleIds.has(n.id)).map(n=>[n.id,{x:n.x,y:n.y}]));workspace().positions=positions;workspace().viewport=snapshot.viewport;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
-    canvas.on('viewport:change',v=>{workspace().viewport=v;host.querySelector('output').textContent=`${Math.round(v.scale*100)}%`;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
+    host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas reference-canvas-host" aria-label="无限分镜画布"></div><div class="dw-canvas-actions"><button data-import title="导入素材到画布">＋ 导入素材</button><button data-show-agent hidden>打开导演</button></div><section class="dw-inspector" hidden></section></section><aside class="dw-agent"><header><b>导演</b><select data-director-mode aria-label="导演自治等级"><option value="assist">辅助模式</option><option value="director">导演模式</option><option value="auto">全自动模式</option></select><button data-hide-agent aria-label="收起导演对话" title="收起对话，扩大画布">→</button></header><div class="dw-messages" aria-live="polite"></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉导演你的目标</label><textarea id="directorMessage" placeholder="想拍什么？或选中画面告诉我怎么改…" rows="3"></textarea><div><button data-director-delegate type="button" title="接管当前项目，完成剩余制作">委托导演</button><button data-director-stop type="button" hidden>暂停</button><button data-director-send class="dw-primary" type="submit" aria-label="发送给导演">发送</button></div></form></aside></section>`;
+    const bindCanvas=api=>{
+      canvas=api;
+      mainLayer=canvas.getMainLayer?.();
+      if(workspace().viewport)canvas.updateViewport(workspace().viewport);
+      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';if(next!==selected)inspectorOpen=false;selected=next;drawInspector();syncCanvas();});
+      let edgeFrame=0;
+      let latestSnapshot=null;
+      const queueEdgeSync=snapshot=>{latestSnapshot=snapshot;if(edgeFrame)return;edgeFrame=requestAnimationFrame(()=>{edgeFrame=0;const next=latestSnapshot;latestSnapshot=null;if(next)renderEdges(next.nodes);});};
+      const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
+      canvas.on('state:change',snapshot=>{if(syncing)return;const geometry=geometrySignature(snapshot);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(snapshot);}const visibleIds=new Set(nodes().map(item=>item.id));const positions=Object.fromEntries(snapshot.nodes.filter(n=>visibleIds.has(n.id)).map(n=>[n.id,{x:n.x,y:n.y}]));workspace().positions=positions;workspace().viewport=snapshot.viewport;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
+      canvas.on('viewport:change',v=>{workspace().viewport=v;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
+      // The whiteboard emits the public state event at the end of a drag. The
+      // Konva layer receives `dragmove` every frame, so draw arrow endpoints
+      // directly on the native shape for a continuous, low-latency response.
+      const onDragMove=event=>{const target=event?.target;if(!target||String(target.id?.()).startsWith('edge-'))return;scheduleEdgeRender(liveCanvasNodes());};
+      const onDragEnd=event=>{const target=event?.target;if(!target||String(target.id?.()).startsWith('edge-'))return;renderEdges(liveCanvasNodes(),true);};
+      mainLayer?.on?.('dragmove.director-edges',onDragMove);
+      mainLayer?.on?.('dragend.director-edges',onDragEnd);
+      syncCanvas();
+      drawInspector();
+    };
+    canvasMount=mountReferenceCanvas(host.querySelector('.dw-canvas'),{sessionKey:projectId,adapter:{
+      sendMessage:(text)=>{if(text)void submit(text);},
+      saveUpload:payload=>bridge.saveUpload?.(payload)||URL.createObjectURL(new Blob([Uint8Array.from(atob(payload.base64),char=>char.charCodeAt(0))])),
+      saveTemp:payload=>bridge.saveTemp?.(payload)||bridge.saveUpload?.(payload),
+    },onReady:bindCanvas});
     host.querySelector('[data-director-mode]').onchange=async e=>{workspace().autonomy=e.target.value;stopped=busy;await save();};
     host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim();if(text){draft='';input.value='';void submit(text);}};
     host.querySelector('#directorMessage').value=draft;
@@ -223,16 +280,9 @@ export function createDirectorWorkspace(host, bridge) {
     const toggleAgent=collapsed=>{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed; if(!collapsed)requestAnimationFrame(()=>composerInput.focus());};
     host.querySelector('[data-hide-agent]').onclick=()=>toggleAgent(true);
     host.querySelector('[data-show-agent]').onclick=()=>toggleAgent(false);
-    host.querySelector('[data-import]').onclick=async()=>{try{const file=await bridge.importAsset();if(!file)return;const v=canvas.getState().viewport;workspace().positions[file.id]={x:(80-v.x)/v.scale,y:(100-v.y)/v.scale};await save();syncCanvas();canvas.selectNodes([file.id]);}catch(e){bridge.toast(e.message);}};
+    host.querySelector('[data-import]').onclick=async()=>{try{const file=await bridge.importAsset();if(!file)return;if(canvas){const v=canvas.getState().viewport;workspace().positions[file.id]={x:(80-v.x)/v.scale,y:(100-v.y)/v.scale};await save();syncCanvas();canvas.selectNodes([file.id]);}}catch(e){bridge.toast(e.message);}};
     host.querySelector('[data-director-delegate]').onclick=()=>void delegate();
     host.querySelector('[data-director-stop]').onclick=()=>{stopped=true;message('将在当前任务结束后暂停，你可以接管继续修改。');drawPanels();};
-    const setTool=type=>{canvas.setToolType(type);host.querySelectorAll('[data-tool]').forEach(button=>{const active=button.dataset.tool===type;button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active));});};
-    host.querySelectorAll('[data-tool]').forEach(button=>{button.onclick=()=>setTool(button.dataset.tool);});
-    setTool('select');
-    host.querySelector('[data-zoom-in]').onclick=()=>canvas.updateViewport({scale:Math.min(3,canvas.getState().viewport.scale*1.2)});
-    host.querySelector('[data-zoom-out]').onclick=()=>canvas.updateViewport({scale:Math.max(.1,canvas.getState().viewport.scale/1.2)});
-    host.querySelector('[data-fit]').onclick=()=>{layoutHistory.push(structuredClone(workspace().positions));layoutHistory=layoutHistory.slice(-30);workspace().positions={};syncing=true;nodes().forEach((n,i)=>canvas.updateNodes([n.id],position(n,i)));syncing=false;canvas.scrollToContent({padding:40,scale:true});void save();};
-    host.querySelector('[data-layout-undo]').onclick=()=>{const last=layoutHistory.pop();if(!last)return;workspace().positions=last;syncing=true;nodes().forEach((n,i)=>canvas.updateNodes([n.id],position(n,i)));syncing=false;void save();};
     drawPanels();
   }
   async function continueStages() {
@@ -252,6 +302,6 @@ export function createDirectorWorkspace(host, bridge) {
     await plan('委托你完成剩余制作。读取已有剧情、人物、场景、镜头及已选版本，保留锁定内容，先执行当前可完成的阶段。');
     await continueStages();
   }
-  function dispose(){epoch++;stopped=true;busy=false;clearTimeout(saveTimer);canvas?.dispose();canvas=null;projectId='';selected='';inspectorOpen=false;}
+  function dispose(){epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }

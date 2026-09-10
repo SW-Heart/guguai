@@ -14,6 +14,8 @@ export function createMediaArchiveService({
   download,
   put,
   remove,
+  splitImage,
+  statFile,
   now,
 }) {
   async function prepareGenerationAsset(userId, task, result) {
@@ -112,5 +114,76 @@ export function createMediaArchiveService({
     });
   }
 
-  return Object.freeze({ prepareGenerationAsset, archiveGenerationResult });
+  async function archiveMidjourneyGridResult(userId, tasks, resultUrl, overrides = {}) {
+    const orderedTasks = [...new Set(Array.isArray(tasks) ? tasks : [])]
+      .filter(task => task?.id)
+      .sort((left, right) => Number(left.midjourneyOutputIndex || 0) - Number(right.midjourneyOutputIndex || 0));
+    const leadTask = orderedTasks[0];
+    if (!leadTask || orderedTasks.length !== 4) throw new Error('Midjourney 输出任务不完整，无法拆分图片');
+    if (typeof splitImage !== 'function') throw new Error('当前环境未配置 Midjourney 图片拆分组件');
+    if (typeof statFile !== 'function') throw new Error('当前环境未配置图片文件信息读取组件');
+    const downloadFile = overrides.download || download;
+    const putFile = overrides.put || put;
+    const removeFile = overrides.remove || remove;
+    const leaseGuard = overrides.leaseGuard;
+    assertGenerationJobLease(leadTask, leaseGuard);
+    return withMediaTempDir(`midjourney-grid-${leadTask.id}`, async jobDir => {
+      const compositeFile = path.join(jobDir, `${leadTask.id}-composite`);
+      await downloadFile(resultUrl, compositeFile, 4, { headers:generationSourceHeaders(leadTask, resultUrl), kind:'image' });
+      const outputFiles = orderedTasks.map((task, index) => path.join(jobDir, `${task.id}-${index + 1}.png`));
+      await splitImage(compositeFile, outputFiles);
+      const assets = [];
+      for (const [index, outputTask] of orderedTasks.entries()) {
+        assertGenerationJobLease(leadTask, leaseGuard);
+        const assetId = outputTask.assetId || `generation-${outputTask.id}`;
+        const existing = findAsset(userId, assetId);
+        if (existing?.sourceGenerationId === outputTask.id && existing.objectKey) {
+          assets.push(existing);
+          continue;
+        }
+        const storageName = `${assetId}.png`;
+        const objectKey = existing?.objectKey || assetObjectKey(userId, storageName);
+        await putFile(objectKey, outputFiles[index], 'image/png');
+        try { assertGenerationJobLease(leadTask, leaseGuard); }
+        catch (error) {
+          if (!existing?.objectKey) await removeFile(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:outputTask.id, message:cleanupError.message }));
+          throw error;
+        }
+        const fileInfo = await statFile(outputFiles[index]);
+        if (!Number(fileInfo?.size)) throw new Error('Midjourney 切图结果为空');
+        const latest = findAsset(userId, assetId);
+        const asset = {
+          ...(latest || existing || {}),
+          id: assetId,
+          ownerId: userId,
+          name: latest?.name || existing?.name || generationAssetName(outputTask, '.png'),
+          kind: 'image',
+          mimeType: 'image/png',
+          size: Number(fileInfo?.size) || 0,
+          storageName,
+          source: 'generation',
+          sourceGenerationId: outputTask.id,
+          sourceUrl: '',
+          sourceRequiresAuth: false,
+          originDeviceId: String(outputTask.originDeviceId || ''),
+          originWorkspaceId: String(outputTask.originWorkspaceId || ''),
+          deliveryStatus: 'remote_backed_up',
+          remoteStatus: 'ready',
+          objectKey,
+          objectUploadedAt: now(),
+          createdAt: latest?.createdAt || existing?.createdAt || now(),
+          updatedAt: now(),
+        };
+        try { saveGenerationAsset(userId, asset, leadTask, leaseGuard); }
+        catch (error) {
+          if (error.code === 'GENERATION_JOB_LEASE_LOST' && !existing?.objectKey) await removeFile(objectKey).catch(cleanupError => console.warn('[generation] 清理失效租约对象失败', { generationId:outputTask.id, message:cleanupError.message }));
+          throw error;
+        }
+        assets.push(asset);
+      }
+      return assets;
+    });
+  }
+
+  return Object.freeze({ prepareGenerationAsset, archiveGenerationResult, archiveMidjourneyGridResult });
 }

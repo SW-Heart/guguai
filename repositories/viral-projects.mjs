@@ -12,7 +12,7 @@ export function findViralProject(userId, id, scope) {
   return row ? JSON.parse(row.doc_json) : null;
 }
 export function createViralProject(userId, scope, input) {
-  const project = { ...normalizeViralInput(input, { allowDraft: true }), id: randomUUID(), revision: 1, workflowVersion: VIRAL_WORKFLOW_VERSION, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), assetApproval: null, planApproval: null };
+  const project = { ...normalizeViralInput(input, { allowDraft: true }), id: randomUUID(), revision: 1, workflowVersion: VIRAL_WORKFLOW_VERSION, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), assetApproval: null, planApproval: null, sourceObservation: null, sourceAnalysis: null, sourceAnalysisState: null, sourceAnalysisError: '' };
   sql('INSERT INTO viral_projects(id,user_id,device_id,workspace_id,revision,updated_at,doc_json) VALUES(:id,:userId,:deviceId,:workspaceId,:revision,:updatedAt,:doc)').run({ ...params(userId, scope), id: project.id, revision: 1, updatedAt: project.updatedAt, doc: JSON.stringify(project) });
   return project;
 }

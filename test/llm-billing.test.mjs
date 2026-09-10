@@ -53,6 +53,18 @@ test('Anthropic client uses configured supplier and returns normalized response'
   assert.deepEqual(result.usage, { inputTokens: 20, outputTokens: 5 });
 });
 
+test('multimodal source analysis maps image data for both gateway protocols', async () => {
+  const image = { type:'image_url', image_url:{ url:'data:image/jpeg;base64,ZmFrZQ==', detail:'low' } };
+  const anthropicConfig = llmConfigFromEnv({ LLM_API_BASE:'https://supplier.example', LLM_API_KEY:'test-key', LLM_API_PROTOCOL:'anthropic', LLM_MODEL:'vision' });
+  let anthropicBody;
+  await callLlm({ system:'观察', prompt:'分析', content:[image], config:anthropicConfig, fetchImpl:async (_url, options) => { anthropicBody=JSON.parse(options.body); return new Response(JSON.stringify({ content:[{type:'text',text:'{}'}], usage:{input_tokens:1,output_tokens:1} }),{status:200}); } });
+  assert.deepEqual(anthropicBody.messages[0].content[1], { type:'image', source:{ type:'base64', media_type:'image/jpeg', data:'ZmFrZQ==' } });
+  const openaiConfig = llmConfigFromEnv({ LLM_API_BASE:'https://supplier.example', LLM_API_KEY:'test-key', LLM_MODEL:'vision' });
+  let openaiBody;
+  await callLlm({ system:'观察', prompt:'分析', content:[image], config:openaiConfig, fetchImpl:async (_url, options) => { openaiBody=JSON.parse(options.body); return new Response(JSON.stringify({ choices:[{message:{content:'{}'}}], usage:{prompt_tokens:1,completion_tokens:1} }),{status:200}); } });
+  assert.deepEqual(openaiBody.messages[1].content[1], image);
+});
+
 test('successful provider responses without usage require reconciliation', async () => {
   const config = llmConfigFromEnv({ LLM_API_BASE: 'https://supplier.example', LLM_API_KEY: 'test-key', LLM_API_PROTOCOL: 'openai-compatible', LLM_MODEL: 'deepseek-v4-flash' });
   await assert.rejects(

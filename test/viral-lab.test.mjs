@@ -5,6 +5,7 @@ import { normalizeViralInput, assetSnapshot, assetApprovalHash, planApprovalHash
 import { createViralProject, findViralProject, saveViralProject } from '../repositories/viral-projects.mjs';
 import { createViralLabRouteHandler } from '../server/routes/viral-lab.mjs';
 import { readFileSync } from 'node:fs';
+import { chmod, rm, writeFile } from 'node:fs/promises';
 import { staticEntryFile } from '../server/static.mjs';
 
 openDatabase({ file: ':memory:' });
@@ -65,7 +66,7 @@ test('服务端确认生成内容，重复确认不扩大付费授权，输入�
   assert.equal(p.planApproval.requests.unit1,first);
   const input={viralProjectId:p.id,viralUnitId:'unit1',viralPlanHash:p.planApproval.hash,requestId:first,expectedPriceVersion:'quoted',prompt:'篡改',duration:15,referenceAssetIds:['other'],videoModel:'evil'};
   const generated=handler.prepareGeneration('a',scope,input);
-  assert.equal(generated.prompt,p.units[0].prompt);assert.equal(generated.duration,30);assert.deepEqual(generated.referenceAssetIds,['product']);assert.equal(generated.videoModel,'seedance-2.5');
+  assert.equal(generated.prompt,p.units[0].prompt);assert.equal(generated.duration,30);assert.deepEqual(generated.referenceAssetIds,['source','product']);assert.equal(generated.videoModel,'seedance-2.5');
   assert.throws(()=>handler.prepareGeneration('b',scope,input),/不存在/);
   assert.throws(()=>handler.prepareGeneration('a',scope,{...input,requestId:'new-id'}),/授权已失效/);
   p=(await invoke('PATCH',path,{...p,sourceNotes:'新记录'})).body.project;
@@ -98,7 +99,26 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   assert.match(html,/app\.js\?v=\d+/);assert.doesNotMatch(html,/app\.js\?v=260\b/);
-  assert.match(html,/features\/viral-lab\/styles\.css\?v=1/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=1/);
+  assert.match(html,/features\/viral-lab\/styles\.css\?v=8/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=8/);
   assert.match(html,/id="viralLabView"/);assert.match(html,/data-route="lab"/);
+});
+
+test('自动原片分析会落库观察时间线、分段提示词并绑定源视频参考', async () => {
+  const executable = `/tmp/viral-lab-test-ffmpeg-${process.pid}.mjs`;
+  const jpeg = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=';
+  await writeFile(executable, `#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nconst out=process.argv.at(-1);\nif(out !== '-') writeFileSync(out.replace('frame-%03d.jpg','frame-001.jpg'),Buffer.from('${jpeg}','base64'));\n`); await chmod(executable,0o755);
+  const sourceHandler = createViralLabRouteHandler({ ...deps, ensureLocalAsset:async()=>'/tmp/source.mp4', sourceAnalysisExecutable:executable, callLlm:async()=>({ text:JSON.stringify({ summary:'原片摘要', timeline:[{start_seconds:0,end_seconds:8,visual_action:'展示商品',spoken_content:'看这里',speaker_mode:'voiceover'}] }), usage:{inputTokens:10,outputTokens:20} }) });
+  async function sourceInvoke(method,path,body={}) { const res={}; await sourceHandler.route({method,body},res,new URL(`http://localhost/api/viral-lab/${path}`)); return res; }
+  try {
+    let p=(await sourceInvoke('POST','projects',fixture())).body.project;
+    const path=`projects/${p.id}`;
+    const quote=(await sourceInvoke('POST',`${path}/source-quote`,{revision:p.revision})).body;
+    p=(await sourceInvoke('POST',`${path}/source-analyze`,{revision:p.revision,quoteId:quote.quoteId})).body.project;
+    assert.equal(p.sourceObservation.summary,'原片摘要'); assert.equal(p.units.length,1); assert.match(p.units[0].prompt,/看这里/); assert.equal(p.sourceAnalysisState.status,'completed');
+    p=(await sourceInvoke('POST',`${path}/assets-confirm`,{revision:p.revision})).body.project;
+    p=(await sourceInvoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
+    const generated=sourceHandler.prepareGeneration('a',scope,{viralProjectId:p.id,viralUnitId:p.units[0].id,viralPlanHash:p.planApproval.hash,requestId:p.planApproval.requests[p.units[0].id]});
+    assert.deepEqual(generated.referenceAssetIds,['source','product']);
+  } finally { await rm(executable,{force:true}); }
 });

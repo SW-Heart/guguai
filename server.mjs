@@ -24,6 +24,7 @@ import { generationRequestFingerprint } from './lib/generation-service.mjs';
 import { createProjectService } from './services/projects.mjs';
 import { createDirectorService } from './services/director.mjs';
 import { createDuomiProvider } from './providers/duomi.mjs';
+import { createTuziProvider } from './providers/tuzi.mjs';
 import { createTtapiProvider } from './providers/ttapi.mjs';
 import { createCntcnProvider } from './providers/cntcn.mjs';
 import { createRoutedProvider } from './providers/routed.mjs';
@@ -35,6 +36,7 @@ import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
 import { createGenerationLifecycleService } from './services/generations.mjs';
 import { createGenerationRecoveryService } from './services/generation-recovery.mjs';
 import { createMediaArchiveService } from './services/media-archive.mjs';
+import { createMidjourneyGridService } from './services/midjourney-grid.mjs';
 import { createRuntimeLifecycle } from './services/runtime-lifecycle.mjs';
 import { bodyBuffer, bodyForm, bodyJson, mutationAllowed, publicHttpErrorBody, publicHttpErrorMessage, requestTraceId, sendJson, sendText } from './server/http-protocol.mjs';
 import { isDesktopRequest, serveFile, serveStatic, staticCacheControl, staticEntryFile } from './server/static.mjs';
@@ -79,6 +81,7 @@ const mediaTmpDir = process.env.MEDIA_TMP_DIR ? path.resolve(process.env.MEDIA_T
 const mediaTmpMaxAgeMs = Math.max(60_000, Number(process.env.MEDIA_TMP_MAX_AGE_MINUTES || 360) * 60_000);
 const port = Number(process.env.PORT || 4317);
 const duomiBase = (process.env.DUOMI_API_BASE || 'https://duomiapi.com').replace(/\/$/, '');
+const tuziBase = (process.env.TUZI_API_BASE || 'https://api.tu-zi.com').replace(/\/$/, '');
 const ttapiBase = (process.env.TTAPI_API_BASE || 'https://api.ttapi.io').replace(/\/$/, '');
 const configuredCntcnBase = (process.env.CNTCN_API_BASE || 'https://api.ai.cntcn.com').replace(/\/$/, '');
 const cntcnBase = /\/v1$/i.test(configuredCntcnBase) ? configuredCntcnBase : `${configuredCntcnBase}/v1`;
@@ -226,6 +229,10 @@ const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/flac']);
 const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm', '.flac':'audio/flac' });
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
+const tuziImageSizes = new Set(['1024x1024', '2048x2048', '2880x2880', '816x1232', '1360x2048', '2352x3520', '1232x816', '2048x1360', '3520x2352', '880x1184', '1552x2080', '2336x3120', '1184x880', '2080x1552', '3120x2336', '1360x768', '2048x1152', '3536x1984', '768x1360', '1152x2048', '1984x3536', 'auto']);
+const tuziImageTiers = new Set(['1k', '2k', '4k']);
+const tuziImageCredits = Object.freeze({ '1k':1, '2k':2, '4k':4 });
+const midjourneyImageCredits = 4;
 // This is the persistence envelope shared by every configured video model.
 // Model-specific validation still happens in validateVideoRequest; keeping the
 // union here prevents a valid professional-workbench choice from being silently
@@ -238,10 +245,11 @@ const videoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2' });
-const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', midjourney: 'midjourney' });
+const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
   { id:imageModelIds.gptImage2, label:'GPT Image 2', description:'从文字或参考图快速探索画面。' },
+  { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', qualityOptions:['1K', '2K', '4K'] },
   { id:imageModelIds.midjourney, label:'Midjourney', description:'通过 Midjourney 参数精细控制艺术风格。' },
 ]);
 const invitationCodes = new Set();
@@ -470,7 +478,7 @@ function generationFailure(task) {
 const publicGenerationFields = Object.freeze([
   'id', 'type', 'status', 'prompt', 'referenceAssetIds', 'modelId', 'size', 'quality', 'aspectRatio', 'duration',
   'videoModelId', 'generationType', 'midjourneyOptions', 'assetId', 'creditCost', 'creditStatus', 'createdAt', 'updatedAt', 'submittedAt',
-  'finishedAt', 'progress', 'awaitingReferences', 'batchSize',
+  'finishedAt', 'progress', 'awaitingReferences', 'batchSize', 'midjourneyOutputIndex', 'midjourneyOutputCount',
 ]);
 function publicGeneration(task) {
   // Keep this response allow-listed. Generation records also contain provider
@@ -531,6 +539,7 @@ function currentUser(req) {
 function requireUser(req, res) { const user = currentUser(req); if (!user) { sendJson(res, 401, { error: '请先登录' }); return null; } return user; }
 const publicCreditModelIds = new Set([
   fixedModels.image,
+  imageModelIds.gptImage25,
   imageModelIds.midjourney,
   ...Object.values(VIDEO_MODEL_IDS),
   ...Object.values(LEGACY_VIDEO_MODEL_IDS),
@@ -606,7 +615,13 @@ function publicPlatformPrices(pricing, videoCapabilities) {
   }
   for (const imageModel of imageModelCatalog) {
     if (!isModelEnabled(imageModel.id)) continue;
-    items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GuGu 图像' : imageModel.label, quality:'标准', duration:null, available:true, enabled:true, availability:'available', credits:pricing.imagePerRequest, yuan:pricing.imagePerRequest * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}`).digest('hex').slice(0, 32)}` });
+    const qualities = imageModel.id === imageModelIds.gptImage25 ? ['1K', '2K', '4K'] : ['标准'];
+    for (const quality of qualities) {
+      const credits = imageModel.id === imageModelIds.gptImage25
+        ? tuziImageCredits[quality.toLowerCase()]
+        : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest;
+      items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GuGu 图像' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
+    }
   }
   return items;
 }
@@ -615,8 +630,8 @@ function configState() {
   const pricing = currentPricing();
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
-    imageGeneration: Boolean(process.env.DUOMI_API_KEY),
-    imageModels: imageModelCatalog.map(model => ({ ...model, availability:'available', enabled:isModelEnabled(model.id) })),
+    imageGeneration: Boolean(process.env.DUOMI_API_KEY || process.env.TUZI_DEFAULT_API_KEY),
+    imageModels: imageModelCatalog.map(model => ({ ...model, availability:'available', enabled:isModelEnabled(model.id) && (model.id !== imageModelIds.gptImage25 || Boolean(process.env.TUZI_DEFAULT_API_KEY)) })),
     smsLogin: smsConfig.configured,
     mediaStorageReady: r2Configured,
     directUpload: r2Configured && directUploadEnabled,
@@ -640,6 +655,7 @@ function publicModelPriceState() {
   const pricedModelIds = new Set(items.map(item => item.modelId));
   const models = [
     { id: fixedModels.image, label: 'GuGu 图像', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
+    { id: imageModelIds.gptImage25, label: 'GPT Image 2.5', description: '支持 1K、2K、4K 多画幅高清图像生成。', availability: 'available', qualityOptions: ['1K', '2K', '4K'] },
     { id: imageModelIds.midjourney, label: 'Midjourney', description: '通过 Midjourney 参数精细控制艺术风格。', availability: 'available', qualityOptions: ['标准'] },
     ...(videoCapabilities.models || []).map(model => ({
       id: model.id,
@@ -688,6 +704,18 @@ const duomiProvider = createDuomiProvider({
   imageMaxPollDurationMs,
   videoMaxPollDurationMs,
   buildVideoPayload,
+  errorMessage,
+});
+const tuziProvider = createTuziProvider({
+  baseUrl:tuziBase,
+  apiKey:process.env.TUZI_DEFAULT_API_KEY,
+  ...providerTransport,
+  sleep,
+  videoPollRemainingMs,
+  videoPollRequestSignal,
+  videoPollTimeoutError,
+  videoPollStartedAt,
+  imageMaxPollDurationMs,
   errorMessage,
 });
 const ttapiProvider = createTtapiProvider({
@@ -1095,6 +1123,7 @@ function publicAsset(asset) {
   };
 }
 const assetObjectKey = storageKeyService.assetObjectKey;
+const midjourneyGridService = createMidjourneyGridService();
 const mediaArchive = createMediaArchiveService({
   assertGenerationJobLease,
   findAsset,
@@ -1109,9 +1138,11 @@ const mediaArchive = createMediaArchiveService({
   download:downloadToFile,
   put:putObject,
   remove:deleteObject,
+  splitImage:midjourneyGridService.splitImage,
+  statFile:filePath => fs.stat(filePath),
   now,
 });
-const { prepareGenerationAsset, archiveGenerationResult } = mediaArchive;
+const { prepareGenerationAsset, archiveGenerationResult, archiveMidjourneyGridResult } = mediaArchive;
 async function withMediaTempDir(label, callback) {
   const jobDir = path.join(mediaTmpDir, `${safeId(label) || 'job'}-${randomUUID()}`);
   await fs.mkdir(jobDir, { recursive: true, mode: 0o700 });
@@ -1500,8 +1531,9 @@ function clearPollFailureState(task) {
   task.pollFailureCount = 0;
   return true;
 }
-function duomiImagePersistenceHooks(userId, task) {
+function imagePersistenceHooks(userId, task) {
   return {
+    ...progressPersistenceHooks(userId, task),
     onSubmitted: async ({ provider, taskId }) => {
       clearProviderTaskIdTimeout(task.id);
       task.provider = provider;
@@ -1512,7 +1544,7 @@ function duomiImagePersistenceHooks(userId, task) {
       task.lastPollError = '';
       task.lastPollErrorAt = null;
       task.pollFailureCount = 0;
-      await saveGenerationWithRetry(userId, task, 'duomi-image-submitted');
+      await saveGenerationWithRetry(userId, task, `${provider}-image-submitted`);
     },
     onPollError: async ({ consecutiveErrors, detail }) => {
       task.status = 'running';
@@ -1528,7 +1560,7 @@ function duomiImagePersistenceHooks(userId, task) {
   };
 }
 function duomiVideoPersistenceHooks(userId, task) {
-  return { ...progressPersistenceHooks(userId, task), ...duomiImagePersistenceHooks(userId, task) };
+  return { ...progressPersistenceHooks(userId, task), ...imagePersistenceHooks(userId, task) };
 }
 function oaiPersistenceHooks(userId, task) {
   return {
@@ -1682,12 +1714,37 @@ function scheduleGenerationArchive(userId, task) {
   runtimeLifecycle.registerTimer(timer);
   generationRetryTimers.set(task.id, timer);
 }
+const midjourneyOutputCount = 4;
+function isMidjourneyGridTask(task) {
+  return task?.modelId === 'midjourney'
+    && Array.isArray(task.midjourneyOutputIds)
+    && task.midjourneyOutputIds.length === midjourneyOutputCount;
+}
+function isMidjourneyGridChild(task) {
+  return isMidjourneyGridTask(task) && Number(task.midjourneyOutputIndex) > 0;
+}
+function findMidjourneyGridTasks(userId, task) {
+  if (!isMidjourneyGridTask(task)) return [task];
+  return task.midjourneyOutputIds
+    .map(id => id === task.id ? task : findGeneration(userId, id))
+    .filter(Boolean)
+    .sort((left, right) => Number(left.midjourneyOutputIndex || 0) - Number(right.midjourneyOutputIndex || 0));
+}
 async function archiveGenerationWithRetry(userId, task) {
   let current = findGeneration(userId, task.id) || task;
   if (!current.archivePending || current.localReadyAt) { Object.assign(task, current); return true; }
   let validSource = false;
   try { validSource = typeof current.sourceUrl === 'string' && ['http:', 'https:'].includes(new URL(current.sourceUrl).protocol); } catch {}
   if (!validSource) {
+    if (isMidjourneyGridTask(current)) {
+      await failGeneration(userId, current, new Error('生成结果链接缺失或无效，无法拆分 Midjourney 图片'));
+      current = findGeneration(userId, task.id) || current;
+      current.archivePending = false;
+      current.finishedAt = now();
+      await saveGenerationWithRetry(userId, current, 'archive-invalid-source');
+      Object.assign(task, current);
+      return true;
+    }
     current.archivePending = false;
     current.lastArchiveError = '生成结果链接缺失或无效，归档已停止，请联系支持';
     current.lastArchiveErrorAt = now();
@@ -1697,17 +1754,38 @@ async function archiveGenerationWithRetry(userId, task) {
     return true;
   }
   try {
-    await archiveGenerationResult(userId, current, current.sourceUrl);
+    if (isMidjourneyGridTask(current)) {
+      const outputTasks = findMidjourneyGridTasks(userId, current);
+      await archiveMidjourneyGridResult(userId, outputTasks, current.sourceUrl);
+      for (const outputTask of outputTasks) {
+        const asset = findAsset(userId, outputTask.assetId || `generation-${outputTask.id}`);
+        if (!asset?.objectKey) throw new Error('Midjourney 切图未完成云端保存');
+        outputTask.assetId = asset.id;
+        outputTask.archiveFailureCount = 0;
+        outputTask.archivePending = false;
+        outputTask.localDeliveryDeadlineAt = '';
+        outputTask.lastArchiveError = '';
+        outputTask.lastArchiveErrorAt = null;
+        outputTask.status = 'completed';
+        outputTask.error = '';
+        outputTask.finishedAt ||= now();
+        await saveGenerationWithRetry(userId, outputTask, outputTask.id === current.id ? 'archive-completed' : 'midjourney-output-completed');
+      }
+    } else {
+      await archiveGenerationResult(userId, current, current.sourceUrl);
+    }
     current = findGeneration(userId, task.id) || current;
-    current.archiveFailureCount = 0;
-    current.archivePending = false;
-    current.localDeliveryDeadlineAt = '';
-    current.lastArchiveError = '';
-    current.lastArchiveErrorAt = null;
-    current.status = 'completed';
-    current.error = '';
-    current.finishedAt ||= now();
-    await saveGenerationWithRetry(userId, current, 'archive-completed');
+    if (!isMidjourneyGridTask(current)) {
+      current.archiveFailureCount = 0;
+      current.archivePending = false;
+      current.localDeliveryDeadlineAt = '';
+      current.lastArchiveError = '';
+      current.lastArchiveErrorAt = null;
+      current.status = 'completed';
+      current.error = '';
+      current.finishedAt ||= now();
+      await saveGenerationWithRetry(userId, current, 'archive-completed');
+    }
     Object.assign(task, current);
     return true;
   } catch (error) {
@@ -1715,6 +1793,10 @@ async function archiveGenerationWithRetry(userId, task) {
     if (current.localReadyAt || !current.archivePending) { Object.assign(task, current); return true; }
     const failures = (Number(current.archiveFailureCount) || 0) + 1;
     generationLifecycle.markArchivePending(current);
+    if (isMidjourneyGridTask(current)) {
+      current.status = 'running';
+      current.finishedAt = null;
+    }
     current.archiveFailureCount = failures;
     current.lastArchiveError = error.message;
     current.lastArchiveErrorAt = now();
@@ -1734,6 +1816,19 @@ async function completeGenerationResult(userId, task, result) {
   // result. Clear it here as a defensive boundary so a completed task cannot
   // carry a stale retry indicator into a later client refresh.
   clearPollFailureState(task);
+  if (isMidjourneyGridTask(task)) {
+    task.archivePending = true;
+    task.localReadyAt = '';
+    task.localDeliveryDeadlineAt = now();
+    task.status = 'running';
+    task.finishedAt = null;
+    task.error = '';
+    await saveGenerationWithRetry(userId, task, 'provider-result');
+    task.creditStatus = 'charged';
+    await saveGenerationWithRetry(userId, task, 'local-delivery-ready');
+    scheduleGenerationArchive(userId, task);
+    return true;
+  }
   const asset = await prepareGenerationAsset(userId, task, result);
   task.assetId = asset.id;
   task.archivePending = true;
@@ -1751,6 +1846,21 @@ async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
   task.status = 'failed';
   task.error = error.message;
+  const includedOutput = isMidjourneyGridChild(task);
+  if (isMidjourneyGridTask(task) && !includedOutput) {
+    for (const outputTask of findMidjourneyGridTasks(userId, task)) {
+      if (outputTask.id === task.id || outputTask.status === 'failed') continue;
+      outputTask.status = 'failed';
+      outputTask.error = error.message;
+      outputTask.finishedAt = now();
+      outputTask.creditStatus = 'included';
+      await saveGenerationWithRetry(userId, outputTask, 'midjourney-output-failed');
+    }
+  }
+  if (includedOutput) {
+    task.creditStatus = 'included';
+    return;
+  }
   try {
     await refundGenerationMicro(userId, task.id, task.creditCostMicro ?? creditsToMicro(task.creditCost));
     task.creditStatus = 'refunded';
@@ -1815,8 +1925,8 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
-      const hooks = task.type === 'image' && task.provider === 'duomi'
-        ? duomiImagePersistenceHooks(userId, task)
+      const hooks = task.type === 'image' && ['duomi', 'tuzi'].includes(task.provider)
+        ? imagePersistenceHooks(userId, task)
         : task.provider === 'oai'
         ? oaiPersistenceHooks(userId, task)
         : task.routeId
@@ -1829,7 +1939,9 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
             ? autodlPersistenceHooks(userId, task)
             : {};
       hooks.deferPolling = deferPolling;
-      const result = task.type === 'image' ? await duomiProvider.createImage(task, refs, hooks) : await createVideo(task, refs, hooks);
+      const result = task.type === 'image'
+        ? await (task.provider === 'tuzi' ? tuziProvider : duomiProvider).createImage(task, refs, hooks)
+        : await createVideo(task, refs, hooks);
       if (result?.pending) return;
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
       await completeGenerationResult(userId, task, result);
@@ -1873,10 +1985,22 @@ function resumeDuomiImageGeneration(userId, task, options = {}) {
     startPhase: 'duomi-image-recovery-running',
     finalPhase: 'duomi-image-recovery-final',
     useRetryForStart: true,
-    poll: ({ pollOnce }) => duomiProvider.pollImage(task.providerTaskId, duomiImagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce, modelId:task.modelId }),
+    poll: ({ pollOnce }) => duomiProvider.pollImage(task.providerTaskId, imagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce, modelId:task.modelId }),
     missingUrlMessage: '图片任务完成，但没有返回结果地址',
     logScope: 'image',
     logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
+}
+function resumeTuziImageGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    startPhase:'tuzi-image-recovery-running',
+    finalPhase:'tuzi-image-recovery-final',
+    useRetryForStart:true,
+    poll:({ pollOnce }) => tuziProvider.pollImage(task.providerTaskId, imagePersistenceHooks(userId, task), videoPollStartedAt(task), { immediate:true, allowExpiredFinalCheck:true, pollOnce }),
+    missingUrlMessage:'图片任务完成，但没有返回结果地址',
+    logScope:'image',
+    logContext:() => ({ providerTaskId:task.providerTaskId }),
   });
 }
 function resumeDuomiVideoGeneration(userId, task, options = {}) {
@@ -1927,7 +2051,8 @@ function resumeGenerationArchive(userId, task) {
       task.creditStatus = 'charged';
     } finally {
       Object.assign(task, findGeneration(userId, task.id) || task);
-      generationLifecycle.markArchivePending(task);
+      if (!isMidjourneyGridTask(task)) generationLifecycle.markArchivePending(task);
+      else if (task.archivePending) { task.status = 'running'; task.finishedAt = null; }
       try { await saveGenerationWithRetry(userId, task, 'archive-recovery-final'); }
       finally { activeGenerations.delete(task.id); }
     }
@@ -1977,11 +2102,13 @@ function processGenerationTask(userId, task, kind = 'generation') {
   if (kind === 'refund_reconcile') return reconcileGenerationRefund(userId, task);
   if (kind === 'archive') return resumeGenerationArchive(userId, task);
   if (kind === 'reconcile_submission') return reconcileMissingProviderTaskId(userId, task);
+  if (isMidjourneyGridChild(task)) return Promise.resolve();
   if (task.awaitingReferences) return Promise.resolve();
   if (task.archivePending && task.sourceUrl && !task.localReadyAt) return resumeGenerationArchive(userId, task);
   const pollOnce = kind === 'poll' || Boolean(task.providerTaskId);
   if (task.status === 'queued' && !task.awaitingReferences) return startGeneration(userId, task, { deferPolling:true });
   if (task.type === 'image' && task.provider === 'duomi' && task.providerTaskId) return resumeDuomiImageGeneration(userId, task, { pollOnce });
+  if (task.type === 'image' && task.provider === 'tuzi' && task.providerTaskId) return resumeTuziImageGeneration(userId, task, { pollOnce });
   if (task.type === 'video' && task.provider === 'duomi' && task.providerTaskId) return resumeDuomiVideoGeneration(userId, task, { pollOnce });
   if (task.provider === 'oai' && task.providerTaskId) return resumeOaiGeneration(userId, task, { pollOnce });
   if (task.routeId && task.providerTaskId) return resumeRoutedGeneration(userId, task, { pollOnce });
@@ -2029,6 +2156,8 @@ async function runGenerationJob(job) {
       } else if (rescheduleGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken, kind:'refund_reconcile', nextRunAt:Date.now() + archiveRescheduleMs, errorCode:'REFUND_PENDING', errorMessage:persistedTask.error || '退款待重试' })) {
         runtimeMetrics.generationJobsRescheduled++;
       }
+    } else if (persistedTask && isMidjourneyGridChild(persistedTask)) {
+      if (completeGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken })) runtimeMetrics.generationJobsCompleted++;
     } else if (!persistedTask || (['completed', 'failed'].includes(persistedTask.status) && !persistedTask.archivePending)) {
       if (completeGenerationJob({ id:job.id, owner:generationJobOwner, leaseToken:job.leaseToken })) runtimeMetrics.generationJobsCompleted++;
     } else if (persistedTask.awaitingReferences) {
@@ -2079,6 +2208,7 @@ async function recoverPendingGenerations() {
   let awaitingReconciliation = 0;
 
   for (const { userId, task } of pending) {
+    if (isMidjourneyGridChild(task)) continue;
     if (task.creditStatus === 'refund_failed') {
       enqueueGenerationJob({ userId, generationId:task.id, kind:'refund_reconcile', nextRunAt:Date.now(), preserveScheduledTime:true });
       refundReconciliations++;
@@ -2224,7 +2354,8 @@ const accountRoute = createAccountRouteHandler({
   markAllNotificationsRead,
 });
 const viralLab = createViralLabRouteHandler({ bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, findAsset, publicAsset, publicGeneration,
-  llmConfig, isLlmConfigured, callLlm, llmRates, conservativeInputTokenUpperBound, llmReservationMicro, reserveLlmCredits, settleLlmCredits, releaseLlmCredits, markLlmBillingReconcile });
+  llmConfig, isLlmConfigured, callLlm, llmRates, conservativeInputTokenUpperBound, llmReservationMicro, reserveLlmCredits, settleLlmCredits, releaseLlmCredits, markLlmBillingReconcile,
+  ensureLocalAsset: (userId, asset) => ensureLocalAsset(userId, asset) });
 const dramaRoute = createDramaRouteHandler({
   bodyJson,
   sendJson,
@@ -2373,6 +2504,10 @@ const generationRoute = createGenerationRouteHandler({
   fixedModels,
   imageSizes,
   imageModelIds:supportedImageModelIds,
+  tuziImageModelId:imageModelIds.gptImage25,
+  tuziImageSizes,
+  tuziImageTiers,
+  tuziImageCredits,
   videoModelIds:VIDEO_MODEL_IDS,
   legacyVideoModelIds:LEGACY_VIDEO_MODEL_IDS,
   storyboardEngineVersion:STORYBOARD_ENGINE_VERSION,
@@ -2380,6 +2515,7 @@ const generationRoute = createGenerationRouteHandler({
   r2ReferencePublicBaseUrl,
   providerAvailability:{
     duomi:Boolean(process.env.DUOMI_API_KEY),
+    tuzi:Boolean(process.env.TUZI_DEFAULT_API_KEY),
     ttapi:ttapiConfigured,
     cntcn:cntcnConfigured,
     autodl:autodlConfigured,
@@ -2391,7 +2527,7 @@ const generationRoute = createGenerationRouteHandler({
   activeGenerations,
 });
 
-export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

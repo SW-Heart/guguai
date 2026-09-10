@@ -16,7 +16,7 @@ export function createGenerationJobPolicy({
   }
 
   function pollInterval(task) {
-    if (task?.type === 'image' && task.provider === 'duomi') return imagePollIntervalMs;
+    if (task?.type === 'image' && ['duomi', 'tuzi'].includes(task.provider)) return imagePollIntervalMs;
     if (task?.provider === 'oai') return oaiPollIntervalMs;
     if (task?.provider === 'autodl') return autodlPollIntervalMs;
     if (task?.provider === 'ttapi') return ttapiPollIntervalMs;

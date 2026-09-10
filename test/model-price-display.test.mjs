@@ -1,11 +1,16 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { closeDatabase, openDatabase } from '../lib/db.mjs';
+import { ensureDefaultModelRoutes } from '../lib/model-routes.mjs';
 
 process.env.DIW_KEY = 'test-diw-key';
 process.env.WJ_TJWD_KEY = 'test-wj-key';
 process.env.WJ_SD_PY_900_KEY = 'test-wj-py-key';
 process.env.CNTCN_KEY = 'test-cntcn-key';
 const { __test } = await import('../server.mjs');
+openDatabase({ file: ':memory:' });
+ensureDefaultModelRoutes();
+after(() => closeDatabase({ checkpoint:false }));
 
 const app = await (await import('node:fs/promises')).readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 
@@ -46,4 +51,19 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
   assert.equal(Object.hasOwn(seedance20Fast, 'selectedRouteName'), false);
   assert.match(seedance20Fast.priceVersion, /^v1-[0-9a-f]{32}$/);
   assert.doesNotMatch(JSON.stringify(catalog), /sd20-|upstream|credential|WJ|DIW/);
+});
+
+test('GPT Image 2.5 price catalog exposes 1K, 2K and 4K request prices', () => {
+  const catalog = __test.publicPlatformPrices({ imagePerRequest:1, videoPerSecond:1, version:1 }, { models:[] });
+  const prices = catalog.filter(item => item.modelId === 'gpt-image-2.5').map(item => [item.quality, item.credits]);
+  assert.deepEqual(prices, [['1K', 1], ['2K', 2], ['4K', 4]]);
+});
+
+test('Midjourney price catalog charges four credits per composite request', () => {
+  const catalog = __test.publicPlatformPrices({ imagePerRequest:1, videoPerSecond:1, version:1 }, { models:[] });
+  const price = catalog.find(item => item.modelId === 'midjourney');
+  assert.equal(price.quality, '标准');
+  assert.equal(price.credits, 4);
+  assert.equal(price.yuan, 0.4);
+  assert.equal(price.unit, 'request');
 });

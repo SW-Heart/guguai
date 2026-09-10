@@ -5108,7 +5108,7 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
 .app-shell.drama-director-open .topbar{grid-template-columns:72px minmax(200px,1fr) auto}
 .app-shell.drama-director-open #dramaSteps{display:none}
 .app-shell.drama-director-open .drama-stage{width:100%;max-width:none;height:calc(100dvh - 56px);margin:0;padding:0;overflow:hidden}
-.director-workspace{--dw-ink:#252a42;--dw-muted:#69708a;--dw-line:#e3e6f0;--dw-brand:#5653cf;display:grid;grid-template-columns:220px minmax(300px,1fr) 350px;height:100%;color:var(--dw-ink);background:#f6f7fb;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif}
+.director-workspace{--dw-ink:#252a42;--dw-muted:#69708a;--dw-line:#e3e6f0;--dw-brand:#5653cf;display:grid;grid-template-columns:220px minmax(300px,1fr) 350px;height:100%;color:var(--dw-ink);background:#f6f7fb;font-family:var(--sans)}
 .director-workspace button,.director-workspace select{min-height:40px;border:1px solid var(--dw-line);border-radius:10px;background:#fff;color:var(--dw-ink);padding:8px 12px;cursor:pointer;font:inherit;font-size:13px}
 .director-workspace button:hover{background:#eeedfc;border-color:#bab7ea}.director-workspace button:disabled{opacity:.5;cursor:default}.director-workspace :focus-visible{outline:3px solid #827de0;outline-offset:2px}
 .director-workspace .dw-primary{background:var(--dw-brand);color:white;border-color:var(--dw-brand)}
@@ -5118,7 +5118,7 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
 .dw-assets>header{align-items:flex-start;flex-direction:column;gap:6px}.dw-assets header span,.dw-board header span{font-size:12px;color:var(--dw-muted)}
 .dw-assets-list{overflow:auto;padding:12px;flex:1;min-height:100px}.dw-assets-list button{display:flex;align-items:center;width:100%;text-align:left;gap:8px;border:0;margin-bottom:4px;background:transparent}.dw-assets-list button.active{background:#eeedfc}.dw-assets-list span{font-size:11px;color:var(--dw-muted);flex:none}.dw-assets-list b{font-size:13px;overflow-wrap:anywhere}.dw-assets-list small{font-size:10px;color:var(--dw-brand)}
 .dw-inspector{border-top:1px solid var(--dw-line);padding:14px;max-height:46%;overflow:auto;font-size:12px}.dw-inspector h3{font-size:14px;margin:0 0 12px}.dw-inspector label{display:block;margin:12px 0}.dw-inspector textarea,.dw-inspector input{display:block;box-sizing:border-box;width:100%;margin-top:8px;border:1px solid var(--dw-line);border-radius:8px;padding:8px;background:#fafbfe;color:var(--dw-ink)}.dw-inspector textarea{height:100px;resize:vertical}.dw-inspector button{font-size:12px;margin:3px 0}
-.dw-board{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}.dw-board>header{z-index:2;background:#ffffffd9;backdrop-filter:blur(16px)}.dw-board>header>div{display:flex;flex-direction:column;gap:5px}.dw-board>header button{font-size:12px}.dw-canvas{position:relative;flex:1;min-height:0;overflow:hidden;background-color:#f5f6fa;background-image:radial-gradient(#cbd0df .8px,transparent .8px);background-size:20px 20px}.dw-tools{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;padding:5px;border:1px solid #ffffff;background:#ffffffeb;backdrop-filter:blur(20px);border-radius:14px;box-shadow:0 8px 28px #34365b1a;white-space:nowrap}.dw-tools button{border:0;background:transparent}.dw-tools output{font:12px ui-monospace,monospace;min-width:42px;text-align:center}
+.dw-board{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}.dw-board>header{z-index:2;background:#ffffffd9;backdrop-filter:blur(16px)}.dw-board>header>div{display:flex;flex-direction:column;gap:5px}.dw-board>header button{font-size:12px}.dw-canvas{position:relative;flex:1;min-height:0;overflow:hidden;background-color:#f5f6fa;background-image:radial-gradient(#cbd0df .8px,transparent .8px);background-size:20px 20px}.dw-tools{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;padding:5px;border:1px solid #ffffff;background:#ffffffeb;backdrop-filter:blur(20px);border-radius:14px;box-shadow:0 8px 28px #34365b1a;white-space:nowrap}.dw-tools button{border:0;background:transparent}.dw-tools output{font:12px var(--mono);min-width:42px;text-align:center}
 .dw-agent>header label{font-size:11px;color:var(--dw-muted)}.dw-agent select{display:block;margin-top:4px;min-height:32px;padding:5px}.dw-messages{flex:1;min-height:120px;overflow:auto;padding:22px 18px}.dw-welcome{padding:32px 4px}.dw-welcome h2{font-size:23px;letter-spacing:-.5px}.dw-welcome p{font-size:13px;line-height:1.8;color:var(--dw-muted)}.dw-message{margin-bottom:22px;font-size:14px;line-height:1.75;overflow-wrap:anywhere}.dw-message small{font-size:11px;color:var(--dw-muted)}.dw-message p{white-space:pre-wrap;margin:5px 0}.dw-message.user{background:#f0effa;border-radius:12px;padding:12px 14px}.dw-plan{font-size:12px;line-height:1.7;padding:0 18px;max-height:28%;overflow:auto}.dw-plan:empty{display:none}.dw-plan details{margin-bottom:10px}.dw-plan summary{cursor:pointer}.dw-plan button{width:100%;margin-bottom:12px}.dw-composer{margin:14px;padding:14px;border:1px solid var(--dw-line);border-radius:16px;box-shadow:0 4px 16px #30325d06;background:#fff}.dw-composer label{font-size:12px;color:var(--dw-muted)}.dw-composer textarea{box-sizing:border-box;width:100%;padding:10px 0;border:0;outline:0;resize:vertical;min-height:85px;max-height:200px;background:transparent;font:14px/1.7 inherit;color:var(--dw-ink)}.dw-composer>div{display:flex;align-items:center;justify-content:space-between;gap:10px}.dw-composer small{font-size:10px;color:var(--dw-muted)}
 @media(max-width:1150px){.director-workspace{grid-template-columns:170px minmax(240px,1fr) 300px}.dw-board>header{height:92px;align-items:flex-start;flex-direction:column;gap:5px;padding:10px}.dw-board>header span{display:none}}
 @media(max-width:800px){.director-workspace{grid-template-columns:minmax(0,1fr) 280px}.dw-assets{display:none}}
@@ -5142,7 +5142,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 40px);min-
 .director-workspace.agent-collapsed{grid-template-columns:minmax(0,1fr)}
 .director-workspace.agent-collapsed .dw-agent{display:none}
 .dw-board{height:100%;min-height:0}.dw-canvas{height:100%;flex:1}
-.dw-canvas-actions{position:absolute;top:16px;left:16px;display:flex;gap:8px;z-index:3}.dw-canvas-actions button{background:#ffffffed;box-shadow:0 3px 14px #31365709;border-color:#e4e6ef}
+.dw-canvas-actions{position:absolute;top:56px;left:16px;display:flex;gap:8px;z-index:3}.dw-canvas-actions button{min-height:32px;padding:6px 10px;background:#fffffff0;box-shadow:0 4px 16px #31365712;border-color:#e4e6ef;font-size:12px}
 .dw-agent>header{height:48px;padding:8px 12px;gap:8px}.dw-agent>header>b{font-size:14px;flex:1}.dw-agent>header select{font-size:12px;min-height:30px;padding:4px 8px;border:0;background:#f4f4f9;margin:0}.dw-agent>header button{min-height:30px;width:30px;padding:4px;border:0;background:transparent;font-size:18px}
 .dw-welcome{padding:12px 0}.dw-welcome h2{font-size:20px}.dw-welcome p{font-size:13px}.dw-welcome button{text-align:left;font-size:12px}.dw-messages{padding:16px;min-height:0}.dw-composer{margin:10px;padding:10px 12px;box-shadow:none}.dw-composer textarea{min-height:76px}.dw-composer>div{justify-content:flex-end;gap:6px}.dw-composer>div [data-director-delegate]{margin-right:auto;border:0;background:#f4f4fa;color:#656581;font-size:12px}.dw-plan{padding:0 12px}.dw-plan>b{display:none}.dw-tools{bottom:16px;border-radius:12px;padding:4px}.dw-tools button{min-height:34px;padding:6px 10px}.dw-tools [data-tool]{min-width:42px}.dw-tools [data-tool="arrow"]{min-width:44px}.dw-tool-divider{height:18px;width:1px;background:#e2e4ee;margin:0 4px}
 .dw-inspector{position:absolute;top:68px;left:16px;z-index:5;width:280px;max-height:calc(100% - 148px);padding:16px;background:#fffffff5;backdrop-filter:blur(16px);border:1px solid #e0e3ed;border-radius:14px;box-shadow:0 10px 35px #30345215;overflow:auto}
@@ -5174,3 +5174,124 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 40px);min-
 @media(max-width:800px){.director-workspace{display:grid;grid-template-columns:minmax(0,1fr) 280px}.dw-inspector.compact{top:64px;left:12px;max-width:calc(100% - 24px)}.dw-inspector.compact>b{display:none}.dw-tools button{padding:6px;font-size:11px}.dw-tools{gap:0}.dw-agent{height:100%}}
 @media(max-width:580px){.director-workspace{display:block;position:relative}.dw-board{height:100%;min-height:0}.dw-agent{position:absolute;right:0;top:0;bottom:0;width:min(310px,85vw);z-index:6;box-shadow:-8px 0 28px #2c315017}.dw-inspector{max-width:calc(100% - 32px)}.dw-tools button{min-height:44px}.dw-canvas-actions button{min-height:44px}.dw-inspector.compact button{min-height:44px}}
 @media(prefers-reduced-motion:reduce){.director-workspace,.dw-agent,.dw-composer,.dw-composer textarea,.dw-node,.dw-canvas-actions button{transition:none!important}.dw-message.user{animation:none!important}}
+
+/* Reference Canvas island: the migrated Canvas owns its tools, viewport and
+   selection surface. Keep the host transparent so the native grid and Konva
+   stage remain the largest, fastest part of the director workspace. */
+.director-workspace .dw-canvas.reference-canvas-host{background:transparent;background-image:none;isolation:isolate}
+.director-workspace .reference-canvas-host>.canvas-preview{height:100%;width:100%;background:#f8f9fc}
+.director-workspace .reference-canvas-host .canvas-preview>div:first-child{background:rgba(255,255,255,.84);backdrop-filter:blur(14px)}
+.director-workspace .reference-canvas-host .canvas-whiteboard-container{background:#f8f9fc}
+.director-workspace .reference-canvas-host .canvas-preview-grid{pointer-events:none;z-index:0}
+.director-workspace .reference-canvas-host .canvas-whiteboard-container>div[ref]{z-index:1}
+.director-workspace .reference-canvas-host .reference-button{display:inline-flex;min-height:32px;align-items:center;justify-content:center;gap:6px;border:1px solid transparent;border-radius:8px;padding:6px 9px;font:inherit;font-size:12px;line-height:1;color:#252a42;background:transparent;cursor:pointer;transition:background .16s ease,border-color .16s ease,transform .12s ease}
+.director-workspace .reference-canvas-host .reference-button:hover{background:#eeedfc;border-color:#d7d5f6}
+.director-workspace .reference-canvas-host .reference-button:active{transform:translateY(1px)}
+.director-workspace .reference-canvas-host .reference-button-outline{border-color:#e3e6f0;background:#fff}
+.director-workspace .reference-canvas-host .reference-button-secondary{color:#4846ad;background:#eeedfc;border-color:#d7d5f6}
+.director-workspace .reference-canvas-host .reference-button-sm{min-height:30px;padding:5px 8px;font-size:11px}
+.director-workspace .reference-canvas-host .reference-button-icon{width:32px;padding:5px}
+.director-workspace .reference-canvas-host .reference-button-group{display:inline-flex;align-items:center;gap:0}
+.director-workspace .reference-canvas-host .reference-button-group>.reference-button{border-radius:0}
+.director-workspace .reference-canvas-host .reference-button-group>.reference-button:first-child{border-radius:8px 0 0 8px}
+.director-workspace .reference-canvas-host .reference-button-group>.reference-button:last-child{border-radius:0 8px 8px 0}
+.director-workspace .reference-canvas-host .reference-tooltip-wrap,.director-workspace .reference-canvas-host .reference-popover-root,.director-workspace .reference-canvas-host .reference-dropdown-root,.director-workspace .reference-canvas-host .reference-sheet-root{position:relative;display:inline-flex}
+.director-workspace .reference-canvas-host .reference-tooltip{position:absolute;z-index:100;left:50%;top:calc(100% + 7px);transform:translateX(-50%);padding:5px 8px;border-radius:6px;color:#fff;background:#252a42;box-shadow:0 6px 18px #252a4230;white-space:nowrap;font-size:11px;pointer-events:none}
+.director-workspace .reference-canvas-host .reference-popover-content,.director-workspace .reference-canvas-host .reference-dropdown-content{position:absolute;z-index:80;top:calc(100% + 8px);left:0;min-width:180px;padding:8px;border:1px solid #e3e6f0;border-radius:10px;background:#fff;box-shadow:0 14px 36px #29335a1f;color:#252a42}
+.director-workspace .reference-canvas-host .reference-popover-close{display:none}
+.director-workspace .reference-canvas-host .reference-dropdown-item{display:flex;align-items:center;width:100%;min-height:32px;gap:8px;border:0;border-radius:7px;padding:6px 8px;background:transparent;color:#252a42;text-align:left;font:inherit;font-size:12px;cursor:pointer}
+.director-workspace .reference-canvas-host .reference-dropdown-item:hover{background:#f1f1ff;color:#4547a5}
+.director-workspace .reference-canvas-host .reference-sheet-content{position:absolute;z-index:90;top:0;right:0;bottom:0;width:min(320px,90%);padding:16px;border-left:1px solid #e3e6f0;background:#fff;box-shadow:-12px 0 32px #29335a1c;overflow:auto}
+.director-workspace .reference-canvas-host .reference-sheet-close{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:20px;cursor:pointer}
+.director-workspace .reference-canvas-host .reference-sheet-title{margin:0 0 12px;font-size:15px}
+.director-workspace .reference-canvas-host input[type=range]{accent-color:#5653cf}
+
+/* Director canvas surface: keep the production content light and unboxed.
+   The migrated whiteboard owns transforms; these rules only style the HTML
+   payload that lives inside its world coordinates. */
+.director-workspace .dw-canvas.reference-canvas-host{background:#f5f6ff}
+.director-workspace .reference-canvas-host>.canvas-preview{background-color:#f5f6ff;background-image:radial-gradient(ellipse at 52% 18%,#ffffffd9 0%,#f5f6ff00 58%),linear-gradient(135deg,#f3f4ff 0%,#fbfbff 48%,#f2f4ff 100%);}
+.director-workspace .reference-canvas-host .canvas-whiteboard-container{background:transparent!important;touch-action:none;overscroll-behavior:contain}
+.director-workspace .reference-canvas-host .canvas-preview-grid{mix-blend-mode:multiply;opacity:.68}
+.director-workspace .reference-canvas-host .canvas-preview-grid .tl-grid-dot{fill:#9290c9!important;color:#9290c9!important}
+.director-workspace .reference-canvas-host .konvajs-content,.director-workspace .reference-canvas-host canvas{touch-action:none}
+.director-workspace .reference-canvas-host .canvas-preview>div:first-child{box-shadow:0 1px 0 #e6e7f0;background:#ffffffc7}
+
+/* Business nodes are content, not cards. Their bounding box is still kept so
+   the native whiteboard can select, move and scale the whole composition. */
+.director-workspace .reference-canvas-host .dw-node-content{box-sizing:border-box;width:280px;height:228px;display:flex;flex-direction:column;gap:8px;padding:4px 2px;color:#252a42;background:transparent;border:0;border-radius:0;box-shadow:none;overflow:hidden;font:14px/1.55 var(--sans);transform-origin:top left;pointer-events:none}
+.director-workspace .reference-canvas-host .dw-node-title{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 2px;color:#252a42;white-space:nowrap}
+.director-workspace .reference-canvas-host .dw-node-title b{max-width:220px;overflow:hidden;text-overflow:ellipsis;font-size:16px;letter-spacing:-.01em}
+.director-workspace .reference-canvas-host .dw-node-status{flex:none;color:#777c98;font-size:11px;font-weight:500}
+.director-workspace .reference-canvas-host .dw-node-status.is-failed{color:#bd5d5d}
+.director-workspace .reference-canvas-host .dw-node-media{display:block;width:100%;height:148px;min-height:0;object-fit:contain;border:0;border-radius:0;background:transparent}
+.director-workspace .reference-canvas-host .dw-node-copy{flex:1;min-height:0;margin:0;padding:2px;overflow:auto;white-space:pre-wrap;color:#3b405a;line-height:1.7}
+.director-workspace .reference-canvas-host .dw-node-meta{margin-top:auto;padding:0 2px;color:#858aa3;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.director-workspace .reference-canvas-host .dw-node-content.is-selected .dw-node-title b{color:#514dc1}
+.director-workspace .reference-canvas-host .dw-node-content.is-selected .dw-node-status{color:#625ec6}
+
+/* Keep floating controls crisp while the stage beneath them zooms. */
+.director-workspace .reference-canvas-host [data-floating-menu],.director-workspace .reference-canvas-host [data-zoom-panel]{transform-origin:top left}
+.director-workspace .reference-canvas-host button,.director-workspace .reference-canvas-host select{font-family:var(--sans)}
+.director-workspace .reference-canvas-host .reference-popover-content,.director-workspace .reference-canvas-host .reference-dropdown-content{backdrop-filter:blur(18px);background:#fffffff2;border-color:#e0e2ee;box-shadow:0 16px 40px #3d3f6a20}
+
+/* Image parameters: keep the image rail quiet and let optional Midjourney
+   controls reveal themselves only when the user asks for them. */
+#imageForm .image-model-control { border-bottom: 0; }
+#imageForm .control-section,
+#imageForm .image-quantity-control { border-top: 0; }
+#imageForm .control-section { padding-top: 12px; }
+#imageForm #imageGptOptions > .control-section:first-child { padding-top: 0; }
+#imageForm #imageTuziOptions > .control-section:first-child { padding-top: 0; }
+#imageForm .image-quantity-control { padding-top: 12px; }
+
+#imageTuziOptions .ratio-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#imageTuziOptions .segmented { margin-bottom: 7px; }
+.ratio-frame-auto { color: currentColor; font: 650 15px/22px var(--mono); }
+
+#imageMidjourneyOptions { display: grid; gap: 10px; padding-top: 2px; }
+#imageMidjourneyOptions > .control-section { padding: 0; }
+#imageMidjourneyOptions .mj-aspect-field,
+#imageMidjourneyOptions .mj-quality-field {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  background: var(--control-surface);
+  box-shadow: var(--control-shadow);
+}
+#imageMidjourneyOptions .mj-aspect-field .field-label { margin-bottom: 7px; }
+#imageMidjourneyOptions .mj-aspect-field .ratio-grid { margin-bottom: 0; }
+#imageMidjourneyOptions .mj-quality-field .field-label { margin-bottom: 7px; }
+#imageMidjourneyOptions .mj-quality-segmented { grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; }
+#imageMidjourneyOptions .mj-quality-segmented button { min-width: 0; min-height: 34px; padding: 4px 2px; font: 10px var(--mono); }
+
+.mj-collapsible { min-width: 0; border: 1px solid var(--control-border); border-radius: 10px; background: var(--control-surface); box-shadow: var(--control-shadow); }
+.mj-collapsible > summary { min-height: 40px; box-sizing: border-box; padding: 9px 10px; color: var(--ink-soft); display: flex; align-items: center; gap: 7px; cursor: pointer; list-style: none; font-size: 10px; font-weight: 550; }
+.mj-collapsible > summary::-webkit-details-marker { display: none; }
+.mj-collapsible > summary > svg { display: none; }
+.mj-collapsible > summary::after { content: ''; width: 7px; height: 7px; margin-left: auto; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg) translateY(-2px); transition: transform var(--ease); }
+.mj-collapsible[open] > summary::after { transform: rotate(225deg) translate(-1px, -1px); }
+.mj-collapsible > summary:hover { color: var(--brand); }
+.mj-collapsible > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; border-radius: 9px; }
+.mj-collapsible > summary small { color: var(--faint); font: 9px var(--mono); }
+.mj-advanced-content { display: grid; gap: 8px; padding: 0 10px 10px; }
+.mj-two-cols.mj-input-cols { gap: 8px; }
+.mj-input-field { min-width: 0; display: grid; gap: 6px; padding: 0; color: var(--muted); font-size: 10px; }
+.mj-input-field input { width: 100%; min-height: 36px; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--control-border); border-radius: 7px; color: var(--ink); background: rgba(247,248,255,.68); font: 10px var(--mono); }
+.mj-input-field input:focus { outline: 0; border-color: var(--control-border-hover); box-shadow: 0 0 0 2px rgba(99,102,241,.09); }
+.mj-toggle-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 0; color: var(--muted); font-size: 9px; }
+.mj-toggle-row label { min-width: 0; min-height: 34px; justify-content: center; padding: 5px 3px; border: 1px solid var(--control-border); border-radius: 8px; background: rgba(247,248,255,.68); box-shadow: none; line-height: 1.25; text-align: center; }
+.mj-toggle-row label:has(input:checked) { border-color: rgba(99,102,241,.28); color: #4c4eb1; background: var(--control-surface-selected); }
+.mj-toggle-row input { margin: 0; accent-color: var(--brand); }
+
+#imageMidjourneyOptions .mj-style-details > summary small { color: #7f75d9; }
+#imageMidjourneyOptions .mj-range-grid { display: grid; gap: 13px; margin: 0; padding: 12px 10px 13px; border-top: 0; border-radius: 0 0 9px 9px; background: rgba(247,248,255,.46); }
+#imageMidjourneyOptions .mj-range-field { display: grid; gap: 7px; padding: 0; color: var(--muted); font-size: 10px; }
+#imageMidjourneyOptions .mj-range-field > span { display: flex; justify-content: space-between; gap: 8px; }
+#imageMidjourneyOptions .mj-range-field b { color: var(--ink); font: 600 10px var(--mono); }
+#imageMidjourneyOptions .mj-range-field input[type=range] { width: 100%; margin: 0; accent-color: var(--brand); }
+
+@media (max-width: 560px) {
+  .mj-toggle-row label { font-size: 10px; }
+}

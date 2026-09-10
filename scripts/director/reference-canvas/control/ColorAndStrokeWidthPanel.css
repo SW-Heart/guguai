@@ -1,0 +1,24 @@
+.custom-color-popover {
+  .react-colorful__saturation {
+    margin-bottom: 10px;
+    border-radius: 5px;
+    border-bottom: none;
+  }
+
+  .react-colorful__hue,
+  .react-colorful__alpha {
+    height: 14px;
+    border-radius: 5px;
+  }
+
+  .react-colorful__hue {
+    margin-bottom: 10px;
+  }
+
+  .react-colorful__saturation-pointer,
+  .react-colorful__hue-pointer,
+  .react-colorful__alpha-pointer {
+    width: 20px;
+    height: 20px;
+  }
+}
