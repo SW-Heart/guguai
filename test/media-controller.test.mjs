@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createTaskPoller } from '../public/features/generation/polling.js';
 import { createMediaController } from '../public/features/media/controller.js';
 
 function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => ({ items:[] }), acknowledgementFailures = 0, initialFiles = [], syncDeliveries = [], syncPages = null, removeDramaAssemblyAssets = async () => {} } = {}) {
@@ -276,4 +277,33 @@ test('startup consumes both change pages and pending delivery pages', async () =
   assert.match(harness.apiCalls[2], /deliveryCursor=delivery-2/);
   assert.equal(harness.downloadCount, 1);
   harness.controller.reset();
+});
+
+test('a video completed while desktop is hidden is downloaded and acknowledged without reopening', async () => {
+  const file = { id:'hidden-video', name:'Video.mp4', kind:'video', deliveryStatus:'awaiting_local', remoteStatus:'pending' };
+  const harness = createHarness({ syncDeliveries:[file] });
+  const timers = [];
+  let active = ['generation'];
+  const poller = createTaskPoller({
+    setTimeoutFn: callback => { timers.push(callback); return callback; },
+    clearTimeoutFn: () => {},
+    isHidden: () => true,
+    canPollInBackground: () => true,
+    getUser: () => true,
+    getActiveIds: () => active,
+    loadActiveTasks: async () => {
+      active = [];
+      await harness.controller.syncDesktopDeliveries({ assetIds:[file.id] });
+    },
+  });
+  poller.scheduleTaskPoll();
+  poller.onHidden();
+  await timers.shift()();
+  assert.equal(harness.downloadCount, 1);
+  harness.pendingDownloads.get(file.id)({ id:'local-hidden-video', relativePath:'library/Video.mp4', size:10, sha256:'video-sha', mimeType:'video/mp4' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.state.files[0].localStatus, 'saved');
+  assert.equal(harness.state.files[0].deliveryStatus, 'local_ready');
+  assert.equal(harness.acknowledgements.length, 1);
+  assert.equal(timers.length, 0);
 });

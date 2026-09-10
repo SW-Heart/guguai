@@ -1684,6 +1684,9 @@ async function createWindow({ loadStudioAfter = true } = {}) {
       nodeIntegration: false,
       sandbox: true,
       devTools: !app.isPackaged,
+      // Hidden/minimized studio windows still discover and download completed
+      // media. Keep their polling and delivery retry timers running normally.
+      backgroundThrottling: false,
     },
   });
   mainWindow.on('close', event => {

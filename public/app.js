@@ -4,7 +4,7 @@ import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferen
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=3';
-import { createTaskPoller } from './features/generation/polling.js?v=2';
+import { createTaskPoller } from './features/generation/polling.js?v=3';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
 import { createCreditPresentation } from './features/credits/presentation.js?v=2';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
@@ -2080,7 +2080,7 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
       } else if ((cardsChanged || assetsChanged) && state.initialSyncReady) {
         scheduleRouteContentRender(state.route, false);
       }
-      if (state.user && !document.hidden) scheduleTaskPoll();
+      if (state.user && (!document.hidden || window.guguDesktop)) scheduleTaskPoll();
       return state.tasks;
     } catch (error) {
       if (!accountScope.isCurrent(requestAccount)) return state.tasks;
@@ -3864,6 +3864,7 @@ const taskPoller = createTaskPoller({
   setTimeoutFn: window.setTimeout.bind(window),
   clearTimeoutFn: window.clearTimeout.bind(window),
   isHidden: () => document.hidden,
+  canPollInBackground: () => Boolean(window.guguDesktop),
   getUser: () => state.user,
   getActiveIds: activeGenerationIds,
   loadActiveTasks: () => loadTasks({ background: true, activeOnly: true }),
@@ -3875,7 +3876,7 @@ const scheduleTaskPoll = taskPoller.scheduleTaskPoll;
 const scheduleNotificationPoll = taskPoller.scheduleNotificationPoll;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
-    taskPoller.stop();
+    taskPoller.onHidden();
     return;
   }
   if (state.user) {

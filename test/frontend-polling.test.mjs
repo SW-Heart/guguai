@@ -97,3 +97,66 @@ test('poller ignores a queued callback after stop and continues after a transien
   await timers.shift().callback();
   assert.deepEqual(timers.map(item => item.delay), [6000]);
 });
+
+for (const desktop of [false, true]) {
+  test(`hidden ${desktop ? 'desktop continues tasks' : 'browser pauses tasks'} while notifications pause`, async () => {
+    const timers = new Set();
+    let hidden = false;
+    let active = ['video'];
+    let polls = 0;
+    const poller = createTaskPoller({
+      setTimeoutFn: callback => { timers.add(callback); return callback; },
+      clearTimeoutFn: callback => timers.delete(callback),
+      isHidden: () => hidden,
+      canPollInBackground: () => desktop,
+      getUser: () => true,
+      getActiveIds: () => active,
+      loadActiveTasks: async () => { polls += 1; if (polls === 2) active = []; },
+    });
+    poller.scheduleTaskPoll();
+    poller.scheduleNotificationPoll();
+    hidden = true;
+    poller.onHidden();
+    assert.equal(timers.size, desktop ? 1 : 0);
+    if (desktop) {
+      for (let i = 0; i < 2; i += 1) {
+        const callback = [...timers][0];
+        timers.delete(callback);
+        await callback();
+      }
+      assert.equal(polls, 2);
+      assert.equal(timers.size, 0, 'no polling after all tasks complete');
+    } else {
+      poller.scheduleTaskPoll();
+      assert.equal(timers.size, 0);
+      hidden = false;
+      poller.scheduleTaskPoll();
+      assert.equal(timers.size, 1);
+    }
+    poller.stop();
+  });
+}
+
+test('hiding desktop during a request preserves the loop; logout still stops it', async () => {
+  const timers = new Set();
+  let finish;
+  const poller = createTaskPoller({
+    setTimeoutFn: callback => { timers.add(callback); return callback; },
+    clearTimeoutFn: callback => timers.delete(callback),
+    getUser: () => true,
+    isHidden: () => true,
+    canPollInBackground: () => true,
+    getActiveIds: () => ['video'],
+    loadActiveTasks: () => new Promise(resolve => { finish = resolve; }),
+  });
+  poller.scheduleTaskPoll();
+  const callback = [...timers][0];
+  timers.delete(callback);
+  const request = callback();
+  poller.onHidden();
+  finish();
+  await request;
+  assert.equal(timers.size, 1);
+  poller.stop();
+  assert.equal(timers.size, 0);
+});

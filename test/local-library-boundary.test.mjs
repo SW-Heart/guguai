@@ -62,7 +62,8 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=267/);
+  assert.match(index, /\/app\.js\?v=268/);
+  assert.match(app, /\.\/features\/generation\/polling\.js\?v=3/);
   assert.match(index, /\/styles\.css\?v=223/);
   assert.match(index, /\/styles\/base\.css\?v=2/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=13/);
