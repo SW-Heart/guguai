@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCreativeAgentClient} from '../public/features/agent/client.js';
 
+test('failed navigation resumes polling the conversation that remains open',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  let polls=0;
+  const client=createCreativeAgentClient({projectId:'p',onState(){},onError(){},api:async url=>{
+    if(url==='/api/agent/config')return {configured:true};
+    if(url.includes('?'))return {sessions:[]};
+    if(url==='/api/agent/sessions')return {id:'first',state:'running'};
+    if(url.endsWith('/missing'))throw new Error('unavailable');
+    if(url.endsWith('/first')){polls++;return {id:'first',state:'running'};}
+    throw new Error(url);
+  }});
+  try{await client.start();await assert.rejects(client.open('missing'),/unavailable/);t.mock.timers.tick(500);await Promise.resolve();assert.equal(polls,1);}
+  finally{client.dispose();}
+});
+
 test('conversation navigation discards responses from a previously open conversation',async()=>{
   const states=[];let releaseOld;
   const client=createCreativeAgentClient({projectId:'p',onState:s=>{if(s)states.push(s.id);},onError:()=>{},api:async(url,options)=>{

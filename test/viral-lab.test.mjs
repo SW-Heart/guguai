@@ -98,7 +98,7 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   assert.equal(staticEntryFile('/lab',{desktop:true}),'index.html');
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=326\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
+  assert.match(html,/app\.js\?v=328\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
   assert.match(html,/features\/viral-lab\/styles\.css\?v=11/);
   assert.match(app,/features\/viral-lab\/controller\.js\?v=13/);
   assert.match(html,/id="viralLabView"/);assert.match(html,/data-route="lab"/);

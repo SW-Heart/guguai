@@ -5520,6 +5520,9 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .dw-agent .dw-composer .dw-primary:disabled{background:#c8c3e6;border-color:#c8c3e6;opacity:1}
 .dw-agent .dw-agent-retry{align-self:flex-start;margin:5px 16px 8px;padding:5px 10px;min-height:30px;font-size:12px}
 .dw-agent-approval>div button{width:auto;flex:1}
+.dw-agent-approval .dw-primary{background:#6d62ce;border-color:#6d62ce;color:#fff;box-shadow:0 3px 8px #7362c51a;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .12s ease}
+.dw-agent-approval .dw-primary:hover,.dw-agent-approval .dw-primary:focus-visible{background:#5e54bd;border-color:#5e54bd;color:#fff;box-shadow:0 5px 12px #6258c52e}
+.dw-agent-approval .dw-primary:active{background:#554bb0;border-color:#554bb0;color:#fff}
 @media(max-width:800px){.dw-agent>header{padding:10px}.dw-agent>header nav button{padding:5px 6px}.dw-agent .dw-composer>div>small{display:none}.dw-model-row{padding-left:12px;padding-right:12px;gap:8px}}
 
 .director-workspace .dw-generation-frame{position:relative;width:100%;height:100%;overflow:hidden;border-radius:10px;background:#eeedf4;box-shadow:0 4px 16px #24213f0a;box-sizing:border-box}

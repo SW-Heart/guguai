@@ -25,7 +25,14 @@ export function createCreativeAgentClient({ api, projectId, onState, onError, on
   async function open(id = '', fresh = false) {
     const token = ++epoch, request = ++sequence;
     clearTimeout(timer);
-    const session = await api(id ? `/api/agent/sessions/${id}` : '/api/agent/sessions', id ? undefined : { method:'POST', body:JSON.stringify({projectId, fresh, ...(fresh && state?.settings?.model ? {model:state.settings.model} : {})}) });
+    let session;
+    try {
+      session = await api(id ? `/api/agent/sessions/${id}` : '/api/agent/sessions', id ? undefined : { method:'POST', body:JSON.stringify({projectId, fresh, ...(fresh && state?.settings?.model ? {model:state.settings.model} : {})}) });
+    } catch (error) {
+      // A failed navigation leaves the previous conversation open and live.
+      if (current(token) && sessionId) schedule(token);
+      throw error;
+    }
     if (!current(token)) return;
     sessionId = session.id; pendingSend = null;
     accept(session, token, request); schedule(token);

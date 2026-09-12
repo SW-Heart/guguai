@@ -2,7 +2,7 @@ import { bindDirectorMentions } from './director-mentions.js?v=1';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
 import { renderMarkdown } from '../agent/markdown.js?v=1';
 import { placeMediaFrames } from '../agent/frames.js?v=1';
-import { createCreativeAgentClient } from '../agent/client.js?v=3';
+import { createCreativeAgentClient } from '../agent/client.js?v=4';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=28';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=8';
 
@@ -81,7 +81,7 @@ export function createDirectorWorkspace(host, bridge) {
   let canvas, canvasMount, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
   let mainLayer, lastNodeGeometry='', edgeRenderFrame=0, resizingChat=false, resizeCanvasSnapshot=null, resizeFinishFrame=0;
   let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver;
-  let agentClient, agentState=null, agentConfig=null, sending=false, connectionError='', conversations=[], historyOpen=false;
+  let agentClient, agentState=null, agentConfig=null, sending=false, switchingConversation=false, connectionError='', conversations=[], historyOpen=false;
   let attachments=[], uploading=false, popoverEvents;
 
   const assetSizes=new Map(), assetSizeLoads=new Map(), assetImages=new Map();
@@ -277,11 +277,26 @@ export function createDirectorWorkspace(host, bridge) {
     if(frame){
       const media=frame.querySelector('img,video');
       if(media){const measure=()=>{const width=media.naturalWidth||media.videoWidth,height=media.naturalHeight||media.videoHeight;if(!width||!height)return;const p=workspace().positions[id];if(!p)return;const nextHeight=p.width*height/width;if(Math.abs(p.height-nextHeight)>.5){p.height=nextHeight;canvas.updateNodes([id],{height:nextHeight});alignCard(id);clearTimeout(saveTimer);saveTimer=setTimeout(()=>void save().catch(e=>bridge.toast(e.message)),600);}};media.onload=measure;media.onloadedmetadata=measure;if(media.complete||media.readyState>=1)measure();}
-      return;
     }
-    // Scale the fixed 280 × 228 card with its canvas bounds, just like images.
-    // Scaling only the outer overlay leaves the text card huge when zoomed out.
-    if(element.firstElementChild)element.firstElementChild.style.transform=`scale(${rect.width/280},${rect.height/228})`;
+    // Keep the HTML overlay aligned with the Konva hit rectangle, then scale
+    // the card's own content as a single unit. In particular, the placeholder
+    // text inside a generation frame must follow the canvas zoom as well.
+    const readDimension=(owner,key,fallback)=>{
+      const value=owner?.[key],number=typeof value==='function'?value.call(owner):value;
+      const result=Number(number);
+      return Number.isFinite(result)&&result>0?result:fallback;
+    };
+    const config=canvas.getNodeConfigById?.(id)||{};
+    const baseWidth=readDimension(shape,'width',readDimension(config,'width',280));
+    const baseHeight=readDimension(shape,'height',readDimension(config,'height',228));
+    const scaleX=Math.abs(readDimension(shape,'scaleX',readDimension(config,'scaleX',1)));
+    const scaleY=Math.abs(readDimension(shape,'scaleY',readDimension(config,'scaleY',1)));
+    const logicalWidth=Math.max(1,baseWidth*scaleX),logicalHeight=Math.max(1,baseHeight*scaleY);
+    const content=element.firstElementChild;
+    if(content){
+      if(frame)Object.assign(content.style,{width:`${logicalWidth}px`,height:`${logicalHeight}px`});
+      Object.assign(content.style,{transformOrigin:'0 0',transform:`scale(${rect.width/logicalWidth},${rect.height/logicalHeight})`});
+    }
   }
   function alignCards(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id));}
   function fitCanvas(ids){
@@ -353,51 +368,61 @@ export function createDirectorWorkspace(host, bridge) {
     renderEdges(snapshotNodes,true);
   }
   function drawPanels() {
-    if(!host.querySelector('.dw-messages'))return;
+    const root=host.querySelector('.director-workspace');
+    const messages=root?.querySelector('.dw-messages');
+    if(!root||!messages)return;
     busy=['queued','running','waiting_job'].includes(agentState?.state);
     const models=agentConfig?.models||[];
-    const modelButton=host.querySelector('[data-agent-model-toggle]');
+    const modelButton=root.querySelector('[data-agent-model-toggle]');
     const currentModel=agentState?.settings?.model;
-    modelButton.title=`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`;
-    modelButton.disabled=!agentState||sending||!models.length;
-    const modelList=host.querySelector('[data-agent-model-list]');
-    const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${sending?'disabled':''}>${escape(m.label)}${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
-    if(modelList.innerHTML!==options)modelList.innerHTML=options;
-    host.querySelector('[data-agent-upload]').disabled=uploading||sending;
-    host.querySelector('[data-agent-upload]').title=uploading?'正在上传…':'上传文件';
-    const attachmentList=host.querySelector('[data-agent-attachments]');
-    attachmentList.innerHTML=attachments.map(f=>`<span class="dw-attachment${['image','video'].includes(f.kind)&&(f.previewUrl||f.url)?' dw-attachment-preview':''}" title="${escape(f.name)}">${f.kind==='image'&&(f.previewUrl||f.url)?`<img src="${escape(f.previewUrl||f.url)}" alt="${escape(f.name)}">`:f.kind==='video'&&(f.previewUrl||f.url)?`<video src="${escape(f.previewUrl||f.url)}" preload="metadata" muted playsinline aria-label="${escape(f.name)}"></video>`:`<span>${escape(f.name)}</span>`}<button type="button" data-remove-attachment="${escape(f.id)}" aria-label="移除 ${escape(f.name)}" ${sending?'disabled':''}>×</button></span>`).join('')+(uploading?'<span role="status">正在上传文件…</span>':'');
-    host.querySelector('[data-agent-new]').disabled=sending||!agentConfig;
-    host.querySelector('[data-agent-history]').disabled=!agentClient;
-    host.querySelector('[data-agent-retry]').hidden=!connectionError;
-    const history=host.querySelector('.dw-conversations');
+    const conversationBusy=sending||switchingConversation;
+    modelButton?.setAttribute('title',`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`);
+    if(modelButton)modelButton.disabled=!agentState||conversationBusy||!models.length;
+    const modelList=root.querySelector('[data-agent-model-list]');
+    const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${conversationBusy?'disabled':''}>${escape(m.label)}${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
+    if(modelList&&modelList.innerHTML!==options)modelList.innerHTML=options;
+    const uploadButton=root.querySelector('[data-agent-upload]');
+    if(uploadButton){uploadButton.disabled=uploading||conversationBusy;uploadButton.title=uploading?'正在上传…':'上传文件';}
+    const attachmentList=root.querySelector('[data-agent-attachments]');
+    if(attachmentList)attachmentList.innerHTML=attachments.map(f=>`<span class="dw-attachment${['image','video'].includes(f.kind)&&(f.previewUrl||f.url)?' dw-attachment-preview':''}" title="${escape(f.name)}">${f.kind==='image'&&(f.previewUrl||f.url)?`<img src="${escape(f.previewUrl||f.url)}" alt="${escape(f.name)}">`:f.kind==='video'&&(f.previewUrl||f.url)?`<video src="${escape(f.previewUrl||f.url)}" preload="metadata" muted playsinline aria-label="${escape(f.name)}"></video>`:`<span>${escape(f.name)}</span>`}<button type="button" data-remove-attachment="${escape(f.id)}" aria-label="移除 ${escape(f.name)}" ${sending?'disabled':''}>×</button></span>`).join('')+(uploading?'<span role="status">正在上传文件…</span>':'');
+    const newButton=root.querySelector('[data-agent-new]');
+    if(newButton)newButton.disabled=conversationBusy||!agentConfig;
+    const historyButton=root.querySelector('[data-agent-history]');
+    historyButton?.toggleAttribute('disabled',!agentClient);
+    root.querySelector('[data-agent-retry]')?.toggleAttribute('hidden',!connectionError);
+    const history=root.querySelector('.dw-conversations');
 
-    host.querySelector('[data-agent-history]').setAttribute('aria-expanded',String(historyOpen));
-    if(historyOpen){
-      history.innerHTML=`<div class="dw-history-heading"><strong>历史对话</strong><span>${conversations.length} 条</span></div>`+(conversations.length?conversations.map(c=>`<button type="button" data-conversation="${escape(c.id)}" aria-current="${c.id===agentState?.id}"><span>${escape(c.title)}</span><small>${escape(new Date(c.updatedAt).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}))}${['running','queued','waiting_job'].includes(c.state)?' · 进行中':''}</small></button>`).join(''):'<p>还没有历史对话</p>');
+    historyButton?.setAttribute('aria-expanded',String(historyOpen));
+    if(historyOpen&&history){
+      history.innerHTML=`<div class="dw-history-heading"><strong>历史对话</strong><span>${conversations.length} 条</span></div>`+(conversations.length?conversations.map(c=>`<button type="button" data-conversation="${escape(c.id)}" aria-current="${c.id===agentState?.id}" ${conversationBusy?'disabled':''}><span>${escape(c.title)}</span><small>${escape(new Date(c.updatedAt).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}))}${['running','queued','waiting_job'].includes(c.state)?' · 进行中':''}</small></button>`).join(''):'<p>还没有历史对话</p>');
       history.querySelectorAll('[data-conversation]').forEach(button=>button.onclick=()=>void switchConversation(button.dataset.conversation));
     }
-    const auto=host.querySelector('[data-agent-auto]');
-    if(document.activeElement!==auto)auto.checked=Boolean(agentState?.settings.autoGenerate);
-    const budget=host.querySelector('[data-agent-budget]');
-    if(document.activeElement!==budget)budget.value=String((agentState?.settings.generationBudgetMicro||0)/1000000);
-    const status=host.querySelector('.dw-mode-help');
-    status.textContent=connectionError||agentState?.activity||'';
-    status.setAttribute('role','status');
-    host.querySelector('[data-director-stop]').hidden=!busy;
-    host.querySelector('[data-director-delegate]').hidden=agentState?.state!=='paused';
-    const messages=host.querySelector('.dw-messages');
+    const auto=root.querySelector('[data-agent-auto]');
+    if(auto&&document.activeElement!==auto)auto.checked=Boolean(agentState?.settings.autoGenerate);
+    const budget=root.querySelector('[data-agent-budget]');
+    if(budget&&document.activeElement!==budget)budget.value=String((agentState?.settings.generationBudgetMicro||0)/1000000);
+    const status=root.querySelector('.dw-mode-help');
+    if(status){status.textContent=connectionError||agentState?.activity||'';status.setAttribute('role','status');}
+    root.querySelector('[data-director-stop]')?.toggleAttribute('hidden',!busy);
+    root.querySelector('[data-director-delegate]')?.toggleAttribute('hidden',agentState?.state!=='paused');
     const stickToBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
     const items=agentState?.messages||[];
-    if(streamSession!==agentState?.id){cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession=agentState?.id;messages.querySelector('.dw-message-history')?.remove();messages.querySelector('.dw-message-draft')?.remove();}
+    if(streamSession!==agentState?.id){
+      cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession=agentState?.id;
+      // Activity may sit inside history after the latest user message.
+      const activity=messages.querySelector('.dw-turn-activity');
+      if(activity)messages.append(activity);
+      messages.querySelector('.dw-message-history')?.remove();messages.querySelector('.dw-message-draft')?.remove();
+    }
     targetDraft=agentState?.draft||'';
     if(!targetDraft.startsWith(visibleDraft))visibleDraft='';
     if(!targetDraft){cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';}
     renderConversationMessages(messages,items,visibleDraft);
     if(targetDraft&&!streamFrame)streamFrame=requestAnimationFrame(animateDraft);
-    host.querySelectorAll('[data-example]').forEach(button=>button.onclick=()=>{host.querySelector('#directorMessage').value=button.dataset.example;host.querySelector('#directorMessage').focus();});
+    root.querySelectorAll('[data-example]').forEach(button=>button.onclick=()=>{const input=root.querySelector('#directorMessage');if(input){input.value=button.dataset.example;input.focus();}});
     const approval=agentState?.approval;
-    const plan=host.querySelector('.dw-plan');
+    const plan=root.querySelector('.dw-plan');
+    if(!plan)return;
     const approvalSignature=approval?JSON.stringify([approval.id,approval.title,approval.modelId,approval.quantity,approval.credits,approval.prompt]):'';
     if(plan.dataset.approvalSignature!==approvalSignature){
       const promptExpanded=plan.querySelector('details')?.open;
@@ -407,10 +432,8 @@ export function createDirectorWorkspace(host, bridge) {
       plan.querySelector('[data-agent-approve]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,true)));
       plan.querySelector('[data-agent-decline]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,false)));
     }
-    const sendButton=host.querySelector('[data-director-send]');
-    sendButton.disabled=uploading||sending||!agentState||!agentConfig?.configured;
-    sendButton.textContent=sending?'发送中…':busy?'补充要求':'发送';
-    sendButton.setAttribute('aria-busy',String(sending));
+    const sendButton=root.querySelector('[data-director-send]');
+    if(sendButton){sendButton.disabled=uploading||conversationBusy||!agentState||!agentConfig?.configured;sendButton.textContent=sending?'发送中…':busy?'补充要求':'发送';sendButton.setAttribute('aria-busy',String(sending));}
     if(stickToBottom)messages.scrollTop=messages.scrollHeight;
     if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
     syncCanvas();
@@ -428,9 +451,9 @@ export function createDirectorWorkspace(host, bridge) {
     if(follow)messages.scrollTop=messages.scrollHeight;
     if(visibleDraft!==targetDraft)streamFrame=requestAnimationFrame(animateDraft);
   }
-  async function agentAction(action){try{await action();connectionError='';}catch(error){if(!error.stale){connectionError=error.message;bridge.toast(error.message);}}drawPanels();}
+  async function agentAction(action){const token=epoch,session=agentState?.id;try{await action();if(token!==epoch||session!==agentState?.id)return;connectionError='';}catch(error){if(token!==epoch||session!==agentState?.id)return;if(!error.stale){connectionError=error.message;bridge.toast(error.message);}}drawPanels();}
   async function runImageAction(action,ids) {
-    if(sending||uploading)throw new Error('请等待当前操作完成');
+    if(sending||uploading||switchingConversation)throw new Error('请等待当前操作完成');
     if(!agentState||!agentConfig?.configured)throw new Error('请先连接 GuGu 对话');
     const prompts={upscale:'请增强附件图片的清晰度和细节，保留原图主体、构图和内容，并生成处理后的图片。',cutout:'请移除附件图片的背景，完整保留主体及边缘细节，生成透明背景的 PNG 图片。'};
     if(!prompts[action])throw new Error('不支持的图片操作');
@@ -464,7 +487,7 @@ export function createDirectorWorkspace(host, bridge) {
     return true;
   }
   async function attachCanvasFiles(ids) {
-    if(sending||uploading)return;
+    if(sending||uploading||switchingConversation)return;
     const items=nodes().filter(n=>ids.includes(n.id)&&(n.kind==='asset'||n.taskId));
     if(!items.length){bridge.toast('请选择已有文件的素材');return;}
     const token=epoch,conversationId=agentState?.id;
@@ -484,6 +507,7 @@ export function createDirectorWorkspace(host, bridge) {
   }
   function drawInspector() {
     const n=nodes().find(n=>n.id===selected),el=host.querySelector('.dw-inspector');
+    if(!el)return;
     el.hidden=!n;
     if(!n){el.innerHTML='';return;}
     if(n.kind==='document'){
@@ -638,17 +662,17 @@ export function createDirectorWorkspace(host, bridge) {
     });
 
     modelPicker.addEventListener('toggle',event=>host.querySelector('[data-agent-model-toggle]').setAttribute('aria-expanded',String(event.newState==='open')));
-    host.querySelector('[data-agent-model-list]').onclick=event=>{const button=event.target.closest('[data-agent-model]');if(!button||sending)return;modelPicker.hidePopover();void agentAction(()=>agentClient.settings({model:button.dataset.agentModel}));};
-    host.querySelector('[data-agent-attachments]').onclick=event=>{const button=event.target.closest('[data-remove-attachment]');if(button&&!sending){attachments=attachments.filter(f=>f.id!==button.dataset.removeAttachment);drawPanels();}};
+    host.querySelector('[data-agent-model-list]').onclick=event=>{const button=event.target.closest('[data-agent-model]');if(!button||sending||switchingConversation)return;modelPicker.hidePopover();void agentAction(()=>agentClient.settings({model:button.dataset.agentModel}));};
+    host.querySelector('[data-agent-attachments]').onclick=event=>{const button=event.target.closest('[data-remove-attachment]');if(button&&!sending&&!switchingConversation){attachments=attachments.filter(f=>f.id!==button.dataset.removeAttachment);drawPanels();}};
     host.querySelector('[data-agent-upload]').onclick=async()=>{
-      if(uploading||sending)return;
+      if(uploading||sending||switchingConversation)return;
       const token=epoch;uploading=true;drawPanels();
       try{const file=await bridge.uploadChatFile();if(token===epoch&&file&&!attachments.some(f=>f.id===file.id))attachments.push(file);}
       catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
       finally{if(token===epoch){uploading=false;drawPanels();}}
     };
     host.querySelector('[data-agent-save-settings]').onclick=()=>void agentAction(()=>agentClient.settings({autoGenerate:host.querySelector('[data-agent-auto]').checked,generationBudgetCredits:Number(host.querySelector('[data-agent-budget]').value)}));
-    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim()||(attachments.length?'请查看这些附件':'' );if(text&&!sending&&!uploading&&agentState&&agentConfig?.configured){draft='';input.value='';void submit(text);}};
+    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim()||(attachments.length?'请查看这些附件':'' );if(text&&!sending&&!uploading&&!switchingConversation&&agentState&&agentConfig?.configured){draft='';input.value='';void submit(text);}};
     host.querySelector('#directorMessage').value=draft;
     const composerInput=host.querySelector('#directorMessage');
     const closeMentions=bindDirectorMentions(composerInput,{items:()=>nodes().filter(n=>n.kind==='asset'||n.taskId),attach:id=>attachCanvasFiles([id]),signal:popoverEvents.signal});
@@ -656,7 +680,7 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('[data-agent-history]').addEventListener('click',closeMentions);
     const resizeComposer=()=>{composerInput.style.height='auto';composerInput.style.height=`${Math.min(180,Math.max(76,composerInput.scrollHeight))}px`;};
     composerInput.addEventListener('input',resizeComposer);
-    composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!sending)host.querySelector('.dw-composer').requestSubmit();}};
+    composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!sending&&!switchingConversation)host.querySelector('.dw-composer').requestSubmit();}};
     composerInput.addEventListener('focus',()=>host.querySelector('.dw-composer').classList.add('is-focused'));
     composerInput.addEventListener('blur',()=>host.querySelector('.dw-composer').classList.remove('is-focused'));
     resizeComposer();
@@ -674,20 +698,23 @@ export function createDirectorWorkspace(host, bridge) {
     drawPanels();
   }
   async function switchConversation(id){
-    if(sending||uploading)return;
-    sending=true;drawPanels();
-    try{await (id?agentClient.open(id):agentClient.newConversation());host.querySelector('#directorHistoryPicker').hidePopover();historyOpen=false;attachments=[];host.querySelector('#directorMessage').value='';connectionError='';}
-    catch(error){connectionError=error.message;}
-    finally{sending=false;drawPanels();}
+    if(sending||uploading||switchingConversation)return;
+    const token=epoch,client=agentClient,input=host.querySelector('#directorMessage'),previousDraft=input?.value;
+    switchingConversation=true;
+    try{drawPanels();await (id?client.open(id):client.newConversation());if(token!==epoch)return;host.querySelector('#directorHistoryPicker')?.hidePopover();historyOpen=false;attachments=[];if(input&&input.value===previousDraft)input.value='';connectionError='';}
+    catch(error){if(token===epoch&&!error.stale){connectionError=error.message;bridge.toast(error.message);}}
+    finally{if(token===epoch){switchingConversation=false;drawPanels();}}
   }
   async function submit(text,files=attachments,selectionIds=selected?[selected]:[]){
     const composerSend=files===attachments;
-    if(sending||uploading)return;
-    sending=true;drawPanels();
-    try{await save();const content=text+(files.length?'\n\n附件：\n'+files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'');await agentClient.send(content,[...new Set([...selectionIds,...files.map(f=>f.id)])]);if(composerSend)attachments=[];connectionError='';}
-    catch(error){if(!error.stale){connectionError=error.message;if(composerSend)host.querySelector('#directorMessage').value=text;bridge.toast(error.message);}}
-    finally{sending=false;drawPanels();}
+    if(sending||uploading||switchingConversation)return;
+    const token=epoch,client=agentClient,session=agentState?.id;
+    const current=()=>token===epoch&&session===agentState?.id;
+    sending=true;
+    try{drawPanels();await save();if(!current())return;const content=text+(files.length?'\n\n附件：\n'+files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'');await client.send(content,[...new Set([...selectionIds,...files.map(f=>f.id)])]);if(!current())return;if(composerSend)attachments=[];connectionError='';}
+    catch(error){if(current()&&!error.stale){connectionError=error.message;const input=host.querySelector('#directorMessage');if(composerSend&&input&&!input.value)input.value=text;bridge.toast(error.message);}}
+    finally{if(token===epoch){sending=false;drawPanels();}}
   }
-  function dispose(){resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
+  function dispose(){resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;sending=false;switchingConversation=false;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }
