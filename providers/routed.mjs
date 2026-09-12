@@ -61,20 +61,23 @@ export function createRoutedProvider({
     for (;;) {
       const delay = consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000;
       const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
-      if (remainingMs <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
-      if (!immediate) await sleep(Math.min(delay, remainingMs));
-      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
+      if (!immediate && remainingMs > 0) await sleep(Math.min(delay, remainingMs));
+      // A worker may resume after sleep or downtime, long after upstream has
+      // completed. Check the final state before applying our local deadline.
+      const expired = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0;
       let state;
       try {
         state = await fetchJson(`${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}`, {
           headers: { Authorization: `Bearer ${key}` },
-          signal: videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
+          signal: expired ? AbortSignal.timeout(60_000) : videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
         });
       } catch (error) {
-        if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
         if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
         consecutiveErrors += 1;
         await hooks.onPollError?.({ consecutiveErrors, detail: upstreamRequestErrorDetail(error) });
+        // An unavailable status endpoint does not prove generation failed.
+        // Let durable recovery retry without issuing a premature refund.
+        if (expired || videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId });
         if (pollOnce) return { pending: true, provider: task.provider, taskId: task.providerTaskId };
         continue;
       }
@@ -89,6 +92,7 @@ export function createRoutedProvider({
       if (resultUrl) return { provider: task.provider, taskId: task.providerTaskId, url: new URL(resultUrl, `${base}/`).href, requiresAuth: /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(resultUrl) };
       if (['completed', 'succeeded', 'success', 'done'].includes(status)) return { provider: task.provider, taskId: task.providerTaskId, url: `${base}/v1/videos/${encodeURIComponent(task.providerTaskId)}/content`, requiresAuth: true };
       if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(status)) throw Object.assign(new Error(errorMessage(state.error || state, '视频生成失败')), { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
+      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
       if (pollOnce) return { pending: true, provider: task.provider, taskId: task.providerTaskId };
     }
   }

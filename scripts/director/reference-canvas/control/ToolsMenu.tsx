@@ -160,6 +160,7 @@ export function ToolsMenu() {
     ...CANVAS_DEFAULT_ANNOTATION_RGBA,
   })
   const handlePickImage = async () => {
+    if((globalThis as any).__directorCanvasAdapter?.importAsset){(globalThis as any).__directorCanvasAdapter.importAsset();return;}
     try {
       const files = await pickCanvasImageFiles({
         accept: ATTACHMENT_TYPE_MAP[AttachmentType.IMAGES]
@@ -218,7 +219,7 @@ export function ToolsMenu() {
       return
     }
     if (tool === 'rectangle') {
-      whiteboardApi?.setToolType('rectangle', { strokeWidth: 8 })
+      whiteboardApi?.setToolType('rectangle', { strokeWidth: 2 })
       return
     }
     if (tool === 'image-marker') {
@@ -498,6 +499,7 @@ export function ToolsMenu() {
             <MyTooltip key={it.name} content={it.label} side="bottom">
               <Button
                 onClick={() => handleToolChange(it.name as ToolType)}
+                className={['select','hand','image'].includes(it.name) ? 'director-labelled-tool' : undefined}
                 size={'icon'}
                 variant={
                   it.name === 'arrow'
@@ -513,6 +515,7 @@ export function ToolsMenu() {
                 aria-label={it.label}
               >
                 {it.icon}
+                {['select','hand','image'].includes(it.name) && <span>{it.name === 'hand' ? '平移' : it.name === 'image' ? '素材' : '选择'}</span>}
               </Button>
             </MyTooltip>
           )

@@ -55,9 +55,13 @@ export function ImageCropOverlay({
     }
     update()
     api.on('viewport:change', update)
+    api.on('transformer:positionChange', update)
+    api.on('state:change', update)
     const interval = setInterval(update, 50)
     return () => {
       api.off('viewport:change', update)
+      api.off('transformer:positionChange', update)
+      api.off('state:change', update)
       clearInterval(interval)
     }
   }, [api, imageId])

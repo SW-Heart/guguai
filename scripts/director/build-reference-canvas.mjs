@@ -43,6 +43,8 @@ const aliasPlugin = {
   },
 }
 
+const bundledCanvasJs = path.join(repo, 'public/vendor/director/reference-canvas.js')
+
 await esbuild.build({
   entryPoints: [path.join(repo, 'scripts/director/reference-canvas-entry.tsx')],
   bundle: true,
@@ -50,7 +52,7 @@ await esbuild.build({
   platform: 'browser',
   target: ['es2020'],
   minify: true,
-  outfile: path.join(repo, 'public/vendor/director/reference-canvas.js'),
+  outfile: bundledCanvasJs,
   nodePaths: packageRoots,
   plugins: [aliasPlugin],
   define: { 'process.env.NODE_ENV': '"production"' },
@@ -58,6 +60,24 @@ await esbuild.build({
   jsx: 'automatic',
   absWorkingDir: repo,
 })
+
+// The reference BubbleMenu hides itself when the ProseMirror selection is
+// empty. In this editor, selecting a canvas text node is already the user's
+// intent to edit it, so keep the formatting bar visible while that editor is
+// active and let its controls work on the current cursor/selection.
+const bundledJs = readFileSync(bundledCanvasJs, 'utf8')
+const bubbleMenuProps =
+  'className:"rich-text-bubble-menu bubble-menu",editor:n,appendTo:()=>document.getElementById("rich-text-html-element"),'
+if (!bundledJs.includes(bubbleMenuProps)) {
+  throw new Error('Unable to locate the reference rich-text BubbleMenu props')
+}
+writeFileSync(
+  bundledCanvasJs,
+  bundledJs.replace(
+    bubbleMenuProps,
+    'className:"rich-text-bubble-menu bubble-menu",editor:n,shouldShow:()=>!0,appendTo:()=>document.getElementById("rich-text-html-element"),',
+  ),
+)
 
 const cleanCss = file => readFileSync(file, 'utf8')
   .replace(/^@import[^;]+;\s*/gm, '')
@@ -161,6 +181,9 @@ const rawCss = compiledCanvasCss
   ? readFileSync(path.join(reference, 'apps/desktop-global/dist/assets', compiledCanvasCss), 'utf8')
   : `${cleanCss(path.join(repo, 'scripts/director/reference-canvas/index.css'))}\n${cleanCss(path.join(repo, 'scripts/director/reference-canvas/whiteboard.css'))}`
 const css = scopeCanvasCss(rawCss).replace(
+  /\.reference-canvas-host \.rich-text-bubble-menu button\[aria-label=Italic\],\.reference-canvas-host \.rich-text-bubble-menu button\[aria-label=Strike\],\.reference-canvas-host \.rich-text-bubble-menu button\[aria-label=Underline\],\.reference-canvas-host \.rich-text-bubble-menu button\[aria-label=Highlight\],\.reference-canvas-host \.rich-text-bubble-menu>\.font-family-select:not\(\.canvas-font-family-select\)\{display:none\}/g,
+  '.reference-canvas-host .rich-text-bubble-menu>.font-family-select:not(.canvas-font-family-select){display:none}',
+).replace(
   /font-family:[^;}]*ui-sans-serif[^;}]*(?=[;}])/g,
   'font-family:var(--sans)',
 )

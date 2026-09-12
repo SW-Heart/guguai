@@ -6,6 +6,7 @@ import {
   __test as routeTest,
   checkModelRoutes,
   createModelRoute,
+  deleteModelRoute,
   createModelRouteCredential,
   ensureDefaultModelRoutes,
   listModelRouteChannels,
@@ -43,6 +44,20 @@ function cleanupDb() {
 test('Seedance route selection, pricing and catalog health', async t => {
   t.beforeEach(freshDb);
   t.afterEach(cleanupDb);
+
+  await t.test('deleting a route resets forced selection and survives default initialization', () => {
+    const route = listModelRoutes()[0];
+    updateRoutePolicy(route.logicalModelId, route.quality, route.id);
+    assert.throws(() => deleteModelRoute(route.id, { expectedVersion: route.version + 1 }), { statusCode: 409 });
+    assert.ok(listModelRoutes().some(item => item.id === route.id));
+    deleteModelRoute(route.id, { expectedVersion: route.version });
+    assert.equal(sql('SELECT forced_route_id FROM model_route_policies WHERE logical_model_id=:modelId AND quality=:quality').get({ modelId: route.logicalModelId, quality: route.quality }).forced_route_id, null);
+    ensureDefaultModelRoutes();
+    assert.ok(!listModelRoutes().some(item => item.id === route.id));
+    assert.ok(selectModelRoute({ logicalModelId: route.logicalModelId, quality: route.quality, duration: route.durationSeconds, aspectRatio: '16:9' }).id !== route.id);
+    assert.equal(sql("SELECT COUNT(*) AS count FROM audit_events WHERE action='model_route.delete'").get().count, 1);
+    assert.throws(() => deleteModelRoute(route.id, { expectedVersion: route.version }), { statusCode: 404 });
+  });
 
   await t.test('seeds all priority routes and calculates the exact 20% markup', () => {
     assert.equal(listModelRoutes().length, 25);

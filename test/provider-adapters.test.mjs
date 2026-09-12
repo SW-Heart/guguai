@@ -65,3 +65,61 @@ test('routed polling clears a persisted retry marker after a later durable poll 
   assert.equal(lastPollError, '');
   assert.equal(recovered, 1);
 });
+
+function expiredRoutedProvider(fetchJson, overrides = {}) {
+  return createRoutedProvider({
+    fetchJson,
+    sleep: async () => {},
+    routeCredential: () => 'test-key',
+    videoPollRemainingMs: () => 0,
+    videoPollRequestSignal: () => { throw new Error('expired budget must use a final-check signal'); },
+    videoPollTimeoutError: () => Object.assign(new Error('poll timeout'), { upstreamTerminal: true, pollTimedOut: true }),
+    videoPollStartedAt: () => 0,
+    videoMaxPollDurationMs: 60 * 60_000,
+    notifyVideoProgress: async () => {},
+    upstreamRequestErrorDetail: error => error.message,
+    isDefinitiveSubmitRejection: () => false,
+    errorMessage: value => String(value),
+    ...overrides,
+  });
+}
+const expiredTask = { provider: 'wj', providerTaskId: 'finished-upstream', routeBaseUrl: 'https://example.com', routeCredentialId: 'test' };
+
+test('routed recovery accepts an upstream success after the local polling deadline', async () => {
+  let calls = 0;
+  const provider = expiredRoutedProvider(async (_url, options) => {
+    calls += 1;
+    assert.equal(options.signal.aborted, false);
+    return { status: 'completed', video_url: 'https://example.com/result.mp4' };
+  });
+  const result = await provider.pollVideo(expiredTask, {}, { immediate: true, pollOnce: true });
+  assert.equal(calls, 1);
+  assert.equal(result.url, 'https://example.com/result.mp4');
+});
+
+test('routed recovery checks upstream before timing out a still-pending task', async () => {
+  let calls = 0;
+  const provider = expiredRoutedProvider(async () => { calls += 1; return { status: 'processing' }; });
+  await assert.rejects(provider.pollVideo(expiredTask, {}, { immediate: true, pollOnce: true }), { pollTimedOut: true });
+  assert.equal(calls, 1);
+});
+
+test('routed final-check transport errors remain recoverable without terminal refund', async () => {
+  for (const upstreamStatus of [undefined, 502]) {
+    const provider = expiredRoutedProvider(async () => { throw Object.assign(new Error('network timeout'), { upstreamStatus }); });
+    await assert.rejects(provider.pollVideo(expiredTask, {}, { immediate: true, pollOnce: true }), error => {
+      assert.equal(error.upstreamTerminal, undefined);
+      assert.equal(error.providerTaskId, expiredTask.providerTaskId);
+      return true;
+    });
+  }
+});
+
+test('routed polling checks the result when its budget expires during the poll delay', async () => {
+  let remaining = 1;
+  const provider = expiredRoutedProvider(async () => ({ status: 'completed', url: '/result.mp4' }), {
+    videoPollRemainingMs: () => remaining,
+    sleep: async () => { remaining = 0; },
+  });
+  assert.equal((await provider.pollVideo(expiredTask)).url, 'https://example.com/result.mp4');
+});

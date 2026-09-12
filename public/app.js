@@ -6,7 +6,7 @@ import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=3';
 import { createTaskPoller } from './features/generation/polling.js?v=3';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
-import { createCreditPresentation } from './features/credits/presentation.js?v=2';
+import { createCreditPresentation } from './features/credits/presentation.js?v=3';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=6';
@@ -24,6 +24,7 @@ const accountScope = createAccountScope({ getUser: () => state.user });
 const alipayOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(String(user?.id || user?.username || 'anonymous'))}`;
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
+let canvasAssetRequest = null;
 const recordIndexes = createRecordIndexes({ getFiles: () => state.files, getTasks: () => state.tasks, getHistory: () => state.generationHistory });
 const fileById = recordIndexes.fileById;
 const taskById = recordIndexes.taskById;
@@ -430,8 +431,7 @@ function insertVideoPromptMentions(assetIds, request = videoPromptMentionRequest
   const selected = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(String))]
     .map(id => referenceFileById(id))
     .filter(file => file && ['image','video','audio'].includes(file.kind));
-  const existingIds = new Set(videoPromptMentionsFromEditor(editor).map(item => item.id));
-  const files = selected.filter(file => !existingIds.has(file.id));
+  const files = selected;
   const range = request?.range?.cloneRange?.() || document.createRange();
   if (!request?.range || !editor.contains(range.startContainer)) { range.selectNodeContents(editor); range.collapse(false); }
   editor.focus();
@@ -563,8 +563,7 @@ function insertImagePromptMentions(assetIds, request = imagePromptMentionRequest
   const selected = [...new Set((Array.isArray(assetIds) ? assetIds : []).map(String))]
     .map(id => referenceFileById(id))
     .filter(file => file?.kind === 'image');
-  const existingIds = new Set(imagePromptMentionsFromEditor(editor).map(item => item.id));
-  const files = selected.filter(file => !existingIds.has(file.id));
+  const files = selected;
   const range = request?.range?.cloneRange?.() || document.createRange();
   if (!request?.range || !editor.contains(range.startContainer)) { range.selectNodeContents(editor); range.collapse(false); }
   editor.focus();
@@ -638,7 +637,7 @@ function fileLibraryLoadingSkeleton() {
 }
 function dramaProjectsLoadingSkeleton() {
   const cards = Array.from({ length:7 }, () => '<article class="project-card loading-skeleton-project"><div class="skeleton-project-content"><i class="skeleton-project-kicker"></i><i class="skeleton-project-title"></i><i class="skeleton-project-title short"></i><span class="skeleton-project-footer"></span></div></article>').join('');
-  return `<div class="loading-skeleton loading-skeleton--projects" role="status" aria-live="polite" aria-label="正在加载短剧项目"><div class="project-library-toolbar loading-skeleton-project-toolbar"><span class="skeleton-project-search"></span><span class="skeleton-project-count"></span></div><div class="project-library-grid"><div class="create-project-card loading-skeleton-project-create"><span></span><i></i></div>${cards}</div></div>`;
+  return `<div class="loading-skeleton loading-skeleton--projects" role="status" aria-live="polite" aria-label="正在加载短剧项目"><div class="project-library-toolbar loading-skeleton-project-toolbar"><span class="skeleton-project-filters"></span><span class="skeleton-project-search"></span><span class="skeleton-project-count"></span></div><div class="project-library-grid"><div class="create-project-card loading-skeleton-project-create"><span></span><i></i></div>${cards}</div></div>`;
 }
 
 let captchaRequest = null;
@@ -1694,7 +1693,7 @@ let viralController = null;
 let viralControllerPromise = null;
 function ensureViralController() {
   if (viralController) return Promise.resolve(viralController);
-  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=8').then(({createViralLab}) => {
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=13').then(({createViralLab}) => {
     viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
     return viralController;
   }).catch(error => { viralControllerPromise = null; throw error; });
@@ -1706,8 +1705,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=94').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+    dramaControllerPromise = import('./drama-studio.js?v=131').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
   }
@@ -1769,7 +1768,7 @@ function scheduleRouteContentRender(route, routeChanged) {
         void ensureViralController().then(controller => {
           if (epoch !== routeRenderEpoch || state.route !== 'lab') return;
           return controller.load();
-        }).catch(error => toast(`爆款实验室加载失败：${error.message}`));
+        }).catch(error => toast(`实验室加载失败：${error.message}`));
         return;
       }
       if (route === 'drama') {
@@ -1794,7 +1793,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
     window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', routePaths[nextRoute]);
   }
   state.route = nextRoute;
-  const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', lab:'爆款实验室', files:'文件库' };
+  const routeTitles = { image:'图像生成', video:'视频生成', drama:'短剧创作', lab:'实验室', files:'文件库' };
   $('#routeTitle').textContent = routeTitles[nextRoute];
   document.title = `${routeTitles[nextRoute]} · GuGu AI`;
   $$('.rail-button[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === nextRoute));
@@ -1804,6 +1803,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
   const wide = files || drama || lab;
   toggleClass($('#appView'), 'library-mode', files);
   toggleClass($('#appView'), 'wide-mode', drama || lab);
+  toggleClass($('#appView'), 'lab-route', lab);
   toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject));
   toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional');
   toggleClass($('#creatorPanel'), 'hidden', wide);
@@ -2274,11 +2274,25 @@ function syncGenerationTab() {
   if (!history) scheduleGenerationLayout();
 }
 window.addEventListener('resize', scheduleGenerationLayout, { passive:true });
-function taskRecency(task) { return String(task.finishedAt || task.updatedAt || task.createdAt || ''); }
+function taskRecency(task) { return String(task?.finishedAt || task?.updatedAt || task?.createdAt || ''); }
 function compareTasksByRecency(left, right) {
   const timeOrder = taskRecency(right).localeCompare(taskRecency(left));
   return timeOrder || String(right.id || '').localeCompare(String(left.id || ''));
 }
+function fileRecency(file) {
+  const generation = taskForAsset(file);
+  return taskRecency(generation) || String(file?.createdAt || file?.updatedAt || '');
+}
+function compareFilesByRecency(left, right) {
+  const leftTime = Date.parse(fileRecency(left));
+  const rightTime = Date.parse(fileRecency(right));
+  if (Number.isFinite(leftTime) || Number.isFinite(rightTime)) {
+    const timeOrder = (Number.isFinite(rightTime) ? rightTime : -Infinity) - (Number.isFinite(leftTime) ? leftTime : -Infinity);
+    if (timeOrder) return timeOrder;
+  }
+  return String(right?.id || '').localeCompare(String(left?.id || ''));
+}
+function sortFilesByRecency(files) { return [...files].sort(compareFilesByRecency); }
 function historyTaskThumbnail(task) {
   const asset = fileById(task.assetId);
   if (asset?.localStatus === 'missing') return '<span class="history-missing-mark">本地文件已移除</span>';
@@ -2429,13 +2443,13 @@ const imageQualityLabels = Object.freeze({ low:'低', medium:'中', high:'高' }
 function generationModelName(task) {
   const modelId = String(task?.videoModelId || task?.modelId || task?.model || '').trim();
   if (!modelId) return '—';
-  if (modelId === 'gpt-image-2') return 'GPT Image 2';
+  if (modelId === 'gpt-image-2') return 'GPT-Image-2';
   if (modelId === 'gpt-image-2.5') return 'GPT Image 2.5';
   if (modelId === 'midjourney') return 'Midjourney';
   const configuredModels = Array.isArray(state.config?.videoCapabilities?.models) ? state.config.videoCapabilities.models : [];
   const model = [...configuredModels, ...fallbackVideoModels].find(item => item.id === modelId);
   if (model?.label) return model.label;
-  const legacyLabels = { 'grok-15':'GuGu 2.0', 'legacy-grok-video-1.5':'GuGu 1.5' };
+  const legacyLabels = { 'grok-15':'Minimax H3', 'legacy-grok-video-1.5':'Grok 1.5' };
   return legacyLabels[modelId] || modelId;
 }
 function generationModeName(task) {
@@ -2812,9 +2826,11 @@ function autoSelectUploadedReference(asset, kind, job) {
   const limits=isFrame ? {image:1,video:0,audio:0,total:1} : isVideo ? referenceLimits() : {image:7,video:0,audio:0,total:7};
   const allowedKinds=isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
   if (!allowedKinds.has(kind)) return false;
-  const selectedFiles=state.dialogSelection.map(id=>referenceFileById(id)).filter(Boolean);
+  const limitIds=referenceDialogLimitIds(referenceTarget);
+  const selectedFiles=limitIds.map(id=>referenceFileById(id)).filter(Boolean);
   const counts=Object.fromEntries(['image','video','audio'].map(type=>[type,selectedFiles.filter(file=>file.kind===type).length]));
-  if (state.dialogSelection.includes(asset.id) || state.dialogSelection.length >= limits.total || counts[kind] >= Number(limits[kind] || 0)) return false;
+  const alreadyReferenced=referencePromptMentionMode(referenceTarget) && state.refs[referenceTarget].includes(asset.id);
+  if (state.dialogSelection.includes(asset.id) || (!alreadyReferenced && limitIds.length >= limits.total) || (!alreadyReferenced && counts[kind] >= Number(limits[kind] || 0))) return false;
   state.dialogSelection.push(asset.id); return true;
 }
 function projectPendingReferenceToCreation(job) {
@@ -2912,6 +2928,14 @@ function referenceFileById(id) {
   return file || pendingReferenceFile(pendingReferenceJob(id));
 }
 function videoReferenceCounts(ids=state.dialogSelection) { return Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, (Array.isArray(ids) ? ids : []).reduce((count, id) => count + Number(referenceFileById(id)?.kind === kind), 0)])); }
+function referencePromptMentionMode(target=state.referenceTarget) {
+  return target === 'image' ? Boolean(imagePromptMentionRequest) : target === 'video' ? Boolean(videoPromptMentionRequest) : false;
+}
+function referenceDialogLimitIds(target=state.referenceTarget) {
+  const selected = Array.isArray(state.dialogSelection) ? state.dialogSelection : [];
+  if (!referencePromptMentionMode(target)) return selected;
+  return [...new Set([...state.refs[target], ...selected])];
+}
 function normalizeVideoReferenceIds(ids, modelId=$('#videoModel')?.value) {
   const limits = referenceLimits(modelId);
   const allowedKinds = referenceFileKinds(modelId);
@@ -2971,7 +2995,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
       toast(`${item.name || '文件'} 不符合当前入口支持的素材类型`);
       continue;
     }
-    const selectedCounts = inDialog ? videoReferenceCounts() : null;
+    const selectedCounts = inDialog ? videoReferenceCounts(referenceDialogLimitIds()) : null;
     if (inDialog && selectedCounts[kind] >= Number(limits[kind] || 0)) {
       discardImported();
       toast(`当前模型最多选择 ${limits[kind]} 个${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}`);
@@ -3036,9 +3060,13 @@ async function pickAndUploadDramaAsset({ context='professional-project' } = {}) 
   const files = await desktopImportToContext(context, { multiple:false });
   return files[0] || null;
 }
-async function pickAndImportDramaCanvasAsset() {
-  const files = await desktopImportToContext('director-canvas', { multiple:false });
-  return files.find(file => file?.kind === 'image' || file?.kind === 'video') || null;
+function pickAndImportDramaCanvasAsset({ chat = false } = {}) {
+  return new Promise(resolve => {
+    if (!$('#referenceDialog')) { resolve(null); return; }
+    if (canvasAssetRequest) canvasAssetRequest.resolve(null);
+    canvasAssetRequest = { resolve, chat };
+    openReferenceDialog('canvas');
+  });
 }
 $('#uploadButton').onclick = () => openUploadPicker('library');
 function videoGenerationParameters(modelId=$('#videoModel')?.value) {
@@ -3169,14 +3197,16 @@ function restoreReferenceDialogOriginal() {
   else if (['image','video'].includes(referenceDialogOriginal.target)) state.refs[referenceDialogOriginal.target] = [...referenceDialogOriginal.value];
 }
 function openReferenceDialog(target, { mentionRequest = null } = {}) {
+  const isCanvas = target === 'canvas';
   if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型');
   if (target === 'video' && !supportsVideoMode('REFERENCE')) return toast('当前模型不支持参考素材');
   if (target === 'video' && videoGenerationParameters().mode === 'FIRST&LAST') return toast('请分别选择首帧和尾帧图片');
   referenceDialogCommitted=false;
-  referenceDialogOriginal={ target, value:[...state.refs[target]] };
+  referenceDialogOriginal=isCanvas ? { target:'canvas', value:[] } : { target, value:[...state.refs[target]] };
   imagePromptMentionRequest = target === 'image' ? mentionRequest : null;
   videoPromptMentionRequest = target === 'video' ? mentionRequest : null;
-  state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
+  const promptMentionMode = ['image', 'video'].includes(target) && Boolean(mentionRequest);
+  state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = isCanvas || promptMentionMode ? [] : [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
 }
 function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
@@ -3188,12 +3218,25 @@ function openVideoFrameDialog(frame) {
 }
 function closeReferenceDialog() { imagePromptMentionRequest = null; videoPromptMentionRequest = null; $('#referenceDialog').close(); }
 $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDialog;
-$('#referenceDialog').addEventListener('close', () => { if (!referenceDialogCommitted) { restoreReferenceDialogOriginal(); cleanupUncommittedReferenceJobs(); renderReferences(); } referenceDialogCommitted=false; referenceDialogOriginal=null; imagePromptMentionRequest = null; videoPromptMentionRequest = null; });
+$('#referenceDialog').addEventListener('close', () => { const request = canvasAssetRequest; if (!referenceDialogCommitted) { restoreReferenceDialogOriginal(); cleanupUncommittedReferenceJobs(); renderReferences(); } referenceDialogCommitted=false; referenceDialogOriginal=null; imagePromptMentionRequest = null; videoPromptMentionRequest = null; if (request) { canvasAssetRequest=null; request.resolve(null); } });
 $('#confirmReference').onclick = () => {
+  if (state.referenceTarget === 'canvas') {
+    const file = referenceFileById(state.dialogSelection[0]);
+    const request = canvasAssetRequest;
+    canvasAssetRequest = null;
+    referenceDialogCommitted = true;
+    $('#referenceDialog').close();
+    request?.resolve(file && (request.chat ? ['image', 'video', 'audio'] : ['image', 'video']).includes(file.kind) ? file : null);
+    return;
+  }
   const pendingCount = state.dialogSelection.filter(id => pendingReferenceJob(id)?.deferUpload).length;
   const mentionRequest = state.referenceTarget === 'image' ? imagePromptMentionRequest : state.referenceTarget === 'video' ? videoPromptMentionRequest : null;
   if (state.referenceTarget === 'video-frame') state.videoFrames[state.videoFrameTarget] = state.dialogSelection[0] || '';
-  else state.refs[state.referenceTarget] = [...state.dialogSelection];
+  else if (mentionRequest) {
+    state.refs[state.referenceTarget] = state.referenceTarget === 'image'
+      ? normalizeImageReferenceIds([...state.refs.image, ...state.dialogSelection])
+      : normalizeVideoReferenceIds([...state.refs.video, ...state.dialogSelection]);
+  } else state.refs[state.referenceTarget] = [...state.dialogSelection];
   let insertion = null;
   if (mentionRequest) insertion = state.referenceTarget === 'image'
     ? insertImagePromptMentions(state.dialogSelection, mentionRequest)
@@ -3205,7 +3248,20 @@ $('#confirmReference').onclick = () => {
   if (pendingCount) toast(`已加入 ${pendingCount} 个本地素材`);
   if (insertion) restoreVideoPromptFocus(insertion.editor, insertion.range);
 };
-$('#dialogUpload').onclick = () => openUploadPicker('reference');
+async function uploadCanvasDialogAsset() {
+  try {
+    const chat=Boolean(canvasAssetRequest?.chat);
+    const files = await desktopImportToContext(chat?'director-chat':'director-canvas', { multiple:false });
+    const file = files.find(item => item && (chat?['image','video','audio']:['image','video']).includes(item.kind));
+    if (!file) return;
+    state.files = [file, ...state.files.filter(item => item.id !== file.id)];
+    state.dialogSelection = [file.id];
+    renderReferenceDialog();
+  } catch (error) {
+    toast(`导入素材失败：${error.message}`);
+  }
+}
+$('#dialogUpload').onclick = () => state.referenceTarget === 'canvas' ? void uploadCanvasDialogAsset() : openUploadPicker('reference');
 
 function audioCoverMarkup() { return '<div class="reference-audio-cover" aria-hidden="true"><b>♫</b><small>AUDIO</small></div>'; }
 function referenceMediaMarkup(file, displayName = file.name) {
@@ -3221,28 +3277,32 @@ function resetReferenceDialogScroll() {
   if (grid) grid.scrollTop = 0;
 }
 function renderReferenceDialog() {
+  const isChat=Boolean(canvasAssetRequest?.chat);
+  const isCanvas = state.referenceTarget === 'canvas';
   const isFrame = state.referenceTarget === 'video-frame';
   const isVideo = state.referenceTarget === 'video';
   const promptMentionMode = ['image', 'video'].includes(state.referenceTarget) && Boolean(isVideo ? videoPromptMentionRequest : imagePromptMentionRequest);
-  const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
-  const allowedKinds = isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
+  const limits = isCanvas ? { image: 1, video: 1, audio: isChat?1:0, total: 1 } : isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
+  const allowedKinds = isCanvas ? new Set(isChat?['image','video','audio']:['image','video']) : isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
   if (state.referenceKind !== 'all' && !allowedKinds.has(state.referenceKind)) state.referenceKind = 'all';
   const visibleKind = state.referenceKind;
   state.dialogSelection = state.dialogSelection.filter(id => { const file=referenceFileById(id); return file && allowedKinds.has(file.kind); });
-  const selectedFiles = state.dialogSelection.map(id => referenceFileById(id)).filter(Boolean);
+  const limitSelectionIds = referenceDialogLimitIds(state.referenceTarget);
+  const selectedFiles = limitSelectionIds.map(id => referenceFileById(id)).filter(Boolean);
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
-  const totalSelected = state.dialogSelection.length;
-  $('#referenceDialog h2').textContent = isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `${promptMentionMode ? '所选素材会插入创作描述，并同步添加到下方参考素材区。' : ''}当前模型支持：${referenceCapabilityText(limits)}；单个图片不超过 20 MB，视频或音频不超过 25 MB。`;
-  $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
-  $('#selectionCount').textContent = isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${counts.audio}）`;
-  const confirmLabel = isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
+  const totalSelected = limitSelectionIds.length;
+  $('#referenceDialog h2').textContent = isCanvas ? (isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
+  $('#referenceDialog .dialog-help').textContent = isCanvas ? (isChat?'从文件库选择图片、视频或音频，也可以上传本地文件。':'从平台文件库选择一项图片或视频，也可以上传本地文件。') : isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `${promptMentionMode ? '所选素材会插入创作描述，并同步添加到下方参考素材区。' : ''}当前模型支持：${referenceCapabilityText(limits)}；单个图片不超过 20 MB，视频或音频不超过 25 MB。`;
+  $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传本地文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
+  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / 1` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${counts.audio}）`;
+  const confirmLabel = isCanvas ? (isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
-  const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === 'reference' && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
+  const uploadContext = isCanvas ? 'director-canvas' : 'reference';
+  const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === uploadContext && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
   $('#referenceKindFilter').innerHTML = [['all', '全部'], ...['image', 'video', 'audio'].filter(kind => allowedKinds.has(kind)).map(kind => [kind, kindLabels[kind]])].map(([kind, label]) => `<button type="button" role="tab" class="${visibleKind === kind ? 'active' : ''}" data-reference-kind="${kind}" aria-selected="${visibleKind === kind}"><span>${label}</span><small>${kind === 'all' ? kindCounts.image + kindCounts.video + kindCounts.audio : kindCounts[kind]}</small></button>`).join('');
   $$('#referenceKindFilter [data-reference-kind]').forEach(button => button.onclick = () => { state.referenceKind = button.dataset.referenceKind; renderReferenceDialog(); });
-  const uploadJobs = state.uploadJobs.filter(job => job.context === 'reference');
+  const uploadJobs = state.uploadJobs.filter(job => job.context === (isCanvas ? 'director-canvas' : 'reference'));
   const pendingJobs = uploadJobs.filter(job => job.deferUpload && allowedKinds.has(job.kind) && (visibleKind === 'all' || job.kind === visibleKind));
   const uploadingAssetIds = new Set(uploadJobs.map(job => job.assetId).filter(Boolean));
   const pendingMarkup = pendingJobs.map(job => {
@@ -3251,9 +3311,9 @@ function renderReferenceDialog() {
   }).join('');
   const uploadMarkup = uploadJobs.filter(job => !job.deferUpload && (visibleKind === 'all' || job.kind === visibleKind)).map(job => uploadJobCard(job, 'reference')).join('');
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
-  const files = state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id)));
+  const files = sortFilesByRecency(state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id))));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
-  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState('没有可用参考素材', '先上传当前模型支持的素材类型。'));
+  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用画布素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传当前模型支持的素材类型。'));
   $$('.reference-option').forEach(button => button.onclick = () => {
     let id = button.dataset.id;
     let file = referenceFileById(id);
@@ -3272,9 +3332,10 @@ function renderReferenceDialog() {
         if (state.referenceTarget === 'video-frame' && state.videoFrames[state.videoFrameTarget] === id) state.videoFrames[state.videoFrameTarget] = '';
         else if (['image','video'].includes(state.referenceTarget)) state.refs[state.referenceTarget] = state.refs[state.referenceTarget].filter(item => item !== id);
       }
-    } else if (totalSelected >= limits.total) return toast(`参考素材最多选择 ${limits.total} 个`);
-    else if ((counts[file.kind] || 0) >= (limits[file.kind] || 0)) return toast(`参考${file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : '音频'}最多选择 ${limits[file.kind] || 0} 个`);
-    else {
+    } else {
+      const alreadyReferenced = promptMentionMode && state.refs[state.referenceTarget].includes(id);
+      if (!alreadyReferenced && totalSelected >= limits.total) return toast(`参考素材最多选择 ${limits.total} 个`);
+      if (!alreadyReferenced && (counts[file.kind] || 0) >= (limits[file.kind] || 0)) return toast(`参考${file.kind === 'image' ? '图片' : file.kind === 'video' ? '视频' : '音频'}最多选择 ${limits[file.kind] || 0} 个`);
       state.dialogSelection.push(id);
       if (file.pendingUpload) projectPendingReferenceToCreation(pendingReferenceJob(id));
     }
@@ -3310,6 +3371,7 @@ function bindRatioMoreToggle(toggle, extras) {
   toggle.onclick = () => { const opening = toggle.getAttribute('aria-expanded') !== 'true'; toggle.setAttribute('aria-expanded', String(opening)); extras.forEach(button => button.classList.toggle('hidden', !opening && !button.classList.contains('selected'))); };
 }
 bindRatioMoreToggle($('#moreRatios'), $$('.ratio-grid[data-select="imageSize"] .ratio-extra'));
+bindRatioMoreToggle($('#imageTuziMoreRatios'), $$('.ratio-grid[data-select="imageTuziAspect"] .ratio-extra'));
 bindRatioMoreToggle($('#imageMjMoreRatios'), $$('.ratio-grid[data-select="imageMjAspect"] .ratio-extra'));
 function ratioIcon(value) { const [width, height] = value.split(':').map(Number); const scale = Math.min(27 / width, 22 / height); return `<span class="select-ratio-icon" aria-hidden="true"><i style="width:${Math.round(width*scale)}px;height:${Math.round(height*scale)}px"></i></span>`; }
 function resolutionIcon(value) {
@@ -3326,6 +3388,10 @@ const tuziImageDimensions = Object.freeze({
   '4:3':Object.freeze({ '1k':'1184x880', '2k':'2080x1552', '4k':'3120x2336' }),
   '16:9':Object.freeze({ '1k':'1360x768', '2k':'2048x1152', '4k':'3536x1984' }),
   '9:16':Object.freeze({ '1k':'768x1360', '2k':'1152x2048', '4k':'1984x3536' }),
+  '1:2':Object.freeze({ '1k':'720x1440', '2k':'1024x2048', '4k':'1920x3840' }),
+  '2:1':Object.freeze({ '1k':'1440x720', '2k':'2048x1024', '4k':'3840x1920' }),
+  '5:4':Object.freeze({ '1k':'1120x896', '2k':'1920x1536', '4k':'3200x2560' }),
+  '4:5':Object.freeze({ '1k':'896x1120', '2k':'1536x1920', '4k':'2560x3200' }),
 });
 const tuziImageCredits = Object.freeze({ '1k':1, '2k':2, '4k':4 });
 const midjourneyImageCredits = 4;
@@ -3354,8 +3420,8 @@ function syncTuziImageParameters() {
   updateImageCost();
 }
 const fallbackVideoModels = Object.freeze([
-  // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for GuGu 1.5.
-  { id:'grok', label:'GuGu 1.5', description:'全能视频模型，支持最长20秒视频，7张参考图', modes:[
+  // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for Grok 1.5.
+  { id:'grok', label:'Grok 1.5', description:'全能视频模型，支持最长20秒视频，7张参考图', modes:[
     { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:1, maxImages:7 },
   ] },
@@ -3368,15 +3434,6 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1'], durations:[30], qualityOptions:['480p','720p'], referenceLimits:{image:30,video:10,audio:10,total:50}, minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1'], durations:[30], qualityOptions:['480p','720p'], referenceLimits:{image:30,video:10,audio:10,total:50}, minImages:1, maxImages:30 },
   ] },
-  { id:'seedance-2.0-fast', label:'Seedance 2.0 Fast', description:'固定 15 秒、720p，支持 9 张图片 + 3 段视频 + 3 段音频参考', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','1:1','9:16'], durations:[15], qualityOptions:['720p'], referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','1:1','9:16'], durations:[15], qualityOptions:['720p'], referenceLimits:{image:9,video:3,audio:3,total:15}, minImages:1, maxImages:9 },
-  ] },
-  { id:'minimax-h3', label:'MiniMax H3', description:'支持 768p 与 2K，4～15 秒视频', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, referenceLimits:{image:5,video:3,audio:3,total:15}, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, referenceLimits:{image:5,video:3,audio:3,total:15}, minImages:1, maxImages:5 },
-    { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16','1:1','21:9','4:3','3:4'], durations:[4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','2k'], pricingByQuality:{'768p':{currency:'credit',amount:2,unit:'second'},'2k':{currency:'credit',amount:3,unit:'second'}}, minImages:1, maxImages:2 },
-  ] },
   // Front-end fallback: Omni Flash supports TEXT and REFERENCE only.
   { id:'oai', label:'Omni Flash', description:'Google 最新视频模型，高质量，英文支持效果好', modes:[
     { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[10], qualityOptions:['720p'], minImages:0, maxImages:0 },
@@ -3388,8 +3445,8 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'REFERENCE', aspectRatios:['16:9'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:3 },
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p','1080p'], minImages:1, maxImages:2 },
   ] },
-  // Front-end fallback: GuGu 2.0 is available through the AutoDL workflow.
-  { id:'minimax-h3-15s', label:'GuGu 2.0', description:'支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成', modes:[
+  // Front-end fallback: Minimax H3 is available through the AutoDL workflow.
+  { id:'minimax-h3-15s', label:'Minimax H3', description:'支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成', modes:[
     { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.5, unit:'second' }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.5, unit:'second' }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:1, maxImages:9 },
   ] },
@@ -3400,7 +3457,8 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:2 },
   ] },
 ]);
-const hiddenVideoModelIds = new Set();
+const hiddenVideoModelIds = new Set(['minimax-h3', 'seedance-2.0-fast']);
+const videoModelOrder = ['seedance-2.0', 'seedance-2.5', 'minimax-h3-15s', 'oai', 'veo-31', 'grok', 'veo'];
 const modeLabels = Object.freeze({ TEXT:'文生视频', REFERENCE:'参考图模式', 'FIRST&LAST':'首尾帧' });
 function videoModelModes(modelId=$('#videoModel')?.value) { return videoModelOptions().find(model => model.id === modelId)?.modes || []; }
 function supportsVideoMode(type, modelId=$('#videoModel')?.value) { return videoModelModes(modelId).some(mode => mode.generationType === type); }
@@ -3414,17 +3472,14 @@ function videoModelOptions() {
       ? { ...model, modes: model.modes?.map(mode => ({ ...mode, durations: mode.durations?.filter(value => Number(value) !== 30) })) }
       : model)
     .sort((a, b) => {
-      const aIsGugu2 = a.id === 'minimax-h3-15s';
-      const bIsGugu2 = b.id === 'minimax-h3-15s';
-      if (aIsGugu2 !== bIsGugu2) return Number(bIsGugu2) - Number(aIsGugu2);
-      return Number(a.availability === 'coming-soon') - Number(b.availability === 'coming-soon');
+      return (videoModelOrder.indexOf(a.id) < 0 ? 99 : videoModelOrder.indexOf(a.id)) - (videoModelOrder.indexOf(b.id) < 0 ? 99 : videoModelOrder.indexOf(b.id));
     });
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
 function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s' : ''; }
 const fallbackImageModels = Object.freeze([
-  { id:'gpt-image-2', label:'GPT Image 2', description:'从文字或参考图快速探索画面。', enabled:true },
   { id:'gpt-image-2.5', label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', enabled:true },
+  { id:'gpt-image-2', label:'GPT-Image-2', description:'从文字或参考图快速探索画面。', enabled:true },
   { id:'midjourney', label:'Midjourney', description:'通过参数精细控制艺术风格。', enabled:true },
 ]);
 function imageModelOptions() {
@@ -3432,7 +3487,7 @@ function imageModelOptions() {
   return models.filter(model => model.enabled !== false || model.id === 'gpt-image-2');
 }
 function imageModelPromo() { return ''; }
-const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', 'gpt-image-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'/favicon.svg?v=2', 'minimax-h3-15s':'/favicon.svg?v=2', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
+const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', 'gpt-image-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/grok.svg', 'minimax-h3-15s':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
@@ -3792,10 +3847,13 @@ function imageQuantityValue(value, modelId=$('#imageModel')?.value) {
 function syncImageQuantityControl() {
   const input = $('#imageQuantity');
   if (!input) return;
+  const modelId = $('#imageModel')?.value || '';
   const config = imageQuantityConfig();
   input.min = String(config.min);
   input.max = String(config.max);
   input.step = String(config.step);
+  if (input.dataset.modelId && input.dataset.modelId !== modelId) input.value = String(config.min);
+  input.dataset.modelId = modelId;
   const quantity = imageQuantityValue(input.value);
   if (quantity !== null) input.value = String(quantity);
 }
@@ -3811,7 +3869,10 @@ function updateImageCost() {
   if (!cost || !quantity) return;
   const count = imageQuantityValue(quantity.value) ?? imageQuantityConfig().min;
   const isMidjourney = $('#imageModel')?.value === 'midjourney';
-  const unitPrice = isMidjourney ? midjourneyImageCredits : $('#imageModel')?.value === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1;
+  const selectedModel = $('#imageModel')?.value;
+  const selectedQuality = selectedModel === 'gpt-image-2.5' ? $('#imageTuziQuality')?.value : '标准';
+  const configuredPrice = state.config.modelPrices?.find(item => item.modelId === selectedModel && item.quality.toLowerCase() === String(selectedQuality).toLowerCase());
+  const unitPrice = configuredPrice?.credits ?? (isMidjourney ? midjourneyImageCredits : selectedModel === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1);
   cost.textContent = creditText((isMidjourney ? count / 4 : count) * unitPrice);
   updateImageQuantityButtons(count);
 }
@@ -3829,6 +3890,8 @@ function changeImageQuantity(delta) {
   commitImageQuantity(current + delta * config.step);
 }
 function videoPricingFor(modelId, parameters, quality) {
+  const configuredPrice = state.config.modelPrices?.find(item => item.modelId === modelId && item.quality.toLowerCase() === String(quality).toLowerCase());
+  if (configuredPrice) return { currency:'credit', amount:configuredPrice.credits, unit:configuredPrice.unit };
   const selectedPricing = parameters?.pricingByQuality?.[quality] || parameters?.pricing;
   if (selectedPricing) return selectedPricing;
   if (modelId === 'minimax-h3') {
@@ -3922,6 +3985,7 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
   const visibleItems = items.filter(item => item.available === true && item.enabled !== false && item.availability !== 'coming-soon' && Number.isFinite(Number(item.credits)) && Number.isFinite(Number(item.yuan)));
   if (!visibleItems.length) { body.innerHTML = '<div class="price-catalog-empty">暂时没有可用的模型价格。</div>'; return; }
   const videoModelIds = new Set((state.config?.videoCapabilities?.models || []).map(model => model.id));
+  const videoModelOrderMap = new Map(videoModelOptions().map((model, index) => [model.id, index]));
   const groups = [...new Set(visibleItems.map(item => item.modelId))].map(modelId => {
     const rows = visibleItems.filter(item => item.modelId === modelId);
     return { modelId, rows, kind: videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
@@ -3929,6 +3993,11 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
   const sections = [{ kind:'video', title:'视频模型', hint:'按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
   body.innerHTML = sections.map(section => {
     const cards = groups.filter(group => group.kind === section.kind);
+    if (section.kind === 'video') cards.sort((left, right) => {
+      const leftOrder = videoModelOrderMap.get(left.modelId) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = videoModelOrderMap.get(right.modelId) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    });
     if (!cards.length) return '';
     return `<section class="price-section"><header class="price-section-head"><h4>${section.title}</h4><span>${cards.length} 个 · ${section.hint}</span></header><div class="price-section-grid">${cards.map(card => modelPriceCard(card.modelId, card.rows, card.kind)).join('')}</div></section>`;
   }).join('');

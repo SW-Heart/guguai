@@ -22,7 +22,7 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
   function creditModelName(entry, task = null) {
     const modelId = entry?.modelId || task?.modelId || entry?.model || entry?.modelName;
     if (!modelId) return '—';
-    if (modelId === 'gpt-image-2') return 'GPT Image 2';
+    if (modelId === 'gpt-image-2') return 'GPT-Image-2';
     const catalog = readState().config?.videoCapabilities?.models || [];
     return catalog.find(model => model.id === modelId)?.label || String(modelId);
   }

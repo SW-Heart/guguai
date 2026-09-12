@@ -1,3 +1,5 @@
+import { isPreconnectFailure } from './transport.mjs';
+
 export function createTuziProvider({
   baseUrl,
   apiKey,
@@ -78,14 +80,38 @@ export function createTuziProvider({
     if (task.size) form.append('size', task.size);
     for (const reference of refs) form.append('input_reference', reference);
     const submission = await trackProviderSubmission((async () => {
-      const created = await fetchJson(`${baseUrl}/v1/videos`, {
-        method:'POST',
-        headers:{ Authorization:authorization() },
-        body:form,
-        signal:AbortSignal.timeout(180_000),
-      });
+      const signal = AbortSignal.timeout(180_000);
+      let created;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          created = await fetchJson(`${baseUrl}/v1/videos`, {
+            method:'POST',
+            headers:{ Authorization:authorization() },
+            body:form,
+            signal,
+          });
+          break;
+        } catch (error) {
+          const safeToRetry = isPreconnectFailure(error);
+          console.error('[image] Tuzi submission transport failure', {
+            generationId:task.id, attempt, phase:error.requestPhase || (safeToRetry ? 'connect' : 'request'),
+            detail:upstreamRequestErrorDetail(error),
+          });
+          if (safeToRetry && attempt < 3 && !signal.aborted) {
+            await sleep(attempt * 1000);
+            if (!signal.aborted) continue;
+          }
+          // A response may have been lost after acceptance. Never replay it.
+          if (!safeToRetry && (!error.upstreamStatus || error.upstreamStatus >= 500 || error.upstreamStatus === 408)) {
+            throw Object.assign(new Error(`图片提交结果待确认：${upstreamRequestErrorDetail(error)}`, { cause:error }), {
+              provider:'tuzi', submissionUncertain:true,
+            });
+          }
+          throw error;
+        }
+      }
       const taskId = created.id || created.task_id;
-      if (!taskId) throw new Error('Tuzi 图片任务没有返回任务 ID');
+      if (!taskId) throw Object.assign(new Error('Tuzi 图片任务没有返回任务 ID'), { provider:'tuzi', submissionUncertain:true });
       await hooks.onSubmitted?.({ provider:'tuzi', taskId:String(taskId) });
       if (hooks.deferPolling) return { pending:true, provider:'tuzi', taskId:String(taskId) };
       return String(taskId);

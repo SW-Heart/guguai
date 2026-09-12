@@ -61,17 +61,22 @@ test('each login activates its account workspace before the legacy claim', () =>
   assert.match(app, /workspace\?\.deactivateAccount\?\.\(\)/);
 });
 
-test('frontend entrypoints use the current immutable cache keys', () => {
-  assert.match(index, /\/app\.js\?v=\d+/);
+test('frontend entrypoints use the current immutable cache keys', async () => {
+  assert.ok(app.includes('./features/credits/presentation.js?v=3'));
+  assert.ok((await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8')).includes('/guguadmin.js?v=19'));
+  assert.match(index, /\/app\.js\?v=321\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=235/);
+  assert.match(index, /\/styles\.css\?v=262/);
+  assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
   assert.match(index, /\/styles\/base\.css\?v=2/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=13/);
-  assert.match(app, /\.\/drama-studio\.js\?v=94/);
+  assert.match(app, /\.\/drama-studio\.js\?v=131/);
   assert.match(app, /\.\/features\/generation\/polling\.js\?v=3/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
   assert.match(app, /\.\/features\/media\/controller\.js\?v=7/);
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=3/);
+  assert.match(dramaStudio, /director-workspace\.js\?v=38\b/);
+  assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=3\b/);
   assert.match(app, /\.\/state\/account-state\.js\?v=1/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
 });
@@ -140,6 +145,16 @@ test('short-drama project opening does not wait for the full local library or ga
   assert.match(loadTasksSource, /activeOnly \? activeIds : \[\.\.\.projectTaskIds\]/);
   assert.match(loadTasksSource, /const assetTasks = projectOnly \? hydratedTasks : tasks/);
   assert.match(loadTasksSource, /void syncDesktopDeliveries\(\{ assetIds:missingAssetIds \}\)/);
+});
+
+test('infinite-canvas agent completions trigger targeted local delivery sync', () => {
+  const agentStart = dramaStudio.indexOf('agentApi:async');
+  const agentEnd = dramaStudio.indexOf('\n      execute:executeDirectorAction', agentStart);
+  const agentSource = dramaStudio.slice(agentStart, agentEnd);
+  assert.match(agentSource, /const previousTasks=new Map\(state\.tasks\.map/);
+  assert.match(agentSource, /const generatedAssetIds=\[\.\.\.new Set\(/);
+  assert.match(agentSource, /typeof syncDesktopDeliveries==='function'/);
+  assert.match(agentSource, /syncDesktopDeliveries\(\{assetIds:generatedAssetIds\}\)/);
 });
 
 test('generation workspace separates works from paginated history', () => {

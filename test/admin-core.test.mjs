@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { configureCursors } from '../lib/store.mjs';
 import { configureLedger, adjustCredits, grantSignupBonus, walletOf } from '../lib/ledger.mjs';
-import { createPricingVersion, currentPricing, pricingSnapshot } from '../lib/pricing.mjs';
+import { createPricingVersion, currentPricing, pricingSnapshot, modelPrice, modelPriceFields, liveLlmRates } from '../lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls, updateModelControl } from '../lib/model-controls.mjs';
 import { registerUser, insertUser } from '../lib/store.mjs';
 
@@ -62,6 +62,23 @@ test('admin core controls', async t => {
     assert.equal(currentPricing().version, second.version);
     assert.throws(() => createPricingVersion({ imagePerRequest: '2', videoPerSecond: '2', actorUserId: admin.id, expectedVersion: first.version }), /价格已被其他管理员修改/);
     assert.equal(sql('SELECT COUNT(*) AS count FROM audit_events WHERE action = \'pricing.create_version\'').get().count, 1);
+  });
+
+  await t.test('model prices are validated, versioned and preserve omitted settings', () => {
+    const admin = makeUser('model_prices', 'admin');
+    const args = { imagePerRequest:1, videoPerSecond:1, actorUserId:admin.id };
+    const before = currentPricing();
+    const rates = liveLlmRates({ yuanPerCredit:0.1, inputYuanPerMillion:3, outputYuanPerMillion:6, inputMicroPerToken:30, outputMicroPerToken:60 });
+    const saved = createPricingVersion({ ...args, modelPrices:{ 'gpt-image-2.5:2k':0, 'grok:720p':2.75, 'llm:input':0.01 } });
+    assert.equal(modelPrice(saved, 'gpt-image-2.5', '2K', 2), 0);
+    assert.equal(modelPrice(before, 'gpt-image-2.5', '2K', 2), 2);
+    assert.equal(modelPriceFields(saved).find(item => item.key === 'grok:720p').amount, 2.75);
+    assert.equal(rates.inputYuanPerMillion, 0.01);
+    assert.equal(rates.inputMicroPerToken, 0.09999999999999999);
+    assert.deepEqual(createPricingVersion(args).modelPrices, saved.modelPrices);
+    for (const modelPrices of [{ unknown:1 }, { 'grok:720p':-1 }, { 'grok:720p':'1.1234567' }, []]) {
+      assert.throws(() => createPricingVersion({ ...args, modelPrices }), error => error.statusCode === 400);
+    }
   });
 
   await t.test('model controls affect public catalog and enforce disabled state', () => {

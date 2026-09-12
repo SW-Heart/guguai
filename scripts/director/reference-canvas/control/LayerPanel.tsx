@@ -29,6 +29,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Film,
   GripVertical,
   Image,
   Lock,
@@ -70,6 +71,9 @@ const getNodeIcon = (type: string) => {
     case 'image':
       IconComponent = <Image {...iconProps} />
       break
+    case 'video':
+      IconComponent = <Film {...iconProps} />
+      break
     case 'rich-text':
       IconComponent = <Type {...iconProps} />
       break
@@ -102,14 +106,43 @@ const getNodeIcon = (type: string) => {
   )
 }
 
-const getNodeThumbnail = (node: NodeConfig, thumbnailLabel: string) => {
-  const isImage = node.$_type?.toLowerCase() === 'image'
+type LayerNodeConfig = NodeConfig & {
+  $_actualType?: string
+}
 
-  if (isImage && node.$_imageUrl) {
+/**
+ * HTML is the rendering container used by the director cards. Keep the
+ * media kind separate so the layer panel describes what the node contains.
+ * The markup fallback also covers canvas states saved before $_actualType
+ * was added.
+ */
+const getNodeLayerType = (node: LayerNodeConfig) => {
+  const type = node.$_type?.toLowerCase()
+  if (type === 'video') return 'video'
+  if (
+    type === 'html' &&
+    (node.$_actualType?.toLowerCase() === 'video' ||
+      /<video(?:\s|>)/i.test(node.$_htmlContent || ''))
+  ) {
+    return 'video'
+  }
+  return type || 'node'
+}
+
+const getNodeThumbnail = (node: NodeConfig, thumbnailLabel: string) => {
+  const layerType = getNodeLayerType(node as LayerNodeConfig)
+  const thumbnailUrl =
+    layerType === 'image'
+      ? node.$_imageUrl
+      : layerType === 'video'
+        ? (node as LayerNodeConfig).$_coverUrl
+        : undefined
+
+  if (thumbnailUrl) {
     return (
       <div className="w-8 h-8 shrink-0 mr-2 overflow-hidden rounded-md">
         <img
-          src={node.$_imageUrl}
+          src={thumbnailUrl}
           alt={thumbnailLabel}
           className="w-full h-full object-cover"
         />
@@ -117,12 +150,13 @@ const getNodeThumbnail = (node: NodeConfig, thumbnailLabel: string) => {
     )
   }
 
-  return getNodeIcon(node.$_type || 'node')
+  return getNodeIcon(layerType)
 }
 
 const getNodeDisplayName = (type: string, t: (key: string) => string) => {
   const typeMap: Record<string, string> = {
     image: t('common:canvas.layers.image'),
+    video: t('common:canvas.layers.video'),
     'rich-text': t('common:canvas.layers.text'),
     rect: t('common:canvas.layers.rectangle'),
     rectangle: t('common:canvas.layers.rectangle'),
@@ -202,7 +236,7 @@ function SortableItem({
           >
             {getNodeThumbnail(node, t('common:canvas.layers.thumbnail'))}
             <span className="min-w-0 flex-1 text-sm font-medium text-foreground truncate">
-              {getNodeDisplayName(node.$_type, t)}
+              {getNodeDisplayName(getNodeLayerType(node), t)}
             </span>
           </div>
         </div>

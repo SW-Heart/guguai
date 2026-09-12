@@ -58,6 +58,7 @@ type ArrowElement = {
   getLayer?: () => {
     batchDraw?: () => void
   } | null
+  listening?: () => boolean
   clone?: (attrs?: Record<string, unknown>) => ArrowElement
   _sceneFunc?: (this: ArrowElement, context: ArrowRenderContext) => void
   [OPEN_ARROW_RENDERING_PATCH]?: boolean
@@ -434,6 +435,46 @@ function worldToScreen(
   }
 }
 
+function distanceToSegment(point: Point, start: Point, end: Point) {
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  if (dx === 0 && dy === 0) return getDistance(point, start)
+
+  const projection = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy))
+  )
+  return getDistance(point, {
+    x: start.x + projection * dx,
+    y: start.y + projection * dy,
+  })
+}
+
+function findCurveArrowAtPoint(api: CanvasApi, point: Point) {
+  const scale = api.getStage().scaleX() || 1
+  const tolerance = Math.max(10 / scale, 7)
+  const nodes = api.getState().nodes ?? []
+
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index]
+    if (!isCurveArrowConfig(node) || node.visible === false || node.$_listening === false) {
+      continue
+    }
+
+    const arrow = getArrowNode(api, node.id)
+    if (!arrow || !arrow.element.listening?.()) continue
+
+    const points = getElementWorldPoints(arrow.element)
+    for (let pointIndex = 1; pointIndex < points.length; pointIndex += 1) {
+      if (distanceToSegment(point, points[pointIndex - 1], points[pointIndex]) <= tolerance) {
+        return node.id
+      }
+    }
+  }
+
+  return null
+}
+
 function strokeShapeWithoutDash(
   context: ArrowRenderContext,
   shape: ArrowElement
@@ -723,6 +764,7 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
   const dragRef = useRef<HandleDrag | null>(null)
   const dragFrameRef = useRef<number | null>(null)
   const pendingDragPointRef = useRef<Point | null>(null)
+  const drawingPointerIdRef = useRef<number | null>(null)
   const draftPreviewFrameRef = useRef<number | null>(null)
   const pendingDraftPreviewRef = useRef<Point | null>(null)
   const selectionFrameRef = useRef<number | null>(null)
@@ -786,28 +828,12 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
     mutableApi._setCursor?.('crosshair')
   }, [active, api])
 
-  const appendDraftPoint = useCallback(
+  const startDraft = useCallback(
     (point: Point) => {
-      const current = draftRef.current
-      let nextDraft: DraftArrow
-
-      if (!current) {
-        nextDraft = {
-          points: [point],
-          previewPoint: point,
-        }
-      } else {
-        const last = current.points[current.points.length - 1]
-        if (last && getDistance(last, point) < MIN_POINT_DISTANCE) {
-          return
-        }
-
-        nextDraft = {
-          points: [...current.points, point],
-          previewPoint: point,
-        }
+      const nextDraft: DraftArrow = {
+        points: [point],
+        previewPoint: point,
       }
-
       draftRef.current = nextDraft
       setDraft(nextDraft)
     },
@@ -845,10 +871,17 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
     setDraft(null)
   }, [active, clearPendingDraftPreview])
 
-  const finishDraft = useCallback(() => {
+  const finishDraft = useCallback((endPoint?: Point) => {
     if (!api) return
 
-    const points = dedupeNearbyPoints(draftRef.current?.points ?? [])
+    const current = draftRef.current
+    const startPoint = current?.points[0]
+    const points = startPoint
+      ? dedupeNearbyPoints([
+          startPoint,
+          endPoint ?? current.previewPoint ?? startPoint,
+        ])
+      : []
     let createdNodeId: string | null = null
     if (points.length >= 2) {
       const stageScale = api.getStage().scaleX() || 1
@@ -880,6 +913,7 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
 
     draftRef.current = null
     activeRef.current = false
+    drawingPointerIdRef.current = null
     clearPendingDraftPreview()
     setDraft(null)
     setActive(false)
@@ -894,31 +928,12 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
 
     draftRef.current = null
     activeRef.current = false
+    drawingPointerIdRef.current = null
     clearPendingDraftPreview()
     setDraft(null)
     setActive(false)
     api.setToolType('select')
   }, [api, clearPendingDraftPreview, setActive])
-
-  const removeLastDraftPoint = useCallback(() => {
-    setDraft(current => {
-      const source = draftRef.current ?? current
-      if (!source) return source
-
-      const nextPoints = source.points.slice(0, -1)
-      if (nextPoints.length === 0) {
-        draftRef.current = null
-        return null
-      }
-
-      const nextDraft = {
-        points: nextPoints,
-        previewPoint: source.previewPoint,
-      }
-      draftRef.current = nextDraft
-      return nextDraft
-    })
-  }, [])
 
   useEffect(() => {
     if (!api) return
@@ -939,22 +954,13 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
         cancelDraft()
         return
       }
-
-      if (
-        (event.key === 'Backspace' || event.key === 'Delete') &&
-        draftRef.current
-      ) {
-        event.preventDefault()
-        event.stopPropagation()
-        removeLastDraftPoint()
-      }
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true)
     }
-  }, [api, cancelDraft, finishDraft, removeLastDraftPoint])
+  }, [api, cancelDraft, finishDraft])
 
   useEffect(() => {
     if (!api) return
@@ -969,18 +975,100 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
       event.preventDefault()
       event.stopPropagation()
       event.stopImmediatePropagation()
-      if (draftRef.current) {
-        appendDraftPoint(point)
-      } else {
-        flushSync(() => appendDraftPoint(point))
+      drawingPointerIdRef.current = event.pointerId
+      flushSync(() => startDraft(point))
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (
+        drawingPointerIdRef.current !== event.pointerId ||
+        !draftRef.current
+      ) {
+        return
       }
+
+      const point = clientToWorld(api, overlayRef.current, event)
+      if (!point) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      pendingDraftPreviewRef.current = point
+      if (draftPreviewFrameRef.current !== null) return
+
+      draftPreviewFrameRef.current = window.requestAnimationFrame(() => {
+        draftPreviewFrameRef.current = null
+        const previewPoint = pendingDraftPreviewRef.current
+        pendingDraftPreviewRef.current = null
+        if (previewPoint) updateDraftPreview(previewPoint)
+      })
+    }
+
+    const handlePointerUp = (event: PointerEvent) => {
+      if (
+        drawingPointerIdRef.current !== event.pointerId ||
+        !draftRef.current
+      ) {
+        return
+      }
+
+      const point = clientToWorld(api, overlayRef.current, event)
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      finishDraft(point ?? undefined)
+    }
+
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (drawingPointerIdRef.current !== event.pointerId) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      cancelDraft()
     }
 
     window.addEventListener('pointerdown', handlePointerDown, true)
+    window.addEventListener('pointermove', handlePointerMove, true)
+    window.addEventListener('pointerup', handlePointerUp, true)
+    window.addEventListener('pointercancel', handlePointerCancel, true)
     return () => {
       window.removeEventListener('pointerdown', handlePointerDown, true)
+      window.removeEventListener('pointermove', handlePointerMove, true)
+      window.removeEventListener('pointerup', handlePointerUp, true)
+      window.removeEventListener('pointercancel', handlePointerCancel, true)
     }
-  }, [api, appendDraftPoint])
+  }, [api, cancelDraft, finishDraft, startDraft, updateDraftPreview])
+
+  useEffect(() => {
+    if (!api) return
+
+    const handleNativeSelectionFallback = (event: PointerEvent) => {
+      if (
+        event.button !== 0 ||
+        activeRef.current ||
+        api.getToolType() !== 'select' ||
+        isInteractivePointerTarget(event.target)
+      ) {
+        return
+      }
+
+      const point = clientToWorld(api, overlayRef.current, event)
+      if (!point) return
+      const nodeId = findCurveArrowAtPoint(api, point)
+      if (!nodeId) return
+
+      window.requestAnimationFrame(() => {
+        const selected = api.getState().selectedNodeIds ?? []
+        if (selected.length === 0) {
+          api.selectNodes([nodeId], event.shiftKey)
+        }
+      })
+    }
+
+    window.addEventListener('pointerdown', handleNativeSelectionFallback, true)
+    return () => window.removeEventListener('pointerdown', handleNativeSelectionFallback, true)
+  }, [api])
 
   const refreshSelection = useCallback(() => {
     if (!api || activeRef.current) {
@@ -1042,39 +1130,6 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
       setNativeTransformerVisible(api, true)
     }
   }, [api, refreshSelection, scheduleSelectionRefresh])
-
-  const handleDrawingPointerDown = (event: ReactPointerEvent<SVGElement>) => {
-    if (!api || !active || event.button !== 0) return
-
-    const point = clientToWorld(api, overlayRef.current, event)
-    if (!point) return
-
-    event.preventDefault()
-    event.stopPropagation()
-    event.nativeEvent.stopImmediatePropagation()
-    if (draftRef.current) {
-      appendDraftPoint(point)
-    } else {
-      flushSync(() => appendDraftPoint(point))
-    }
-  }
-
-  const handleDrawingPointerMove = (event: ReactPointerEvent<SVGElement>) => {
-    if (!api || !active || !draftRef.current) return
-
-    const point = clientToWorld(api, overlayRef.current, event)
-    if (!point) return
-
-    pendingDraftPreviewRef.current = point
-    if (draftPreviewFrameRef.current !== null) return
-
-    draftPreviewFrameRef.current = window.requestAnimationFrame(() => {
-      draftPreviewFrameRef.current = null
-      const previewPoint = pendingDraftPreviewRef.current
-      pendingDraftPreviewRef.current = null
-      if (previewPoint) updateDraftPreview(previewPoint)
-    })
-  }
 
   const handleHandlePointerDown = (
     event: ReactPointerEvent<SVGElement>,
@@ -1254,8 +1309,6 @@ export function CurveArrowToolLayer({ api }: { api: CanvasApi | null }) {
           height="100%"
           fill="transparent"
           style={{ pointerEvents: 'auto', cursor: 'crosshair' }}
-          onPointerDown={handleDrawingPointerDown}
-          onPointerMove={handleDrawingPointerMove}
         />
       )}
 

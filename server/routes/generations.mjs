@@ -1,3 +1,5 @@
+import { modelPrice } from '../../lib/pricing.mjs';
+
 export function createGenerationRouteHandler({
   prepareViralGeneration,
   bodyJson,
@@ -141,7 +143,8 @@ export function createGenerationRouteHandler({
       return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:visiblePrice.salePriceCredits, yuan:visiblePrice.salePriceYuan, priceVersion:publicRoutePriceVersion(route) }), true;
     }
     const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
-    const credits = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) * request.duration : currentPricing().videoPerSecond * request.duration;
+    const pricing = currentPricing();
+    const credits = modelPrice(pricing, request.modelId, request.quality, selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : pricing.videoPerSecond) * request.duration;
     return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:staticPriceVersion(request) }), true;
   }
 
@@ -211,13 +214,13 @@ export function createGenerationRouteHandler({
     return false;
   }
 
-  async function handleGenerationSubmit(req, res) {
-    const user = await requireUser(req, res); if (!user) return true;
-    const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
-    const input = await bodyJson(req);
+  async function submitGeneration({ user, scope, input, headerRequestId = '', previewOnly = false, maxCostMicro = Infinity }) {
+    const res = {};
+    const sendJson = (_res, status, data) => { res.result = { status, data }; };
+    input = structuredClone(input);
+    async function execute() {
     if (input.viralProjectId) Object.assign(input, prepareViralGeneration(user.id, scope, input));
     const type = input.type;
-    const headerRequestId = String(req.headers['idempotency-key'] || '').trim();
     const bodyRequestId = String(input.requestId || '').trim();
     if (headerRequestId && bodyRequestId && headerRequestId !== bodyRequestId) return sendJson(res, 400, { error:'请求幂等键不一致' }), true;
     const generationRequestId = headerRequestId || bodyRequestId;
@@ -299,7 +302,7 @@ export function createGenerationRouteHandler({
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;
     if (!providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:type === 'image' ? '图片生成服务尚未配置' : '视频生成服务尚未配置' }), true;
     const pricing = currentPricing();
-    const pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
+    let pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
       ? { ...pricing, videoPerSecondMicro:creditsToMicro(videoRequest.pricing.amount) }
       : isMidjourney
         ? { ...pricing, imagePerRequestMicro:creditsToMicro(midjourneyImageCredits) }
@@ -315,11 +318,17 @@ export function createGenerationRouteHandler({
     }
     const taskIds = generationRequestId ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`) : Array.from({ length:quantity }, () => randomId());
     const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
+    pricingForTask = type === 'video'
+      ? { ...pricingForTask, videoPerSecondMicro:creditsToMicro(modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
+      : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, modelId === 'gpt-image-2.5' ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
     const pricingSnapshotValue = routeSelection
       ? { version:pricing.version, contentType:type, billingUnit:'request', quantity:1, unitPriceMicro:routeSelection.salePriceMicro, totalMicro:routeSelection.salePriceMicro, unitPrice:routeSelection.salePriceCredits, total:routeSelection.salePriceCredits, routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, costYuan:routeSelection.costYuan, markupPercent:20, salePriceYuan:routeSelection.salePriceYuan, priceVersion:publicRoutePriceVersion(routeSelection) }
       : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
     if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error:'当前价格已变化，请刷新价格后重试', code:'PRICE_CHANGED', price:{ credits:pricingSnapshotValue.total, yuan:pricingSnapshotValue.salePriceYuan, priceVersion:pricingSnapshotValue.priceVersion } }), true;
     const batchId = quantity > 1 ? randomId() : '';
+    const totalCostMicro = pricingSnapshotValue.totalMicro * (isMidjourney ? quantity / midjourneyOutputCount : quantity);
+    if (previewOnly) return sendJson(res, 200, { modelId, type, quantity, credits:totalCostMicro / 1000000, costMicro:totalCostMicro, priceVersion:pricingSnapshotValue.priceVersion || '', duration, size, quality:type === 'image' ? imageQuality : videoRequest.quality }), true;
+    if (totalCostMicro > maxCostMicro) return sendJson(res, 409, { error:'价格已变化或超出已授权费用，请重新确认', code:'AGENT_BUDGET_EXCEEDED' }), true;
     const tasks = Array.from({ length:quantity }, (_, index) => {
       const outputIndex = isMidjourney ? index % midjourneyOutputCount : null;
       const groupIndex = isMidjourney ? Math.floor(index / midjourneyOutputCount) : null;
@@ -369,9 +378,24 @@ export function createGenerationRouteHandler({
     return sendJson(res, 202, { tasks:effectiveTasks.map(publicGeneration), quantity, balance:charged.balance, ...boundProject }), true;
   }
 
-  return async function generationRoute(req, res, url) {
+    await execute();
+    return res.result;
+  }
+
+  async function handleGenerationSubmit(req, res) {
+    const user = await requireUser(req, res); if (!user) return true;
+    const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+    const input = await bodyJson(req);
+    const result = await submitGeneration({ user, scope, input, headerRequestId:String(req.headers['idempotency-key'] || '').trim() });
+    sendJson(res, result.status, result.data);
+    return true;
+  }
+
+  const generationRoute = async function generationRoute(req, res, url) {
     if (await handleModelQuote(req, res, url)) return true;
     if (url.pathname === '/api/generations' && req.method === 'POST') return handleGenerationSubmit(req, res);
     return handleGenerations(req, res, url);
   };
+  generationRoute.submit = submitGeneration;
+  return generationRoute;
 }

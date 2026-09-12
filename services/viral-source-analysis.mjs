@@ -90,12 +90,21 @@ export function buildSourceAnalysisPrompt({ productName = '', brief = '' } = {})
 export function splitSourceTimeline(observation, { modelId = 'seedance-2.5', materials = [] } = {}) {
   const duration = modelId === 'seedance-2.0' ? 15 : 30;
   const sourceTotal = Math.max(number(observation?.durationSeconds), ...((observation?.timeline || []).map(item => item.endSeconds)), 0);
-  const total = Math.max(sourceTotal, duration);
-  const count = Math.max(1, Math.ceil(total / duration));
+  const total = sourceTotal || duration;
+  const ranges = [];
+  let cursor = 0;
+  while (cursor < total) {
+    let end = Math.min(total, cursor + duration);
+    // Prefer a complete speech/shot boundary instead of repeating a sentence across outputs.
+    const crossing = (observation?.timeline || []).find(beat => beat.startSeconds < end && beat.endSeconds > end && beat.startSeconds > cursor);
+    if (crossing) end = crossing.startSeconds;
+    ranges.push({ startSeconds:cursor, endSeconds:end });
+    cursor = end;
+  }
   const defaultRefs = materials.filter(item => item.role !== 'audio').map(item => item.assetId);
-  return Array.from({ length:count }, (_, index) => {
-    const start = index * duration;
-    const end = Math.min(sourceTotal || duration, (index + 1) * duration);
+  return ranges.map((range, index) => {
+    const start = range.startSeconds;
+    const end = range.endSeconds;
     const spans = (observation?.timeline || []).filter(item => item.endSeconds > start && item.startSeconds < end).map(item => item.id);
     return {
       id: `part-${String(index + 1).padStart(2, '0')}`,
@@ -118,8 +127,8 @@ function formatTime(value) { return Number(value).toFixed(3); }
 export function compileReplicaPrompt(project, observation, unit) {
   const range = unit.sourceRange || { startSeconds:0, endSeconds:observation.durationSeconds };
   const beats = (observation.timeline || []).filter(item => item.endSeconds > range.startSeconds && item.startSeconds < range.endSeconds);
-  const materials = project.materials.filter(item => unit.referenceAssetIds.includes(item.assetId));
-  const sourceDuty = project.sourceAssetId ? '@视频1负责原片的镜头顺序、节奏和动作参考，不复制原片中的商品身份。' : '';
+  const materials = unit.referenceAssetIds.map(id => project.materials.find(item => item.assetId === id)).filter(Boolean);
+  const sourceDuty = project.sourceAssetId ? `@视频1负责原片 ${formatTime(range.startSeconds)}–${formatTime(range.endSeconds)} 秒的镜头顺序、节奏和动作参考，不复制原片中的商品身份。下方阶段时间均从本段的 0 秒开始。` : '';
   let imageIndex = 0; let audioIndex = 0;
   const duties = materials.map(item => {
     const mention = item.role === 'audio' ? `@音频${++audioIndex}` : `@图片${++imageIndex}`;
@@ -128,9 +137,9 @@ export function compileReplicaPrompt(project, observation, unit) {
       : `${mention}负责${item.label || item.role || '当前素材'}的外观与身份，场景、镜头和动作以原片观察为准。`;
   }).join('\n');
   const events = beats.length ? beats.map((beat, index) => {
-    const speech = beat.spokenContent ? ` ${beat.speakerMode === 'voiceover' ? '画外音' : '人物口播'}：{${beat.spokenContent}}` : '';
-    return `阶段${index + 1}（${formatTime(Math.max(range.startSeconds, beat.startSeconds))}–${formatTime(Math.min(range.endSeconds, beat.endSeconds))}秒）：${beat.visualAction || '按原片保持画面与动作。'}${speech}`;
-  }).join('\n') : `阶段一（${formatTime(range.startSeconds)}–${formatTime(range.endSeconds)}秒）：按参考视频保持原片节奏与镜头。`;
+    const speech = beat.spokenContent && beat.startSeconds >= range.startSeconds ? ` ${beat.speakerMode === 'voiceover' ? '画外音' : '人物口播'}：{${beat.spokenContent}}` : '';
+    return `阶段${index + 1}（${formatTime(Math.max(range.startSeconds, beat.startSeconds) - range.startSeconds)}–${formatTime(Math.min(range.endSeconds, beat.endSeconds) - range.startSeconds)}秒）：${beat.visualAction || '按原片保持画面与动作。'}${speech}`;
+  }).join('\n') : `阶段一（0.000–${formatTime(range.endSeconds - range.startSeconds)}秒）：按参考视频保持原片节奏与镜头。`;
   const sourceSpan = Math.max(0, range.endSeconds - range.startSeconds);
   const tail = sourceSpan + 0.01 < unit.duration ? `\n输出补足：源片观察到 ${formatTime(sourceSpan)} 秒；剩余时间延续最后一个画面状态和声音落点，不新增台词或动作。` : '';
   if (unit.modelId === 'seedance-2.0') {

@@ -22,3 +22,54 @@
     height: 20px;
   }
 }
+
+.reference-stroke-controls-horizontal {
+  width: max-content;
+  min-width: max-content;
+  flex-wrap: nowrap;
+}
+
+.reference-stroke-controls-horizontal input[type='range'] {
+  width: 88px;
+  min-width: 88px;
+}
+
+.reference-stroke-colors {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.reference-stroke-colors > button,
+.reference-stroke-colors > span,
+.reference-stroke-colors .reference-popover-root,
+.reference-stroke-colors .reference-popover-trigger,
+.reference-stroke-colors .reference-popover-trigger > button {
+  box-sizing: border-box;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  flex: 0 0 22px;
+  aspect-ratio: 1 / 1;
+}
+
+.reference-stroke-colors > button,
+.reference-stroke-colors .reference-popover-trigger > button {
+  padding: 0;
+  border-radius: 9999px;
+}
+
+.reference-stroke-colors > span,
+.reference-stroke-colors .reference-popover-root,
+.reference-stroke-colors .reference-popover-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reference-stroke-colors .reference-popover-trigger > button {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  line-height: 0;
+}

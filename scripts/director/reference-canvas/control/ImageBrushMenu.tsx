@@ -85,10 +85,17 @@ export function ImageBrushMenu({
     if (!api) return
 
     api.on('viewport:change', updatePositionFromNode)
+    // Transformer position changes are emitted for every drag/transform
+    // frame. Viewport changes alone leave the brush toolbar behind the image
+    // while the image itself is moving.
+    api.on('transformer:positionChange', updatePositionFromNode)
+    api.on('state:change', updatePositionFromNode)
     api.on('toolType:change', handleToolTypeChange)
 
     return () => {
       api.off('viewport:change', updatePositionFromNode)
+      api.off('transformer:positionChange', updatePositionFromNode)
+      api.off('state:change', updatePositionFromNode)
       api.off('toolType:change', handleToolTypeChange)
     }
   }, [api])

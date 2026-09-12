@@ -132,6 +132,7 @@ test('ledger', async t => {
     assert.equal(walletOf(userId).available, 100 - 0.60576);
     assertInvariants(userId, 'after reserve');
 
+    configureLedger({ llmRates:{ ...rates, inputMicroPerToken:300, outputMicroPerToken:600 }, llmProtocol:'test', llmModel:'test' });
     const settled = await settleLlmCredits(userId, 'req-1', llmResult(10_000, 3_000));
     assert.equal(settled.chargedMicro, 480_000);
     assert.equal(settled.chargedCredits, 0.48);

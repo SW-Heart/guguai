@@ -54,6 +54,7 @@ test('empty database creates the R2-only schema v1 baseline', async () => {
     assert.equal(dbModule.readMeta('schema_baseline'), 'r2-only-v1');
     assert.equal(dbModule.readMeta('schema_min_rollback_version'), '1');
     assert.match(dbModule.readMeta('schema_checksum'), /^[a-f0-9]{64}$/);
+    assert.equal(dbModule.readMeta('schema_checksum'), '9c3d92303b67350bfe587df0fef690017db492f1664b805671ec5085974c1e29', 'deployed v1 baseline checksum must remain immutable');
     assert.deepEqual(handle.prepare('SELECT version, name, checksum, rollback_version AS rollbackVersion FROM schema_migrations').all().map(row => ({ ...row, checksum:row.checksum.length })), [{ version:1, name:'r2-only-v1', checksum:64, rollbackVersion:1 }]);
     const tables = handle.prepare(`
       SELECT name FROM sqlite_master
@@ -61,6 +62,7 @@ test('empty database creates the R2-only schema v1 baseline', async () => {
       ORDER BY name`).all();
     assert.ok(tables.some(row => row.name === 'assets'));
     assert.ok(tables.some(row => row.name === 'upload_intents'));
+    assert.ok(tables.some(row => row.name === 'deleted_model_routes'));
 
     const columns = tables.flatMap(({ name }) => handle.prepare(`PRAGMA table_info(${name})`).all());
     assert.deepEqual(columns.filter(column => column.name.toLowerCase().includes('oss')), []);

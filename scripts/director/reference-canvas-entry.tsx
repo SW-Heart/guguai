@@ -12,6 +12,21 @@ export interface ReferenceCanvasOptions {
   onDispose?: () => void
 }
 
+// Native rich text is rendered as HTML while it is being edited and rasterized
+// back into the canvas when editing ends. Keep that HTML layer at the same
+// visual scale as the director cards (16px canvas text becomes about 13px on
+// screen), while still allowing an explicit node scale to be preserved.
+const CANVAS_RICH_TEXT_HTML_SCALE = 0.8
+
+function normalizeCanvasNode(node: any) {
+  if (node?.$_type !== 'rich-text') return node
+  // Nodes created before this normalization usually persisted the native
+  // default of 1 after their first edit. Treat that default the same as a
+  // missing scale, but keep intentional resize values such as 0.6 or 1.4.
+  if (Number.isFinite(node.htmlScale) && node.htmlScale !== 1) return node
+  return { ...node, htmlScale: CANVAS_RICH_TEXT_HTML_SCALE }
+}
+
 function RuntimeBridge({ options, children }: PropsWithChildren<{ options: ReferenceCanvasOptions }>) {
   const setSessionKey = useSetAtom(currentClawSessionKeyAtom)
   const setMessageInput = useSetAtom(messageInputRefAtom)
@@ -36,6 +51,12 @@ export function mountReferenceCanvas(container: HTMLElement, options: ReferenceC
       <RuntimeBridge options={options}>
         <CanvasPreview
           onReady={value => {
+            const createNodes = value.createNodes.bind(value)
+            value.createNodes = (nodes: any[], ...args: any[]) => createNodes(nodes.map(node =>
+              normalizeCanvasNode(node.$_type === 'image'
+                ? { brightness: 0, $_applyBrightnessFilter: false, ...node }
+                : node)
+            ), ...args)
             api = value
             options.onReady?.(value)
           }}

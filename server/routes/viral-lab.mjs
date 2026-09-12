@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
-import { createViralProject, findViralProject, listViralProjects, saveViralProject, viralGenerationRecords } from '../../repositories/viral-projects.mjs';
+import { createViralProject, findViralProject, listViralProjects, listViralTasks, saveViralProject, viralGenerationRecords } from '../../repositories/viral-projects.mjs';
 import { normalizeViralInput, assetSnapshot, assetApprovalHash, planApprovalHash, assertViralReady, viralError, fingerprint, viralPlanSystem } from '../../lib/viral-lab.mjs';
 import { buildSourceAnalysisPrompt, normalizeReplicaPlan, normalizeSourceObservation, sourceAnalysisFingerprint, sourceAnalysisSystemPrompt, splitSourceTimeline } from '../../services/viral-source-analysis.mjs';
 
@@ -86,6 +86,10 @@ export function createViralLabRouteHandler({ bodyJson, sendJson, requireUser, re
     const user = await requireUser(req, res); if (!user) return true;
     const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
     const path = url.pathname.slice('/api/viral-lab/'.length);
+    if (path === 'tasks' && req.method === 'GET') {
+      sendJson(res, 200, { tasks: listViralTasks(user.id, scope).map(task => ({ ...publicGeneration(task), viralProjectId:task.viralProjectId, viralUnitId:task.viralUnitId, viralPlanHash:task.viralPlanHash })) });
+      return true;
+    }
     if (path === 'projects' && req.method === 'GET') {
       sendJson(res, 200, { projects: listViralProjects(user.id, scope).map(p => ({ id: p.id, title: p.title, type: p.type, updatedAt: p.updatedAt, unitCount: p.units.length, approved: Boolean(p.planApproval), sourceAnalyzed: Boolean(p.sourceObservation) })), capabilities: { aiPlan: isLlmConfigured(llmConfig), automaticSourceAnalysis: Boolean(isLlmConfigured(llmConfig) && ensureLocalAsset && sourceAnalysisExecutable), identityReview: false } });
       return true;
@@ -153,12 +157,16 @@ export function createViralLabRouteHandler({ bodyJson, sendJson, requireUser, re
         const asset = findAsset(user.id, project.sourceAssetId, scope);
         const sourceFile = await ensureLocalAsset(user.id, asset);
         const frames = await sourceFrames(sourceFile);
-        const result = await callLlm({ system:sourceAnalysisSystemPrompt, prompt:buildSourceAnalysisPrompt(), content:frames.content, maxOutputTokens:quote.maxOutputTokens, jsonMode:true, config:llmConfig });
+        const result = await callLlm({ system:sourceAnalysisSystemPrompt, prompt:buildSourceAnalysisPrompt() + '\n本次输入只有静态采样画面，没有音频。不得从口型或字幕猜测 spoken_content、asr_text 或声音风格；spoken_content 留空，speaker_mode 写 uncertain。', content:frames.content, maxOutputTokens:quote.maxOutputTokens, jsonMode:true, config:llmConfig });
         const billing = await settleLlmCredits(user.id, requestId, result, { projectId:project.id, skillName:'viral-source-analysis', skillVersion:'1.0.0' });
         settled = true;
         let parsed;
         try { parsed = JSON.parse(result.text.replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch { throw viralError('原片分析结果无法读取，已保留项目内容', 502); }
         const observation = normalizeSourceObservation(parsed, { sourceHash:source.sha256, durationSeconds:frames.durationSeconds });
+        observation.asrText = '';
+        observation.audioSummary = { speechStyle:'', musicAndSfx:'' };
+        observation.timeline.forEach(beat => { beat.spokenContent = ''; beat.speakerMode = 'uncertain'; });
+        observation.uncertainties.unshift('当前仅分析画面，未识别原片音频；需要保留的台词和声音请手动补充。');
         if (!observation.timeline.length) throw viralError('原片分析没有识别到可用时间线，已保留项目内容', 502);
         const modelId = project.units?.[0]?.modelId === 'seedance-2.0' ? 'seedance-2.0' : 'seedance-2.5';
         const draftUnits = splitSourceTimeline(observation, { modelId, materials:project.materials });

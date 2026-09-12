@@ -39,3 +39,28 @@ test('2.5 编译器不会把源片原话拆成残句', () => {
   assert.match(prompt, /【事件脚本】/);
   assert.match(prompt, /画外音：\{使用后更方便\}/);
 });
+
+test('跨段台词只出现一次，后续视频使用从零开始的段内时间', () => {
+  const source = normalizeSourceObservation({ timeline:[
+    { start_seconds:0, end_seconds:25, visual_action:'开场' },
+    { start_seconds:25, end_seconds:35, visual_action:'展示', spoken_content:'完整的一句话', speaker_mode:'voiceover' },
+    { start_seconds:35, end_seconds:60, visual_action:'结尾' },
+  ] }, { durationSeconds:60 });
+  const project = { sourceAssetId:'video', materials:[{assetId:'p',role:'product'}] };
+  const units = splitSourceTimeline(source, { materials:project.materials });
+  assert.equal(units[1].sourceRange.startSeconds,25);
+  assert.equal(units.at(-1).sourceRange.endSeconds,60);
+  const prompts = units.map(unit => compileReplicaPrompt(project,source,unit));
+  assert.equal(prompts.join('\n').split('完整的一句话').length - 1,1);
+  assert.match(prompts[1],/阶段1（0\.000–10\.000秒）/);
+  for (const unit of units) assert.ok(unit.sourceRange.endSeconds-unit.sourceRange.startSeconds <= unit.duration);
+});
+
+test('素材编号遵循实际提交顺序，超长观察不会重复口播', () => {
+  const source = normalizeSourceObservation({timeline:[{start_seconds:0,end_seconds:65,visual_action:'展示',spoken_content:'仅说一次'}]});
+  const project = { materials:[{assetId:'a',label:'甲图'},{assetId:'b',label:'乙图'}] };
+  const units = splitSourceTimeline(source,{materials:project.materials}).map(unit=>({...unit,referenceAssetIds:['b','a']}));
+  const prompts = units.map(unit=>compileReplicaPrompt(project,source,unit));
+  assert.match(prompts[0],/@图片1负责乙图/);
+  assert.equal(prompts.join('').split('仅说一次').length-1,1);
+});

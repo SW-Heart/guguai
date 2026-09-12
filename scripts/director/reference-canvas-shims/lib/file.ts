@@ -17,12 +17,15 @@ export function base64ToFile(value: string, name: string): File {
 
 export async function xhrDownload(url: string, fileName?: string) {
   const response = await fetch(url)
+  if (!response.ok) throw new Error(`下载失败（${response.status}）`)
   const blob = await response.blob()
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
   link.download = fileName || 'canvas-export'
+  document.body.appendChild(link)
   link.click()
-  URL.revokeObjectURL(link.href)
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000)
 }
 
 export function escapeWindowsPath(path: string) {

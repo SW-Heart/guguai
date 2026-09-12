@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { MessageInputContainer } from './MessageInputContainer'
 import { useSendMessage } from '../useSendMessage'
+import { toast } from 'sonner'
 import type { CanvasSnapshot } from '@8btc/whiteboard'
 import MyTooltip from '@/components/ui/MyToolTip'
 import { xhrDownload } from '@/lib/file'
@@ -37,6 +38,7 @@ export function FloatingMenu({
 }: FloatingMenuProps) {
   const whiteboardApi = useAtomValue(whiteboardApiAtom)
 
+  const [attaching, setAttaching] = useState(false)
   const [showChatBox, setShowChatbox] = useState(false)
   const inputRef = useRef<HTMLDivElement>(null)
   const chatButtonRef = useRef<HTMLButtonElement>(null)
@@ -92,14 +94,20 @@ export function FloatingMenu({
     }
   }, [inputRef, chatButtonRef])
 
-  const handleUpscale = async () => {
-    if (isSending) return
-    sendMessage('upscale')
-  }
-
-  const handleCutout = async () => {
-    if (isSending) return
-    sendMessage('cut out')
+  const [runningAction, setRunningAction] = useState(false)
+  const handleImageAction = async (action: 'upscale' | 'cutout') => {
+    if (isSending || runningAction) return
+    setRunningAction(true)
+    try {
+      const adapter = (globalThis as any).__directorCanvasAdapter
+      if (adapter?.imageAction) {
+        await adapter.imageAction(action, whiteboardApi?.getState().selectedNodeIds || [])
+      } else {
+        await sendMessage(action === 'upscale' ? '增强图片清晰度，保留原图内容' : '移除图片背景，保留主体，输出透明背景图片')
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '图片处理失败，请重试')
+    } finally { setRunningAction(false) }
   }
 
   const handleCrop = () => {
@@ -114,6 +122,9 @@ export function FloatingMenu({
   }
 
   const handleDownload = async () => {
+    try {
+    const adapter = (globalThis as any).__directorCanvasAdapter
+    if (await adapter?.downloadFiles?.(whiteboardApi?.getState().selectedNodeIds || [])) return
     const dataUrl = whiteboardApi
       ? await exportCanvasSelectionAsImage(whiteboardApi, {
           pixelRatio: 1,
@@ -122,17 +133,37 @@ export function FloatingMenu({
         })
       : null
     if (!dataUrl) {
-      console.log('下载失败，可能是选中了无法导出的内容')
+      toast.error('当前选区无法导出，请选择图片、素材或图形')
       return
     }
 
-    xhrDownload(dataUrl, `whiteboard_${Date.now()}.png`)
+    await xhrDownload(dataUrl, `whiteboard_${Date.now()}.png`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '下载失败，请重试')
+    }
   }
 
   return (
     <div className="floating-menu">
       <div className="flex items-center gap-2">
         <ButtonGroup>
+          {(globalThis as any).__directorCanvasAdapter?.attachFiles && (
+            <MyTooltip content="发送到聊天">
+              <Button variant="outline" size="icon" aria-label="发送到聊天"
+                disabled={attaching}
+                onClick={async () => {
+                  if (attaching) return
+                  setAttaching(true)
+                  try {
+                    await (globalThis as any).__directorCanvasAdapter.attachFiles(
+                      whiteboardApi?.getState().selectedNodeIds || []
+                    )
+                  } finally { setAttaching(false) }
+                }}>
+                <MessageSquarePlusIcon />
+              </Button>
+            </MyTooltip>
+          )}
           {SHOW_CANVAS_FLOATING_CHAT && showChatBtn && (
             <MyTooltip content={i18n.t('common:canvas.quickActions.chat')}>
               <Button
@@ -168,8 +199,9 @@ export function FloatingMenu({
                 <Button
                   variant={'outline'}
                   size={'icon'}
+                  disabled={runningAction || isSending}
                   onClick={() => {
-                    handleUpscale()
+                    void handleImageAction('upscale')
                   }}
                 >
                   <ImageUpscaleIcon />
@@ -180,8 +212,9 @@ export function FloatingMenu({
                 <Button
                   variant={'outline'}
                   size={'icon'}
+                  disabled={runningAction || isSending}
                   onClick={() => {
-                    handleCutout()
+                    void handleImageAction('cutout')
                   }}
                 >
                   <SquareUserRoundIcon />

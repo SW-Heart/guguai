@@ -37,3 +37,11 @@ test('asset mentions compile to typed model placeholders and preserve repeated r
   assert.match(prompt, /Audio1/);
   assert.doesNotMatch(prompt, /@图片 1/);
 });
+
+test('repeated mentions of one asset keep one model reference number', () => {
+  const mentions = [
+    { id:'image-a', label:'商品图', kind:'image' },
+    { id:'image-a', label:'商品图', kind:'image' },
+  ];
+  assert.equal(replaceAssetMentions('@商品图作为主体，@商品图再次出现。', mentions), 'Image1作为主体，Image1再次出现。');
+});

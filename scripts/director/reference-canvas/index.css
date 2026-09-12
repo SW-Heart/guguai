@@ -200,13 +200,6 @@
   color: currentColor !important;
 }
 
-.rich-text-bubble-menu button[aria-label='Italic'],
-.rich-text-bubble-menu button[aria-label='Strike'],
-.rich-text-bubble-menu button[aria-label='Underline'],
-.rich-text-bubble-menu button[aria-label='Highlight'] {
-  display: none;
-}
-
 .rich-text-bubble-menu > .font-family-select:not(.canvas-font-family-select) {
   display: none;
 }

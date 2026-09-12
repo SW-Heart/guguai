@@ -89,6 +89,7 @@ export function Grid() {
       version="1.1"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true"
+      style={{ stroke: 'none', strokeWidth: 0 }}
     >
       <defs>
         {gridSteps.map(({ min, mid, step }, i) => {
@@ -119,7 +120,7 @@ export function Grid() {
         })}
       </defs>
       {gridSteps.map(({ step }, i) => (
-        <rect key={i} width="100%" height="100%" fill={`url(#grid_${step})`} />
+        <rect key={i} stroke="none" strokeWidth={0} width="100%" height="100%" fill={`url(#grid_${step})`} />
       ))}
     </svg>
   )

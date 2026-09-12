@@ -415,15 +415,34 @@ import { createApiClient } from './api-client.js?v=3';
       const current = pricing.current || {};
       const history = (pricing.history || []).slice(0, 6);
       $('#pricingPanel').innerHTML = `<div class="panel-head"><div><h3>全局价格 <span class="detail">· 当前版本 ${esc(current.version)}</span></h3><p class="detail">新价格仅影响新提交的任务，历史版本只读保留。</p></div></div><form id="pricingForm" class="price-form"><label class="control">图片积分 / 次<input name="imagePerRequest" value="${esc(current.imagePerRequest)}" inputmode="decimal" required></label><label class="control">视频积分 / 秒<input name="videoPerSecond" value="${esc(current.videoPerSecond)}" inputmode="decimal" required></label><button class="primary" type="submit">发布新价格</button></form>${history.length ? `<div class="user-recent"><h3>最近价格版本</h3><div class="table-wrap"><table><thead><tr><th>版本</th><th>图片 / 次</th><th>视频 / 秒</th><th>创建时间</th></tr></thead><tbody>${history.map(item => `<tr><td>${esc(item.version)}</td><td>${money(item.imagePerRequest)}</td><td>${money(item.videoPerSecond)}</td><td>${date(item.createdAt)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+      const pricingForm = $('#pricingForm');
+      $('#pricingPanel h3').textContent = `模型价格 · 当前版本 ${current.version}`;
+      pricingForm.style.gridTemplateColumns = 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))';
+      const submitPrice = pricingForm.querySelector('button[type="submit"]');
+      submitPrice.insertAdjacentHTML('beforebegin', (pricing.fields || []).map(field => `<label class="control">${esc(field.label)} · ${esc(field.quality)} / ${esc(field.unit)}<input name="modelPrice:${esc(field.key)}" value="${esc(field.amount)}" inputmode="decimal" required></label>`).join(''));
+      pricingForm.insertAdjacentHTML('beforebegin', '<p class="detail">下方按模型与清晰度配置价格，图片和视频单位为积分；文本模型单位为人民币。Seedance 各线路价格在上方线路编辑中配置。</p>');
       $('#pricingForm').onsubmit = async event => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
         const button = event.currentTarget.querySelector('button[type="submit"]');
         setButtonBusy(button, true, '发布中…');
-        try { await api('/api/admin/pricing', { method: 'POST', body: JSON.stringify({ imagePerRequest: form.get('imagePerRequest'), videoPerSecond: form.get('videoPerSecond'), expectedVersion: current.version }) }); toast('价格已发布'); await loadModels(); }
+        try { await api('/api/admin/pricing', { method: 'POST', body: JSON.stringify({ imagePerRequest: form.get('imagePerRequest'), videoPerSecond: form.get('videoPerSecond'), modelPrices:Object.fromEntries((pricing.fields || []).map(field => [field.key, form.get(`modelPrice:${field.key}`)])), expectedVersion: current.version }) }); toast('价格已发布'); await loadModels(); }
         catch (error) { toast(error.message); setButtonBusy(button, false); }
       };
     } catch (error) { root.innerHTML = `${errorMarkup(error.message, 'models')}`; root.querySelector('[data-retry="models"]')?.addEventListener('click', loadModels); }
+  }
+
+  async function deleteRoute(route) {
+    await showAdminDialog({
+      kicker: '删除模型', title: `删除 ${route.displayName}`,
+      description: `确认删除上游模型 ${route.upstreamModelId}（${route.quality}）的这条调用线路？删除后不再用于新任务；若当前手动选中此线路，将恢复自动选择。渠道 Key 和历史记录会保留。`,
+      submit: '确认删除', danger: true,
+      onSubmit: async () => {
+        await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'DELETE', body: JSON.stringify({ expectedVersion: route.version }) });
+        toast('模型线路已删除');
+        await loadModels();
+      },
+    });
   }
 
   function routeStatusBadge(route) {
@@ -446,11 +465,12 @@ import { createApiClient } from './api-client.js?v=3';
       const publicPriceModelId = modelId === 'seedance-2.0-text' || modelId === 'seedance-2.0-img' ? 'seedance-2.0' : modelId;
       const price = (data.prices || []).find(item => item.modelId === publicPriceModelId && item.quality === quality);
       const label = routeModelLabels[modelId] || modelId;
-      return `<section class="route-group"><header><div><h4>${esc(label)} · ${esc(quality)}</h4><span>${price?.available ? `当前 ¥${Number(price.yuan).toFixed(2)} / ${money(price.credits)} 积分` : '当前无可用线路'}</span>${modelId === 'seedance-2.0-fast' ? '<p class="detail">固定 15 秒 · 9 图 / 3 视频 / 3 音频</p>' : modelId === 'seedance-2.0-text' ? '<p class="detail">无图片时自动进入此线路池</p>' : modelId === 'seedance-2.0-img' ? '<p class="detail">上传 1～9 张图片时自动进入此线路池</p>' : ''}</div><div class="route-header-actions"><button class="route-add-button" data-add-route="${esc(key)}" type="button">新增模型</button><label>选择策略<select data-route-policy="${esc(key)}" data-version="${policy?.version || 1}"><option value="">自动按优先级</option>${routes.map(route => `<option value="${esc(route.id)}" ${policy?.forcedRouteId === route.id ? 'selected' : ''}>手动 · ${esc(route.displayName)}</option>`).join('')}</select></label></div></header><div class="table-wrap"><table class="route-table" aria-label="${esc(label)} ${esc(quality)} 调用线路"><thead><tr><th>优先级</th><th>线路 / 上游模型 ID</th><th>状态</th><th>成本</th><th>用户价</th><th>检查时间</th><th>操作</th></tr></thead><tbody>${routes.map(route => `<tr class="${(policy?.forcedRouteId === route.id || (modelId !== 'seedance-2.0-text' && modelId !== 'seedance-2.0-img' && price?.selectedRouteId === route.id)) ? 'is-selected' : ''}"><td><b>${route.priority}</b></td><td><b>${esc(route.displayName)}</b><div class="detail">${esc(route.upstreamModelId)}</div></td><td>${routeStatusBadge(route)}${route.catalogMessage ? `<div class="route-message" title="${esc(route.catalogMessage)}">${esc(route.catalogMessage)}</div>` : ''}</td><td><b>¥${Number(route.costYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.costYuan, route.durationSeconds)}</div></td><td><b>¥${Number(route.salePriceYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.salePriceYuan, route.durationSeconds)}${route.salePriceConfigured ? '' : ' · 自动价'}</div></td><td>${date(route.catalogCheckedAt)}</td><td class="actions"><button class="small-button" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="small-button" data-check-route="${esc(route.id)}" type="button">检查</button></td></tr>`).join('')}</tbody></table></div></section>`;
+      return `<section class="route-group"><header><div><h4>${esc(label)} · ${esc(quality)}</h4><span>${price?.available ? `当前 ¥${Number(price.yuan).toFixed(2)} / ${money(price.credits)} 积分` : '当前无可用线路'}</span>${modelId === 'seedance-2.0-fast' ? '<p class="detail">固定 15 秒 · 9 图 / 3 视频 / 3 音频</p>' : modelId === 'seedance-2.0-text' ? '<p class="detail">无图片时自动进入此线路池</p>' : modelId === 'seedance-2.0-img' ? '<p class="detail">上传 1～9 张图片时自动进入此线路池</p>' : ''}</div><div class="route-header-actions"><button class="route-add-button" data-add-route="${esc(key)}" type="button">新增模型</button><label>选择策略<select data-route-policy="${esc(key)}" data-version="${policy?.version || 1}"><option value="">自动按优先级</option>${routes.map(route => `<option value="${esc(route.id)}" ${policy?.forcedRouteId === route.id ? 'selected' : ''}>手动 · ${esc(route.displayName)}</option>`).join('')}</select></label></div></header><div class="table-wrap"><table class="route-table" aria-label="${esc(label)} ${esc(quality)} 调用线路"><thead><tr><th>优先级</th><th>线路 / 上游模型 ID</th><th>状态</th><th>成本</th><th>用户价</th><th>检查时间</th><th>操作</th></tr></thead><tbody>${routes.map(route => `<tr class="${(policy?.forcedRouteId === route.id || (modelId !== 'seedance-2.0-text' && modelId !== 'seedance-2.0-img' && price?.selectedRouteId === route.id)) ? 'is-selected' : ''}"><td><b>${route.priority}</b></td><td><b>${esc(route.displayName)}</b><div class="detail">${esc(route.upstreamModelId)}</div></td><td>${routeStatusBadge(route)}${route.catalogMessage ? `<div class="route-message" title="${esc(route.catalogMessage)}">${esc(route.catalogMessage)}</div>` : ''}</td><td><b>¥${Number(route.costYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.costYuan, route.durationSeconds)}</div></td><td><b>¥${Number(route.salePriceYuan).toFixed(2)}</b><div class="detail">${perSecondPrice(route.salePriceYuan, route.durationSeconds)}${route.salePriceConfigured ? '' : ' · 自动价'}</div></td><td>${date(route.catalogCheckedAt)}</td><td class="actions"><button class="small-button" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="small-button" data-check-route="${esc(route.id)}" type="button">检查</button><button class="small-button danger-action" data-delete-route="${esc(route.id)}" type="button">删除</button></td></tr>`).join('')}</tbody></table></div></section>`;
     }).join('')}</div>` : emptyMarkup('暂无调用线路', '请先新增渠道模型，平台才会有可用的上游线路。')}`;
     $('#checkAllRoutes')?.addEventListener('click', () => checkRoutes());
     root.querySelectorAll('[data-add-route]').forEach(button => button.onclick = () => { const [modelId, quality] = button.dataset.addRoute.split(':'); addModelRoute(modelId, quality, data); });
     root.querySelectorAll('[data-check-route]').forEach(button => button.onclick = () => checkRoutes([button.dataset.checkRoute]));
+    root.querySelectorAll('[data-delete-route]').forEach(button => button.onclick = () => deleteRoute(items.find(item => item.id === button.dataset.deleteRoute)));
     root.querySelectorAll('[data-edit-route]').forEach(button => button.onclick = () => editRoute(items.find(item => item.id === button.dataset.editRoute), data.channels));
     root.querySelectorAll('[data-route-policy]').forEach(select => select.onchange = () => changeRoutePolicy(select));
   }

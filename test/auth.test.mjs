@@ -149,12 +149,22 @@ test('media object keys are scoped per user and prefix', () => {
 
 test('generation option enums match provider contracts', () => {
   assert.deepEqual([...__test.imageSizes], ['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
+  const addedTuziSizes = ['720x1440', '1024x2048', '1920x3840', '1440x720', '2048x1024', '3840x1920', '1120x896', '1920x1536', '3200x2560', '896x1120', '1536x1920', '2560x3200'];
+  for (const size of addedTuziSizes) assert.ok(__test.tuziImageSizes.has(size), `GPT Image 2.5 应支持 ${size}`);
+  for (const size of [...__test.tuziImageSizes].filter(value => value !== 'auto')) {
+    const [width, height] = size.split('x').map(Number);
+    assert.ok(Math.max(width, height) <= 3840, `${size} 的最大边不能超过 3840px`);
+    assert.equal(width % 16, 0, `${size} 的宽度必须是 16px 的整数倍`);
+    assert.equal(height % 16, 0, `${size} 的高度必须是 16px 的整数倍`);
+    assert.ok(Math.max(width, height) / Math.min(width, height) <= 3, `${size} 的长短边比例不能超过 3:1`);
+    assert.ok(width * height >= 655_360 && width * height <= 8_294_400, `${size} 的总像素数必须在允许范围内`);
+  }
   assert.deepEqual([...__test.videoAspectRatios], ['2:3', '3:2', '1:1', '9:16', '16:9', '21:9', '4:3', '3:4']);
   assert.deepEqual([...__test.videoDurations], [8, 10, 15, 20, 30]);
 });
 
 test('models are fixed server-side and network errors retain their cause', () => {
-  assert.deepEqual(__test.fixedModels, { image: 'gpt-image-2' });
+  assert.deepEqual(__test.fixedModels, { image: 'gpt-image-2.5' });
   assert.equal(__test.downloadErrorDetail({ message: 'fetch failed', cause: { code: 'ETIMEDOUT', message: 'connect timed out' } }), 'ETIMEDOUT · connect timed out');
 });
 

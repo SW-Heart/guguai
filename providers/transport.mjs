@@ -1,3 +1,27 @@
+// Only connection establishment failures are safe to replay for a billed POST.
+// Socket resets and response timeouts may happen after the provider accepted it.
+export function isPreconnectFailure(error) {
+  if (!error || error.upstreamStatus || error.requestPhase === 'response_body') return false;
+  if (error.errors?.length) return error.errors.every(isPreconnectFailure);
+  if (error.cause) return isPreconnectFailure(error.cause);
+  return ['ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'].includes(error.code)
+    || (error.syscall === 'connect' && ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(error.code));
+}
+
+export function transportErrorCodes(error) {
+  const codes = new Set();
+  const seen = new Set();
+  function visit(value) {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    if (/^[A-Z][A-Z0-9_]{1,79}$/.test(value.code || '')) codes.add(value.code);
+    visit(value.cause);
+    for (const child of value.errors || []) visit(child);
+  }
+  visit(error);
+  return [...codes];
+}
+
 export function createProviderTransport({
   fetchImpl = globalThis.fetch,
   errorMessage,
@@ -10,8 +34,17 @@ export function createProviderTransport({
   }
 
   async function fetchJson(url, options = {}) {
-    const response = await fetchImpl(url, options);
-    const text = await response.text();
+    let response, text;
+    try {
+      response = await fetchImpl(url, options);
+      text = await response.text();
+    } catch (error) {
+      const codes = transportErrorCodes(error);
+      throw Object.assign(new Error(`${error.message}${codes.length ? ` [${codes.join(', ')}]` : ''}`, { cause:error }), {
+        requestPhase:response ? 'response_body' : isPreconnectFailure(error) ? 'connect' : 'request',
+        transportCodes:codes,
+      });
+    }
     let value;
     try { value = JSON.parse(text); } catch { value = { raw: text }; }
     if (!response.ok) {
@@ -44,7 +77,7 @@ export function createProviderTransport({
   }
 
   function upstreamRequestErrorDetail(error) {
-    return [error?.upstreamStatus, error?.cause?.code, error?.upstreamMessage || error?.cause?.message || error?.message]
+    return [error?.upstreamStatus, transportErrorCodes(error).join(', '), error?.upstreamMessage || error?.message]
       .filter(Boolean).join(' · ') || '未知上游网络错误';
   }
 

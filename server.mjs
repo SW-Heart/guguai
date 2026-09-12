@@ -1,3 +1,9 @@
+import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
+import { createAgentGateway } from './lib/agent/gateway.mjs';
+import { createAgentSkills } from './lib/agent/skills.mjs';
+import { createAgentTools } from './lib/agent/tools.mjs';
+import { createAgentRuntime } from './lib/agent/runtime.mjs';
+import { createAgentRouteHandler } from './server/routes/agent.mjs';
 import { createViralLabRouteHandler } from './server/routes/viral-lab.mjs';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
@@ -14,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserById, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -49,12 +55,13 @@ import { createSystemRouteHandler } from './server/routes/system.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
-import { currentPricing, pricingSnapshot } from './lib/pricing.mjs';
+import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
+import { notifyGenerationFailure } from './lib/feishu.mjs';
 import { putSupportLogObject, supportLogMaxBytes, supportLogObjectKey, supportLogStorageReady, SUPPORT_LOG_MIME } from './lib/support-logs.mjs';
 import {
   closePaymentOrder,
@@ -150,7 +157,7 @@ const publicDownloadUrls = Object.freeze({
   windows: String(process.env.PUBLIC_WINDOWS_DOWNLOAD_URL || `${defaultPublicDownloadBaseUrl}/latest-windows.exe`).trim(),
 });
 const llmConfig = llmConfigFromEnv();
-const llmRates = llmRatesFromEnv();
+const llmRates = liveLlmRates(llmRatesFromEnv());
 const r2Endpoint = String(process.env.R2_ENDPOINT || '').trim().replace(/\/+$/, '');
 const r2Bucket = String(process.env.R2_BUCKET || '').trim();
 const r2Region = String(process.env.R2_REGION || 'auto').trim() || 'auto';
@@ -229,7 +236,7 @@ const videoTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime']);
 const audioTypes = new Set(['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/webm', 'audio/flac']);
 const uploadMimeByExtension = Object.freeze({ '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.mp4':'video/mp4', '.webm':'video/webm', '.mov':'video/quicktime', '.mp3':'audio/mpeg', '.wav':'audio/wav', '.ogg':'audio/ogg', '.m4a':'audio/mp4', '.aac':'audio/aac', '.weba':'audio/webm', '.flac':'audio/flac' });
 const imageSizes = new Set(['1:1', '3:2', '2:3', '16:9', '9:16', '1:2', '2:1', '4:3', '3:4', '5:4', '4:5']);
-const tuziImageSizes = new Set(['1024x1024', '2048x2048', '2880x2880', '816x1232', '1360x2048', '2352x3520', '1232x816', '2048x1360', '3520x2352', '880x1184', '1552x2080', '2336x3120', '1184x880', '2080x1552', '3120x2336', '1360x768', '2048x1152', '3536x1984', '768x1360', '1152x2048', '1984x3536', 'auto']);
+const tuziImageSizes = new Set(['1024x1024', '2048x2048', '2880x2880', '816x1232', '1360x2048', '2352x3520', '1232x816', '2048x1360', '3520x2352', '880x1184', '1552x2080', '2336x3120', '1184x880', '2080x1552', '3120x2336', '1360x768', '2048x1152', '3536x1984', '768x1360', '1152x2048', '1984x3536', '720x1440', '1024x2048', '1920x3840', '1440x720', '2048x1024', '3840x1920', '1120x896', '1920x1536', '3200x2560', '896x1120', '1536x1920', '2560x3200', 'auto']);
 const tuziImageTiers = new Set(['1k', '2k', '4k']);
 const tuziImageCredits = Object.freeze({ '1k':1, '2k':2, '4k':4 });
 const midjourneyImageCredits = 4;
@@ -239,17 +246,17 @@ const midjourneyImageCredits = 4;
 // rewritten while the drama project is saved.
 const videoAspectRatios = new Set(['2:3', '3:2', '1:1', '9:16', '16:9', '21:9', '4:3', '3:4']);
 const videoDurations = new Set([8, 10, 15, 20, 30]);
-// Short-drama shots are model-specific. GuGu 2.0 accepts every integer
+// Short-drama shots are model-specific. Minimax H3 accepts every integer
 // duration from 1 to 15 seconds, so the project persistence layer must not
 // collapse those values back to the legacy 8/10/15/20/30-second set.
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
-const fixedModels = Object.freeze({ image: 'gpt-image-2' });
+const fixedModels = Object.freeze({ image: 'gpt-image-2.5' });
 const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
-  { id:imageModelIds.gptImage2, label:'GPT Image 2', description:'从文字或参考图快速探索画面。' },
   { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', qualityOptions:['1K', '2K', '4K'] },
+  { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:'从文字或参考图快速探索画面。' },
   { id:imageModelIds.midjourney, label:'Midjourney', description:'通过 Midjourney 参数精细控制艺术风格。' },
 ]);
 const invitationCodes = new Set();
@@ -387,7 +394,7 @@ const generationFailureCatalog = Object.freeze({
   MODEL_UNAVAILABLE: Object.freeze({ message: '当前生成服务不支持所选模型', suggestion: '请稍后重试；若持续出现，请联系支持检查模型配置。', action: 'retry_later' }),
   SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
   SERVICE_NOT_CONFIGURED: Object.freeze({ message: '生成服务尚未配置', suggestion: '请联系支持处理当前生成服务配置后再试。', action: 'contact_support' }),
-  NETWORK_ERROR: Object.freeze({ message: '生成服务连接失败', suggestion: '请检查网络后稍后重试；若持续失败，请联系支持。', action: 'retry_later' }),
+  NETWORK_ERROR: Object.freeze({ message: '生成服务连接失败', suggestion: '平台暂时无法连接生成服务，请稍后重试；若持续失败，请联系支持。', action: 'retry_later' }),
   UPSTREAM_BILLING: Object.freeze({ message: '生成服务额度不足', suggestion: '当前服务暂时无法提交本次任务，请稍后重试或联系支持。', action: 'contact_support' }),
   UPSTREAM_REJECTED: Object.freeze({ message: '生成服务拒绝了本次任务', suggestion: '请调整提示词或参考素材后重试；若仍失败，请联系支持并提供本平台任务编号。', action: 'edit_input' }),
   RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
@@ -609,7 +616,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     if (!mode) continue;
     for (const quality of mode.qualityOptions?.length ? mode.qualityOptions : ['标准']) {
       const price = mode.pricingByQuality?.[quality] || mode.pricing || { currency: 'credit', amount: pricing.videoPerSecond, unit: 'second' };
-      const credits = Number(price.amount || 0);
+      const credits = modelPrice(pricing, model.id, quality, Number(price.amount || 0));
       items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
@@ -617,10 +624,10 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     if (!isModelEnabled(imageModel.id)) continue;
     const qualities = imageModel.id === imageModelIds.gptImage25 ? ['1K', '2K', '4K'] : ['标准'];
     for (const quality of qualities) {
-      const credits = imageModel.id === imageModelIds.gptImage25
+      const credits = modelPrice(pricing, imageModel.id, quality, imageModel.id === imageModelIds.gptImage25
         ? tuziImageCredits[quality.toLowerCase()]
-        : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest;
-      items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GuGu 图像' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
+        : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
+      items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
   return items;
@@ -654,7 +661,7 @@ function publicModelPriceState() {
   });
   const pricedModelIds = new Set(items.map(item => item.modelId));
   const models = [
-    { id: fixedModels.image, label: 'GuGu 图像', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
+    { id: imageModelIds.gptImage2, label: 'GPT-Image-2', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
     { id: imageModelIds.gptImage25, label: 'GPT Image 2.5', description: '支持 1K、2K、4K 多画幅高清图像生成。', availability: 'available', qualityOptions: ['1K', '2K', '4K'] },
     { id: imageModelIds.midjourney, label: 'Midjourney', description: '通过 Midjourney 参数精细控制艺术风格。', availability: 'available', qualityOptions: ['标准'] },
     ...(videoCapabilities.models || []).map(model => ({
@@ -876,7 +883,7 @@ const videoProviderAdapters = createProviderAdapterRegistry({
     lookup: persistedProviderTask,
   },
   autodl: {
-    validate: task => { validVideoTask(task); if (!autodlConfigured) throw new Error('AutoDL GuGu 2.0 视频服务尚未配置'); return task; },
+    validate: task => { validVideoTask(task); if (!autodlConfigured) throw new Error('AutoDL Minimax H3 视频服务尚未配置'); return task; },
     submit: (task, refs, hooks) => autodlProvider.createVideo(task, refs, hooks),
     poll: (task, hooks, _startedAt) => autodlProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
     lookup: persistedProviderTask,
@@ -1855,11 +1862,29 @@ async function completeGenerationResult(userId, task, result) {
   scheduleGenerationArchive(userId, task);
   return true;
 }
+const generationFailureNotifications = new Set();
+function dispatchGenerationFailureNotification(userId, task, error) {
+  if (!task?.id || generationFailureNotifications.has(task.id)) return;
+  if (generationFailureNotifications.size >= 10_000) generationFailureNotifications.delete(generationFailureNotifications.values().next().value);
+  generationFailureNotifications.add(task.id);
+  let user = null;
+  try { user = findUserById(userId); }
+  catch (lookupError) {
+    console.error('[feishu] 生成失败卡片读取用户名失败', { generationId:task.id, message:lookupError.message });
+  }
+  void notifyGenerationFailure({ task, user, error, createdAt:now() }).catch(notificationError => {
+    console.error('[feishu] 生成失败卡片发送失败', {
+      generationId: task.id,
+      message: notificationError.message,
+    });
+  });
+}
 async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
   task.status = 'failed';
   task.error = error.message;
   const includedOutput = isMidjourneyGridChild(task);
+  if (!includedOutput) dispatchGenerationFailureNotification(userId, task, error);
   if (isMidjourneyGridTask(task) && !includedOutput) {
     for (const outputTask of findMidjourneyGridTasks(userId, task)) {
       if (outputTask.id === task.id || outputTask.status === 'failed') continue;
@@ -2494,7 +2519,7 @@ const generationRoute = createGenerationRouteHandler({
   publicRoutePriceVersion,
   currentPricing,
   pricingSnapshot,
-  staticPriceVersion:request => `v1-${createHash('sha256').update(`gugu-price:static:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}`,
+  staticPriceVersion:request => `v1-${createHash('sha256').update(`gugu-price:static:${currentPricing().version}:${request.modelId}:${request.quality}:${request.duration}`).digest('hex').slice(0, 32)}`,
   creditsToMicro,
   charLength,
   walletOf,
@@ -2538,6 +2563,44 @@ const generationRoute = createGenerationRouteHandler({
   },
   runtimeMetrics,
   activeGenerations,
+});
+
+
+const agentGateway = createAgentGateway();
+const agentSkills = createAgentSkills();
+const agentRepository = createAgentSessionRepository({ sql, tx });
+function agentMediaCatalog() {
+  const images = imageModelCatalog.filter(m => isModelEnabled(m.id)).map(m => ({
+    id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
+    sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],
+    qualities:m.id === imageModelIds.gptImage25 ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
+    quantity:m.id === imageModelIds.midjourney ? [4,8] : [1,2,3,4,5,6,7,8,9,10],
+    referenceUsage:'referenceAssetIds 使用当前工作空间的素材 ID。Midjourney 比例、质量等设置在 midjourneyOptions。实际可用性与费用由 media_prepare 检查。',
+  }));
+  const videos = publicVideoCapabilitiesWithControls().models.filter(m => m.enabled && m.availability !== 'coming-soon').map(m => ({ ...m, kind:'video', referenceUsage:'FIRST&LAST 模式 referenceAssetIds 按首帧、尾帧顺序；其他模式按模型参考素材限制填写。先预检实际线路与费用。' }));
+  return [...images, ...videos];
+}
+const agentTools = createAgentTools({
+  skills:agentSkills, catalog:agentMediaCatalog, generate:args => generationRoute.submit(args),
+  loadProject:loadDramaProject, saveProject:saveDramaProject, publicProject:publicDramaProject,
+  findAsset, publicAsset, listAssets, findGeneration,
+  inspectImage:asset => asset.objectKey && r2Configured ? signedAssetUrl(asset.objectKey, 900) : null,
+});
+const agentRuntime = createAgentRuntime({
+  repository:agentRepository, gateway:agentGateway, tools:agentTools, skills:agentSkills,
+  billing:{ rates:llmRates, reserve:reserveLlmCredits, settle:settleLlmCredits, release:releaseLlmCredits, reconcile:markLlmBillingReconcile },
+  contextFor:async session => {
+    const project = session.projectId ? await loadDramaProject(session.userId,session.projectId,session.scope) : null;
+    return {
+      project:project ? { id:project.id,title:project.title,revision:project.revision,script:project.script?.slice(0,20000),resources:project.resources.slice(0,30),shots:project.shots.slice(0,30),lockedIds:project.directorWorkspace?.lockedIds || [],assetIds:project.projectAssetIds } : null,
+      selectedIds:session.doc.selection || [], documents:session.doc.documents.map(({id,title,revision}) => ({id,title,revision})), generations:session.doc.generations.slice(-30),
+    };
+  },
+});
+const agentRoute = createAgentRouteHandler({
+  repository:agentRepository,runtime:agentRuntime,gateway:agentGateway,skills:agentSkills,
+  bodyJson,sendJson,requireUser,requireDesktopWorkspaceScope,loadProject:loadDramaProject,publicProject:publicDramaProject,
+  findGeneration,publicGeneration,walletOf,
 });
 
 export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
@@ -2587,6 +2650,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (await viralLab.route(req, res, url)) return;
+    if (await agentRoute(req, res, url)) return;
     if (await dramaRoute(req, res, url)) return;
 
     if (await generationRoute(req, res, url)) return;
@@ -2611,6 +2675,7 @@ async function shutdownServer() {
   if (shuttingDown) return;
   shuttingDown = true;
   serverDraining = true;
+  await agentRuntime.stop();
   clearInterval(sessionSweeper);
   clearInterval(uploadSweeper);
   if (generationRecoverySweeper) clearInterval(generationRecoverySweeper);
@@ -2652,5 +2717,6 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     generationRecoverySweeper = startGenerationRecoverySweeper();
     generationJobPoller = startGenerationJobPoller();
     startModelRouteMonitor();
+    agentRuntime.start();
   });
 }

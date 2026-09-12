@@ -22,7 +22,7 @@ test('batch import skips an unreadable image and still selects the next decodabl
     state:{ referenceTarget:'video' },
     desktopScope:{ localAsset:item => item }, mediaController:{ mergeLocalAssets:() => {} }, loadFiles:async () => {},
     referenceFileKinds:() => new Set(['image']), referenceLimits:() => ({ image:9 }),
-    desktopMediaKind:() => 'image', videoReferenceCounts:() => ({ image:0 }),
+    referenceDialogLimitIds:() => [], desktopMediaKind:() => 'image', videoReferenceCounts:() => ({ image:0 }),
     createUploadJob:(_file, _context, options) => { const job = { ...options }; jobs.push(job); return job; },
     autoSelectUploadedReference:() => true, pendingReferenceFile:job => job,
     projectPendingReferenceToCreation:() => {}, renderReferenceDialog:() => {},
@@ -39,7 +39,7 @@ test('batch import skips an unreadable image and still selects the next decodabl
 test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=268'));
+  assert.ok(html.includes('/app.js?v=321'));
   assert.ok(frontend.includes('./features/media/controller.js?v=7'));
   for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=13'));
 });

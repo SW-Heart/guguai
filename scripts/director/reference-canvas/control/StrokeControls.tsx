@@ -52,11 +52,11 @@ export function StrokeControls({
     : strokeWidth.toFixed(1)
 
   const sliderSection = (
-    <div className="flex items-center gap-2">
+    <div className="flex shrink-0 items-center gap-2">
       <span className="min-w-[42px] whitespace-nowrap text-right text-xs tabular-nums text-gray-500">
         {displayStrokeWidth}px
       </span>
-      <div className={layout === 'horizontal' ? 'w-[88px]' : 'w-[120px]'}>
+      <div className={layout === 'horizontal' ? 'w-[88px] shrink-0' : 'w-[120px] shrink-0'}>
         <Slider
           min={1}
           max={64}
@@ -71,13 +71,13 @@ export function StrokeControls({
   )
 
   const colorSection = (
-    <div className="flex items-center gap-1">
+    <div className="reference-stroke-colors flex shrink-0 items-center gap-1">
       {STROKE_COLORS.map(color => (
         <button
           key={color}
           title={color}
           onClick={() => onStrokeColorChange(color)}
-          className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${
+          className={`h-5 w-5 shrink-0 rounded-full border-2 transition-transform hover:scale-110 ${
             strokeColor === color
               ? 'border-blue-500 scale-110'
               : 'border-gray-300'
@@ -85,56 +85,58 @@ export function StrokeControls({
           style={{ backgroundColor: color }}
         />
       ))}
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            title={i18n.t('legacy:ui_5e6fcb565121')}
-            className="w-[22px] h-[22px] rounded-full border-2 border-gray-300 transition-transform hover:scale-110 overflow-hidden relative"
+      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
+        <Popover>
+          <PopoverTrigger asChild className="flex h-[22px] w-[22px] shrink-0 items-center justify-center">
+            <button
+              title={i18n.t('legacy:ui_5e6fcb565121')}
+              className="relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-full border-2 border-gray-300 transition-transform hover:scale-110"
+            >
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    'conic-gradient(hsl(0,100%,50%), hsl(60,100%,50%), hsl(120,100%,50%), hsl(180,100%,50%), hsl(240,100%,50%), hsl(300,100%,50%), hsl(360,100%,50%))',
+                }}
+              />
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    'radial-gradient(circle, white 0%, transparent 65%)',
+                }}
+              />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="right"
+            className="p-3 w-auto border-none shadow-xl rounded-xl bg-popover custom-color-popover"
           >
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  'conic-gradient(hsl(0,100%,50%), hsl(60,100%,50%), hsl(120,100%,50%), hsl(180,100%,50%), hsl(240,100%,50%), hsl(300,100%,50%), hsl(360,100%,50%))',
+            <RgbaColorPicker
+              color={customColor}
+              onChange={newColor => {
+                onCustomColorChange(newColor)
+                onStrokeColorChange(rgbaToString(newColor))
               }}
             />
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  'radial-gradient(circle, white 0%, transparent 65%)',
-              }}
-            />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          side="right"
-          className="p-3 w-auto border-none shadow-xl rounded-xl bg-popover custom-color-popover"
-        >
-          <RgbaColorPicker
-            color={customColor}
-            onChange={newColor => {
-              onCustomColorChange(newColor)
-              onStrokeColorChange(rgbaToString(newColor))
-            }}
-          />
-        </PopoverContent>
-      </Popover>
+          </PopoverContent>
+        </Popover>
+      </span>
     </div>
   )
 
   if (layout === 'horizontal') {
     return (
-      <>
+      <div className="reference-stroke-controls reference-stroke-controls-horizontal flex min-w-max items-center gap-3">
         {sliderSection}
-        <div className="w-px h-5 bg-gray-200" />
+        <div className="h-5 w-px shrink-0 bg-gray-200" />
         {colorSection}
-      </>
+      </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="reference-stroke-controls flex flex-col gap-3">
       {sliderSection}
       {colorSection}
     </div>

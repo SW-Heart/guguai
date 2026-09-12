@@ -60,6 +60,17 @@ test('Midjourney quantity creates four output tasks but charges and submits one 
     providerAvailability:{ duomi:true, tuzi:false, ttapi:false, cntcn:false, autodl:false, oai:false, oaiVeo:false, oaiMinimax:false },
     runtimeMetrics:{ idempotencyConflicts:0 }, activeGenerations:new Set(),
   });
+  const submission = { user:{ id:'user-1' }, scope:{ deviceId:'device-1', workspaceId:'workspace-1' }, input };
+  const preview = await handler.submit({ ...submission, previewOnly:true });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.data.costMicro, 4_000_000);
+  assert.equal(records.size, 0);
+  assert.equal(queued.length, 0);
+  const overBudget = await handler.submit({ ...submission, maxCostMicro:3_000_000 });
+  assert.equal(overBudget.status, 409);
+  assert.equal(overBudget.data.code, 'AGENT_BUDGET_EXCEEDED');
+  assert.equal(records.size, 0);
+  assert.equal(queued.length, 0);
   const response = {};
   await handler({ method:'POST', headers:{} }, response, new URL('http://localhost/api/generations'));
   assert.equal(response.statusCode, 202);

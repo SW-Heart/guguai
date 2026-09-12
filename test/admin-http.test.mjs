@@ -91,7 +91,9 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(unauth.response.status, 401);
   const page = await fetch(`${base}/guguadmin`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /管理后台/);
+  const adminHtml = await page.text();
+  assert.match(adminHtml, /管理后台/);
+  assert.match(adminHtml, /guguadmin\.js\?v=19/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -104,6 +106,13 @@ test('admin HTTP permissions and core workflows', async t => {
   const routes = await admin.call('/api/admin/model-routes');
   assert.equal(routes.response.status, 200);
   assert.ok(routes.data.channels.some(item => item.id === 'diw-main'));
+  const deletingRoute = routes.data.items[0];
+  const deletePath = `/api/admin/model-routes/${deletingRoute.id}`;
+  assert.equal((await admin.call(deletePath, { method: 'DELETE', body: { expectedVersion: deletingRoute.version } })).response.status, 403);
+  assert.equal((await admin.call(deletePath, { method: 'DELETE', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { expectedVersion: deletingRoute.version + 1 } })).response.status, 409);
+  assert.equal((await admin.call(deletePath, { method: 'DELETE', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { expectedVersion: deletingRoute.version } })).response.status, 200);
+  assert.ok(!(await admin.call('/api/admin/model-routes')).data.items.some(item => item.id === deletingRoute.id));
+
   const overviewAfterRefund = await admin.call('/api/admin/overview');
   assert.equal(overviewAfterRefund.data.credits.spent, 0);
   const paidOrders = await admin.call('/api/admin/payment-orders');
@@ -128,9 +137,11 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(createdRoute.data.route.adminEnabled, false);
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
-  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
+  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2 }, expectedVersion: 1 } });
   assert.equal(pricing.response.status, 201);
   assert.equal(pricing.data.pricing.videoPerSecond, 0.8);
+  const priceFields = await admin.call('/api/admin/pricing');
+  assert.equal(priceFields.data.fields.find(item => item.key === 'gpt-image-2.5:2k').amount, 0.125);
 
   const invite = await admin.call('/api/admin/invite-codes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { code: 'HTTP-TEST-01', maxUses: 1, signupBonus: '4.5' } });
   assert.equal(invite.response.status, 201);
@@ -141,6 +152,9 @@ test('admin HTTP permissions and core workflows', async t => {
   const userCookie = userResponse.headers.get('set-cookie').split(';')[0];
 
   const userClient = client(base); userClient.cookie = userCookie;
+  const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
+  assert.equal(quote.response.status, 200);
+  assert.equal(quote.data.credits, 27.5);
   const forbidden = await userClient.call('/api/admin/overview');
   assert.equal(forbidden.response.status, 401);
   const userLoginAsAdmin = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_user', password: 'user-password-123' } });

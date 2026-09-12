@@ -25,3 +25,7 @@ export function saveViralProject(userId, scope, project, expectedRevision) {
 export function viralGenerationRecords(userId, projectId, scope) {
   return sql(`SELECT doc_json FROM generations WHERE user_id=:userId AND json_extract(doc_json,'$.viralProjectId')=:projectId AND COALESCE(json_extract(doc_json,'$.originDeviceId'),'')=:deviceId AND COALESCE(json_extract(doc_json,'$.originWorkspaceId'),'')=:workspaceId ORDER BY created_at DESC LIMIT 200`).all({ ...params(userId, scope), projectId }).map(row => JSON.parse(row.doc_json));
 }
+
+export function listViralTasks(userId, scope) {
+  return sql(`SELECT doc_json FROM generations WHERE user_id=:userId AND json_extract(doc_json,'$.viralProjectId') IS NOT NULL AND COALESCE(json_extract(doc_json,'$.originDeviceId'),'')=:deviceId AND COALESCE(json_extract(doc_json,'$.originWorkspaceId'),'')=:workspaceId ORDER BY CASE WHEN json_extract(doc_json,'$.status') IN ('queued','running') THEN 0 ELSE 1 END, created_at DESC LIMIT 200`).all(params(userId, scope)).map(row => JSON.parse(row.doc_json));
+}

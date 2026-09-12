@@ -25,6 +25,19 @@ type CanvasEventTarget = {
   nodes?: () => CanvasEventTarget[]
 }
 
+export function isCanvasRichTextEmpty(value: unknown): boolean {
+  if (typeof value !== 'string') return true
+
+  return (
+    value
+      .replace(/<br\s*\/?>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;|&#160;|&#xA0;/gi, ' ')
+      .replace(/[\u200b-\u200d\ufeff]/g, '')
+      .trim().length === 0
+  )
+}
+
 function isTextNode(target: CanvasEventTarget): boolean {
   const nodeType = target.getAttr?.('$_type')
   return nodeType === 'rich-text' || nodeType === 'text'

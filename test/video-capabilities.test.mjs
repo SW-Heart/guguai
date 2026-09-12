@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
 
-test('video catalog exposes GuGu 2.0 as available in launch order', () => {
+test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
-    'GuGu 2.0', 'GuGu 1.5', 'Seedance 2.0', 'Seedance 2.5', 'Seedance 2.0 Fast', 'MiniMax H3', 'Omni Flash', 'Veo 3.1', 'Veo 3.1 Fast',
+    'Seedance 2.0', 'Seedance 2.5', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
   ]);
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
@@ -85,23 +85,11 @@ test('continuity payload follows provider field contract', () => {
   assert.deepEqual(payload, { model:'configured-in-env', prompt:'广告', aspect_ratio:'16:9', duration:8, quality:'4k', generation_type:'FIRST&LAST', image_urls:['first','last'] });
 });
 
-test('MiniMax H3 exposes one model with resolution-specific pricing and routing', () => {
-  const model = publicVideoCapabilities().models.find(item => item.id === VIDEO_MODEL_IDS.MINIMAX_H3);
-  assert.ok(model);
-  assert.deepEqual(model.modes.find(mode => mode.generationType === 'TEXT').qualityOptions, ['768p', '2k']);
-  assert.equal(model.modes.find(mode => mode.generationType === 'TEXT').pricingByQuality['768p'].amount, 2);
-  assert.equal(model.modes.find(mode => mode.generationType === 'TEXT').pricingByQuality['2k'].amount, 3);
-
-  const low = validateVideoRequest({ modelId: 'minimax-h3', generationType: 'TEXT', aspectRatio: '21:9', duration: 4, quality: '768p' });
-  assert.equal(low.provider, 'oai');
-  assert.equal(low.model, 'minimax-h3-768p');
-  assert.equal(low.pricing.amount, 2);
-  assert.equal(low.duration, 4);
-
-  const high = validateVideoRequest({ modelId: 'minimax-h3', generationType: 'REFERENCE', aspectRatio: '3:4', duration: 15, quality: '2k' }, 5);
-  assert.equal(high.model, 'minimax-h3-2k');
-  assert.equal(high.pricing.amount, 3);
-  assert.equal(high.maxImages, 5);
+test('removed models reject new generation requests', () => {
+  for (const modelId of ['minimax-h3', 'seedance-2.0-fast']) {
+    assert.equal(publicVideoCapabilities().models.some(model => model.id === modelId), false);
+    assert.throws(() => validateVideoRequest({ modelId, generationType: 'TEXT', duration: 15 }), /不支持的视频模型/);
+  }
 });
 
 test('MiniMax H3 payload follows its ratio and reference field contract', () => {
@@ -137,38 +125,6 @@ test('Seedance 2.0 exposes the dynamic route capabilities', () => {
     videoModelId: VIDEO_MODEL_IDS.SEEDANCE_2, model: request.model, prompt: '混合参考', aspectRatio: '16:9', duration: 15, quality: '720p', referenceLimits: request.referenceLimits,
   }, { images: ['image-url'], videos: ['video-url'], audios: ['audio-url'] }), {
     model: request.model, prompt: '混合参考', aspect_ratio: '16:9', seconds: 15, resolution: '720p',
-    reference_image_urls: ['image-url'], reference_videos: ['video-url'], reference_audios: ['audio-url'],
-  });
-});
-
-test('Seedance 2.0 Fast exposes the DIW fixed 15-second model capabilities', () => {
-  const model = publicVideoCapabilities().models.find(item => item.id === VIDEO_MODEL_IDS.SEEDANCE_2_FAST);
-  assert.ok(model);
-  assert.equal(model.label, 'Seedance 2.0 Fast');
-  assert.match(model.description, /固定 15 秒、720p/);
-  assert.deepEqual(model.modes[0].aspectRatios, ['16:9', '1:1', '9:16']);
-  assert.deepEqual(model.modes[0].durations, [15]);
-  assert.equal(model.modes[0].qualityOptions[0], '720p');
-  assert.deepEqual(model.modes[1].referenceLimits, { image: 9, video: 3, audio: 3, total: 15 });
-
-  const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '1:1', duration: 15, quality: '720p' }, 15);
-  assert.equal(request.provider, 'route');
-  assert.equal(request.model, '');
-  assert.equal(request.referenceLimits.total, 15);
-  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '16:9', duration: 14, quality: '720p' }), /不支持 14 秒/);
-  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST, generationType: 'REFERENCE', aspectRatio: '16:9', duration: 15, quality: '720p' }, 16), /1～15 个参考素材/);
-
-  assert.deepEqual(buildVideoPayload({
-    videoModelId: VIDEO_MODEL_IDS.SEEDANCE_2_FAST,
-    videoProfile: request.profileKey,
-    model: request.model,
-    prompt: '@图片1 @视频1 @音频1',
-    aspectRatio: request.aspectRatio,
-    duration: request.duration,
-    quality: request.quality,
-    referenceLimits: request.referenceLimits,
-  }, { images: ['image-url'], videos: ['video-url'], audios: ['audio-url'] }), {
-    model: request.model, prompt: '@图片1 @视频1 @音频1', aspect_ratio: '1:1', seconds: 15, resolution: '720p',
     reference_image_urls: ['image-url'], reference_videos: ['video-url'], reference_audios: ['audio-url'],
   });
 });

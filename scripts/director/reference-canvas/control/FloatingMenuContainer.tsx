@@ -307,10 +307,24 @@ export function FloatingMenuContainer({
 
   useEffect(() => {
     if (!api) return
+
     const handlePositionChange = (position: TransformerPosition | null) => {
       setTransformerPosition(position)
     }
     api.on('transformer:positionChange', handlePositionChange)
+    // The API emits the current position once when selection is attached;
+    // initialize from the live transformer as well so the menu cannot mount
+    // at a stale/empty position when the canvas is restored with a selection.
+    const transformer = api.getTransformer?.() as any
+    const initialPosition = transformer?.getClientRect?.()
+    if (initialPosition) {
+      setTransformerPosition({
+        x: initialPosition.x,
+        y: initialPosition.y,
+        width: initialPosition.width,
+        height: initialPosition.height,
+      })
+    }
     return () => {
       api.off('transformer:positionChange', handlePositionChange)
     }

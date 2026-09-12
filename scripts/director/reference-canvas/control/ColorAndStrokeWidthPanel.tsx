@@ -207,7 +207,7 @@ export function ColorAndStrokeWidthPanel({
 
   return (
     <div
-      className="absolute bg-popover rounded-lg shadow-lg px-3 py-2 flex items-center gap-3 -translate-x-1/2 -translate-y-full z-50 pointer-events-auto"
+      className="reference-stroke-floating-panel absolute w-max min-w-max bg-popover rounded-lg shadow-lg px-3 py-2 flex items-center gap-3 -translate-x-1/2 -translate-y-full z-50 pointer-events-auto"
       style={{ left: `${panelX}px`, top: `${panelY}px` }}
     >
       <StrokeControls

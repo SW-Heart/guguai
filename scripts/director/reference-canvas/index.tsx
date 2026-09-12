@@ -45,16 +45,19 @@ import { emitter } from '@/lib/event-emitter'
 import { UndoRedoButton } from './control/UndoRedoButtonGroup'
 import { ColorAndStrokeWidthPanel } from './control/ColorAndStrokeWidthPanel'
 import { CurveArrowToolLayer } from './control/CurveArrowToolLayer'
+import { BrushSelectionEnhancer } from './control/BrushSelectionEnhancer'
 import { TextColorPicker } from './control/TextColorPicker'
 import { toast } from 'sonner'
 import { configureImageResizeBehavior } from './imageResizeBehavior'
 import { RichTextDefaultFontAdapter } from './control/RichTextDefaultFontAdapter'
+import { RichTextFontSizeAdapter } from './control/RichTextFontSizeAdapter'
 import { loadCanvasDefaultFont } from './canvasFonts'
 import {
   bindCanvasDoubleClickToRichText,
   getCanvasPointFromClient,
   getDroppedCanvasImageFiles,
   hasCanvasImageDrag,
+  isCanvasRichTextEmpty,
 } from './canvasQuickActions'
 import { arrayBufferToBase64 } from '@/lib/file'
 import { fileClient } from '@/api/fileClient'
@@ -399,6 +402,54 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
   useEffect(() => {
     if (!whiteboardApi) return
     return bindCanvasDoubleClickToRichText(whiteboardApi)
+  }, [whiteboardApi])
+
+  useEffect(() => {
+    if (!whiteboardApi) return
+
+    let editingTextIds: string[] = []
+    let pendingCleanup = false
+
+    const handleEditorRegister = () => {
+      editingTextIds = (whiteboardApi.getState().selectedNodeIds ?? []).filter(
+        id => whiteboardApi.getNodeConfigById(id)?.$_type === 'rich-text'
+      )
+    }
+
+    const removeEmptyTextNode = () => {
+      if (!pendingCleanup || editingTextIds.length === 0) return
+
+      const emptyIds = editingTextIds.filter(id => {
+        const node = whiteboardApi.getNodeConfigById(id)
+        return (
+          node?.$_type === 'rich-text' &&
+          isCanvasRichTextEmpty(node.$_htmlContent)
+        )
+      })
+
+      if (emptyIds.length === 0) return
+
+      pendingCleanup = false
+      whiteboardApi.deleteNodes(emptyIds)
+    }
+
+    const handleEditorUnregister = () => {
+      pendingCleanup = true
+      window.setTimeout(removeEmptyTextNode, 0)
+    }
+
+    const handleStateChange = () => {
+      if (pendingCleanup) removeEmptyTextNode()
+    }
+
+    whiteboardApi.on('texteditor:register', handleEditorRegister)
+    whiteboardApi.on('texteditor:unregister', handleEditorUnregister)
+    whiteboardApi.on('state:change', handleStateChange)
+    return () => {
+      whiteboardApi.off('texteditor:register', handleEditorRegister)
+      whiteboardApi.off('texteditor:unregister', handleEditorUnregister)
+      whiteboardApi.off('state:change', handleStateChange)
+    }
   }, [whiteboardApi])
 
   const handleCanvasDragEnter = useCallback(
@@ -826,9 +877,9 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
       className="canvas-layer-panel-attach-container h-full flex flex-col canvas-preview overflow-hidden relative"
       id={layerPanelAttachContainerId}
     >
-      <div className="px-4 py-1.5 border-b border-solid border-border">
+      {!(globalThis as any).__directorCanvasAdapter?.workspaceToolbar && <div className="px-4 py-1.5 border-b border-solid border-border">
         <ToolsMenu />
-      </div>
+      </div>}
       <div
         className="canvas-whiteboard-container relative w-full h-full"
         id={whiteboardContainerId}
@@ -838,8 +889,9 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
         onDrop={handleCanvasDrop}
       >
         <Grid />
-        <div ref={containerRef} className="relative size-full outline-none" />
+        <div ref={containerRef} className="director-stage-surface relative size-full outline-none" />
         <CurveArrowToolLayer api={whiteboardApi} />
+        <BrushSelectionEnhancer api={whiteboardApi} />
 
         {isCanvasImageDragActive && (
           <div className="pointer-events-none absolute inset-3 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/70 bg-primary/10 backdrop-blur-[1px]">
@@ -867,6 +919,7 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
           renderTextColorPicker={(editor: any) => (
             <>
               <RichTextDefaultFontAdapter editor={editor} />
+              <RichTextFontSizeAdapter editor={editor} />
               <TextColorPicker editor={editor} />
             </>
           )}

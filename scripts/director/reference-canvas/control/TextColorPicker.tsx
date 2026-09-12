@@ -340,7 +340,13 @@ export function TextColorPicker({ editor }: { editor: ColorEditor }) {
         })}
       </div>
 
-      <Popover open={open}>
+      <Popover
+        open={open}
+        onOpenChange={nextOpen => {
+          if (nextOpen) openPicker()
+          else closePicker()
+        }}
+      >
         <PopoverTrigger asChild>
           <button
             ref={triggerRef}

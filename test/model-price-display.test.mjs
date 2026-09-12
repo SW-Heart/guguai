@@ -67,3 +67,10 @@ test('Midjourney price catalog charges four credits per composite request', () =
   assert.equal(price.yuan, 0.4);
   assert.equal(price.unit, 'request');
 });
+
+test('configured image and video prices override defaults including zero', () => {
+  const catalog = __test.publicPlatformPrices({ imagePerRequest:1, videoPerSecond:1, version:2, modelPrices:{ 'gpt-image-2.5:2k':0, 'midjourney:标准':2.5, 'grok:720p':3.25 } }, { models:[{ id:'grok', label:'Grok', modes:[{ generationType:'TEXT', qualityOptions:['720p'], pricing:{ amount:1.5, unit:'second' } }] }] });
+  assert.equal(catalog.find(item => item.modelId === 'gpt-image-2.5' && item.quality === '2K').credits, 0);
+  assert.equal(catalog.find(item => item.modelId === 'midjourney').credits, 2.5);
+  assert.equal(catalog.find(item => item.modelId === 'grok').credits, 3.25);
+});

@@ -98,10 +98,45 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   assert.equal(staticEntryFile('/lab',{desktop:true}),'index.html');
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=\d+/);assert.doesNotMatch(html,/app\.js\?v=260\b/);
-  assert.match(html,/features\/viral-lab\/styles\.css\?v=8/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=8/);
+  assert.match(html,/app\.js\?v=321\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
+  assert.match(html,/features\/viral-lab\/styles\.css\?v=11/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=13/);
   assert.match(html,/id="viralLabView"/);assert.match(html,/data-route="lab"/);
+});
+
+function insertTask(id, userId, project, status='failed', taskScope=scope) {
+  const task = { id, type:'video', status, viralProjectId:project.id, viralUnitId:'unit1', viralPlanHash:project.planApproval?.hash,
+    originDeviceId:taskScope.deviceId, originWorkspaceId:taskScope.workspaceId, createdAt:new Date().toISOString() };
+  sql('INSERT INTO generations(id,user_id,type,status,created_at,updated_at,doc_json) VALUES(?,?,?,?,?,?,?)').run(id,userId,'video',status,task.createdAt,task.createdAt,JSON.stringify(task));
+  return task;
+}
+
+test('任务列表只包含本账号工作区，失败分段可重试一次且不改变其他授权', async () => {
+  let p=(await invoke('POST','projects',fixture())).body.project;
+  const path=`projects/${p.id}`;
+  p=(await invoke('POST',`${path}/assets-confirm`,{revision:p.revision})).body.project;
+  p=(await invoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
+  const first=p.planApproval.requests.unit1;
+  insertTask(first,'a',p);
+  insertTask('foreign-user','b',p);
+  insertTask('foreign-workspace','a',p,'running',{...scope,workspaceId:'other'});
+  const listed=(await invoke('GET','tasks')).body.tasks;
+  assert.ok(listed.some(task=>task.id===first));
+  assert.ok(!listed.some(task=>task.id.startsWith('foreign-')));
+  p=(await invoke('POST',`${path}/retry`,{revision:p.revision,unitId:'unit1'})).body.project;
+  assert.notEqual(p.planApproval.requests.unit1,first);
+  assert.throws(()=>handler.prepareGeneration('a',scope,{viralProjectId:p.id,viralUnitId:'unit1',viralPlanHash:p.planApproval.hash,requestId:first}),/授权已失效/);
+  insertTask(p.planApproval.requests.unit1,'a',p);
+  await assert.rejects(()=>invoke('POST',`${path}/retry`,{revision:p.revision,unitId:'unit1'}),/重试一次/);
+});
+
+test('确认前拒绝过长提示词及切换模型后超长的原片区间', () => {
+  const p={...normalizeViralInput(fixture()),workflowVersion:'1'};
+  p.assetApproval={hash:assetApprovalHash(p,snap(p))};
+  p.units[0].prompt='字'.repeat(4097);
+  assert.throws(()=>assertViralReady(p,snap(p)),/4096/);
+  p.units[0].prompt='有效提示词';p.units[0].duration=15;p.units[0].modelId='seedance-2.0';p.units[0].sourceRange={startSeconds:0,endSeconds:30};
+  assert.throws(()=>assertViralReady(p,snap(p)),/超过当前模型时长/);
 });
 
 test('自动原片分析会落库观察时间线、分段提示词并绑定源视频参考', async () => {
@@ -115,7 +150,7 @@ test('自动原片分析会落库观察时间线、分段提示词并绑定源�
     const path=`projects/${p.id}`;
     const quote=(await sourceInvoke('POST',`${path}/source-quote`,{revision:p.revision})).body;
     p=(await sourceInvoke('POST',`${path}/source-analyze`,{revision:p.revision,quoteId:quote.quoteId})).body.project;
-    assert.equal(p.sourceObservation.summary,'原片摘要'); assert.equal(p.units.length,1); assert.match(p.units[0].prompt,/看这里/); assert.equal(p.sourceAnalysisState.status,'completed');
+    assert.equal(p.sourceObservation.summary,'原片摘要'); assert.equal(p.units.length,1); assert.doesNotMatch(p.units[0].prompt,/看这里/); assert.equal(p.sourceObservation.timeline[0].spokenContent,''); assert.equal(p.sourceAnalysisState.status,'completed');
     p=(await sourceInvoke('POST',`${path}/assets-confirm`,{revision:p.revision})).body.project;
     p=(await sourceInvoke('POST',`${path}/plan-confirm`,{revision:p.revision})).body.project;
     const generated=sourceHandler.prepareGeneration('a',scope,{viralProjectId:p.id,viralUnitId:p.units[0].id,viralPlanHash:p.planApproval.hash,requestId:p.planApproval.requests[p.units[0].id]});
