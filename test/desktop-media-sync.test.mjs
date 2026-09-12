@@ -78,14 +78,14 @@ test('desktop references require explicit remote content readiness', () => {
   assert.equal(isRemoteReferenceReady({ id:'ready', remoteStatus:'ready' }), true);
   assert.equal(isRemoteReferenceReady({ id:'unspecified' }), false);
   assert.equal(isRemoteReferenceReady({ id:'local', remoteStatus:'local_only', localId:'desktop-1' }), false);
-  assert.equal(isRemoteReferenceReady({ id:'generated', remoteStatus:'local_only', referenceSourceAvailable:true }), true);
+  assert.equal(isRemoteReferenceReady({ id:'generated', remoteStatus:'local_only', referenceSourceAvailable:true }), false);
   assert.equal(isRemoteReferenceReady({ id:'desktop-only', localOnly:true, remoteStatus:'ready' }), false);
 });
 
 test('legacy desktop references are marked for upload before video creation', () => {
   assert.equal(needsReferenceUpload({ id:'local', localOnly:true, remoteStatus:'pending' }), true);
   assert.equal(needsReferenceUpload({ id:'legacy', localId:'desktop-1', remoteStatus:'local_only' }), true);
-  assert.equal(needsReferenceUpload({ id:'remote', remoteStatus:'local_only', referenceSourceAvailable:true }), false);
+  assert.equal(needsReferenceUpload({ id:'remote', remoteStatus:'local_only', referenceSourceAvailable:true }), true);
   assert.equal(needsReferenceUpload({ id:'ready', remoteStatus:'ready' }), false);
 });
 
@@ -105,4 +105,13 @@ test('desktop auto hydration selects generated results awaiting local delivery o
   assert.equal(shouldHydrateDesktopAsset({ id:'inconsistent', deliveryStatus:'remote_backed_up', remoteStatus:'pending' }), false);
   assert.equal(shouldHydrateDesktopAsset({ id:'repair', deliveryStatus:'local_ready', remoteStatus:'ready' }, { force:true }), true);
   assert.equal(shouldHydrateDesktopAsset({ id:'already-local', deliveryStatus:'local_ready', remoteStatus:'ready', localStatus:'saved' }, { force:true }), false);
+});
+
+ test('regenerated images with temporary source links upload local bytes before submission', () => {
+  for (const remoteStatus of ['pending', 'local_only']) {
+    const image = { id:'generation-old', localId:'desktop-image', localStatus:'saved', remoteStatus, referenceSourceAvailable:true };
+    assert.equal(isRemoteReferenceReady(image), false);
+    assert.equal(needsReferenceUpload(image), true);
+  }
+  assert.equal(needsReferenceUpload({ localId:'desktop-image', remoteStatus:'ready', referenceSourceAvailable:true }), false);
 });

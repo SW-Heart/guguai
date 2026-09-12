@@ -1,3 +1,4 @@
+import { isRemoteReferenceReady } from './desktop-media-sync.js?v=14';
 import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=40';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=2';
 import { buildShotVideoPrompt } from './video-prompt.js?v=3';
@@ -323,7 +324,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       if (assetMissing(id)) throw new Error('本地文件不存在，请重新选择参考素材');
       const file = asset(id);
       if (!file) throw new Error('参考素材不存在，请重新选择');
-      if (!file.localOnly && (file.remoteStatus === 'ready' || file.referenceSourceAvailable)) {
+      if (isRemoteReferenceReady(file)) {
         resolved.push(id);
         continue;
       }

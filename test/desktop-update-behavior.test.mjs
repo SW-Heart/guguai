@@ -5,11 +5,11 @@ import test from 'node:test';
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 const desktopMain = await readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
 
-test('desktop updates prompt on launch or window restore and stay silent while downloading', () => {
+test('desktop updates check before studio entry and do not prompt on window restore', () => {
   assert.match(desktopMain, /let updatePromptOnStartup = false/);
   assert.match(desktopMain, /promptOnStartup: updatePromptOnStartup/);
-  assert.match(desktopMain, /updatePromptOnStartup = true;\s+void autoUpdater\.checkForUpdates\(\)/);
-  assert.match(desktopMain, /currentUpdateStatus = \{ \.\.\.currentUpdateStatus, promptOnOpen: true \}/);
+  assert.match(desktopMain, /await startupUpdateGate.ready;[\s\S]*?promptOnStartup: false[\s\S]*?await loadStudio\(\)/);
+  assert.doesNotMatch(desktopMain, /promptOnOpen: true/);
 
   const bridgeSource = app.slice(app.indexOf('async function initDesktopBridge('));
   assert.match(bridgeSource, /const shouldPrompt = payload\?\.promptOnStartup === true \|\| payload\?\.promptOnOpen === true/);

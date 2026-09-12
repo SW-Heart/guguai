@@ -39,9 +39,9 @@ test('batch import skips an unreadable image and still selects the next decodabl
 test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=323'));
-  assert.ok(frontend.includes('./features/media/controller.js?v=7'));
-  for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=13'));
+  assert.ok(html.includes('/app.js?v=324'));
+  assert.ok(frontend.includes('./features/media/controller.js?v=8'));
+  for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=14'));
 });
 
 test('reimport restores missing bytes at the indexed path and preserves identity', async () => {

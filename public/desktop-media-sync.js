@@ -40,7 +40,7 @@ export function mergeDesktopAssetRecord(existing, incoming) {
 }
 
 export function isRemoteReferenceReady(file) {
-  return Boolean(file && !file.localOnly && (file.remoteStatus === 'ready' || file.referenceSourceAvailable));
+  return Boolean(file && !file.localOnly && file.remoteStatus === 'ready');
 }
 
 export function needsReferenceUpload(file) {

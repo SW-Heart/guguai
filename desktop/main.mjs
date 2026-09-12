@@ -1,3 +1,4 @@
+import { createStartupUpdateGate } from './startup-update.mjs';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -100,6 +101,7 @@ let updateReminderSnoozed = false;
 // discovered by a later/manual check are surfaced through the in-app update
 // control so active work is never interrupted.
 let updatePromptOnStartup = false;
+let startupUpdateGate;
 let windowFullscreenTransition = false;
 const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
@@ -956,6 +958,7 @@ function updateFeedUrl() {
   }
 }
 function sendUpdateStatus(status, extra = {}) {
+  startupUpdateGate?.onStatus(status);
   currentUpdateStatus = {
     status,
     currentVersion: app.getVersion(),
@@ -967,6 +970,7 @@ function sendUpdateStatus(status, extra = {}) {
 }
 
 function snoozeUpdateReminder() {
+  startupUpdateGate?.finish();
   updateReminderSnoozed = true;
   currentUpdateStatus = { ...currentUpdateStatus, snoozed: true };
   mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
@@ -1114,8 +1118,7 @@ function configureAutoUpdater() {
     const url = updateFeedUrl();
     if (!url) { sendUpdateStatus('unconfigured'); return; }
     try {
-      // Keep the updater out of the initial module graph. It is only needed
-      // after the studio is visible or when the user explicitly checks.
+      // Load the updater while the local startup page is visible.
       const updaterModule = await import('electron-updater');
       autoUpdater = updaterModule.autoUpdater || updaterModule.default?.autoUpdater;
       if (!autoUpdater) throw new Error('自动更新模块不可用');
@@ -1149,10 +1152,7 @@ function configureAutoUpdater() {
         sendUpdateStatus('downloaded', { version: info.version });
       });
       autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.message }));
-      setTimeout(() => {
-        updatePromptOnStartup = true;
-        void autoUpdater.checkForUpdates().catch(error => sendUpdateStatus('error', { message: error.message }));
-      }, 4_000);
+
     } catch (error) {
       sendUpdateStatus('error', { message: error.message });
     }
@@ -1160,9 +1160,9 @@ function configureAutoUpdater() {
   return autoUpdaterConfigPromise;
 }
 async function checkForUpdates({ promptOnStartup = false } = {}) {
+  updatePromptOnStartup = Boolean(promptOnStartup) && !startupUpdateGate?.finished;
   await configureAutoUpdater();
   if (!updateConfigured) return { status: 'unconfigured' };
-  updatePromptOnStartup = Boolean(promptOnStartup);
   try { const result = await autoUpdater.checkForUpdates(); return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' }; }
   catch (error) { sendUpdateStatus('error', { message: error.message }); return { status: 'error', message: error.message }; }
 }
@@ -1308,11 +1308,7 @@ function showMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
-  const status = currentUpdateStatus.status;
-  if (!updateReminderSnoozed && ['available', 'downloading', 'downloaded', 'error'].includes(status)) {
-    currentUpdateStatus = { ...currentUpdateStatus, promptOnOpen: true };
-    mainWindow.webContents.send('desktop:update-status', currentUpdateStatus);
-  }
+
 }
 
 function hideMainWindowToTray() {
@@ -1782,11 +1778,14 @@ async function bootstrap() {
     persistSettings(),
   ]);
   createTray();
+  startupUpdateGate = createStartupUpdateGate();
+  updatePromptOnStartup = true;
+  void checkForUpdates({ promptOnStartup: true });
+  await startupUpdateGate.ready;
+  updatePromptOnStartup = false;
+  currentUpdateStatus = { ...currentUpdateStatus, promptOnStartup: false, promptOnOpen: false };
   await loadStudio();
   startupTrace('studio-loaded');
-  // Updating is intentionally initialized after the first remote page load;
-  // its network check remains delayed by configureAutoUpdater itself.
-  void configureAutoUpdater();
 }
 
 app.whenReady().then(bootstrap).catch(async error => {

@@ -246,6 +246,7 @@
     }
 
     function closeUpdateDialog() {
+      void bridge?.updates?.snooze?.();
       updateDismissed = true;
       $('#updateDialog').classList.add('hidden');
       void bridge?.window?.setModalState?.(false);
@@ -320,7 +321,6 @@
     $('#closeUpdate').onclick = $('#laterUpdate').onclick = closeUpdateDialog;
     $('#updateAction').onclick = async () => {
       if (updateState.status === 'error') {
-        closeUpdateDialog();
         updateDismissed = false;
         try { await bridge?.updates?.check?.(); } catch (error) { $('#startupStatus').textContent = error.message; }
         return;
