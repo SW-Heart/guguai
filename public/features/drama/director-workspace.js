@@ -428,7 +428,7 @@ export function createDirectorWorkspace(host, bridge) {
       const promptExpanded=plan.querySelector('details')?.open;
       plan.innerHTML=approval?`<div class="dw-agent-approval"><strong>${escape(approval.title)}</strong><p>${escape(approval.modelId)} · ${approval.quantity} 个 · ${approval.credits} 积分</p><details><summary>查看创作描述</summary><p>${escape(approval.prompt)}</p></details><div><button data-agent-decline>取消</button><button data-agent-approve class="dw-primary">确认生成</button></div></div>`:'';
       plan.dataset.approvalSignature=approvalSignature;
-      if(promptExpanded)plan.querySelector('details').open=true;
+      if(promptExpanded)plan.querySelector('details')?.setAttribute('open','');
       plan.querySelector('[data-agent-approve]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,true)));
       plan.querySelector('[data-agent-decline]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,false)));
     }
