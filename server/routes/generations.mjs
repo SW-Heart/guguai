@@ -33,7 +33,7 @@ export function createGenerationRouteHandler({
   enqueueGenerationJob,
   saveGeneration,
   failGeneration,
-  deleteGenerationRecord,
+  hideGenerationForUser,
   saveDramaProject,
   ensureUserDirs,
   randomId,
@@ -151,7 +151,7 @@ export function createGenerationRouteHandler({
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
       if (url.searchParams.has('ids')) {
         const ids = [...new Set(String(url.searchParams.get('ids') || '').split(',').map(safeId).filter(Boolean))].slice(0, 200);
-        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id, scope)).filter(Boolean).map(publicGeneration)), true;
+        return sendJson(res, 200, ids.map(id => findGeneration(user.id, id, scope)).filter(task => task && !task.userDeleted).map(publicGeneration)), true;
       }
       const view = String(url.searchParams.get('view') || 'all').trim().toLowerCase();
       if (!['all', 'works', 'history'].includes(view)) return sendJson(res, 400, { error:'生成记录视图无效' }), true;
@@ -203,9 +203,9 @@ export function createGenerationRouteHandler({
       const user = await requireUser(req, res); if (!user) return true;
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
       const id = safeId(generationMatch[1]);
-      const task = findGeneration(user.id, id, scope); if (!task) return sendJson(res, 404, { error:'生成记录不存在' }), true;
+      const task = findGeneration(user.id, id, scope); if (!task || task.userDeleted) return sendJson(res, 404, { error:'生成记录不存在' }), true;
       if (activeGenerations.has(id) || ['queued','running'].includes(task.status)) return sendJson(res, 409, { error:'任务正在生成中，完成后才能删除' }), true;
-      const deleted = await deleteGenerationRecord(user.id, task);
+      const deleted = await hideGenerationForUser(user.id, task);
       return sendJson(res, 200, { ok:true, ...deleted }), true;
     }
     return false;

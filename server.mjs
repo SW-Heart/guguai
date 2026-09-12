@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteGeneration, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -1043,21 +1043,34 @@ async function removeGenerationFromDramaProjects(userId, task) {
   }
   for(const project of projects)if(removeGenerationFromDramaProject(project,id))await saveDramaProject(userId,project);
 }
-async function deleteGenerationRecord(userId, task, { project = null } = {}) {
+async function removeGenerationOutput(userId, task, { project = null } = {}) {
   const id = String(task?.id || '');
   if (!id) throw new Error('生成记录不存在');
   const retryTimer = generationRetryTimers.get(id);
   if (retryTimer) { clearTimeout(retryTimer); generationRetryTimers.delete(id); }
   clearProviderTaskIdTimeout(id);
   const asset = task.assetId ? findAsset(userId, task.assetId) : null;
+  // Generation rows are audit records. Removing a generated file must never
+  // remove the task itself from the admin log. Clear the output reference and
+  // persist that fact before deleting the file so the task remains searchable.
+  task.assetId = '';
+  task.outputDeletedAt = now();
+  task.outputDeleted = true;
+  saveGeneration(userId, task);
   // Mutate the supplied project in memory so the short-drama endpoint can
   // return the exact post-delete selection in the same response.
   if (project) removeGenerationFromDramaProject(project, id);
   await deleteAssetRecord(userId, asset);
-  deleteGeneration(userId, id);
   if (project) await saveDramaProject(userId, project);
   else await removeGenerationFromDramaProjects(userId, task);
-  return { deletedAssetId: asset?.id || null };
+  return { deletedAssetId: asset?.id || null, generationLogPreserved: true };
+}
+async function hideGenerationForUser(userId, task) {
+  const deleted = await removeGenerationOutput(userId, task);
+  task.userDeleted = true;
+  task.userDeletedAt = now();
+  saveGeneration(userId, task);
+  return { ...deleted, userRecordDeleted: true };
 }
 // 单条与批量的本地接收确认共用同一套校验和副作用：写回素材元数据、标记该设备投递完成、
 // 结束对应生成任务的归档重试。返回 { error, status } 表示这一条被拒绝，调用方决定是整个
@@ -2381,7 +2394,7 @@ const dramaRoute = createDramaRouteHandler({
   llmConfig,
   runSmartDirector,
   planDirectorActions,
-  deleteGenerationRecord,
+  removeGenerationOutput,
   activeGenerations,
   now,
   charLength,
@@ -2455,7 +2468,7 @@ const filesRoute = createFilesRouteHandler({
   saveAsset,
   findGeneration,
   activeGenerations,
-  deleteGenerationRecord,
+  removeGenerationOutput,
   deleteAssetRecord,
 });
 const generationRoute = createGenerationRouteHandler({
@@ -2493,7 +2506,7 @@ const generationRoute = createGenerationRouteHandler({
   enqueueGenerationJob,
   saveGeneration,
   failGeneration,
-  deleteGenerationRecord,
+  hideGenerationForUser,
   saveDramaProject,
   ensureUserDirs,
   randomId:randomUUID,

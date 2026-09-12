@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=12';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=13';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
