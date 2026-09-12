@@ -35,3 +35,10 @@ test('an offered update waits through download and errors until user continues',
   await gate.ready;
   assert.equal(gate.finished, true);
 });
+
+test('startup update check has a short default deadline', () => {
+  let deadline;
+  const gate = createStartupUpdateGate({ schedule: (fn, ms) => { deadline = ms; return 1; }, cancel: () => {} });
+  assert.equal(deadline, 1500);
+  gate.finish();
+});

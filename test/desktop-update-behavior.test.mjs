@@ -34,3 +34,8 @@ test('Windows update starts a detached handoff before allowing the tray app to q
   assert.match(installer, /helper\.unref\(\)/);
   assert.doesNotMatch(installer, /quitAndInstall/);
 });
+
+test('startup checks updates alongside workspace initialization', () => {
+  const bootstrap = desktopMain.slice(desktopMain.indexOf('async function bootstrap()'));
+  assert.ok(bootstrap.indexOf('void checkForUpdates({ promptOnStartup: true })') < bootstrap.indexOf('ensureWorkspaceRoot(workspaceRoot)'));
+});

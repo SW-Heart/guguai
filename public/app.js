@@ -1705,7 +1705,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=134').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=135').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -3458,7 +3458,7 @@ const fallbackVideoModels = Object.freeze([
   ] },
 ]);
 const hiddenVideoModelIds = new Set(['minimax-h3', 'seedance-2.0-fast']);
-const videoModelOrder = ['seedance-2.0', 'seedance-2.5', 'minimax-h3-15s', 'oai', 'veo-31', 'grok', 'veo'];
+const videoModelOrder = ['minimax-h3-15s', 'seedance-2.0', 'seedance-2.5', 'oai', 'veo-31', 'grok', 'veo'];
 const modeLabels = Object.freeze({ TEXT:'文生视频', REFERENCE:'参考图模式', 'FIRST&LAST':'首尾帧' });
 function videoModelModes(modelId=$('#videoModel')?.value) { return videoModelOptions().find(model => model.id === modelId)?.modes || []; }
 function supportsVideoMode(type, modelId=$('#videoModel')?.value) { return videoModelModes(modelId).some(mode => mode.generationType === type); }

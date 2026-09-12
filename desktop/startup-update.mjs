@@ -1,6 +1,6 @@
 // Only the initial metadata check has a deadline. Once an update is offered,
 // keep the startup surface until the user installs it or chooses to continue.
-export function createStartupUpdateGate({ timeoutMs = 10_000, schedule = setTimeout, cancel = clearTimeout } = {}) {
+export function createStartupUpdateGate({ timeoutMs = 1_500, schedule = setTimeout, cancel = clearTimeout } = {}) {
   let resolve;
   let finished = false;
   let offered = false;

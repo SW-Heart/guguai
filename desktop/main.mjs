@@ -962,7 +962,7 @@ function sendUpdateStatus(status, extra = {}) {
   currentUpdateStatus = {
     status,
     currentVersion: app.getVersion(),
-    promptOnStartup: updatePromptOnStartup,
+    promptOnStartup: updatePromptOnStartup && !startupUpdateGate?.finished,
     ...extra,
     snoozed: updateReminderSnoozed,
   };
@@ -1161,6 +1161,7 @@ function configureAutoUpdater() {
 }
 async function checkForUpdates({ promptOnStartup = false } = {}) {
   updatePromptOnStartup = Boolean(promptOnStartup) && !startupUpdateGate?.finished;
+  if (updatePromptOnStartup) sendUpdateStatus('checking');
   await configureAutoUpdater();
   if (!updateConfigured) return { status: 'unconfigured' };
   try { const result = await autoUpdater.checkForUpdates(); return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' }; }
@@ -1768,6 +1769,10 @@ async function bootstrap() {
   settingsReadyResolve?.();
   settingsReadyResolve = null;
   startupTrace('settings-ready');
+  startupUpdateGate = createStartupUpdateGate();
+  updatePromptOnStartup = true;
+  void checkForUpdates({ promptOnStartup: true });
+
   workspaceRoot = configuredWorkspaceRoot(settings, path.join(app.getPath('documents'), 'GuGu AI Projects'));
   settings.workspaceRootPath = workspaceRoot;
   settings.workspacePath = workspaceRoot;
@@ -1778,9 +1783,6 @@ async function bootstrap() {
     persistSettings(),
   ]);
   createTray();
-  startupUpdateGate = createStartupUpdateGate();
-  updatePromptOnStartup = true;
-  void checkForUpdates({ promptOnStartup: true });
   await startupUpdateGate.ready;
   updatePromptOnStartup = false;
   currentUpdateStatus = { ...currentUpdateStatus, promptOnStartup: false, promptOnOpen: false };

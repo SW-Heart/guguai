@@ -261,6 +261,7 @@
     function renderUpdate(payload, { open = true } = {}) {
       updateState = { ...updateState, ...(payload || {}) };
       const status = updateState.status;
+      if (status === 'checking') $('#startupStatus').textContent = '正在检查更新…';
       const dialog = $('#updateDialog');
       const card = dialog.querySelector('.update-card');
       const progress = $('#progress');
@@ -345,13 +346,13 @@
         return;
       }
       if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查更新…';
-      renderUpdate(payload);
+      renderUpdate(payload, { open: payload?.promptOnStartup === true });
     });
     Promise.all([bridge?.getInfo?.(), bridge?.updates?.getStatus?.()]).then(([info, status]) => {
       setupWindowControls(info || {});
       if (status?.status && status.status !== 'idle') {
         updateState = { ...updateState, ...status };
-        renderUpdate(status);
+        renderUpdate(status, { open: status.promptOnStartup === true });
       }
     }).catch(() => {});
   </script>
