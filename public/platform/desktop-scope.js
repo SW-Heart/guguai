@@ -18,7 +18,9 @@ export function createDesktopScope({ getWindow, getSyncInfo, getMediaKind = item
     if (!id || (!item?.url && item?.localStatus !== 'missing')) return null;
     const kind = item.kind || getMediaKind(item);
     if (!kind) return null;
-    return { ...item, id, localId: item.id, cloudAssetId, kind, url: item.url, remoteUrl: item.remoteUrl || (cloudAssetId ? `/api/files/${encodeURIComponent(cloudAssetId)}/content` : ''), localStatus: item.localStatus === 'missing' ? 'missing' : 'saved', localOnly: !cloudAssetId, updatedAt: item.updatedAt || item.createdAt };
+    // Desktop downloads historically mark remoteStatus as ready even when only
+    // the local copy exists. Local library metadata cannot prove cloud readiness.
+    return { ...item, id, localId: item.id, cloudAssetId, kind, url: item.url, remoteUrl: item.remoteUrl || (cloudAssetId ? `/api/files/${encodeURIComponent(cloudAssetId)}/content` : ''), ...(cloudAssetId ? { remoteStatus:'pending' } : {}), localStatus: item.localStatus === 'missing' ? 'missing' : 'saved', localOnly: !cloudAssetId, updatedAt: item.updatedAt || item.createdAt };
   }
   return { headers, localAsset };
 }

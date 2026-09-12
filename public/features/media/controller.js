@@ -137,7 +137,7 @@ export function createMediaController({
     if (fileById(remoteFile.id)?.localStatus === 'missing') return;
     const local = desktopLocalClientAsset(localAsset);
     if (!local) return;
-    const file = { ...remoteFile, ...local, id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
+    const file = { ...remoteFile, ...local, remoteStatus:remoteFile.remoteStatus || 'pending', id:remoteFile.id, localId:local.localId, cloudAssetId:remoteFile.id, remoteUrl:remoteFile.url, localStatus:'saved', localPath:local.relativePath };
     localFileStateRevision += 1;
     const existed = state.files.some(item => item.id === file.id);
     mergeStateFiles([file]);

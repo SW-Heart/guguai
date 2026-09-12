@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDesktopScope } from '../public/platform/desktop-scope.js';
+import { isRemoteReferenceReady, needsReferenceUpload } from '../public/desktop-media-sync.js';
+
+test('restart with legacy downloaded records still uploads generated references', () => {
+  const scope = createDesktopScope({ getMediaKind: () => 'image' });
+  const file = scope.localAsset({ id:'local-old', cloudAssetId:'generation-old', url:'gugu-media://local-old', remoteStatus:'ready' });
+  assert.equal(file.localStatus, 'saved');
+  assert.equal(isRemoteReferenceReady(file), false);
+  assert.equal(needsReferenceUpload(file), true);
+});
 
 test('desktop scope only emits workspace headers for a ready desktop session', () => {
   let desktop = true;

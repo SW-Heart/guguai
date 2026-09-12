@@ -3,7 +3,7 @@ import { replaceAssetMentions } from './video-prompt.js?v=4';
 import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload } from './desktop-media-sync.js?v=14';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
-import { createDesktopScope } from './platform/desktop-scope.js?v=3';
+import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=3';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
 import { createCreditPresentation } from './features/credits/presentation.js?v=3';
@@ -12,7 +12,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=6';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=8';
+import { createMediaController } from './features/media/controller.js?v=9';
 import { createSupportLogController } from './features/support/controller.js?v=1';
 
 const $ = selector => document.querySelector(selector);
