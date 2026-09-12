@@ -4,7 +4,7 @@ import { renderMarkdown } from '../agent/markdown.js?v=1';
 import { placeMediaFrames } from '../agent/frames.js?v=1';
 import { createCreativeAgentClient } from '../agent/client.js?v=3';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=28';
-import { normalizeDirectorWorkspace, normalizeCanvasNodes, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=6';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=8';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
@@ -117,6 +117,25 @@ export function createDirectorWorkspace(host, bridge) {
     shape.clearCache();
     shape.getLayer()?.batchDraw();
   }
+  function findLayerNode(id) {
+    let found=null;
+    mainLayer?.children?.forEach?.(node=>{if(!found&&node.id?.()===id)found=node;});
+    return found;
+  }
+  function liveCanvasNodes(state=canvas?.getState?.()) {
+    if(!state)return [];
+    return (state.nodes||[]).map(node=>{
+      // Konva owns the live geometry while a node is being dragged. The
+      // whiteboard state is rebuilt on dragend and can therefore still carry
+      // the previous coordinates when this callback runs.
+      const shape=canvas?.getCanvasNodeById?.(node.id)?.getElement?.()||findLayerNode(node.id);
+      const attrs=shape?.getAttrs?.();
+      return attrs?{...node,
+        x:attrs.x??node.x,y:attrs.y??node.y,width:attrs.width??node.width,height:attrs.height??node.height,
+        scaleX:attrs.scaleX??node.scaleX,scaleY:attrs.scaleY??node.scaleY,rotation:attrs.rotation??node.rotation,
+      }:node;
+    });
+  }
   function loadAssetSize(id,url){
     if(assetSizes.has(url)||assetSizeLoads.has(url))return;
     const token=epoch;
@@ -130,8 +149,13 @@ export function createDirectorWorkspace(host, bridge) {
       assetSizes.set(url,{width:image.naturalWidth,height:image.naturalHeight});
       // A viewport/selection event may already have persisted placeholder
       // dimensions. Correct every node sharing this URL after decoding.
-      const canvasNodes=canvas?.getState?.()?.nodes;
-      const targets=Array.isArray(canvasNodes)?canvasNodes:[canvas?.getNodeConfigById?.(id)];
+      // Image decoding is asynchronous; read the live Konva geometry so a
+      // completed load cannot restore a stale pre-drag position.
+      const targets=liveCanvasNodes().filter(node=>node.id===id||node.$_imageUrl===url);
+      if(!targets.length){
+        const fallback=canvas?.getNodeConfigById?.(id);
+        if(fallback)targets.push(fallback);
+      }
       for(const current of targets){
         if(current?.$_type!=='image'||current.$_imageUrl!==url)continue;
         const bounds=assetBounds(url,current);
@@ -180,18 +204,24 @@ export function createDirectorWorkspace(host, bridge) {
     const ns=canvasItems();
     return ns.filter(n=>['resource','shot'].includes(n.kind)).map(n=>({from:n.kind==='resource'?'story':(n.item.resourceIds?.find(id=>ns.some(x=>x.id===id))||'story'),to:n.id})).filter(edge=>ns.some(n=>n.id===edge.from));
   }
-  function findLayerNode(id) {
-    let found=null;
-    mainLayer?.children?.forEach?.(node=>{if(!found&&node.id?.()===id)found=node;});
-    return found;
+  function liveCanvasSnapshot(fallback=null) {
+    const state=fallback||canvas?.getState?.();
+    if(!state)return null;
+    const currentNodes=liveCanvasNodes(state);
+    return {...state,nodes:currentNodes.length?currentNodes:(state.nodes||[])};
   }
-  function liveCanvasNodes() {
-    const state=canvas?.getState();
-    if(!state)return [];
-    return (state.nodes||[]).map(node=>{
-      const shape=findLayerNode(node.id), attrs=shape?.getAttrs?.();
-      return attrs?{...node,x:attrs.x??node.x,y:attrs.y??node.y,width:attrs.width??node.width,height:attrs.height??node.height,scaleX:attrs.scaleX??node.scaleX,scaleY:attrs.scaleY??node.scaleY}:node;
-    });
+  function persistLiveCanvasState(snapshot=liveCanvasSnapshot()) {
+    if(!snapshot)return null;
+    persistCanvasSnapshot(workspace(),snapshot,new Set(nodes().map(item=>item.id)));
+    return snapshot;
+  }
+  function scheduleCanvasSave(immediate=false) {
+    clearTimeout(saveTimer);
+    if(immediate){
+      void save().catch(e=>bridge.toast(e.message));
+      return;
+    }
+    saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);
   }
   function renderEdges(snapshotNodes=canvas?.getState().nodes||[], persist=false) {
     if(!canvas||!mainLayer)return;
@@ -510,13 +540,13 @@ export function createDirectorWorkspace(host, bridge) {
       const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
-      canvas.on('state:change',snapshot=>{if(syncing||resizingChat)return;const geometry=geometrySignature(snapshot);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(snapshot);}const visibleIds=new Set(nodes().map(item=>item.id));const positions=Object.fromEntries(snapshot.nodes.filter(n=>visibleIds.has(n.id)).map(n=>[n.id,{x:n.x,y:n.y,width:n.width,height:n.height,scaleX:n.scaleX,scaleY:n.scaleY,rotation:n.rotation}]));workspace().positions=positions;workspace().canvasNodes=normalizeCanvasNodes(snapshot.nodes.filter(n=>(!visibleIds.has(n.id)||n.$_type==='image')&&!String(n.id).startsWith('edge-')));workspace().viewport=snapshot.viewport;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
-      canvas.on('viewport:change',v=>{if(resizingChat)return;requestAnimationFrame(alignCards);workspace().viewport=v;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);});
+      canvas.on('state:change',snapshot=>{if(syncing||resizingChat)return;const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
+      canvas.on('viewport:change',v=>{if(resizingChat)return;requestAnimationFrame(alignCards);persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
       // The whiteboard emits the public state event at the end of a drag. The
       // Konva layer receives `dragmove` every frame, so draw arrow endpoints
       // directly on the native shape for a continuous, low-latency response.
       const onDragMove=event=>{const target=event?.target;if(!target||String(target.id?.()).startsWith('edge-'))return;alignCards();scheduleEdgeRender(liveCanvasNodes());};
-      const onDragEnd=event=>{const target=event?.target;if(!target||String(target.id?.()).startsWith('edge-'))return;renderEdges(liveCanvasNodes(),true);};
+      const onDragEnd=event=>{const target=event?.target;if(!target||String(target.id?.()).startsWith('edge-'))return;const snapshot=persistLiveCanvasState();if(snapshot)renderEdges(snapshot.nodes,true);scheduleCanvasSave(true);};
       mainLayer?.on?.('dragmove.director-edges',onDragMove);
       mainLayer?.on?.('dragend.director-edges',onDragEnd);
       syncing=true;

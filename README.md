@@ -67,13 +67,16 @@ cp .env.example .env
 | Seedance 2.0 Fast 视频 | `DIW_API_BASE`、`DIW_KEY` | 使用 DIW 的 `ed-seedance 2.0 fast 720p`，固定 15 秒/720p，支持 9 图 + 3 视频 + 3 音频参考 |
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
+| 创作 Agent 对话 | `AGENT_API_BASE`、`AGENT_API_KEY`、`AGENT_MODEL`、`AGENT_MODELS` | 导演画布中的创作对话；可兼容已有导演配置，详见下文 |
+| 飞书失败告警 | `FEISHU_WEBHOOK` | 可选，生成任务失败时向飞书群机器人发送卡片；留空关闭 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
 | 短信登录 | `SMS_ACCESS_KEY_ID`、`SMS_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；短信凭据与媒体存储凭据相互隔离 |
 
-模型线路的渠道 Key 可在管理后台“渠道与 Key”中维护。同一渠道（例如 WJ）可以添加多个权限不同的 Key；每个 Key 会独立检查 `/v1/models` 并绑定到具体模型线路。后台新增的 Key 使用 `MODEL_ROUTE_CREDENTIAL_SECRET` 加密保存，该密钥必须长期稳定，不能在重启或迁移时更换，否则已保存的 Key 无法解密。已有的 `DIW_KEY`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY` 和 `CNTCN_KEY` 会作为兼容的初始凭证继续使用。
 | 文件存储 | `R2_*`、`R2_REFERENCE_*`、`MEDIA_OBJECT_PREFIX` | 用户素材和服务端兜底的生成结果使用私有 R2；桌面尾帧/成片保存在本地；模型参考图片使用独立临时 R2 Bucket |
 | 桌面发布 | `DESKTOP_API_BASE`、`DESKTOP_UPDATE_OSS_PREFIX`、`DESKTOP_UPDATE_PUBLIC_URL` | 构建生产客户端并使用 `npm run desktop:release -- --publish` 发布桌面自动更新文件 |
 | 浏览器直传 | `DIRECT_UPLOAD_ENABLED`、`R2_UPLOAD_EXPIRES_SECONDS`、`R2_ASSET_URL_EXPIRES_SECONDS`、`UPLOAD_INTENT_EXPIRES_SECONDS`、`UPLOAD_MAX_PENDING_PER_USER`、`UPLOAD_INIT_LIMIT_PER_MINUTE` | 使用 R2 预签名 PUT；上传完成后服务端执行对象大小、MIME 和文件头校验，默认开启 |
+
+模型线路的渠道 Key 可在管理后台“渠道与 Key”中维护。同一渠道（例如 WJ）可以添加多个权限不同的 Key；每个 Key 会独立检查 `/v1/models` 并绑定到具体模型线路。后台新增的 Key 使用 `MODEL_ROUTE_CREDENTIAL_SECRET` 加密保存，该密钥必须长期稳定，不能在重启或迁移时更换，否则已保存的 Key 无法解密。已有的 `DIW_KEY`、`WJ_TJWD_KEY`、`WJ_SD_PY_900_KEY` 和 `CNTCN_KEY` 会作为兼容的初始凭证继续使用。
 
 最小示例（请替换为真实值）：
 
@@ -183,6 +186,40 @@ MEDIA_TMP_DIR=/var/lib/gugu-ai/tmp
 - `LLM_API_PROTOCOL` 可设为 `openai-compatible`（默认）或 `anthropic`。
 - 开发环境不设置 `DATA_DIR` 时默认使用项目下的 `data/`；生产环境应显式设置项目目录外的持久化绝对路径。
 - `TRUST_PROXY=loopback` 只信任来自本机反向代理的 `X-Real-IP`，不要在 Node 端口直接暴露公网时启用。
+
+### 飞书生成失败告警（可选）
+
+将飞书群自定义机器人的 Webhook 配置到服务端 `.env` 或部署环境，再重启服务：
+
+```dotenv
+FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-token
+```
+
+只需 `FEISHU_WEBHOOK`，不需要飞书应用 App ID 或 App Secret。当前实现仅接受上述 `open.feishu.cn` 群机器人地址，未实现机器人签名校验参数；开启签名校验的机器人无法直接使用。Webhook 属于凭据，示例文件保持空值，实际地址只放在服务端环境中。
+
+生成任务进入服务端 `failGeneration` 失败处理时，异步发送标题为“生成任务失败”的卡片，包含模型、上游渠道、任务 ID、用户名、失败原因和北京时间。Midjourney 拆分子图不重复告警，同一任务在进程内去重；这不是跨重启持久化的去重机制，也不是覆盖登录、支付、Agent 对话等所有错误的通用告警。
+
+未配置或地址格式无效时直接跳过发送。每次请求超时为 5 秒，最多尝试 3 次；发送失败写入服务端 `[feishu]` 日志，不阻塞任务失败处理。没有收到通知时，先检查运行服务实际加载的环境变量、是否已重启、地址格式和机器人安全设置，再查看 `[feishu] 生成失败卡片发送失败` 日志。不要用真实付费生成任务作为配置测试；可运行 `node --test test/feishu.test.mjs` 检查实现，该测试使用模拟请求，不会向群里发消息。
+
+### 创作 Agent 对话配置
+
+导演画布的创作对话使用独立的 `AGENT_*` 配置，服务端网关调用兼容 Chat Completions 的流式接口和工具调用：
+
+```dotenv
+AGENT_API_BASE=https://your-gateway.example/v1
+AGENT_API_KEY=your-server-key
+AGENT_MODEL=your-default-model
+AGENT_MODELS=your-default-model,another-model
+AGENT_MAX_OUTPUT_TOKENS=6000
+AGENT_CONTEXT_BYTES=120000
+AGENT_SKILLS_DIRS=
+```
+
+地址、密钥和默认模型分别优先读取 `AGENT_*`，为空时依次回退到对应的 `DIRECTOR_AGENT_*`、`LLM_*` 配置；默认模型最终回退为 `deepseek-v4-flash`。只配置 `AGENT_*` 不会反向配置旧智能导演流程。网关地址可带 `/v1`，代码会补齐该路径。
+
+`AGENT_MODELS` 是逗号分隔的模型列表；留空时尝试读取网关 `/v1/models`，失败仍保留默认模型。输出 token 上限默认 6000，约束在 256–16000；上下文预算默认 120000 字节，约束在 24000–500000。修改这些环境变量后需要重启服务。
+
+内置创作 Skill 位于 `agent-skills/`；`AGENT_SKILLS_DIRS` 可追加外部目录，Linux/macOS 用冒号分隔，Windows 用分号分隔。Skill 内容支持热读取。完整的对话、工具确认、计费及 Skill 扩展说明见 [创作 Agent 文档](agent-skills/README.md)。
 
 ### 3. 启动服务
 

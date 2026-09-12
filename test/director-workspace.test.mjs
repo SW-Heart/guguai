@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeDirectorWorkspace, validateDirectorPlan, applyDirectorEdit, fitDirectorViewport } from '../public/features/drama/director-actions.js';
+import { normalizeDirectorWorkspace, validateDirectorPlan, applyDirectorEdit, fitDirectorViewport, persistCanvasSnapshot } from '../public/features/drama/director-actions.js';
 const project=()=>({resources:[{id:'r1',name:'苏蔓',prompt:'original'}],shots:[{id:'s1',script:'这句台词必须保留',duration:8,videoVersions:['v1']}],directorWorkspace:normalizeDirectorWorkspace()});
 test('director defaults and malformed viewport are bounded',()=>{
  const w=normalizeDirectorWorkspace({autonomy:'invalid',hiddenIds:['shot-1','shot-1',42,''],positions:{bad:{x:'bad',y:1}},viewport:{scale:100}});
@@ -50,6 +50,25 @@ test('canvas state rejects invalid geometry and active image URLs',()=>{
  assert.equal(saved.canvasNodes[0].$_imageUrl,undefined);
  assert.equal(saved.canvasNodes[0].x,undefined);
  assert.equal(saved.canvasNodes[0].width,undefined);
+});
+
+test('canvas snapshot persists moved file coordinates and native canvas nodes',()=>{
+ const workspace=normalizeDirectorWorkspace({positions:{file:{x:10,y:20}}});
+ persistCanvasSnapshot(workspace,{viewport:{x:12,y:24,scale:.8},nodes:[
+  {id:'file',$_type:'html',x:180,y:260,width:280,height:228},
+  {id:'note',$_type:'rect',x:420,y:80,width:100,height:60},
+  {id:'edge-note',$_type:'arrow',x:0,y:0,points:[0,0,1,1]},
+ ]},new Set(['file']));
+ assert.deepEqual(workspace.positions.file,{x:180,y:260,width:280,height:228});
+ assert.deepEqual(workspace.positions.note,undefined);
+ assert.deepEqual(workspace.canvasNodes,[{id:'note',$_type:'rect',x:420,y:80,width:100,height:60}]);
+ assert.deepEqual(workspace.viewport,{x:12,y:24,scale:.8});
+});
+
+test('canvas snapshot keeps positions that are not present in a partial event',()=>{
+ const workspace=normalizeDirectorWorkspace({positions:{file:{x:180,y:260},other:{x:40,y:80}}});
+ persistCanvasSnapshot(workspace,{nodes:[{id:'file',$_type:'html',x:220,y:300}]},new Set(['file','other']));
+ assert.deepEqual(workspace.positions,{file:{x:220,y:300},other:{x:40,y:80}});
 });
 
 test('canvas notes preserve text while stripping active markup attributes',()=>{

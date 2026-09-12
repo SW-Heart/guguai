@@ -20,6 +20,27 @@ export function normalizeCanvasNodes(nodes) {
   return out;
  });
 }
+
+export function persistCanvasSnapshot(workspace, snapshot, visibleIds = []) {
+ const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : [];
+ const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds);
+ const positions = { ...(workspace.positions || {}) };
+ nodes
+  .filter(node => visible.has(node.id) && Number.isFinite(node.x) && Number.isFinite(node.y))
+  .forEach(node => {
+   positions[node.id] = {
+   x:node.x,
+   y:node.y,
+   ...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(key => Number.isFinite(node[key])).map(key => [key, node[key]])),
+   };
+  });
+ workspace.positions = positions;
+ workspace.canvasNodes = normalizeCanvasNodes(nodes.filter(node => (!visible.has(node.id) || node.$_type === 'image') && !String(node.id).startsWith('edge-')));
+ if (snapshot.viewport && Number.isFinite(snapshot.viewport.x) && Number.isFinite(snapshot.viewport.y) && Number.isFinite(snapshot.viewport.scale)) {
+  workspace.viewport = { x:snapshot.viewport.x, y:snapshot.viewport.y, scale:snapshot.viewport.scale };
+ }
+ return workspace;
+}
 // One action contract for manual controls and the director. No generated code is executed.
 export const directorActionTypes = ['design_story','add_resource','update_resource','add_shot','update_shot','generate_resource','generate_video','read_tail','check_continuity','assemble'];
 export function normalizeDirectorWorkspace(value = {}) {

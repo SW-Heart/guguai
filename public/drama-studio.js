@@ -1,4 +1,4 @@
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=38';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=40';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=2';
 import { buildShotVideoPrompt } from './video-prompt.js?v=3';
 import {
