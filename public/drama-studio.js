@@ -1,5 +1,5 @@
 import { isRemoteReferenceReady } from './desktop-media-sync.js?v=14';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=43';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=44';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=2';
 import { buildShotVideoPrompt } from './video-prompt.js?v=3';
 import {

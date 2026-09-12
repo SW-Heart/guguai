@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 function setup(prepareChatAsset){
   const input={value:'保留我的草稿',focus(){}};
-  const context={sending:false,switchingConversation:false,uploading:false,epoch:1,agentState:{id:'chat'},attachments:[],nodes:()=>[{id:'local',kind:'asset'},{id:'generated',kind:'generation',taskId:'task'}],bridge:{prepareChatAsset,toast(){}},drawPanels(){},host:{querySelector:selector=>selector==='#directorMessage'?input:{classList:{remove(){}},hidden:true}}};
+  const context={sending:false,switchingConversation:false,uploading:false,submissionQueue:[],drainingSubmissions:false,epoch:1,agentState:{id:'chat'},attachments:[],nodes:()=>[{id:'local',kind:'asset'},{id:'generated',kind:'generation',taskId:'task'}],bridge:{prepareChatAsset,toast(){}},drawPanels(){},host:{querySelector:selector=>selector==='#directorMessage'?input:{classList:{remove(){}},hidden:true}}};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  async function attachCanvasFiles'),source.indexOf('  function drawInspector')),context);
   return {context,input};
@@ -53,7 +53,7 @@ test('quick actions preserve unrelated composer attachments and text',async()=>{
   context.save=async()=>{};
   let sent;
   context.agentClient={send:async(text,ids)=>{sent={text,ids};}};
-  vm.runInContext(source.slice(source.indexOf('  async function submit('),source.indexOf('  function dispose(')),context);
+  vm.runInContext(source.slice(source.indexOf('  function redrawComposer('),source.indexOf('  function dispose(')),context);
   await context.submit('增强清晰度',[{id:'action-file',name:'action.png'}],['local']);
   assert.match(sent.text,/action-file/);assert.doesNotMatch(sent.text,/draft-file/);
   assert.equal(context.attachments[0].id,'draft-file');assert.equal(input.value,'保留我的草稿');

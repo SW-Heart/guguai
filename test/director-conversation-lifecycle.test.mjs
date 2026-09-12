@@ -7,7 +7,7 @@ const source=readFileSync(new URL('../public/features/drama/director-workspace.j
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function setup(){
   const input={value:''},sent=[],toasts=[];
-  const context={epoch:1,sending:false,switchingConversation:false,uploading:false,attachments:[],selected:'',agentState:{id:'first'},connectionError:'',historyOpen:true,
+  const context={epoch:1,sending:false,switchingConversation:false,uploading:false,submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',agentState:{id:'first'},connectionError:'',historyOpen:true,
     host:{querySelector:selector=>selector==='#directorMessage'?input:{hidePopover(){}}},
     bridge:{toast:message=>toasts.push(message)},drawPanels(){},save:async()=>{},
     agentClient:{send:async text=>sent.push(text),open:async()=>{},newConversation:async()=>{}},
@@ -28,6 +28,16 @@ test('a failed send preserves the next draft and releases the send lock',async()
   const request=context.submit('failed message');await Promise.resolve();
   input.value='my next draft';sending.reject(new Error('offline'));await request;
   assert.equal(input.value,'my next draft');assert.equal(context.sending,false);
+});
+test('follow-up prompts queue while the first prompt is being submitted',async()=>{
+  const {context,sent}=setup(),first=deferred();context.agentState.state='running';
+  context.agentClient.send=async text=>{sent.push(text);if(sent.length===1)await first.promise;};
+  const settle=async()=>{for(let i=0;i<4;i++)await Promise.resolve();};
+  const firstRequest=context.submit('first message');await settle();
+  const secondRequest=context.submit('second message');await settle();
+  assert.deepEqual(sent,['first message']);
+  first.resolve();await Promise.all([firstRequest,secondRequest]);
+  assert.deepEqual(sent,['first message','second message']);
 });
 test('conversation navigation preserves text typed while the request is pending',async()=>{
   const {context,input}=setup(),opening=deferred();context.agentClient.open=()=>opening.promise;
@@ -54,4 +64,8 @@ test('changing sessions preserves the activity controls nested inside old histor
   const start=source.indexOf('    if(streamSession!==agentState?.id)');
   vm.runInContext(source.slice(start,source.indexOf("    targetDraft=agentState?.draft",start)),context);
   assert.equal(activity.parent,'messages');assert.equal(activity.removed,undefined);assert.equal(context.streamSession,'new');
+});
+test('generation state keeps the composer available for follow-up requirements',()=>{
+  assert.match(source,/sendButton\.disabled=uploading\|\|switchingConversation\|\|!agentState/);
+  assert.match(source,/busy\?'补充要求'/);
 });

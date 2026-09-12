@@ -139,6 +139,25 @@ test('discussion requests block premature media tools even with automatic budget
   await runtime.stop();f.db.close();
 });
 
+test('a new prompt arriving during a media wait is scheduled immediately',async()=>{
+  const f=fixture();f.repo.enqueue(f.session,{clientId:'first',text:'先开始第一个创作'});
+  let round=0;
+  const tools={definitions:()=>[],images:async()=>[],get:name=>({waits:name==='jobs_wait'}),execute:async(name)=>{
+    if(name==='jobs_wait'){
+      f.repo.enqueue(f.get(),{clientId:'follow-up',text:'继续做第二个创作'});
+      return {wait:true};
+    }
+    return {ok:true};
+  }};
+  const {runtime}=runtimeFixture(f,async()=>round++===0?answer(null,[call('jobs_wait',{jobIds:['job']})]):answer('第二个创作已开始。'),tools);
+  await runtime.kick(f.session.id);
+  assert.equal(f.get().state,'queued');
+  await runtime.kick(f.session.id);
+  assert.equal(f.get().state,'completed');
+  assert.equal(f.get().doc.messages.at(-1).content,'第二个创作已开始。');
+  await runtime.stop();f.db.close();
+});
+
 test('uncertain model execution is reconciled after restart, never automatically replayed',async()=>{
   const f=fixture();f.repo.enqueue(f.session,{clientId:'message-1',text:'你好'});
   const claimed=f.repo.claim(f.session.id);claimed.doc.step={id:'step-1',model:'test-model',requestStarted:true};f.repo.save(claimed,'queued');f.repo.release(claimed);

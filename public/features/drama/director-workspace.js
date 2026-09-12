@@ -3,7 +3,7 @@ import { importedImageBounds } from '../agent/image-bounds.js?v=1';
 import { renderMarkdown } from '../agent/markdown.js?v=1';
 import { placeMediaFrames } from '../agent/frames.js?v=1';
 import { createCreativeAgentClient } from '../agent/client.js?v=4';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=28';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=29';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=8';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -82,6 +82,7 @@ export function createDirectorWorkspace(host, bridge) {
   let mainLayer, lastNodeGeometry='', edgeRenderFrame=0, resizingChat=false, resizeCanvasSnapshot=null, resizeFinishFrame=0;
   let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver;
   let agentClient, agentState=null, agentConfig=null, sending=false, switchingConversation=false, connectionError='', conversations=[], historyOpen=false;
+  let submissionQueue=[], drainingSubmissions=false;
   let attachments=[], uploading=false, popoverEvents;
 
   const assetSizes=new Map(), assetSizeLoads=new Map(), assetImages=new Map();
@@ -375,14 +376,18 @@ export function createDirectorWorkspace(host, bridge) {
     const models=agentConfig?.models||[];
     const modelButton=root.querySelector('[data-agent-model-toggle]');
     const currentModel=agentState?.settings?.model;
-    const conversationBusy=sending||switchingConversation;
+    // A running generation is not a conversation lock.  `sending` only
+    // describes the short request that adds a message to the queue; the
+    // composer must remain usable while the agent is thinking or waiting for
+    // a media task.
+    const conversationBusy=drainingSubmissions||switchingConversation;
     modelButton?.setAttribute('title',`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`);
     if(modelButton)modelButton.disabled=!agentState||conversationBusy||!models.length;
     const modelList=root.querySelector('[data-agent-model-list]');
     const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${conversationBusy?'disabled':''}>${escape(m.label)}${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
     if(modelList&&modelList.innerHTML!==options)modelList.innerHTML=options;
     const uploadButton=root.querySelector('[data-agent-upload]');
-    if(uploadButton){uploadButton.disabled=uploading||conversationBusy;uploadButton.title=uploading?'正在上传…':'上传文件';}
+    if(uploadButton){uploadButton.disabled=uploading||switchingConversation;uploadButton.title=uploading?'正在上传…':'上传文件';}
     const attachmentList=root.querySelector('[data-agent-attachments]');
     if(attachmentList)attachmentList.innerHTML=attachments.map(f=>`<span class="dw-attachment${['image','video'].includes(f.kind)&&(f.previewUrl||f.url)?' dw-attachment-preview':''}" title="${escape(f.name)}">${f.kind==='image'&&(f.previewUrl||f.url)?`<img src="${escape(f.previewUrl||f.url)}" alt="${escape(f.name)}">`:f.kind==='video'&&(f.previewUrl||f.url)?`<video src="${escape(f.previewUrl||f.url)}" preload="metadata" muted playsinline aria-label="${escape(f.name)}"></video>`:`<span>${escape(f.name)}</span>`}<button type="button" data-remove-attachment="${escape(f.id)}" aria-label="移除 ${escape(f.name)}" ${sending?'disabled':''}>×</button></span>`).join('')+(uploading?'<span role="status">正在上传文件…</span>':'');
     const newButton=root.querySelector('[data-agent-new]');
@@ -433,7 +438,9 @@ export function createDirectorWorkspace(host, bridge) {
       plan.querySelector('[data-agent-decline]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,false)));
     }
     const sendButton=root.querySelector('[data-director-send]');
-    if(sendButton){sendButton.disabled=uploading||conversationBusy||!agentState||!agentConfig?.configured;sendButton.textContent=sending?'发送中…':busy?'补充要求':'发送';sendButton.setAttribute('aria-busy',String(sending));}
+    if(sendButton){sendButton.disabled=uploading||switchingConversation||!agentState||!agentConfig?.configured;sendButton.textContent=busy?'补充要求':sending?'发送中…':'发送';sendButton.setAttribute('aria-busy',String(sending));}
+    const composer=root.querySelector('#directorMessage');
+    if(composer)composer.placeholder=busy?'任务进行中也可以继续补充创作要求':'想聊什么，或希望我帮你创作什么？';
     if(stickToBottom)messages.scrollTop=messages.scrollHeight;
     if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
     syncCanvas();
@@ -453,7 +460,7 @@ export function createDirectorWorkspace(host, bridge) {
   }
   async function agentAction(action){const token=epoch,session=agentState?.id;try{await action();if(token!==epoch||session!==agentState?.id)return;connectionError='';}catch(error){if(token!==epoch||session!==agentState?.id)return;if(!error.stale){connectionError=error.message;bridge.toast(error.message);}}drawPanels();}
   async function runImageAction(action,ids) {
-    if(sending||uploading||switchingConversation)throw new Error('请等待当前操作完成');
+    if(uploading||switchingConversation)throw new Error('请等待当前操作完成');
     if(!agentState||!agentConfig?.configured)throw new Error('请先连接 GuGu 对话');
     const prompts={upscale:'请增强附件图片的清晰度和细节，保留原图主体、构图和内容，并生成处理后的图片。',cutout:'请移除附件图片的背景，完整保留主体及边缘细节，生成透明背景的 PNG 图片。'};
     if(!prompts[action])throw new Error('不支持的图片操作');
@@ -487,7 +494,7 @@ export function createDirectorWorkspace(host, bridge) {
     return true;
   }
   async function attachCanvasFiles(ids) {
-    if(sending||uploading||switchingConversation)return;
+    if(uploading||switchingConversation)return;
     const items=nodes().filter(n=>ids.includes(n.id)&&(n.kind==='asset'||n.taskId));
     if(!items.length){bridge.toast('请选择已有文件的素材');return;}
     const token=epoch,conversationId=agentState?.id;
@@ -662,17 +669,17 @@ export function createDirectorWorkspace(host, bridge) {
     });
 
     modelPicker.addEventListener('toggle',event=>host.querySelector('[data-agent-model-toggle]').setAttribute('aria-expanded',String(event.newState==='open')));
-    host.querySelector('[data-agent-model-list]').onclick=event=>{const button=event.target.closest('[data-agent-model]');if(!button||sending||switchingConversation)return;modelPicker.hidePopover();void agentAction(()=>agentClient.settings({model:button.dataset.agentModel}));};
-    host.querySelector('[data-agent-attachments]').onclick=event=>{const button=event.target.closest('[data-remove-attachment]');if(button&&!sending&&!switchingConversation){attachments=attachments.filter(f=>f.id!==button.dataset.removeAttachment);drawPanels();}};
+    host.querySelector('[data-agent-model-list]').onclick=event=>{const button=event.target.closest('[data-agent-model]');if(!button||drainingSubmissions||switchingConversation)return;modelPicker.hidePopover();void agentAction(()=>agentClient.settings({model:button.dataset.agentModel}));};
+    host.querySelector('[data-agent-attachments]').onclick=event=>{const button=event.target.closest('[data-remove-attachment]');if(button&&!switchingConversation){attachments=attachments.filter(f=>f.id!==button.dataset.removeAttachment);drawPanels();}};
     host.querySelector('[data-agent-upload]').onclick=async()=>{
-      if(uploading||sending||switchingConversation)return;
+      if(uploading||switchingConversation)return;
       const token=epoch;uploading=true;drawPanels();
       try{const file=await bridge.uploadChatFile();if(token===epoch&&file&&!attachments.some(f=>f.id===file.id))attachments.push(file);}
       catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
       finally{if(token===epoch){uploading=false;drawPanels();}}
     };
     host.querySelector('[data-agent-save-settings]').onclick=()=>void agentAction(()=>agentClient.settings({autoGenerate:host.querySelector('[data-agent-auto]').checked,generationBudgetCredits:Number(host.querySelector('[data-agent-budget]').value)}));
-    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim()||(attachments.length?'请查看这些附件':'' );if(text&&!sending&&!uploading&&!switchingConversation&&agentState&&agentConfig?.configured){draft='';input.value='';void submit(text);}};
+    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage');const text=input.value.trim()||(attachments.length?'请查看这些附件':'' );if(text&&!uploading&&!switchingConversation&&agentState&&agentConfig?.configured){draft='';input.value='';void submit(text);}};
     host.querySelector('#directorMessage').value=draft;
     const composerInput=host.querySelector('#directorMessage');
     const closeMentions=bindDirectorMentions(composerInput,{items:()=>nodes().filter(n=>n.kind==='asset'||n.taskId),attach:id=>attachCanvasFiles([id]),signal:popoverEvents.signal});
@@ -680,7 +687,7 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('[data-agent-history]').addEventListener('click',closeMentions);
     const resizeComposer=()=>{composerInput.style.height='auto';composerInput.style.height=`${Math.min(180,Math.max(76,composerInput.scrollHeight))}px`;};
     composerInput.addEventListener('input',resizeComposer);
-    composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!sending&&!switchingConversation)host.querySelector('.dw-composer').requestSubmit();}};
+    composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!uploading&&!switchingConversation)host.querySelector('.dw-composer').requestSubmit();}};
     composerInput.addEventListener('focus',()=>host.querySelector('.dw-composer').classList.add('is-focused'));
     composerInput.addEventListener('blur',()=>host.querySelector('.dw-composer').classList.remove('is-focused'));
     resizeComposer();
@@ -705,16 +712,55 @@ export function createDirectorWorkspace(host, bridge) {
     catch(error){if(token===epoch&&!error.stale){connectionError=error.message;bridge.toast(error.message);}}
     finally{if(token===epoch){switchingConversation=false;drawPanels();}}
   }
-  async function submit(text,files=attachments,selectionIds=selected?[selected]:[]){
-    const composerSend=files===attachments;
-    if(sending||uploading||switchingConversation)return;
-    const token=epoch,client=agentClient,session=agentState?.id;
-    const current=()=>token===epoch&&session===agentState?.id;
-    sending=true;
-    try{drawPanels();await save();if(!current())return;const content=text+(files.length?'\n\n附件：\n'+files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'');await client.send(content,[...new Set([...selectionIds,...files.map(f=>f.id)])]);if(!current())return;if(composerSend)attachments=[];connectionError='';}
-    catch(error){if(current()&&!error.stale){connectionError=error.message;const input=host.querySelector('#directorMessage');if(composerSend&&input&&!input.value)input.value=text;bridge.toast(error.message);}}
-    finally{if(token===epoch){sending=false;drawPanels();}}
+  function redrawComposer(){try{drawPanels();}catch(error){bridge.toast?.(error.message);}}
+  async function drainSubmissions(){
+    if(drainingSubmissions)return;
+    drainingSubmissions=true;
+    while(submissionQueue.length){
+      const request=submissionQueue.shift();
+      const token=epoch,client=agentClient,session=agentState?.id;
+      const current=()=>token===epoch&&session===agentState?.id;
+      sending=true;
+      try{
+        redrawComposer();
+        await save();
+        if(!current()){request.resolve?.();continue;}
+        const content=request.text+(request.files.length?'\n\n附件：\n'+request.files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'');
+        await client.send(content,[...new Set([...request.selectionIds,...request.files.map(f=>f.id)])]);
+        if(!current()){request.resolve?.();continue;}
+        connectionError='';
+        request.resolve?.();
+      }catch(error){
+        if(current()&&!error.stale){
+          connectionError=error.message;
+          const input=host.querySelector('#directorMessage');
+          if(request.composerSend&&!input?.value)input.value=request.text;
+          if(request.composerSend&&request.files.length){
+            const existing=new Set(attachments.map(file=>file.id));
+            attachments=[...request.files.filter(file=>!existing.has(file.id)),...attachments];
+          }
+          bridge.toast(error.message);
+        }
+        request.resolve?.();
+      }finally{
+        if(token===epoch){sending=false;redrawComposer();}
+      }
+    }
+    drainingSubmissions=false;
+    redrawComposer();
   }
-  function dispose(){resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;sending=false;switchingConversation=false;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
+  function submit(text,files=attachments,selectionIds=selected?[selected]:[]){
+    if(uploading||switchingConversation)return Promise.resolve();
+    const composerSend=files===attachments;
+    const request={text:String(text||''),files:[...files],selectionIds:[...selectionIds],composerSend};
+    if(!request.text&&!request.files.length)return Promise.resolve();
+    // Snapshot and release attachments immediately so the next prompt can be
+    // prepared while this one is being added to the conversation.
+    if(composerSend)attachments=[];
+    const promise=new Promise(resolve=>{request.resolve=resolve;submissionQueue.push(request);});
+    void drainSubmissions();
+    return promise;
+  }
+  function dispose(){resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;sending=false;switchingConversation=false;submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }
