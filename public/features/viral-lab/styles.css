@@ -8,6 +8,7 @@
   color: var(--ink);
   overflow-x: clip;
 }
+.vl-home { width: 100%; padding-inline: clamp(22px, 3vw, 48px); }
 .vl-home-heading { display: none; }
 .vl-dialog, .vl-dialog * { box-sizing: border-box; }
 .vl-workbench { --vl-toolbar-offset: 88px; scroll-padding-top: var(--vl-toolbar-offset); }

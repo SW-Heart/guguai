@@ -100,9 +100,9 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   const controller=readFileSync(new URL('../public/features/viral-lab/controller.js',import.meta.url),'utf8');
   const styles=readFileSync(new URL('../public/features/viral-lab/styles.css',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=337\b/);assert.doesNotMatch(html,/app\.js\?v=336\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
-  assert.match(html,/features\/viral-lab\/styles\.css\?v=18/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=19/);
+  assert.match(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=337\b/);assert.doesNotMatch(html,/app\.js\?v=336\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
+  assert.match(html,/features\/viral-lab\/styles\.css\?v=19/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=20/);
   assert.doesNotMatch(html,/features\/viral-lab\/styles\.css\?v=15/);
   assert.doesNotMatch(app,/features\/viral-lab\/controller\.js\?v=15/);
   assert.match(controller,/data-vl="create-motion"/);

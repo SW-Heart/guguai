@@ -185,6 +185,20 @@ import { createApiClient } from './api-client.js?v=3';
   }
 
   const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, models: loadModels, credentials: loadCredentials, invites: loadInvites, announcements: loadAnnouncements, logs: loadLogs };
+  function scrollAdminToTop() {
+    const documentScroller = document.scrollingElement;
+    if (documentScroller) {
+      documentScroller.scrollTop = 0;
+      documentScroller.scrollLeft = 0;
+    } else {
+      window.scrollTo(0, 0);
+    }
+    const content = $('.content');
+    if (content) {
+      content.scrollTop = 0;
+      content.scrollLeft = 0;
+    }
+  }
   function showView(name) {
     if (!loaders[name]) return;
     if (state.view === name) return;
@@ -194,6 +208,7 @@ import { createApiClient } from './api-client.js?v=3';
       if (name === 'invites') resetPager('invites');
       if (name === 'logs') resetPager('log');
     }
+    if (name === 'logs') scrollAdminToTop();
     state.view = name;
     document.querySelectorAll('.nav').forEach(button => {
       const active = button.dataset.view === name;
