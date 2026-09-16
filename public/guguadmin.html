@@ -9,7 +9,7 @@
   <title>GuGu 管理后台</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/favicon.svg?v=2">
-  <link rel="stylesheet" href="/guguadmin.css?v=16">
+  <link rel="stylesheet" href="/guguadmin.css?v=18">
   <link rel="stylesheet" href="/guguadmin-routes.css?v=5">
 </head>
 <body>
@@ -55,7 +55,6 @@
         <div class="sidebar-footer"><span class="status-dot"></span><span>系统运行中</span></div>
       </nav>
       <section class="content" aria-live="polite">
-        <div id="toast" class="toast" role="status" aria-live="polite"></div>
         <section id="view-overview" class="view" aria-labelledby="overviewTitle"></section>
         <section id="view-users" class="view hidden" aria-labelledby="usersTitle"></section>
         <section id="view-orders" class="view hidden" aria-labelledby="ordersTitle"></section>
@@ -76,6 +75,7 @@
       <footer class="admin-dialog-footer"><button id="adminDialogCancel" class="ghost" type="button">取消</button><button id="adminDialogSubmit" class="primary" type="submit">保存</button></footer>
     </form>
   </dialog>
-  <script type="module" src="/guguadmin.js?v=19"></script>
+  <div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
+  <script type="module" src="/guguadmin.js?v=21"></script>
 </body>
 </html>

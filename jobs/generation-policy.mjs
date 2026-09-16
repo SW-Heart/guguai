@@ -18,13 +18,14 @@ export function createGenerationJobPolicy({
   function pollInterval(task) {
     if (task?.type === 'image' && ['duomi', 'tuzi'].includes(task.provider)) return imagePollIntervalMs;
     if (task?.provider === 'oai') return oaiPollIntervalMs;
-    if (task?.provider === 'autodl') return autodlPollIntervalMs;
+    if (['autodl', 'autodl-motion'].includes(task?.provider)) return autodlPollIntervalMs;
     if (task?.provider === 'ttapi') return ttapiPollIntervalMs;
     if (task?.provider === 'cntcn' || task?.routeId) return task?.routeId ? 10_000 : cntcnPollIntervalMs;
     if (task?.provider === 'duomi') return duomiPollIntervalMs;
     return defaultPollIntervalMs;
   }
   function nextRunAt(task, kind, at = Date.now()) {
+    if (kind === 'generation' && task?.status === 'queued' && Number(task.generationRetryCount) > 0) return at + 5_000;
     if (kind === 'reconcile_submission') return providerTaskIdDeadline(task);
     if (kind === 'archive') {
       const failures = Math.max(0, Number(task?.archiveFailureCount) || 0);

@@ -36,6 +36,7 @@ import { createCntcnProvider } from './providers/cntcn.mjs';
 import { createRoutedProvider } from './providers/routed.mjs';
 import { createAutodlProvider } from './providers/autodl.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
+import { generationAttemptContext, prepareGenerationRetry } from './services/generation-retry.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
@@ -97,6 +98,8 @@ const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${config
 const autodlBase = (process.env.AUTODL_API_BASE || 'https://autodl.art').replace(/\/$/, '');
 const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_15S_WORKFLOW_ID || process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
 const autodlConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlWorkflowId);
+const autodlMotionWorkflowId = process.env.AUTODL_MOTION_RETARGETING_WORKFLOW_ID || 'wan2.2animate-v4-motion_retargeting';
+const autodlMotionConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlMotionWorkflowId);
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
@@ -137,7 +140,7 @@ const generationJobPolicy = createGenerationJobPolicy({
   recoverySweepMs: generationRecoverySweepMs,
   archiveRescheduleMs,
   providerTaskIdDeadline: task => {
-    const anchor = Date.parse(task?.createdAt || task?.submissionUncertainAt || '');
+    const anchor = Date.parse(task?.attemptStartedAt || task?.createdAt || task?.submissionUncertainAt || '');
     return (Number.isFinite(anchor) ? anchor : Date.now()) + providerTaskIdTimeoutMs;
   },
 });
@@ -309,7 +312,7 @@ function videoPollRemainingMs(startedAt, maxDurationMs) {
   return Math.max(0, maxDurationMs - (Date.now() - startedAt));
 }
 function videoPollStartedAt(task, fallback = Date.now()) {
-  for (const value of [task?.submittedAt, task?.createdAt]) {
+  for (const value of [task?.submittedAt, task?.attemptStartedAt, task?.createdAt]) {
     const persisted = Date.parse(value || '');
     if (Number.isFinite(persisted)) return persisted;
   }
@@ -783,6 +786,33 @@ const autodlProvider = createAutodlProvider({
   maxPollDurationMs: autodlMaxPollDurationMs,
   maxPolls: autodlMaxPolls,
 });
+function buildAutodlMotionPayload(_task, refs) {
+  const groups = refs && !Array.isArray(refs) ? refs : { images: [], videos: [] };
+  return {
+    seed: _task.seed === undefined || _task.seed === null || _task.seed === '' ? undefined : Number(_task.seed),
+    ref_image: groups.images?.[0] || '',
+    ref_video: groups.videos?.[0] || '',
+    resolution: _task.quality || '464*832px',
+  };
+}
+const autodlMotionProvider = createAutodlProvider({
+  baseUrl: autodlBase,
+  workflowId: autodlMotionWorkflowId,
+  apiKey: process.env.AUTODL_COMFYUI_KEY,
+  ...providerTransport,
+  sleep,
+  notifyVideoProgress: providerTransport.notifyVideoProgress,
+  upstreamRequestErrorDetail: providerTransport.upstreamRequestErrorDetail,
+  isDefinitiveSubmitRejection: providerTransport.isDefinitiveSubmitRejection,
+  errorMessage,
+  videoPollTimeoutError,
+  buildPayload: buildAutodlMotionPayload,
+  providerName: 'autodl-motion',
+  pollIntervalMs: autodlPollIntervalMs,
+  requestTimeoutMs: autodlRequestTimeoutMs,
+  maxPollDurationMs: autodlMaxPollDurationMs,
+  maxPolls: autodlMaxPolls,
+});
 const oaiProvider = createOaiProvider({
   baseUrl: oaiBase,
   keys: {
@@ -886,6 +916,12 @@ const videoProviderAdapters = createProviderAdapterRegistry({
     validate: task => { validVideoTask(task); if (!autodlConfigured) throw new Error('AutoDL Minimax H3 视频服务尚未配置'); return task; },
     submit: (task, refs, hooks) => autodlProvider.createVideo(task, refs, hooks),
     poll: (task, hooks, _startedAt) => autodlProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
+    lookup: persistedProviderTask,
+  },
+  'autodl-motion': {
+    validate: task => { validVideoTask(task); if (!autodlMotionConfigured) throw new Error('AutoDL 动作迁移服务尚未配置'); return task; },
+    submit: (task, refs, hooks) => autodlMotionProvider.createVideo(task, refs, hooks),
+    poll: (task, hooks, _startedAt) => autodlMotionProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
     lookup: persistedProviderTask,
   },
   oai: {
@@ -1403,7 +1439,7 @@ async function resolveImageRefs(userId, ids, task = {}) {
   });
 }
 async function resolveRefs(userId, ids, task = {}) {
-  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
+  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl' || task.provider === 'autodl-motion';
   const scope = { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId };
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   // Image references use the dedicated reference bucket; video and audio
@@ -1881,6 +1917,12 @@ function dispatchGenerationFailureNotification(userId, task, error) {
 }
 async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
+  if (prepareGenerationRetry(task, error)) {
+    clearProviderTaskIdTimeout(task.id);
+    await saveGenerationWithRetry(userId, task, 'generation-retry-scheduled');
+    console.info('[generation] retry scheduled', { generationId:task.id, retryCount:task.generationRetryCount, error:error.message });
+    return;
+  }
   task.status = 'failed';
   task.error = error.message;
   const includedOutput = isMidjourneyGridChild(task);
@@ -1909,7 +1951,7 @@ async function failGeneration(userId, task, error) {
   }
 }
 function providerTaskIdDeadline(task) {
-  const anchor = Date.parse(task.createdAt || task.submissionUncertainAt || '');
+  const anchor = Date.parse(task.attemptStartedAt || task.createdAt || task.submissionUncertainAt || '');
   return (Number.isFinite(anchor) ? anchor : Date.now()) + providerTaskIdTimeoutMs;
 }
 function awaitingProviderTaskId(task) {
@@ -1958,6 +2000,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
     try {
+      task.attemptStartedAt = now();
       generationLifecycle.markRunning(task);
       await saveGenerationWithRetry(userId, task, 'generation-running');
       const refs = task.type === 'image'
@@ -1973,7 +2016,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
         ? ttapiPersistenceHooks(userId, task)
         : task.provider === 'cntcn'
           ? cntcnPersistenceHooks(userId, task)
-          : task.provider === 'autodl'
+          : ['autodl', 'autodl-motion'].includes(task.provider)
             ? autodlPersistenceHooks(userId, task)
             : {};
       hooks.deferPolling = deferPolling;
@@ -1987,7 +2030,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       if (error.submissionUncertain) {
         generationLifecycle.markSubmissionUncertain(task, error);
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
+      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl', 'autodl-motion'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
         generationLifecycle.markProviderTaskPaused(task, error);
         console.error('[video] async provider task paused without refund', { generationId: task.id, provider: task.provider, providerTaskId: task.providerTaskId, message: error.message });
       } else {
@@ -2081,6 +2124,14 @@ function resumeAutodlGeneration(userId, task, options = {}) {
     logContext: () => ({ providerTaskId:task.providerTaskId }),
   });
 }
+function resumeAutodlMotionGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'autodl-motion-recovery-final',
+    poll: ({ pollOnce }) => autodlMotionProvider.pollVideo(task.providerTaskId, autodlPersistenceHooks(userId, task), { startedAt: videoPollStartedAt(task), pollOnce }),
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
+}
 function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
@@ -2153,6 +2204,7 @@ function processGenerationTask(userId, task, kind = 'generation') {
   if (task.provider === 'ttapi' && task.providerTaskId) return resumeTtapiGeneration(userId, task, { pollOnce });
   if (task.provider === 'cntcn' && task.providerTaskId) return resumeCntcnGeneration(userId, task, { pollOnce });
   if (task.provider === 'autodl' && task.providerTaskId) return resumeAutodlGeneration(userId, task, { pollOnce });
+  if (task.provider === 'autodl-motion' && task.providerTaskId) return resumeAutodlMotionGeneration(userId, task, { pollOnce });
   if (!task.providerTaskId) return reconcileMissingProviderTaskId(userId, task);
   return failUnsupportedGenerationRecovery(userId, task);
 }
@@ -2178,7 +2230,7 @@ async function runGenerationJob(job) {
       if (!(job.kind === 'refund_reconcile'
         ? task.status !== 'failed' || task.creditStatus !== 'refund_failed'
         : (['completed', 'failed'].includes(task.status) && !task.archivePending))) {
-        await processGenerationTask(job.userId, task, job.kind);
+        await generationAttemptContext.run(task, () => processGenerationTask(job.userId, task, job.kind));
       }
     }
   } catch (error) {
@@ -2557,6 +2609,7 @@ const generationRoute = createGenerationRouteHandler({
     ttapi:ttapiConfigured,
     cntcn:cntcnConfigured,
     autodl:autodlConfigured,
+    autodlMotion:autodlMotionConfigured,
     oai:oaiConfigured,
     oaiVeo:oaiVeoConfigured,
     oaiMinimax:oaiMinimaxConfigured,
@@ -2603,7 +2656,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,walletOf,
 });
 
-export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, buildAutodlMotionPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

@@ -179,7 +179,7 @@ export function createDirectorWorkspace(host, bridge) {
       const task=bridge.task(n.taskId),media=bridge.media(n.taskId);
       const status=n.item.placeholder?n.item.status:task?.status||'queued';
       const state=media?'completed':status==='completed'?'saving':status;
-      const text=({waiting_approval:'等待确认',queued:'排队中',running:'正在创作',processing:'正在创作',saving:'正在保存到本地',failed:'生成失败',cancelled:'已取消'})[state]||'正在准备';
+      const text=({waiting_approval:'等待确认',queued:'排队中',running:'正在创作',processing:'正在创作',saving:'正在准备文件',failed:'生成失败',cancelled:'已取消'})[state]||'正在准备';
       const progress=Number(task?.progress);const percentage=Number.isFinite(progress)&&progress>0?Math.min(99,Math.round(progress)):null;
       return `<div class="dw-generation-frame" data-state="${escape(state)}" aria-label="${escape(n.title)}">${media?`<${media.kind==='video'?'video controls playsinline preload="metadata"':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''}>${media.kind==='video'?'</video>':''}`:`<div class="dw-frame-placeholder"><span class="dw-frame-pulse" aria-hidden="true"></span><b>${text}</b>${percentage?`<span>${percentage}%</span><progress max="100" value="${percentage}"></progress>`:''}</div>`}<span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     }
@@ -431,7 +431,7 @@ export function createDirectorWorkspace(host, bridge) {
     const approvalSignature=approval?JSON.stringify([approval.id,approval.title,approval.modelId,approval.quantity,approval.credits,approval.prompt]):'';
     if(plan.dataset.approvalSignature!==approvalSignature){
       const promptExpanded=plan.querySelector('details')?.open;
-      plan.innerHTML=approval?`<div class="dw-agent-approval"><strong>${escape(approval.title)}</strong><p>${escape(approval.modelId)} · ${approval.quantity} 个 · ${approval.credits} 积分</p><details><summary>查看创作描述</summary><p>${escape(approval.prompt)}</p></details><div><button data-agent-decline>取消</button><button data-agent-approve class="dw-primary">确认生成</button></div></div>`:'';
+      plan.innerHTML=approval?`<div class="dw-agent-approval"><strong>${escape(approval.title)}</strong><p>${approval.quantity} 个 · ${approval.credits} 积分</p><details><summary>查看创作描述</summary><p>${escape(approval.prompt)}</p></details><div><button data-agent-decline>取消</button><button data-agent-approve class="dw-primary">确认生成</button></div></div>`:'';
       plan.dataset.approvalSignature=approvalSignature;
       if(promptExpanded)plan.querySelector('details')?.setAttribute('open','');
       plan.querySelector('[data-agent-approve]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,true)));
@@ -440,7 +440,7 @@ export function createDirectorWorkspace(host, bridge) {
     const sendButton=root.querySelector('[data-director-send]');
     if(sendButton){sendButton.disabled=uploading||switchingConversation||!agentState||!agentConfig?.configured;sendButton.textContent=busy?'补充要求':sending?'发送中…':'发送';sendButton.setAttribute('aria-busy',String(sending));}
     const composer=root.querySelector('#directorMessage');
-    if(composer)composer.placeholder=busy?'任务进行中也可以继续补充创作要求':'想聊什么，或希望我帮你创作什么？';
+    if(composer)composer.placeholder=busy?'生成进行中也可以继续补充创作要求':'想聊什么，或希望我帮你创作什么？';
     if(stickToBottom)messages.scrollTop=messages.scrollHeight;
     if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
     syncCanvas();
@@ -700,7 +700,7 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('[data-director-delegate]').onclick=()=>void agentAction(()=>agentClient.resume());
     host.querySelector('[data-director-stop]').onclick=()=>void agentAction(()=>agentClient.interrupt());
     const token=epoch;
-    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId,onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{if(token!==epoch)return;agentState=state;agentConfig=config;connectionError=config.configured?'':'对话服务尚未配置';drawPanels();},onError:error=>{if(token===epoch&&!error.stale){connectionError=error.message;drawPanels();}}});
+    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId,onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{if(token!==epoch)return;agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';drawPanels();},onError:error=>{if(token===epoch&&!error.stale){connectionError=error.message;drawPanels();}}});
     void agentClient.start().catch(error=>{if(token===epoch){connectionError=error.message;drawPanels();}});
     drawPanels();
   }

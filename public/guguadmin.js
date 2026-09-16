@@ -43,7 +43,23 @@ import { createApiClient } from './api-client.js?v=3';
   const loadingMarkup = text => `<div class="loading-state" role="status"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
   const emptyMarkup = (title, detail = '') => `<div class="empty"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ''}</div>`;
   const errorMarkup = (message, retry = '') => `<div class="error-state"><span>${esc(message || '请求失败，请稍后重试。')}</span>${retry ? `<button class="small-button" data-retry="${esc(retry)}" type="button">重新加载</button>` : ''}</div>`;
-  const toast = (message, kind = '') => { const el = $('#toast'); el.textContent = message; el.className = `toast show ${kind}`; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.className = 'toast'; }, 2800); };
+  const toast = (message, kind = '') => {
+    const el = $('#toast');
+    clearTimeout(el.timer);
+    clearTimeout(el.closeTimer);
+    el.textContent = message;
+    el.className = `toast show ${kind}`;
+    if (typeof el.showPopover === 'function') {
+      if (el.matches(':popover-open')) el.hidePopover();
+      el.showPopover();
+    }
+    el.timer = setTimeout(() => {
+      el.classList.remove('show');
+      el.closeTimer = setTimeout(() => {
+        if (el.matches(':popover-open')) el.hidePopover();
+      }, 180);
+    }, 2800);
+  };
 
   function setButtonBusy(button, busy, label = '处理中…') {
     if (!button) return;

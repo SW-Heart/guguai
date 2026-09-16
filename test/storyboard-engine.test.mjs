@@ -52,7 +52,7 @@ test('first-last compiler lets images own appearance instead of dumping the full
   const resources = [{type:'character',name:'女侠',description:'闭关三百年',bible:{appearance:'杏眼长发',costume:'白色仙侠长袍',stateNotes:'发簪固定'}}];
   const prompt = buildShotVideoPrompt({project:{workflowVersion:3},shot,scene:plan.scenes[0],resources});
   assert.match(prompt, /首帧为唯一动作起点/);
-  assert.match(prompt, /参考图锁定：女侠/);
+  assert.match(prompt, /参考图片：女侠/);
   assert.doesNotMatch(prompt, /杏眼长发/);
   assert.doesNotMatch(prompt, /白色仙侠长袍/);
   assert.doesNotMatch(prompt, /发簪固定/);

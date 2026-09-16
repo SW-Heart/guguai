@@ -9,7 +9,7 @@ test('legacy video prompt is rebuilt from storyboard facts and ignores unsafe hi
   const resources = [{ type:'character', name:'修仙女侠', description:'闭关三百年的白衣女侠', bible:{ appearance:'杏眼长发', costume:'白色仙侠长袍', stateNotes:'发簪固定' } }];
   const prompt = buildShotVideoPrompt({ project, shot, scene, resources });
   for (const expected of ['盘坐持瓜','舀起一勺西瓜','抬头听见轰鸣','缓慢推进','风声与远处引擎声','修仙女侠','禁止出现其他人物']) assert.match(prompt, new RegExp(expected));
-  assert.match(prompt, /参考图只锁定/);
+  assert.match(prompt, /参考图片用于保持/);
   assert.match(prompt, /16:9/);
   assert.doesNotMatch(prompt, /白衣女侠位于画面中央/);
   assert.doesNotMatch(prompt, /战斗机将从左侧闯入/);

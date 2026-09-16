@@ -102,7 +102,7 @@ export function createTuziProvider({
             if (!signal.aborted) continue;
           }
           // A response may have been lost after acceptance. Never replay it.
-          if (!safeToRetry && (!error.upstreamStatus || error.upstreamStatus >= 500 || error.upstreamStatus === 408)) {
+          if (!safeToRetry && (!error.upstreamStatus || [408, 409, 425].includes(error.upstreamStatus))) {
             throw Object.assign(new Error(`图片提交结果待确认：${upstreamRequestErrorDetail(error)}`, { cause:error }), {
               provider:'tuzi', submissionUncertain:true,
             });

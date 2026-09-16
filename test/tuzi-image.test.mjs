@@ -89,7 +89,7 @@ test('Tuzi never replays uncertain submissions or explicit HTTP rejections', asy
     let calls = 0;
     const tuzi = provider(async () => { calls++; throw failure; });
     await assert.rejects(tuzi.createImage({ prompt:'test' }, []), error => {
-      assert.equal(Boolean(error.submissionUncertain), ![400, 429].includes(failure.upstreamStatus));
+      assert.equal(Boolean(error.submissionUncertain), ![400, 429, 502].includes(failure.upstreamStatus));
       return true;
     });
     assert.equal(calls, 1);

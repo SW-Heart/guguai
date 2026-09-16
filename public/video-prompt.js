@@ -1,7 +1,7 @@
 const clean = value => String(value || '').trim();
 const clip = (value, limit) => Array.from(clean(value)).slice(0, limit).join('');
 
-const typeName = type => ({ character:'角色', location:'场景', prop:'物品' }[type] || '资源');
+const typeName = type => ({ character:'角色', location:'场景', prop:'物品' }[type] || '素材');
 
 function normalizeVisualDetail(value, aspectRatio) {
   const ratio = clean(aspectRatio) || '9:16';
@@ -142,8 +142,8 @@ export function buildShotVideoPrompt({ project, shot, scene, resources = [] }) {
   const dialogue = dialogueLines(scene, compiledShot);
   const visualDirection = safeVisualDirection(compiledShot, project?.workflowVersion);
   const modeLine = {
-    TEXT:'文本控制；按时间轴执行，不得自由改编。',
-    REFERENCE:'参考图只锁定人物、场景、物品身份；动作严格按时间轴执行。',
+    TEXT:'仅根据镜头描述生成画面，按时间顺序呈现，不要自行改编。',
+    REFERENCE:'参考图片用于保持人物、场景和物品外观一致；动作按时间顺序呈现。',
     'FIRST&LAST':'首帧为唯一动作起点，尾帧为唯一动作终点；只生成两帧之间的连续运动。',
   }[mode];
   const timelineLines = timeline.map(item =>
@@ -158,11 +158,11 @@ export function buildShotVideoPrompt({ project, shot, scene, resources = [] }) {
     `尾帧 ${duration.toFixed(1)}s：${clean(compiledShot?.endState)||'动作完全停止并保持结束姿态'}；最后定格，不追加动作。`,
     dialogue.length ? `对白（逐字，不增删）：\n${dialogue.join('\n')}` : '',
     visualDirection ? `必要画面约束：${normalizeVisualDetail(visualDirection,compiledShot?.aspectRatio)}` : '',
-    sceneLine ? `环境锁定：${sceneLine}` : '',
-    resources.length ? (mode === 'TEXT' ? `可见对象：\n${resources.map(resource=>`- ${compactResource(resource,mode)}`).join('\n')}` : `参考图锁定：${resources.map(resource=>clean(resource.name)).filter(Boolean).join('、')}；仅锁定外观身份，不引用其他场次状态。`) : '',
+    sceneLine ? `环境：${sceneLine}` : '',
+    resources.length ? (mode === 'TEXT' ? `可见对象：\n${resources.map(resource=>`- ${compactResource(resource,mode)}`).join('\n')}` : `参考图片：${resources.map(resource=>clean(resource.name)).filter(Boolean).join('、')}；仅保持外观身份，不引用其他场次状态。`) : '',
     clean(compiledShot?.continuityNotes) ? `本镜连续性：${clean(compiledShot.continuityNotes)}` : '',
-    clean(compiledShot?.sound) ? `同步声音：${clean(compiledShot.sound)}` : '',
-    Array.isArray(shot?.assetMentions)&&shot.assetMentions.length ? `素材引用已替换为模型输入占位符：${shot.assetMentions.map((item,index)=>`${mentionPrefix(item.kind)}${(shot.assetMentions.slice(0,index+1).filter(other=>other.kind===item.kind).length)}（${String(item.label||'').replace(/^@/,'')}）`).join('、')}` : '',
+    clean(compiledShot?.sound) ? `声音：${clean(compiledShot.sound)}` : '',
+    Array.isArray(shot?.assetMentions)&&shot.assetMentions.length ? `参考素材：${shot.assetMentions.map(item=>String(item.label||'').replace(/^@/,'')).filter(Boolean).join('、')}` : '',
     `禁止：中途切镜、转场、蒙太奇、插入空镜或反应镜头；禁止新增动作和角色；禁止改写台词；${clean(compiledShot?.negativePrompt)||'禁止人物变脸、服装变化、道具消失、轴线跳变'}。`,
   ].filter(Boolean);
   return clip(sections.join('\n'), 4000);

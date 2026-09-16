@@ -9,11 +9,11 @@ export function createGenerationPresentation({ escapeHtml } = {}) {
 
   function videoProgressLabel(task) {
     return ({
-      submitting: '正在提交视频',
+      submitting: '正在准备视频',
       provider_processing: '正在生成视频',
       polling_retry: '正在重试获取进度',
       archiving: '正在整理成品',
-      awaiting_reconciliation: '正在确认任务',
+      awaiting_reconciliation: '正在确认生成',
     })[task.progressStage] || '正在生成视频';
   }
 
@@ -26,7 +26,7 @@ export function createGenerationPresentation({ escapeHtml } = {}) {
 
   function generationPreparationMarkup(task) {
     if (!task?.localPreparation && !task?.awaitingReferences) return '';
-    const label = ({ preparing_references: '正在准备素材…', confirming_price: '正在确认价格…', submitting: '正在提交生成…' })[task.progressStage] || '正在准备生成…';
+    const label = ({ preparing_references: '正在准备素材…', confirming_price: '正在确认价格…', submitting: '正在准备生成…' })[task.progressStage] || '正在准备生成…';
     return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
   }
 

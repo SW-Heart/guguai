@@ -1,19 +1,19 @@
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
-import { replaceAssetMentions } from './video-prompt.js?v=4';
+import { replaceAssetMentions } from './video-prompt.js?v=5';
 import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload } from './desktop-media-sync.js?v=14';
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=3';
-import { createGenerationPresentation } from './features/generation/presentation.js?v=3';
+import { createGenerationPresentation } from './features/generation/presentation.js?v=4';
 import { createCreditPresentation } from './features/credits/presentation.js?v=3';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=6';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=9';
-import { createSupportLogController } from './features/support/controller.js?v=1';
+import { createMediaController } from './features/media/controller.js?v=10';
+import { createSupportLogController } from './features/support/controller.js?v=2';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -101,7 +101,7 @@ const mediaController = createMediaController({
   onError:(error, context) => {
     if (context?.action === 'show-folder') toast(`打开失败：${error.message}`);
     if (context?.action === 'copy-asset') toast(`复制失败：${error.message}`);
-    if (context?.action === 'load-files') toast(`本地文件库加载失败：${error.message}`);
+    if (context?.action === 'load-files') toast(`素材库加载失败：${error.message}`);
   },
   removeDramaAssemblyAssets:(assetIds, projectId) => {
     if (dramaController) return dramaController.removeAssemblyVideosForAssets?.(assetIds, projectId);
@@ -122,12 +122,12 @@ async function confirmGenerationDeletion(task, { title = '确认删除作品' } 
   const failed = task?.status === 'failed';
   if (!await confirmDelete({
     title,
-    message: failed ? '失败作品删除后无法恢复。' : '作品、关联云端文件、本机副本及短剧引用都会删除，且无法恢复。',
+    message: failed ? '失败作品删除后无法恢复。' : '作品、关联文件和短剧引用都会删除，且无法恢复。',
   })) return false;
   if (failed) return true;
   return confirmDelete({
     title:'再次确认永久删除',
-    message:'这是已生成的内容。确认继续删除作品、云端文件、本机副本及所有短剧引用吗？',
+    message:'这是已生成的内容。确认继续删除作品、关联文件和所有短剧引用吗？',
   });
 }
 async function confirmFileDeletion(file) {
@@ -227,13 +227,13 @@ function mergeTasksIntoLoadedHistory(tasks = []) {
 function desktopSyncMarkup(task) {
   const delivery = mediaController.downloadState(task?.assetId);
   if (delivery?.status === 'failed') return `<div class="skeleton-progress" role="status"><span>${esc(delivery.error || '下载失败')}</span><button type="button" class="retry-local-download" data-asset-id="${esc(task.assetId)}">重试下载</button></div>`;
-  const label = delivery?.status === 'retrying' ? '下载暂时失败，等待重试…' : '正在保存到本地…';
+  const label = delivery?.status === 'retrying' ? '下载暂时失败，等待重试…' : '正在准备文件…';
   return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="${label}"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>${label}</span></div></div>`;
 }
 function requireDesktopLocalAsset(file) {
-  if (file?.localStatus === 'missing') { toast('本地文件不存在，请重新选择'); return false; }
+  if (file?.localStatus === 'missing') { toast('文件不存在，请重新选择'); return false; }
   if (!isDesktopAssetSyncing(file)) return true;
-  toast('素材正在保存到本地，请稍后再预览');
+  toast('素材正在准备，请稍后再预览');
   return false;
 }
 // Local video cards only load metadata near the viewport. Creating hundreds of
@@ -615,13 +615,30 @@ const taskFailure = task => {
     suggestion: String(task.failure.suggestion || '请调整内容后重试。'),
     action: String(task.failure.action || 'edit_input'),
   };
-  return task?.status === 'failed' ? { code:'UNKNOWN', message:'生成失败，服务未返回具体原因', suggestion:'请调整提示词或参考图片后重试；若持续失败，请联系支持。', action:'edit_input' } : null;
+  return task?.status === 'failed' ? { code:'UNKNOWN', message:'生成失败，服务未返回具体原因', suggestion:'请调整创作描述或参考图片后重试；若持续失败，请联系支持。', action:'edit_input' } : null;
 };
 const taskErrorText = task => { const failure = taskFailure(task); return failure ? `${failure.message}\n建议：${failure.suggestion}` : ''; };
 let toastTimer;
+let toastCloseTimer;
 let alipayPaymentPollTimer = 0;
 let creditPopoverCloseTimer = 0;
-function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.add('show'); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 3200); }
+function toast(message) {
+  const element = $('#toast');
+  clearTimeout(toastTimer);
+  clearTimeout(toastCloseTimer);
+  element.textContent = message;
+  element.classList.add('show');
+  if (typeof element.showPopover === 'function') {
+    if (element.matches(':popover-open')) element.hidePopover();
+    element.showPopover();
+  }
+  toastTimer = setTimeout(() => {
+    element.classList.remove('show');
+    toastCloseTimer = setTimeout(() => {
+      if (element.matches(':popover-open')) element.hidePopover();
+    }, 180);
+  }, 3200);
+}
 function emptyState(title, body, action='') { return `<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>${esc(title)}</h3><p>${esc(body)}</p>${action}</div>`; }
 function generationLoadingSkeleton() {
   const cards = Array.from({ length:8 }, () => '<article class="task-card loading-skeleton-card"><div class="card-visual"><div class="card-placeholder"><div class="skeleton-frame"><i></i><i></i><i></i></div><div class="skeleton-card-lines"><i></i><i></i></div></div></div></article>').join('');
@@ -1360,9 +1377,9 @@ async function initDesktopBridge() {
       button.onclick = async () => {
         try {
           const opened = await bridge.workspace.open();
-          if (!opened) toast('本地工作区尚未初始化');
+          if (!opened) toast('工作区尚未准备好');
         } catch (error) {
-          toast(`打开本地工作区失败：${error.message}`);
+          toast(`打开工作区失败：${error.message}`);
         }
       };
     });
@@ -1422,7 +1439,7 @@ async function initDesktopBridge() {
     }
     return true;
   } catch (error) {
-    buttons.forEach(button => { button.title = `本地工作区不可用：${error.message}`; });
+    buttons.forEach(button => { button.title = `工作区不可用：${error.message}`; });
     return false;
   }
 }
@@ -1520,7 +1537,7 @@ async function enterApp(user) {
   const isStartupCurrent = () => accountLifecycle.isCurrent(startupRequest);
   state.alipayOrderNo = sessionStorage.getItem(alipayOrderStorageKey(user)) || '';
   state.initialSyncReady = false;
-  showBoot('正在加载工作区', '正在读取本地素材与生成记录，请稍候。', { progress:8, progressLabel:'准备本地工作区' });
+  showBoot('正在加载工作区', '正在读取素材与生成记录，请稍候。', { progress:8, progressLabel:'准备工作区' });
   updateAccountIdentity(user);
   setCreditBalance(user.credits);
 
@@ -1542,7 +1559,7 @@ async function enterApp(user) {
     { label:'读取创作配置', run:loadConfig },
     { label:'读取积分信息', run:loadCredits },
     { label:'读取消息通知', run:loadNotifications },
-    { label:'读取本地文件', run:loadFiles },
+    { label:'读取素材', run:loadFiles },
     { label:'读取生成记录', run:loadTasks },
   ];
   let completedLoadSteps = 0;
@@ -1693,7 +1710,7 @@ let viralController = null;
 let viralControllerPromise = null;
 function ensureViralController() {
   if (viralController) return Promise.resolve(viralController);
-  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=13').then(({createViralLab}) => {
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=19').then(({createViralLab}) => {
     viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
     return viralController;
   }).catch(error => { viralControllerPromise = null; throw error; });
@@ -1705,7 +1722,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=138').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=141').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
       return dramaController;
     });
@@ -1912,7 +1929,7 @@ function renderDramaAnalysis(result) {
   const usage = result.usage || state.dramaProject?.analysisUsage || {};
   const scenes = analysis.scenes || [];
   const labels = { characters:'角色', locations:'场景', props:'道具', costumes:'服装' };
-  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="active">02 分镜</span><span>03 关键帧</span><span>04 视频</span></nav><header class="analysis-title"><span>STRUCTURE REPORT</span><h2>${esc(analysis.title)}</h2><p>${esc(analysis.logline || '尚未生成故事梗概')}</p><div class="analysis-usage"><span>输入 ${Number(usage.inputTokens || 0).toLocaleString('zh-CN')} Token</span><span>输出 ${Number(usage.outputTokens || 0).toLocaleString('zh-CN')} Token</span><span>实扣 ${creditText(usage.chargedCredits)} 积分</span></div></header><section class="analysis-section"><header><h3>场次表</h3><span>${scenes.length} SCENES</span></header><div class="scene-ledger">${scenes.length ? scenes.map((scene, index) => `<article class="scene-row"><span class="scene-number">${String(scene.sceneNumber ?? index + 1).padStart(2,'0')}</span><div class="scene-copy"><b>${esc(scene.heading || scene.location || `场次 ${index + 1}`)}</b><p>${esc(scene.summary || scene.dramaticFunction || '待补充场次说明')}</p></div><span class="scene-time">${esc(scene.timeOfDay || '')}</span></article>`).join('') : '<div class="analysis-error">没有识别到场次，请补充场次标题后重新分析。</div>'}</div></section><section class="analysis-section"><header><h3>资产清单</h3><span>FIRST PASS</span></header><div class="asset-groups">${Object.entries(labels).map(([key,label]) => { const items = analysis.assets?.[key] || []; return `<div class="asset-group"><b>${label} · ${items.length}</b><div class="asset-tags">${items.length ? items.map(item => `<span title="${esc(typeof item === 'object' ? item.description || '' : '')}">${esc(assetName(item))}</span>`).join('') : '<span>未识别</span>'}</div></div>`; }).join('')}</div></section><section class="workflow-next"><div><span>NEXT / DIRECTOR BOARD</span><b>分析已保存，下一步生成导演分镜</b><p>将每个场次拆成固定 6 秒镜头，并生成关键帧与视频提示词。分镜按实际 Token 结算。</p></div><button id="generateStoryboardButton" class="gradient-button" type="button">生成导演分镜</button></section>`;
+  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="active">02 分镜</span><span>03 关键帧</span><span>04 视频</span></nav><header class="analysis-title"><span>剧本分析</span><h2>${esc(analysis.title)}</h2><p>${esc(analysis.logline || '尚未生成故事梗概')}</p><div class="analysis-usage"><span>输入 ${Number(usage.inputTokens || 0).toLocaleString('zh-CN')}</span><span>输出 ${Number(usage.outputTokens || 0).toLocaleString('zh-CN')}</span><span>实扣 ${creditText(usage.chargedCredits)} 积分</span></div></header><section class="analysis-section"><header><h3>场次表</h3><span>${scenes.length} 场次</span></header><div class="scene-ledger">${scenes.length ? scenes.map((scene, index) => `<article class="scene-row"><span class="scene-number">${String(scene.sceneNumber ?? index + 1).padStart(2,'0')}</span><div class="scene-copy"><b>${esc(scene.heading || scene.location || `场次 ${index + 1}`)}</b><p>${esc(scene.summary || scene.dramaticFunction || '待补充场次说明')}</p></div><span class="scene-time">${esc(scene.timeOfDay || '')}</span></article>`).join('') : '<div class="analysis-error">没有识别到场次，请补充场次标题后重新分析。</div>'}</div></section><section class="analysis-section"><header><h3>素材清单</h3><span>初步结果</span></header><div class="asset-groups">${Object.entries(labels).map(([key,label]) => { const items = analysis.assets?.[key] || []; return `<div class="asset-group"><b>${label} · ${items.length}</b><div class="asset-tags">${items.length ? items.map(item => `<span title="${esc(typeof item === 'object' ? item.description || '' : '')}">${esc(assetName(item))}</span>`).join('') : '<span>未识别</span>'}</div></div>`; }).join('')}</div></section><section class="workflow-next"><div><span>下一步</span><b>分析已保存，下一步生成导演分镜</b><p>将每个场次拆成固定 6 秒镜头，并生成关键帧与视频描述。费用按实际用量计算。</p></div><button id="generateStoryboardButton" class="gradient-button" type="button">生成导演分镜</button></section>`;
   $('#generateStoryboardButton').onclick = generateStoryboard;
 }
 
@@ -1929,12 +1946,12 @@ async function generateStoryboard() {
 const shotTask = (shot, kind) => shot ? state.tasks.find(task => task.id === shot[kind === 'keyframe' ? 'keyframeTaskId' : 'videoTaskId']) : null;
 const shotAsset = task => task?.assetId ? state.files.find(file => file.id === task.assetId) : null;
 function shotAction(shot, keyframeTask, videoTask) {
-  if (!keyframeTask) return `<button class="shot-generate" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">生成关键帧 <small>预扣 ${state.pricing.image} 积分</small></button>`;
+  if (!keyframeTask) return `<button class="shot-generate" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">生成关键帧 <small>预计消耗 ${state.pricing.image} 积分</small></button>`;
   if (['queued','running'].includes(keyframeTask.status)) return `<span class="shot-progress"><i></i>关键帧${statusText(keyframeTask.status)}</span>`;
-  if (keyframeTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">重试关键帧 <small>预扣 ${state.pricing.image} 积分</small></button>`;
-  if (!videoTask) return `<button class="shot-generate video" data-shot-action="video" data-shot-id="${shot.id}" type="button">生成 6 秒视频 <small>预扣 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
+  if (keyframeTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">重试关键帧 <small>预计消耗 ${state.pricing.image} 积分</small></button>`;
+  if (!videoTask) return `<button class="shot-generate video" data-shot-action="video" data-shot-id="${shot.id}" type="button">生成 6 秒视频 <small>预计消耗 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
   if (['queued','running'].includes(videoTask.status)) return `<span class="shot-progress"><i></i>视频${statusText(videoTask.status)}</span>`;
-  if (videoTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="video" data-shot-id="${shot.id}" type="button">重试视频 <small>预扣 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
+  if (videoTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="video" data-shot-id="${shot.id}" type="button">重试视频 <small>预计消耗 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
   return '<span class="shot-complete">✓ 镜头视频完成</span>';
 }
 function renderStoryboard(project=state.dramaProject) {
@@ -1942,7 +1959,7 @@ function renderStoryboard(project=state.dramaProject) {
   state.dramaProject = project;
   const shots = project.storyboard.shots || [];
   const completedVideos = shots.filter(shot => shotTask(shot, 'video')?.status === 'completed').length;
-  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="done">02 分镜</span><span class="active">03 关键帧</span><span class="${completedVideos === shots.length && shots.length ? 'done' : ''}">04 视频</span></nav><header class="storyboard-title"><div><span>DIRECTOR BOARD / ${shots.length} SHOTS</span><h2>${esc(project.title)}</h2><p>每个镜头固定 6 秒。先生成关键帧，确认视觉后再单独预扣视频费用。</p></div><strong>${completedVideos}<small> / ${shots.length} 完片</small></strong></header><div class="shot-list">${shots.map((shot,index) => { const keyframeTask = shotTask(shot,'keyframe'); const videoTask = shotTask(shot,'video'); const keyframe = shotAsset(keyframeTask); const video = shotAsset(videoTask); const media = video ? videoPreviewMarkup(video, 'shot-video-placeholder') : keyframe ? `<img src="${keyframe.url}" alt="${esc(shot.title)}" loading="lazy">` : `<div class="shot-placeholder"><span>${String(index+1).padStart(2,'0')}</span><small>KEYFRAME</small></div>`; return `<article class="shot-card"><div class="shot-media">${media}<span class="shot-duration">6 SEC</span></div><div class="shot-copy"><header><span>SCENE ${String(shot.sceneNumber).padStart(2,'0')} / SHOT ${String(shot.shotNumber).padStart(2,'0')}</span><h3>${esc(shot.title)}</h3></header><div class="shot-meta"><span>${esc(shot.shotSize)}</span><span>${esc(shot.cameraMovement)}</span><span>${esc((shot.characters || []).join('、') || '空镜')}</span></div><p>${esc(shot.action)}</p>${shot.dialogue ? `<blockquote>${esc(shot.dialogue)}</blockquote>` : ''}<details><summary>查看生成提示词</summary><p>${esc(videoTask ? shot.videoPrompt : shot.keyframePrompt)}</p></details><footer>${shotAction(shot,keyframeTask,videoTask)}</footer></div></article>`; }).join('')}</div>`;
+  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="done">02 分镜</span><span class="active">03 关键帧</span><span class="${completedVideos === shots.length && shots.length ? 'done' : ''}">04 视频</span></nav><header class="storyboard-title"><div><span>分镜设计 · ${shots.length} 个镜头</span><h2>${esc(project.title)}</h2><p>每个镜头固定 6 秒。先生成关键帧，确认视觉后再单独预计消耗视频费用。</p></div><strong>${completedVideos}<small> / ${shots.length} 完片</small></strong></header><div class="shot-list">${shots.map((shot,index) => { const keyframeTask = shotTask(shot,'keyframe'); const videoTask = shotTask(shot,'video'); const keyframe = shotAsset(keyframeTask); const video = shotAsset(videoTask); const media = video ? videoPreviewMarkup(video, 'shot-video-placeholder') : keyframe ? `<img src="${keyframe.url}" alt="${esc(shot.title)}" loading="lazy">` : `<div class="shot-placeholder"><span>${String(index+1).padStart(2,'0')}</span><small>关键帧</small></div>`; return `<article class="shot-card"><div class="shot-media">${media}<span class="shot-duration">6 秒</span></div><div class="shot-copy"><header><span>场次 ${String(shot.sceneNumber).padStart(2,'0')} / 分镜 ${String(shot.shotNumber).padStart(2,'0')}</span><h3>${esc(shot.title)}</h3></header><div class="shot-meta"><span>${esc(shot.shotSize)}</span><span>${esc(shot.cameraMovement)}</span><span>${esc((shot.characters || []).join('、') || '空镜')}</span></div><p>${esc(shot.action)}</p>${shot.dialogue ? `<blockquote>${esc(shot.dialogue)}</blockquote>` : ''}<details><summary>查看生成描述</summary><p>${esc(videoTask ? shot.videoPrompt : shot.keyframePrompt)}</p></details><footer>${shotAction(shot,keyframeTask,videoTask)}</footer></div></article>`; }).join('')}</div>`;
   $$('[data-shot-action]').forEach(button => button.onclick = () => button.dataset.shotAction === 'video' ? startShotVideo(button.dataset.shotId, button) : startShotKeyframe(button.dataset.shotId, button));
 }
 
@@ -1955,15 +1972,15 @@ async function bindShotTask(shotId, kind, task) {
 }
 async function startShotKeyframe(shotId, button) {
   const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); if (!shot) return;
-  button.disabled = true; button.textContent = '正在提交关键帧…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'image', prompt:shot.keyframePrompt, size:'9:16', quality:'medium', referenceAssetIds:[] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'keyframe',task); toast(`关键帧已提交，预扣 ${task.creditCost} 积分`); }
+  button.disabled = true; button.textContent = '正在生成关键帧…';
+  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'image', prompt:shot.keyframePrompt, size:'9:16', quality:'medium', referenceAssetIds:[] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'keyframe',task); toast(`关键帧已开始生成，预计消耗 ${task.creditCost} 积分`); }
   catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
 }
 async function startShotVideo(shotId, button) {
   const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); const keyframeTask = shotTask(shot,'keyframe');
   if (!shot || keyframeTask?.status !== 'completed' || !keyframeTask.assetId) return toast('关键帧完成后才能生成视频');
-  button.disabled = true; button.textContent = '正在提交视频…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'video', prompt:shot.videoPrompt, aspectRatio:'9:16', duration:6, referenceAssetIds:[keyframeTask.assetId] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'video',task); toast(`6 秒视频已提交，预扣 ${task.creditCost} 积分`); }
+  button.disabled = true; button.textContent = '正在生成视频…';
+  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'video', prompt:shot.videoPrompt, aspectRatio:'9:16', duration:6, referenceAssetIds:[keyframeTask.assetId] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'video',task); toast(`6 秒视频已开始生成，预计消耗 ${task.creditCost} 积分`); }
   catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
 }
 
@@ -1971,7 +1988,7 @@ $('#dramaScript').oninput = event => $('#dramaScriptCount').textContent = Array.
 $('#dramaScriptForm').onsubmit = async event => {
   event.preventDefault(); const script = $('#dramaScript').value.trim(); if (!script) return;
   const button = $('#analyzeScriptButton'); const original = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="button-spinner"></span><span>正在拆解场次</span>';
-  $('#dramaAnalysis').innerHTML = '<div class="analysis-loading"><span class="loader-ring"></span><b>导演模型正在阅读剧本</b><span>完成后按实际 Token 结算</span></div>';
+  $('#dramaAnalysis').innerHTML = '<div class="analysis-loading"><span class="loader-ring"></span><b>AI 正在分析剧本</b><span>费用按实际用量计算</span></div>';
   try { const result = await api('/api/drama/analyze-script', { method:'POST', body:JSON.stringify({ script }) }); setCreditBalance(result.balance); renderDramaAnalysis(result); toast(`剧本分析完成，实扣 ${creditText(result.usage.chargedCredits)} 积分`); }
   catch (error) { $('#dramaAnalysis').innerHTML = `<div class="analysis-error"><b>剧本分析未完成</b><br>${esc(error.message)}</div>`; toast(error.message); await loadCredits(); }
   finally { button.disabled = !state.config.llm; button.innerHTML = original; }
@@ -2164,7 +2181,7 @@ function taskCard(task) {
         <button class="task-action danger-action" type="button" data-action="delete" data-task-id="${task.id}" data-tooltip="删除" aria-label="删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
       </div>`
     : '';
-  const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败任务操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button><button class="failure-delete task-action" type="button" data-action="delete" data-task-id="${task.id}" title="删除失败任务" aria-label="删除失败任务"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div>` : '';
+  const failedActions = task.status === 'failed' ? `<div class="card-failure-actions" aria-label="失败作品操作"><button class="failure-retry task-action" type="button" data-action="retry" data-task-id="${task.id}" title="重试"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg><span>重试</span></button><button class="failure-delete task-action" type="button" data-action="delete" data-task-id="${task.id}" title="删除失败作品" aria-label="删除失败作品"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg><span>删除</span></button></div>` : '';
   const openButton = localReady || task.status === 'failed' ? `<button class="media-open open-task" type="button" data-task-id="${task.id}" aria-label="查看${task.type === 'image' ? '图片' : '视频'}详情"></button>` : '';
   return `<article class="task-card ${displayStatus}${localSyncing ? ' local-syncing' : ''}" data-record-id="${task.id}"><div class="card-visual">${media}${openButton}${completedActions}${failedActions}</div></article>`;
 }
@@ -2295,7 +2312,7 @@ function compareFilesByRecency(left, right) {
 function sortFilesByRecency(files) { return [...files].sort(compareFilesByRecency); }
 function historyTaskThumbnail(task) {
   const asset = fileById(task.assetId);
-  if (asset?.localStatus === 'missing') return '<span class="history-missing-mark">本地文件已移除</span>';
+  if (asset?.localStatus === 'missing') return '<span class="history-missing-mark">文件已移除</span>';
   const localReady = Boolean(asset && asset.localStatus === 'saved' && !taskLocalSyncing(task, asset));
   if (localReady) return task.type === 'image' ? assetImageMarkup(asset, assetDisplayName(asset)) : videoPreviewMarkup(asset, 'history-video-placeholder');
   if (task.status === 'failed') return '<span class="history-failure-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7 3 2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg></span>';
@@ -2303,7 +2320,7 @@ function historyTaskThumbnail(task) {
 }
 function historyTaskSummary(task) {
   const prompt = String(task.prompt || '').replace(/\s+/g, ' ').trim();
-  return prompt ? prompt.slice(0, 90) + (prompt.length > 90 ? '…' : '') : `未命名${task.type === 'image' ? '图像' : '视频'}任务`;
+  return prompt ? prompt.slice(0, 90) + (prompt.length > 90 ? '…' : '') : `未命名${task.type === 'image' ? '图像' : '视频'}`;
 }
 function historyTaskMeta(task) {
   const type = task.type === 'image' ? '图像' : '视频';
@@ -2341,7 +2358,7 @@ function renderGenerationHistory() {
   const empty = entry.error
     ? emptyState('历史记录加载失败', entry.error, '<button class="secondary-button history-retry" type="button">重试</button>')
     : entry.loaded
-      ? emptyState(`还没有${state.route === 'image' ? '图像' : '视频'}历史记录`, '完成一次生成后，任务会出现在这里。')
+      ? emptyState(`还没有${state.route === 'image' ? '图像' : '视频'}历史记录`, '完成一次生成后，作品会出现在这里。')
       : generationHistoryLoadingSkeleton();
   reconcileCards(container, tasks, { card:historyTaskRow, signature:taskRenderSignature, bind:bindHistoryRow, empty });
   container.querySelector('.history-retry')?.addEventListener('click', () => void loadGenerationHistory({ reset:true }), { once:true });
@@ -2504,8 +2521,7 @@ function generationSupplementalRows(task, fileText, fileInfoId='generationDetail
   return detailRow('内容类型', task.type === 'image' ? '图片' : '视频')
     + detailRow('参考素材', generationReferenceText(task))
     + detailRow('文件信息', fileText, fileInfoId)
-    + detailRow('积分记录', creditText)
-    + detailRow('任务编号', task.id);
+    + detailRow('积分记录', creditText);
 }
 function taskReferenceIds(task, { fallbackToOutput = false, forceOutput = false } = {}) {
   if (!task) return [];
@@ -2659,7 +2675,7 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
 async function deleteGenerationTask(task, button = null) {
   if (!task) return false;
   const active = taskLocalSyncing(task) || ['queued','running'].includes(task.status);
-  if (active) { toast('任务生成中，完成后才能删除'); return false; }
+  if (active) { toast('作品生成中，完成后才能删除'); return false; }
   if (!await confirmGenerationDeletion(task)) return false;
   const card = button?.closest('.task-card');
   const originalButtonMarkup = button?.innerHTML || '';
@@ -2681,7 +2697,7 @@ async function deleteGenerationTask(task, button = null) {
     transientFailureDeadlines.delete(id);
     if ($('#generationDetailDialog')?.open && state.detailTaskId === id) closeGenerationDetail();
     await Promise.all([loadTasks(), loadFiles()]);
-    toast(task.status === 'failed' ? '失败任务已删除' : '作品及关联文件已删除');
+    toast(task.status === 'failed' ? '失败记录已删除' : '作品及关联文件已删除');
     return true;
   } catch (error) {
     toast(error.message);
@@ -2729,7 +2745,7 @@ function openGenerationDetail(id) {
     : localReady
     ? (task.type === 'image' ? `<img src="${asset.url}" alt="${esc(asset.name)}">` : `<video src="${asset.url}" controls autoplay></video>`)
     : asset?.localStatus === 'missing'
-      ? '<div class="detail-missing-file"><b>本地文件已移除</b><span>请重新选择素材或重新生成</span></div>'
+      ? '<div class="detail-missing-file"><b>文件已移除</b><span>请重新选择素材或重新生成</span></div>'
     : detailFailure
       ? `<div class="detail-missing-file" role="alert"><b>${esc(detailFailure.message || '生成失败')}</b><span>${esc(detailFailure.suggestion || '请调整内容后重试')}</span></div>`
       : `<div class="detail-placeholder ${task.status}" aria-hidden="true"><div class="loader-ring"></div></div>`;
@@ -2739,14 +2755,14 @@ function openGenerationDetail(id) {
   const status = $('#generationDetailStatus'); status.className = `detail-status ${displayStatus}`; status.textContent = statusText(displayStatus);
   $('#generationDetailPrompt').textContent = task.prompt;
   const promptElement = $('#generationDetailPrompt'); const promptToggle = $('#generationDetailPromptToggle'); promptElement.classList.remove('expanded'); promptToggle.classList.add('hidden'); promptToggle.setAttribute('aria-expanded', 'false'); promptToggle.textContent = '展开全部'; requestAnimationFrame(() => { const overflowing = promptElement.scrollHeight > promptElement.clientHeight + 1; promptToggle.classList.toggle('hidden', !overflowing); });
-  const fileText = localSyncing ? '正在加载并恢复到本机' : localReady ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : '暂无成品文件';
+  const fileText = localSyncing ? '正在准备文件' : localReady ? `${formatBytes(asset.size)}${asset.width && asset.height ? ` · ${asset.width} × ${asset.height} px` : ''}` : '暂无成品文件';
   $('#generationCoreMeta').innerHTML = generationParameterRows(task);
   $('#generationDetailMeta').innerHTML = generationSupplementalRows(task, fileText);
   const error = $('#generationDetailError'); const failure = taskFailure(task); error.textContent = taskErrorText(task); error.classList.toggle('hidden', !failure);
   const fileAction = $('#downloadGeneration'); fileAction.classList.toggle('hidden', !localReady); configureLocalFileAction(fileAction, localReady ? asset : null);
   $('#useGenerationReference').classList.toggle('hidden', !localReady || task.type !== 'image');
   const deriveButton = $('#deriveGeneration'); const deriveSame = task.type !== 'image'; deriveButton.classList.toggle('hidden', !localReady); deriveButton.classList.toggle('gradient-button', deriveSame); deriveButton.classList.toggle('secondary-button', !deriveSame); deriveButton.innerHTML = deriveSame ? '<svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></svg>生成同款' : '生成视频'; deriveButton.parentElement.classList.toggle('single-action', deriveSame);
-  const deleteButton = $('#deleteGeneration'); const active = localSyncing || ['queued','running'].includes(task.status); deleteButton.disabled = active; deleteButton.title = active ? '任务生成中，完成后才能删除' : '';
+  const deleteButton = $('#deleteGeneration'); const active = localSyncing || ['queued','running'].includes(task.status); deleteButton.disabled = active; deleteButton.title = active ? '作品生成中，完成后才能删除' : '';
   $('#generationDetailDialog').showModal();
   if (localReady) {
     if (task.type === 'image') {
@@ -2805,7 +2821,7 @@ function uploadJobCard(job, variant='file') {
 function renderUploadJobCards(container, jobs, variant='file') { container.querySelectorAll('[data-upload-id]').forEach(node => node.remove()); if (jobs.length) container.prepend(...jobs.map(job => elementFromHtml(uploadJobCard(job, variant)))); }
 function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) renderReferenceDialog(); renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
 function createUploadJob(file, context, { previewUrl='', mimeType='', deferUpload=false, localAssetId='', removeLocalOnDiscard=false } = {}) {
-  const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:String(previewUrl || ''), revokePreview:false, localAssetId, removeLocalOnDiscard, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已加入，创作时上传' : '准备上传', error:'', selected:false, assetId:'' };
+  const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:String(previewUrl || ''), revokePreview:false, localAssetId, removeLocalOnDiscard, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已选择' : '准备上传', error:'', selected:false, assetId:'' };
   state.uploadJobs.push(job); notifyUploadSurfaceChanged(); return job;
 }
 function updateUploadJob(job, progress, label='正在上传') { if (!job) return; job.progress=Math.max(0, Math.min(100, Number(progress) || 0)); job.label=label; job.status=job.status === 'queued' ? 'uploading' : job.status; const now=Date.now(); if (now-job.lastRenderAt < 60 && job.progress < 100) return; job.lastRenderAt=now; notifyUploadSurfaceChanged(); }
@@ -2852,7 +2868,7 @@ function renderFiles() {
   const uploadingAssetIds = new Set(uploads.map(job => job.assetId).filter(Boolean));
   const files = libraryFiles.filter(file => libraryFileMatches(file) && !uploadingAssetIds.has(file.id));
   const hasInitialData = state.initialSyncReady || libraryFiles.length > 0 || uploads.length > 0;
-  $('#fileCount').textContent = hasInitialData ? `${localFileTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个同步中` : ''}` : '正在加载…';
+  $('#fileCount').textContent = hasInitialData ? `${localFileTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个上传中` : ''}` : '正在加载…';
   const empty = hasInitialData
     ? uploads.length ? '' : emptyState(libraryFiles.length ? '没有匹配的文件' : '文件库还是空的', libraryFiles.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', libraryFiles.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>')
     : fileLibraryLoadingSkeleton();
@@ -2959,15 +2975,15 @@ function desktopMediaKind(item) {
   return '';
 }
 async function verifyImportedImagePreview(url) {
-  if (!url) throw new Error('本地图片无法读取，请重新选择原图');
+  if (!url) throw new Error('图片无法读取，请重新选择原图');
   const preview = new Image();
   preview.src = url;
   try { await preview.decode(); }
-  catch { throw new Error('本地图片无法读取或解码，请确认原图能正常打开后重新导入'); }
+  catch { throw new Error('图片无法读取或解码，请确认原图能正常打开后重新导入'); }
 }
 async function desktopImportToContext(context, { multiple = true } = {}) {
   const bridge = window.guguDesktop;
-  if (!bridge?.media?.chooseAndImport) throw new Error('桌面导入能力尚未就绪，请重启客户端后再试');
+  if (!bridge?.media?.chooseAndImport) throw new Error('上传功能暂时未准备好，请重启客户端后再试');
   const imported = await bridge.media.chooseAndImport({ multiple });
   if (!imported.length) return [];
   const inDialog = context === 'reference';
@@ -2976,6 +2992,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
   const isVideoReference = inDialog && state.referenceTarget === 'video';
   const allowedKinds = inDialog ? (isFrame ? new Set(['image']) : referenceFileKinds()) : canvasOnly ? new Set(['image', 'video']) : new Set(['image', 'video', 'audio']);
   const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideoReference ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
+  const allowedKindText = [...allowedKinds].map(kind => kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频').join('、');
   let synced = 0;
   let localImported = 0;
   let selected = 0;
@@ -2992,20 +3009,20 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
     }
     if (!kind || ((inDialog || canvasOnly) && (!allowedKinds.has(kind) || (inDialog && limits[kind] <= 0)))) {
       discardImported();
-      toast(`${item.name || '文件'} 不符合当前入口支持的素材类型`);
+      toast(`${item.name || '文件'} 类型不支持，请选择${allowedKindText}文件`);
       continue;
     }
     const selectedCounts = inDialog ? videoReferenceCounts(referenceDialogLimitIds()) : null;
     if (inDialog && selectedCounts[kind] >= Number(limits[kind] || 0)) {
       discardImported();
-      toast(`当前模型最多选择 ${limits[kind]} 个${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}`);
+      toast(`最多选择 ${limits[kind]} 个${kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频'}`);
       continue;
     }
     let job=null;
     try {
       const previewUrl=await bridge.media.url(item.id).catch(()=> '');
       if (canvasOnly) {
-        if (!previewUrl) throw new Error('本地素材预览地址创建失败');
+        if (!previewUrl) throw new Error('素材预览失败，请重新选择');
         processedFiles.push({
           ...item,
           url: previewUrl,
@@ -3023,15 +3040,15 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
       if (localFile) mediaController.mergeLocalAssets([localFile]);
       job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id, removeLocalOnDiscard:!item.reused });
       if (inDialog) {
-        if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到当前模型限制');
-        job.selected=true; job.label='已加入，创作时同步'; projectPendingReferenceToCreation(job); selected+=1;
+        if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到上限');
+        job.selected=true; job.label='已选择'; projectPendingReferenceToCreation(job); selected+=1;
         processedFiles.push(pendingReferenceFile(job));
         continue;
       }
-      updateUploadJob(job, 8, '正在同步到云端');
+      updateUploadJob(job, 8, '正在上传');
       const result = await bridge.media.syncLocal({ assetId: item.id });
       const cloudAsset = cloudAssetFromDesktopSync(result);
-      if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
+      if (!cloudAsset?.id) throw new Error('素材保存失败，请重新上传后再试');
       const file = { ...cloudAsset, url: result.url, remoteUrl: cloudAsset.url, localStatus: 'saved', localPath: result.relativePath, sha256: item.sha256 || cloudAsset.sha256 };
       finishUploadJob(job, file, true);
       processedFiles.push(file);
@@ -3039,14 +3056,14 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
     } catch (error) {
       console.warn('[desktop] 导入素材处理失败', { assetId:item.id, name:item.name, stage:job ? 'sync' : 'preview', message:error.message });
       if (job) failUploadJob(job,error);
-      toast(`${item.name || '文件'} ${inDialog ? '加入参考区' : '云端同步'}失败：${error.message}`);
+      toast(`${item.name || '文件'} ${inDialog ? '添加到参考素材' : '上传'}失败：${error.message}`);
     }
   }
   renderReferenceDialog(); resetReferenceDialogScroll(); renderReferences();
   await loadFiles({ background:inDialog });
-  if (localImported) toast(`${localImported} 个素材已加入画布，仅保存在本机`);
-  if (synced) toast(`${synced} 个素材已保存到本地并同步到云端`);
-  else if (selected) toast(`${selected} 个参考素材已加入，发起创作时同步`);
+  if (localImported) toast(`${localImported} 个素材已添加到画布`);
+  if (synced) toast(`${synced} 个素材上传完成`);
+  else if (selected) toast(`${selected} 个参考素材已添加`);
   return processedFiles;
 }
 function openUploadPicker(context) {
@@ -3092,8 +3109,8 @@ function videoReferenceLimit() {
   return referenceLimits().total || 0;
 }
 function referenceCapabilityText(limits=referenceLimits()) {
-  const parts = [['image', '图片'], ['video', '视频'], ['audio', '音频']].filter(([kind]) => Number(limits[kind] || 0) > 0).map(([kind, label]) => `${label} ${limits[kind]}`);
-  return parts.length ? `${parts.join(' · ')} · 共 ${limits.total} 个` : '当前模型不支持参考素材';
+  const parts = [['image', '图片'], ['video', '视频'], ['audio', '音频']].filter(([kind]) => Number(limits[kind] || 0) > 0).map(([kind, label]) => `${label} ${limits[kind]} 个`);
+  return parts.length ? `可选择 ${parts.join('、')}，共 ${limits.total} 项` : '暂时无法添加参考素材';
 }
 function renderVideoGenerationMode() {
   const toggle = $('#videoModeToggle');
@@ -3176,7 +3193,7 @@ function setVideoGenerationType(type) {
   if (!supportsVideoMode(type) || !['REFERENCE', 'FIRST&LAST'].includes(type)) return;
   const current = state.videoGenerationType === 'FIRST&LAST' ? 'FIRST&LAST' : (videoHasImages() ? 'REFERENCE' : videoGenerationParameters().mode);
   if (type === 'FIRST&LAST') {
-    if (state.videoPromptMentions.length) return toast('提示词中已引用参考素材，请先移除后再使用首尾帧');
+    if (state.videoPromptMentions.length) return toast('创作描述中已引用参考素材，请先移除后再使用首尾帧');
     const imageRefs = state.refs.video.filter(id => referenceFileById(id)?.kind === 'image');
     const [first, last] = imageRefs.slice(0, 2);
     state.videoFrames = { first: first || '', last: last || '' };
@@ -3199,7 +3216,7 @@ function restoreReferenceDialogOriginal() {
 function openReferenceDialog(target, { mentionRequest = null } = {}) {
   const isCanvas = target === 'canvas';
   if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型');
-  if (target === 'video' && !supportsVideoMode('REFERENCE')) return toast('当前模型不支持参考素材');
+  if (target === 'video' && !supportsVideoMode('REFERENCE')) return toast('这个视频暂时不能添加参考素材');
   if (target === 'video' && videoGenerationParameters().mode === 'FIRST&LAST') return toast('请分别选择首帧和尾帧图片');
   referenceDialogCommitted=false;
   referenceDialogOriginal=isCanvas ? { target:'canvas', value:[] } : { target, value:[...state.refs[target]] };
@@ -3245,7 +3262,7 @@ $('#confirmReference').onclick = () => {
   cleanupUncommittedReferenceJobs();
   referenceDialogCommitted=true;
   renderReferences(); $('#referenceDialog').close();
-  if (pendingCount) toast(`已加入 ${pendingCount} 个本地素材`);
+  if (pendingCount) toast(`已添加 ${pendingCount} 个素材`);
   if (insertion) restoreVideoPromptFocus(insertion.editor, insertion.range);
 };
 async function uploadCanvasDialogAsset() {
@@ -3292,9 +3309,9 @@ function renderReferenceDialog() {
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
   const totalSelected = limitSelectionIds.length;
   $('#referenceDialog h2').textContent = isCanvas ? (isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isCanvas ? (isChat?'从文件库选择图片、视频或音频，也可以上传本地文件。':'从平台文件库选择一项图片或视频，也可以上传本地文件。') : isFrame ? '选择一张图片作为视频的当前帧，单张不超过 20 MB。' : `${promptMentionMode ? '所选素材会插入创作描述，并同步添加到下方参考素材区。' : ''}当前模型支持：${referenceCapabilityText(limits)}；单个图片不超过 20 MB，视频或音频不超过 25 MB。`;
-  $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传本地文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
-  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / 1` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图${counts.image} / 视${counts.video} / 音${counts.audio}）`;
+  $('#referenceDialog .dialog-help').textContent = isCanvas ? (isChat?'选择要发送的图片、视频或音频，也可以直接上传文件。':'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；图片不超过 20 MB，视频或音频不超过 25 MB。`;
+  $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
+  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / 1` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
   const confirmLabel = isCanvas ? (isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
@@ -3313,7 +3330,7 @@ function renderReferenceDialog() {
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
   const files = sortFilesByRecency(state.files.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id))));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
-  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用画布素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传当前模型支持的素材类型。'));
+  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用画布素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传可用的图片、视频或音频。'));
   $$('.reference-option').forEach(button => button.onclick = () => {
     let id = button.dataset.id;
     let file = referenceFileById(id);
@@ -3421,7 +3438,7 @@ function syncTuziImageParameters() {
 }
 const fallbackVideoModels = Object.freeze([
   // Front-end fallback must mirror modelCatalog above: no FIRST&LAST for Grok 1.5.
-  { id:'grok', label:'Grok 1.5', description:'全能视频模型，支持最长20秒视频，7张参考图', modes:[
+  { id:'grok', label:'Grok 1.5', description:'支持最长 20 秒视频和 7 张参考图', modes:[
     { generationType:'TEXT', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:0, maxImages:0 },
     { generationType:'REFERENCE', aspectRatios:['2:3','3:2','1:1','9:16','16:9'], durations:[10,15,20], qualityOptions:['480p','720p'], pricing:{ currency:'credit', amount:1.5, unit:'second' }, minImages:1, maxImages:7 },
   ] },
@@ -3662,10 +3679,10 @@ async function uploadPendingReferenceJob(job) {
   const existing=job.assetId ? state.files.find(file => file.id === job.assetId) : null;
   if (existing && !existing.localOnly) return existing;
   if (!job.localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error(`${job.name} 未准备好，请重新选择`);
-  updateUploadJob(job, 8, '正在同步到云端');
+  updateUploadJob(job, 8, '正在上传');
   const result=await window.guguDesktop.media.syncLocal({ assetId:job.localAssetId });
   const cloudAsset=cloudAssetFromDesktopSync(result);
-  if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
+  if (!cloudAsset?.id) throw new Error('素材保存失败，请重新上传后再试');
   const file={ ...cloudAsset, url:result.url, remoteUrl:cloudAsset.url, localStatus:'saved', localPath:result.relativePath, sha256:cloudAsset.sha256 };
   finishUploadJob(job, file, false);
   return file;
@@ -3677,10 +3694,10 @@ async function resolveReferenceAssetIds(ids) {
     if (isRemoteReferenceReady(file)) { resolved.push(file.id); continue; }
     if (needsReferenceUpload(file)) {
       const localAssetId=file.localId || (file.localOnly ? file.id : '');
-      if (!localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error('参考素材仅保存在原桌面设备，请重新上传后再创作');
+      if (!localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
       const result=await window.guguDesktop.media.syncLocal({ assetId:localAssetId, uploadForReference:true });
       const cloudAsset=cloudAssetFromDesktopSync(result);
-      if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材同步到云端失败，请重新上传后再试');
+      if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材上传失败，请重新上传后再试');
       const syncedFile={ ...cloudAsset, url:result.url || file.url, remoteUrl:cloudAsset.url, localId:localAssetId, localStatus:'saved', localPath:result.relativePath || file.localPath, sha256:cloudAsset.sha256 || file.sha256 };
       state.files=[syncedFile,...state.files.filter(item=>item.id!==syncedFile.id)];
       replacePendingReferenceId(id, syncedFile.id);
@@ -3736,7 +3753,7 @@ async function submitGeneration(type, form, payload) {
       if (!accountScope.isCurrent(requestAccount)) return;
       const items = Array.isArray(page) ? page : page.items || [];
       const unavailable = localAssetIds.find(id => !items.some(item => item.id === id && item.localStatus === 'saved'));
-      if (unavailable) throw new Error('参考素材本地文件未找到，请从原图重新导入后再创作');
+      if (unavailable) throw new Error('参考素材无法使用，请重新选择原图后再创作');
     }
     let expectedPriceVersion = '';
     if (routedVideo) {
@@ -3765,7 +3782,7 @@ async function submitGeneration(type, form, payload) {
     if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
     renderReferences();
     const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0);
-    toast(tasks.length > 1 ? `已提交 ${tasks.length} 张图片，预扣 ${creditText(totalCost)} 积分` : `已提交，扣除 ${tasks[0].creditCost} 积分`);
+    toast(tasks.length > 1 ? `已开始生成 ${tasks.length} 张图片，预计消耗 ${creditText(totalCost)} 积分` : `已开始生成，消耗 ${tasks[0].creditCost} 积分`);
     if (deferredReferences) {
       const uploadedReferenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
       if (!accountScope.isCurrent(requestAccount)) return;
@@ -3828,7 +3845,7 @@ $('#videoForm').onsubmit = event => {
   if (Array.from(prompt).length > videoPromptLimit()) return;
   syncVideoModelParameters();
   const input = currentVideoFormInput();
-  if (!input) return toast('当前模型的创作参数已变化，请重新选择时长、画幅和清晰度');
+  if (!input) return toast('创作参数已变化，请重新选择时长、画幅和清晰度');
   const referenceAssetIds = input.generationType === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video;
   submitGeneration('video', event.currentTarget, { prompt:replaceAssetMentions(prompt, state.videoPromptMentions), ...input, referenceAssetIds });
 };

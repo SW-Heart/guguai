@@ -42,7 +42,7 @@ export function createSupportLogController({ api, toast, closeNotifications = ()
     const bridge = window.guguDesktop;
     if (!bridge?.logs?.collect) throw new Error('当前客户端版本不支持日志上传，请先更新客户端');
     const bundle = await bridge.logs.collect();
-    if (!bundle?.bytes?.length) throw new Error('本机暂无可上传的日志');
+    if (!bundle?.bytes?.length) throw new Error('暂时没有可上传的日志');
     const query = new URLSearchParams();
     const clientInfo = getClientInfo() || {};
     const syncInfo = getSyncInfo() || {};

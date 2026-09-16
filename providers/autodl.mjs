@@ -9,13 +9,15 @@ export function createAutodlProvider({
   isDefinitiveSubmitRejection,
   errorMessage,
   videoPollTimeoutError,
+  buildPayload,
+  providerName = 'autodl',
   pollIntervalMs = 10_000,
   requestTimeoutMs = 60_000,
   maxPollDurationMs = 60 * 60_000,
   maxPolls = Math.ceil(maxPollDurationMs / pollIntervalMs),
 } = {}) {
   for (const [name, dependency] of Object.entries({ baseUrl, workflowId, apiKey, fetchJson, sleep, notifyVideoProgress, upstreamRequestErrorDetail, isDefinitiveSubmitRejection, errorMessage, videoPollTimeoutError })) {
-    if (typeof dependency !== 'function' && !['baseUrl', 'workflowId', 'apiKey'].includes(name)) throw new TypeError(`AutoDL 适配器缺少 ${name} 依赖`);
+    if (typeof dependency !== 'function' && !['baseUrl', 'workflowId', 'apiKey', 'buildPayload', 'providerName'].includes(name)) throw new TypeError(`AutoDL 适配器缺少 ${name} 依赖`);
   }
 
   function status(value) {
@@ -44,7 +46,7 @@ export function createAutodlProvider({
       retryableBusinessResponse: true,
     });
   }
-  function payload(task, refs) {
+  function defaultPayload(task, refs) {
     const groups = Array.isArray(refs) ? { images: refs, audios: [] } : (refs || { images: [], audios: [] });
     const value = {
       prompt: task.prompt,
@@ -54,6 +56,9 @@ export function createAutodlProvider({
     groups.images?.slice(0, task.referenceLimits?.image || task.maxReferenceImages || 9).forEach((url, index) => { value[`ref_image_${index}`] = url; });
     groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { value[`ref_audio_${index}`] = url; });
     return value;
+  }
+  function payload(task, refs) {
+    return typeof buildPayload === 'function' ? buildPayload(task, refs) : defaultPayload(task, refs);
   }
 
   async function pollVideo(providerTaskId, hooks = {}, runtime = {}) {
@@ -85,13 +90,13 @@ export function createAutodlProvider({
         if (businessError) throw businessError;
       } catch (error) {
         if (runtimeMaxDurationMs - (now() - startedAt) <= 0) break;
-        if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: 'autodl', providerTaskId, upstreamTerminal: true });
+        if ([401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: providerName, providerTaskId, upstreamTerminal: true });
         consecutiveErrors++;
         const detail = upstreamRequestErrorDetail(error);
         console.error('[video] AutoDL poll retryable failure; task remains active', { taskId: providerTaskId, consecutiveErrors, detail });
         try { await hooks.onPollError?.({ consecutiveErrors, detail }); }
         catch (saveError) { console.error('[video] AutoDL poll state persistence failed', { taskId: providerTaskId, message: saveError.message }); }
-        if (pollOnce) return { pending: true, provider: 'autodl', taskId: providerTaskId };
+        if (pollOnce) return { pending: true, provider: providerName, taskId: providerTaskId };
         continue;
       }
       try { await hooks.onPollRecovered?.(); }
@@ -100,13 +105,13 @@ export function createAutodlProvider({
       await notifyVideoProgress(hooks, state);
       const resultUrl = videoUrl(state);
       const currentStatus = status(state);
-      if (resultUrl) return { provider: 'autodl', taskId: providerTaskId, url: resultUrl };
+      if (resultUrl) return { provider: providerName, taskId: providerTaskId, url: resultUrl };
       if (['failed', 'failure', 'error', 'cancelled', 'canceled', 'rejected', 'expired'].includes(currentStatus)) {
-        throw Object.assign(new Error(state.msg || state.message || 'AutoDL 视频生成失败'), { provider: 'autodl', providerTaskId, upstreamTerminal: true });
+        throw Object.assign(new Error(state.msg || state.message || 'AutoDL 视频生成失败'), { provider: providerName, providerTaskId, upstreamTerminal: true });
       }
-      if (pollOnce) return { pending: true, provider: 'autodl', taskId: providerTaskId };
+      if (pollOnce) return { pending: true, provider: providerName, taskId: providerTaskId };
     }
-    if (pollOnce && runtimeMaxDurationMs - (now() - startedAt) > 0) return { pending: true, provider: 'autodl', taskId: providerTaskId };
+    if (pollOnce && runtimeMaxDurationMs - (now() - startedAt) > 0) return { pending: true, provider: providerName, taskId: providerTaskId };
     throw videoPollTimeoutError('AutoDL', providerTaskId);
   }
 
@@ -122,17 +127,17 @@ export function createAutodlProvider({
       });
       providerTaskId = taskId(created);
       if (!providerTaskId) throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });
-      await hooks.onSubmitted?.({ provider: 'autodl', taskId: providerTaskId });
+      await hooks.onSubmitted?.({ provider: providerName, taskId: providerTaskId });
       const immediateUrl = videoUrl(created);
-      if (immediateUrl) return { provider: 'autodl', taskId: providerTaskId, url: immediateUrl };
-      if (hooks.deferPolling) return { pending: true, provider: 'autodl', taskId: providerTaskId };
+      if (immediateUrl) return { provider: providerName, taskId: providerTaskId, url: immediateUrl };
+      if (hooks.deferPolling) return { pending: true, provider: providerName, taskId: providerTaskId };
       const persistedStartedAt = Date.parse(task.submittedAt || '');
       return pollVideo(providerTaskId, hooks, Number.isFinite(persistedStartedAt) ? { ...runtime, startedAt: persistedStartedAt } : runtime);
     } catch (error) {
       if (error.upstreamTerminal || error.submissionUncertain) throw error;
-      if (!providerTaskId && isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'autodl', upstreamTerminal: true });
-      if (providerTaskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: 'autodl', providerTaskId });
-      throw Object.assign(new Error(`AutoDL 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: 'autodl', submissionUncertain: true, cause: error });
+      if (!providerTaskId && isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: providerName, upstreamTerminal: true });
+      if (providerTaskId && error.providerTaskId === undefined) throw Object.assign(new Error(error.message), { provider: providerName, providerTaskId });
+      throw Object.assign(new Error(`AutoDL 提交结果待确认：${upstreamRequestErrorDetail(error)}`), { provider: providerName, submissionUncertain: true, cause: error });
     }
   }
 

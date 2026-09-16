@@ -122,7 +122,7 @@ export function createDuomiProvider({
         headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (midjourney && created.code !== undefined && Number(created.code) !== 200) throw new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败'));
+      if (midjourney && created.code !== undefined && Number(created.code) !== 200) throw Object.assign(new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败')), { upstreamTerminal:true });
       const submittedTaskId = midjourney ? created.data?.task_id : (created.id || created.task_id);
       if (!submittedTaskId) throw new Error('图片任务没有返回任务 ID');
       await hooks.onSubmitted?.({ provider: 'duomi', taskId: String(submittedTaskId) });

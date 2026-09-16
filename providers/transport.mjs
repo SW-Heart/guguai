@@ -1,3 +1,5 @@
+import { generationAttemptContext, generationRequestLog } from '../services/generation-retry.mjs';
+
 // Only connection establishment failures are safe to replay for a billed POST.
 // Socket resets and response timeouts may happen after the provider accepted it.
 export function isPreconnectFailure(error) {
@@ -34,6 +36,8 @@ export function createProviderTransport({
   }
 
   async function fetchJson(url, options = {}) {
+    const context = generationAttemptContext.getStore();
+    if (context) console.info('[generation] upstream request', JSON.stringify(await generationRequestLog(url, options, context)));
     let response, text;
     try {
       response = await fetchImpl(url, options);
@@ -83,8 +87,7 @@ export function createProviderTransport({
 
   function isDefinitiveSubmitRejection(error) {
     return Number(error?.upstreamStatus) >= 400
-      && Number(error?.upstreamStatus) < 500
-      && ![408, 409, 425, 429].includes(Number(error.upstreamStatus));
+      && ![408, 409, 425].includes(Number(error.upstreamStatus));
   }
 
   async function notifyVideoProgress(hooks, value) {

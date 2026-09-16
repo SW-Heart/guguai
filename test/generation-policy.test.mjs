@@ -19,6 +19,7 @@ test('generation job policy chooses provider intervals without side effects', ()
   assert.equal(policy.pollInterval({ type: 'image', provider: 'tuzi' }), 10);
   assert.equal(policy.pollInterval({ provider: 'oai' }), 20);
   assert.equal(policy.pollInterval({ provider: 'autodl' }), 30);
+  assert.equal(policy.pollInterval({ provider: 'autodl-motion' }), 30);
   assert.equal(policy.pollInterval({ provider: 'ttapi' }), 40);
   assert.equal(policy.pollInterval({ provider: 'cntcn' }), 50);
   assert.equal(policy.pollInterval({ provider: 'duomi', type: 'video' }), 8_000);
@@ -35,4 +36,15 @@ test('generation job policy keeps recovery kind and bounded backoff deterministi
   assert.equal(policy.nextRunAt({ archiveFailureCount: 2, localDeliveryDeadlineAt:'1970-01-01T00:00:10.000Z' }, 'archive', 1_000), 1_200);
   assert.equal(policy.nextRunAt({ pollFailureCount: 2, provider: 'oai' }, 'poll', 1_000), 1_080);
   assert.equal(policy.nextRunAt({ deadline: 1_234 }, 'reconcile_submission', 1_000), 1_234);
+});
+
+test('explicit generation retries wait five seconds instead of the recovery sweep', () => {
+  for (const type of ['image', 'video']) {
+    for (const generationRetryCount of [1, 2, 3]) {
+      const task = { type, status:'queued', generationRetryCount, providerTaskId:'' };
+      assert.equal(policy.nextRunAt(task, policy.recoveryKind(task), 1_000), 6_000);
+    }
+  }
+  assert.equal(policy.nextRunAt({ status:'queued' }, 'generation', 1_000), 1_070);
+  assert.equal(policy.nextRunAt({ status:'running', generationRetryCount:1, provider:'oai' }, 'poll', 1_000), 1_020);
 });

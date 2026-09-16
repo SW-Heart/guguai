@@ -33,14 +33,14 @@ test('batch import skips an unreadable image and still selects the next decodabl
   const results = await context.desktopImportToContext('reference');
   assert.equal(jobs.length, 1);
   assert.equal(results[0].localAssetId, 'valid');
-  assert.ok(messages.some(message => message.includes('本地图片无法读取或解码')));
+  assert.ok(messages.some(message => message.includes('图片无法读取或解码')));
 });
 
 test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=329'));
-  assert.ok(frontend.includes('./features/media/controller.js?v=9'));
+  assert.ok(html.includes('/app.js?v=341'));
+  assert.ok(frontend.includes('./features/media/controller.js?v=10'));
   for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=14'));
 });
 

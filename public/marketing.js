@@ -298,7 +298,7 @@ import { createApiClient } from './api-client.js?v=3';
       return `<div class="price-row"><div class="price-row-label"><b>${escapeHtml(item.quality || '标准')}</b><small>${durationText}${total}</small></div><div class="price-row-value"><strong>¥${formatNumber(item.yuan)}<span>/ ${unit}</span></strong><small>${formatNumber(item.credits, 2)} 积分 / ${unit}</small></div></div>`;
     }).join('');
     const modelLabel = model?.label || rows[0]?.label || rows[0]?.modelId || '未命名模型';
-    return `<article class="price-card reveal in-view"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，提交任务前仍会再次确认。</p></article>`;
+    return `<article class="price-card reveal in-view"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，开始生成前会再次确认。</p></article>`;
   };
   const renderUnavailableCard = model => `<article class="price-card reveal in-view"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(model.id)}</span><div><h2>${escapeHtml(model.label)}</h2><p class="price-card-description">${escapeHtml(model.description || '模型能力正在准备中')}</p></div></div><span class="price-badge is-coming">${model.availability === 'coming-soon' ? '即将上线' : '暂不可用'}</span></header><div class="price-empty" style="padding:24px 14px;border:0;background:rgba(255,255,255,.36)">当前没有可展示的实时价格</div><p class="price-card-note">服务恢复后，价格会自动出现在这里。</p></article>`;
 
@@ -318,7 +318,7 @@ import { createApiClient } from './api-client.js?v=3';
     });
     models.filter(model => !groups.has(model.id) && model.id !== 'gpt-image-2').forEach(model => cards.push(renderUnavailableCard(model)));
     if (!cards.length) {
-      catalog.innerHTML = '<div class="price-empty"><strong>暂时没有可展示的模型价格</strong>价格服务正在同步，请稍后点击“刷新价格”重试。</div>';
+      catalog.innerHTML = '<div class="price-empty"><strong>暂时没有可展示的模型价格</strong>价格正在更新，请稍后点击“刷新价格”重试。</div>';
       return;
     }
     catalog.innerHTML = cards.join('');
@@ -331,7 +331,7 @@ import { createApiClient } from './api-client.js?v=3';
     refresh?.setAttribute('aria-busy', 'true');
     if (refresh) refresh.disabled = true;
     setStatus('正在获取最新价格…');
-    if (!catalog.children.length || catalog.querySelector('.price-loading')) catalog.innerHTML = '<div class="price-loading">正在同步今日模型价格</div>';
+    if (!catalog.children.length || catalog.querySelector('.price-loading')) catalog.innerHTML = '<div class="price-loading">正在更新今日模型价格</div>';
     try {
       const payload = await api('/api/public/model-prices', { cache:'no-store', responseShape: data => Boolean(data && typeof data === 'object' && Array.isArray(data.items)) });
       renderCatalog(payload);

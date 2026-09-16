@@ -69,7 +69,7 @@ export function createMediaController({
 
   async function listDesktopFiles(options = {}) {
     const localBridge = bridge();
-    if (!localBridge?.media?.listLocal) throw new Error('桌面本地文件库尚未就绪');
+    if (!localBridge?.media?.listLocal) throw new Error('素材库暂时未准备好，请重启客户端后再试');
     const local = await localBridge.media.listLocal(options);
     const page = Array.isArray(local) ? { items:local, nextCursor:'' } : (local || {});
     return {
@@ -345,7 +345,7 @@ export function createMediaController({
     if (control) { control.disabled = true; control.setAttribute('aria-disabled', 'true'); }
     try {
       const localAssetId = String(file.localId || (file.localOnly ? file.id : ''));
-      if (!localAssetId || !await localBridge.media.showInFolder(localAssetId)) throw new Error('本地素材不存在');
+      if (!localAssetId || !await localBridge.media.showInFolder(localAssetId)) throw new Error('素材不存在');
       return true;
     } catch (error) {
       onError(error, { action:'show-folder' });
@@ -362,7 +362,7 @@ export function createMediaController({
     if (control) { control.disabled = true; control.setAttribute('aria-busy', 'true'); }
     try {
       const localAssetId = String(file.localId || (file.localOnly ? file.id : ''));
-      if (!localAssetId || !await localBridge.media.copyToClipboard(localAssetId)) throw new Error('本地素材不存在');
+      if (!localAssetId || !await localBridge.media.copyToClipboard(localAssetId)) throw new Error('素材不存在');
       return true;
     } catch (error) {
       onError(error, { action:'copy-asset' });
@@ -387,7 +387,7 @@ export function createMediaController({
     }
     if (result?.downloadError) throw Object.assign(new Error(result.downloadError), { retryable:result.retryable });
     if (result?.unavailable) throw Object.assign(new Error(`远端文件已不存在（${result.status || 404}）`), { unavailable:true });
-    if (!result?.id) throw new Error('素材接收后未能写入本地工作区');
+    if (!result?.id) throw new Error('素材保存失败，请重试');
     if (merge) applyDesktopLocalAsset(file, result);
     if (!requestIsCurrent(requestAccount, requestEpoch)) return null;
     queueDesktopAcknowledgement(fileById(file.id) || file, result, { requestAccount, requestEpoch });
