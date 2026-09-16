@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareGenerationRetry, generationRequestLog, generationAttemptContext } from '../services/generation-retry.mjs';
+import { prepareGenerationRetry, generationRequestLog, generationAttemptContext, refreshGenerationRetryRoute } from '../services/generation-retry.mjs';
 import { createGenerationRecoveryService } from '../services/generation-recovery.mjs';
 
 for (const type of ['image', 'video']) test(`${type}: three persistent retries reset deadlines and retain the original charge`, () => {
@@ -43,4 +43,46 @@ test('request logs retain full payloads and mark retries without exposing creden
   assert.equal(log.attempt, 3); assert.equal(log.isRetry, true);
   assert.equal(log.headers.authorization, '[REDACTED]'); assert.deepEqual(log.body, [...body.entries()]);
   await Promise.all([1, 2].map(id => generationAttemptContext.run({ id }, async () => { await Promise.resolve(); assert.equal(generationAttemptContext.getStore().id, id); })));
+});
+
+test('a routed retry selects and applies the latest highest-priority channel without changing its charge', () => {
+  const task = {
+    id:'g', type:'video', generationRetryCount:2, routeId:'route-1', videoModelId:'seedance-2.5',
+    model:'old-upstream', provider:'old-provider', quality:'720p', duration:30, aspectRatio:'9:16',
+    pricingSnapshot:{ routeId:'route-1', totalMicro:1230000 }, creditCostMicro:1230000,
+  };
+  let request;
+  const route = refreshGenerationRetryRoute(task, {
+    referenceCounts:{ image:2, video:1, audio:0 },
+    selectModelRoute(value) {
+      request = value;
+      return {
+        id:'route-2', version:7, displayName:'当前最优渠道', provider:'new-provider', adapterType:'new-video',
+        baseUrl:'https://new.example.com', credentialId:'credential-2', upstreamModelId:'new-upstream',
+        capabilities:{ image:3, video:1, audio:1 },
+      };
+    },
+  });
+  assert.equal(route.id, 'route-2');
+  assert.deepEqual(request, {
+    logicalModelId:'seedance-2.5', quality:'720p', duration:30, aspectRatio:'9:16',
+    referenceCounts:{ image:2, video:1, audio:0 },
+  });
+  assert.deepEqual({
+    routeId:task.routeId, routeVersion:task.routeVersion, provider:task.provider, model:task.model,
+    routeDisplayName:task.routeDisplayName, routeAdapter:task.routeAdapter, routeBaseUrl:task.routeBaseUrl,
+    routeCredentialId:task.routeCredentialId, referenceLimits:task.referenceLimits,
+  }, {
+    routeId:'route-2', routeVersion:7, provider:'new-provider', model:'new-upstream',
+    routeDisplayName:'当前最优渠道', routeAdapter:'new-video', routeBaseUrl:'https://new.example.com',
+    routeCredentialId:'credential-2', referenceLimits:{ image:3, video:1, audio:1, total:5 },
+  });
+  assert.deepEqual(task.pricingSnapshot, { routeId:'route-1', totalMicro:1230000 });
+  assert.equal(task.creditCostMicro, 1230000);
+});
+
+test('initial submissions and non-routed retries do not select another channel', () => {
+  const selectModelRoute = () => assert.fail('route selection should be skipped');
+  assert.equal(refreshGenerationRetryRoute({ routeId:'route-1', generationRetryCount:0 }, { selectModelRoute }), null);
+  assert.equal(refreshGenerationRetryRoute({ generationRetryCount:1 }, { selectModelRoute }), null);
 });

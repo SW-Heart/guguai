@@ -36,7 +36,7 @@ import { createCntcnProvider } from './providers/cntcn.mjs';
 import { createRoutedProvider } from './providers/routed.mjs';
 import { createAutodlProvider } from './providers/autodl.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
-import { generationAttemptContext, prepareGenerationRetry } from './services/generation-retry.mjs';
+import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
@@ -2000,6 +2000,17 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
     try {
+      if (task.routeId && Number(task.generationRetryCount) > 0) {
+        const referenceCounts = referenceAssetCounts(userId, task.referenceAssetIds, { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId });
+        const previousRouteId = task.routeId;
+        const route = refreshGenerationRetryRoute(task, { selectModelRoute, referenceCounts });
+        console.info('[generation] retry route selected', {
+          generationId: task.id,
+          retryCount: task.generationRetryCount,
+          previousRouteId,
+          routeId: route.id,
+        });
+      }
       task.attemptStartedAt = now();
       generationLifecycle.markRunning(task);
       await saveGenerationWithRetry(userId, task, 'generation-running');
