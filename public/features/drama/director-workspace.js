@@ -1,9 +1,10 @@
 import { bindDirectorMentions } from './director-mentions.js?v=1';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
 import { renderMarkdown } from '../agent/markdown.js?v=1';
-import { placeMediaFrames } from '../agent/frames.js?v=1';
+import { placeMediaFrames } from '../agent/frames.js?v=2';
 import { createCreativeAgentClient } from '../agent/client.js?v=4';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=29';
+import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=30';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=8';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -80,8 +81,9 @@ function renderConversationMessages(container, items, draft='') {
 export function createDirectorWorkspace(host, bridge) {
   let canvas, canvasMount, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
   let mainLayer, lastNodeGeometry='', edgeRenderFrame=0, resizingChat=false, resizeCanvasSnapshot=null, resizeFinishFrame=0;
-  let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver;
-  let agentClient, agentState=null, agentConfig=null, sending=false, switchingConversation=false, connectionError='', conversations=[], historyOpen=false;
+  let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver, mediaLoadObserver;
+  let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, connectionError='', conversations=[], historyOpen=false;
+  let lastAgentCacheSignature='';
   let submissionQueue=[], drainingSubmissions=false;
   let attachments=[], uploading=false, popoverEvents;
 
@@ -93,6 +95,34 @@ export function createDirectorWorkspace(host, bridge) {
   const hiddenIds=()=>new Set(workspace().hiddenIds||[]);
   const canvasItems=()=>{const hidden=hiddenIds();return nodes().filter(item=>!hidden.has(item.id));};
   const revealCanvasItem=id=>{const hidden=hiddenIds();if(!hidden.delete(id))return false;workspace().hiddenIds=[...hidden];return true;};
+  function markCanvasItemsHidden(ids) {
+    const knownIds=new Set([...nodes().map(item=>item.id),...(workspace().canvasNodes||[]).map(item=>item.id)]);
+    const deletedIds=[...new Set(ids)].filter(id=>knownIds.has(id)&&!String(id).startsWith('edge-'));
+    if(deletedIds.length===0)return [];
+    bridge.markCanvasDirty?.();
+    const hidden=hiddenIds();
+    deletedIds.forEach(id=>hidden.add(id));
+    workspace().hiddenIds=[...hidden];
+    deletedIds.forEach(id=>{if(workspace().positions)delete workspace().positions[id];});
+    return deletedIds;
+  }
+  function handleCanvasDeleteKeydown(event) {
+    if(!canvas||!['Delete','Backspace'].includes(event.key)||canvas.isEditingText)return;
+    const target=event.target;
+    if(target?.closest?.('input,textarea,select,[contenteditable="true"]'))return;
+    const canvasHost=host.querySelector('.dw-canvas');
+    if(!canvasHost?.contains(target))return;
+    const selectedIds=(canvas.getState?.().selectedNodeIds||[]).filter(Boolean);
+    if(selectedIds.length===0)return;
+    // The whiteboard emits `nodes:selected([])` before `nodes:deleted`. Mark
+    // dynamic nodes hidden first so that the intermediate sync cannot recreate
+    // a failed generation placeholder while the delete event is still pending.
+    markCanvasItemsHidden(selectedIds);
+    event.preventDefault();
+    event.stopPropagation();
+    const deleted=canvas.deleteNodes(selectedIds);
+    if(Array.isArray(deleted)&&deleted.length)scheduleCanvasSave();
+  }
   function nodes() {
     const p=get();return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.generations||[]).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...bridge.imported().map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.synopsis||p.script}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
   }
@@ -157,16 +187,22 @@ export function createDirectorWorkspace(host, bridge) {
         const fallback=canvas?.getNodeConfigById?.(id);
         if(fallback)targets.push(fallback);
       }
+      let changed=false;
       for(const current of targets){
         if(current?.$_type!=='image'||current.$_imageUrl!==url)continue;
         const bounds=assetBounds(url,current);
+        if(Math.abs((Number(current.width)||0)-bounds.width)<=.5&&Math.abs((Number(current.height)||0)-bounds.height)<=.5){paintAssetImage(current.id,url);continue;}
         const saved=workspace().positions[current.id]||{};
         workspace().positions[current.id]={...saved,x:current.x,y:current.y,...bounds};
-        canvas.updateNodes([current.id],bounds);
+        const previousSyncing=syncing;syncing=true;
+        try{canvas.updateNodes([current.id],bounds);}finally{syncing=previousSyncing;}
         paintAssetImage(current.id,url);
+        changed=true;
       }
-      globalThis.clearTimeout?.(saveTimer);
-      saveTimer=globalThis.setTimeout?.(()=>{if(token===epoch)void save().catch(e=>bridge.toast(e.message));},600);
+      if(changed){
+        globalThis.clearTimeout?.(saveTimer);
+        saveTimer=globalThis.setTimeout?.(()=>{if(token===epoch)void save().catch(e=>bridge.toast(e.message));},600);
+      }
     };
     image.onerror=()=>assetSizeLoads.delete(url);
     if(!url.startsWith('gugu-media://'))image.crossOrigin='anonymous';
@@ -174,19 +210,19 @@ export function createDirectorWorkspace(host, bridge) {
   }
   function nodeContent(n) {
     if(n.kind==='asset'&&n.media?.kind==='image')return '';
-    if(n.kind==='asset'&&n.media?.kind==='video')return `<div class="dw-generation-frame dw-imported-video" data-state="completed"><video controls playsinline preload="metadata" src="${escape(n.media.url)}" aria-label="${escape(n.title)}"></video><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
+    if(n.kind==='asset'&&n.media?.kind==='video')return `<div class="dw-generation-frame dw-imported-video" data-state="completed"><video controls playsinline preload="none" data-canvas-src="${escape(n.media.url)}" aria-label="${escape(n.title)}"></video><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     if(n.kind==='generation'){
       const task=bridge.task(n.taskId),media=bridge.media(n.taskId);
       const status=n.item.placeholder?n.item.status:task?.status||'queued';
       const state=media?'completed':status==='completed'?'saving':status;
       const text=({waiting_approval:'等待确认',queued:'排队中',running:'正在创作',processing:'正在创作',saving:'正在准备文件',failed:'生成失败',cancelled:'已取消'})[state]||'正在准备';
       const progress=Number(task?.progress);const percentage=Number.isFinite(progress)&&progress>0?Math.min(99,Math.round(progress)):null;
-      return `<div class="dw-generation-frame" data-state="${escape(state)}" aria-label="${escape(n.title)}">${media?`<${media.kind==='video'?'video controls playsinline preload="metadata"':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''}>${media.kind==='video'?'</video>':''}`:`<div class="dw-frame-placeholder"><span class="dw-frame-pulse" aria-hidden="true"></span><b>${text}</b>${percentage?`<span>${percentage}%</span><progress max="100" value="${percentage}"></progress>`:''}</div>`}<span class="dw-frame-caption">${escape(n.title)}</span></div>`;
+      return `<div class="dw-generation-frame" data-state="${escape(state)}" aria-label="${escape(n.title)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''}>${media.kind==='video'?'</video>':''}`:`<div class="dw-frame-placeholder"><span class="dw-frame-pulse" aria-hidden="true"></span><b>${text}</b>${percentage?`<span>${percentage}%</span><progress max="100" value="${percentage}"></progress>`:''}</div>`}<span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     }
     const t=bridge.task(n.taskId);const media=n.media||bridge.media(n.taskId);const action=workspace().plan?.actions?.find(a=>a.targetId===n.id&&['running','failed'].includes(a.status));
     const status=action?labels[action.status]:t?(labels[t.status]||t.status):n.kind==='asset'?'已导入':n.kind==='story'&&get().script?'已设计':'待制作';
     const locked=workspace().lockedIds.includes(n.id);
-    return `<div class="dw-node-content${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}"><header class="dw-node-title"><b>${escape(n.title)}</b><span class="dw-node-status${action?.status==='failed'?' is-failed':''}">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls':'img'} src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} class="dw-node-media" >${media.kind==='video'?'</video>':''}`:`<p class="dw-node-copy">${escape(n.text)}</p>`}<footer class="dw-node-meta">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':n.kind==='document'?`文字作品 · 第 ${n.item.revision} 版`:n.kind==='generation'?'生成作品':'剧本'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></div>`;
+    return `<div class="dw-node-content${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}"><header class="dw-node-title"><b>${escape(n.title)}</b><span class="dw-node-status${action?.status==='failed'?' is-failed':''}">${locked?'已锁定':escape(status)}</span></header>${media?`<${media.kind==='video'?'video controls preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''} class="dw-node-media" >${media.kind==='video'?'</video>':''}`:`<p class="dw-node-copy">${escape(n.text)}</p>`}<footer class="dw-node-meta">${n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='resource'?({character:'角色',location:'场景',prop:'道具'}[n.item.type]||'素材'):n.kind==='asset'?'参考素材':n.kind==='document'?`文字作品 · 第 ${n.item.revision} 版`:n.kind==='generation'?'生成作品':'剧本'}${t?.progress?` · ${Math.round(t.progress)}%`:''}</footer></div>`;
   }
   function nodeBounds(node) {
     const width=Math.max(1,Number(node?.width)||280)*(Number(node?.scaleX)||1);
@@ -247,6 +283,10 @@ export function createDirectorWorkspace(host, bridge) {
     const node=canvas.getCanvasNodeById(id),element=node?.htmlElement,shape=node?.getElement?.();
     if(!element||!shape)return;
     if(html!==undefined&&element.dataset.content!==html){element.innerHTML=html;element.dataset.content=html;}
+    element.querySelectorAll('[data-canvas-src]').forEach(media=>{
+      if(mediaLoadObserver)mediaLoadObserver.observe(media);
+      else {media.src=media.dataset.canvasSrc;delete media.dataset.canvasSrc;if(media.tagName==='VIDEO')media.preload='metadata';}
+    });
     // HtmlNode already synchronizes this element from getClientRect() on
     // viewport/drag events. Do the same here when content changes. Applying
     // getAbsoluteTransform() as a CSS matrix on top of the core's left/top
@@ -259,14 +299,30 @@ export function createDirectorWorkspace(host, bridge) {
       // pixels for native playback controls (their shadow DOM is opaque).
       if(video.dataset.canvasPlayback)return;
       video.dataset.canvasPlayback='true';
-      ['pointerdown','mousedown','touchstart','click','dblclick','keydown','keyup'].forEach(type=>video.addEventListener(type,event=>{
+      ['pointerdown','mousedown','touchstart','wheel','click','dblclick','keydown','keyup'].forEach(type=>video.addEventListener(type,event=>{
         event.stopPropagation();
         const point=event.touches?.[0]||event;
         const rect=video.getBoundingClientRect();
         const onPicture=Number.isFinite(point.clientY)&&point.clientY<rect.bottom-48;
-        if(onPicture&&['pointerdown','mousedown','touchstart'].includes(type)){
+        if(onPicture&&['pointerdown','mousedown','touchstart','wheel'].includes(type)){
           const surface=canvas.getStage().content;
-          surface.dispatchEvent(new event.constructor(type,event));
+          const forwarded=type==='wheel'
+            ? new event.constructor('wheel',{
+              deltaX:event.deltaX,
+              deltaY:event.deltaY,
+              deltaZ:event.deltaZ,
+              deltaMode:event.deltaMode,
+              clientX:event.clientX,
+              clientY:event.clientY,
+              screenX:event.screenX,
+              screenY:event.screenY,
+              ctrlKey:event.ctrlKey,
+              shiftKey:event.shiftKey,
+              altKey:event.altKey,
+              metaKey:event.metaKey,
+            })
+            : new event.constructor(type,event);
+          surface.dispatchEvent(forwarded);
           if(type!=='pointerdown')event.preventDefault();
         }else if(type==='pointerdown'&&selected!==id){
           canvas.selectNodes([id]);
@@ -277,7 +333,7 @@ export function createDirectorWorkspace(host, bridge) {
     const frame=element.querySelector('.dw-generation-frame');
     if(frame){
       const media=frame.querySelector('img,video');
-      if(media){const measure=()=>{const width=media.naturalWidth||media.videoWidth,height=media.naturalHeight||media.videoHeight;if(!width||!height)return;const p=workspace().positions[id];if(!p)return;const nextHeight=p.width*height/width;if(Math.abs(p.height-nextHeight)>.5){p.height=nextHeight;canvas.updateNodes([id],{height:nextHeight});alignCard(id);clearTimeout(saveTimer);saveTimer=setTimeout(()=>void save().catch(e=>bridge.toast(e.message)),600);}};media.onload=measure;media.onloadedmetadata=measure;if(media.complete||media.readyState>=1)measure();}
+      if(media){const measure=()=>{const width=media.naturalWidth||media.videoWidth,height=media.naturalHeight||media.videoHeight;if(!width||!height)return;const p=workspace().positions[id];if(!p)return;const nextHeight=p.width*height/width;if(Math.abs(p.height-nextHeight)>.5){p.height=nextHeight;const previousSyncing=syncing;syncing=true;try{canvas.updateNodes([id],{height:nextHeight});}finally{syncing=previousSyncing;}alignCard(id);clearTimeout(saveTimer);saveTimer=setTimeout(()=>void save().catch(e=>bridge.toast(e.message)),600);}};media.onload=measure;media.onloadedmetadata=measure;if(media.complete||media.readyState>=1)measure();}
     }
     // Keep the HTML overlay aligned with the Konva hit rectangle, then scale
     // the card's own content as a single unit. In particular, the placeholder
@@ -288,6 +344,7 @@ export function createDirectorWorkspace(host, bridge) {
       return Number.isFinite(result)&&result>0?result:fallback;
     };
     const config=canvas.getNodeConfigById?.(id)||{};
+    element.style.visibility=config.visible===false?'hidden':'visible';
     const baseWidth=readDimension(shape,'width',readDimension(config,'width',280));
     const baseHeight=readDimension(shape,'height',readDimension(config,'height',228));
     const scaleX=Math.abs(readDimension(shape,'scaleX',readDimension(config,'scaleX',1)));
@@ -298,6 +355,14 @@ export function createDirectorWorkspace(host, bridge) {
       if(frame)Object.assign(content.style,{width:`${logicalWidth}px`,height:`${logicalHeight}px`});
       Object.assign(content.style,{transformOrigin:'0 0',transform:`scale(${rect.width/logicalWidth},${rect.height/logicalHeight})`});
     }
+  }
+  function syncCanvasOverlayVisibility(snapshot=canvas?.getState?.()) {
+    if(!canvas)return;
+    (snapshot?.nodes||[]).forEach(node=>{
+      if(node?.$_type!=='html')return;
+      const element=canvas.getCanvasNodeById?.(node.id)?.htmlElement;
+      if(element)element.style.visibility=node.visible===false?'hidden':'visible';
+    });
   }
   function alignCards(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id));}
   function fitCanvas(ids){
@@ -325,7 +390,9 @@ export function createDirectorWorkspace(host, bridge) {
   function syncCanvas() {
     if(!canvas||syncing)return;syncing=true;
     const ns=canvasItems();const existing=new Map(canvas.getState().nodes.map(n=>[n.id,n]));
-    const placements=placeMediaFrames(agentState?.generations||[],workspace().positions,[...existing.values()].filter(n=>!String(n.id).startsWith('edge-')));
+    const additions=[];
+    const surface=canvas.getContainer?.();
+    const placements=surface?.clientWidth>0&&surface?.clientHeight>0?placeMediaFrames(agentState?.generations||[],workspace().positions,[...existing.values()].filter(n=>!String(n.id).startsWith('edge-')),{viewport:canvas.getState().viewport,width:surface.clientWidth,height:surface.clientHeight}):{};
     if(Object.keys(placements).length){Object.assign(workspace().positions,placements);clearTimeout(saveTimer);saveTimer=setTimeout(()=>void save().catch(e=>bridge.toast(e.message)),600);}
     const links=edgeLinks();
     const valid=new Set([...ns.map(n=>n.id),...links.map(l=>`edge-${l.to}`)]);
@@ -341,9 +408,9 @@ export function createDirectorWorkspace(host, bridge) {
         // as the canvas id means selections and saved positions remain stable.
         if(old && (old.$_type!=='image'||old.$_imageUrl!==url)){
           canvas.deleteNodes([n.id]);
-          canvas.createNodes([{id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,brightness:0,$_applyBrightnessFilter:false,...pos,...bounds,draggable:true}],false);
+          additions.push({id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,brightness:0,$_applyBrightnessFilter:false,...pos,...bounds,draggable:true});
         }else if(!old){
-          canvas.createNodes([{id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,brightness:0,$_applyBrightnessFilter:false,...pos,...bounds,draggable:true}],false);
+          additions.push({id:n.id,$_type:'image',$_actualType:'director-asset',$_imageUrl:url,brightness:0,$_applyBrightnessFilter:false,...pos,...bounds,draggable:true});
         }else if(old.$_applyBrightnessFilter!==false||old.brightness!==0){
           // The Konva image node owns live drag/transform coordinates. The
           // workspace position is only the last persisted snapshot, so
@@ -356,11 +423,19 @@ export function createDirectorWorkspace(host, bridge) {
       }
       const html=nodeContent(n);
       const media=n.media||bridge.media(n.taskId);
-      const actualType=media?.kind==='video'?'video':'director';
-      if(!old)canvas.createNodes([{id:n.id,$_type:'html',$_actualType:actualType,$_htmlContent:html,fill:'rgba(255,255,255,0.001)',strokeEnabled:false,width:280,height:228,...pos,draggable:true}],false);
-      else if(old.$_type==='html'&&(old.$_htmlContent!==html||old.$_actualType!==actualType))canvas.updateNodes([n.id],{$_actualType:actualType,$_htmlContent:html,fill:'rgba(255,255,255,0.001)',strokeEnabled:false});
-      alignCard(n.id,html);
+      const actualType=media?.kind==='video'?'video':media?.kind==='image'?'image':'director';
+      const mediaAttrs=media?.kind==='image'&&media.url?{$_imageUrl:media.url}:{};
+      if(!old)additions.push({id:n.id,$_type:'html',$_actualType:actualType,...mediaAttrs,$_htmlContent:html,fill:'rgba(255,255,255,0.001)',strokeEnabled:false,width:280,height:228,...pos,draggable:true});
+      else if(old.$_type==='html'&&(old.$_htmlContent!==html||old.$_actualType!==actualType||old.$_imageUrl!==mediaAttrs.$_imageUrl))canvas.updateNodes([n.id],{$_actualType:actualType,...mediaAttrs,$_htmlContent:html,fill:'rgba(255,255,255,0.001)',strokeEnabled:false});
+      if(old)alignCard(n.id,html);
     });
+    if(additions.length){
+      canvas.createNodes(additions,false);
+      additions.forEach(node=>{
+        if(node.$_type==='image')paintAssetImage(node.id,node.$_imageUrl);
+        else alignCard(node.id,node.$_htmlContent);
+      });
+    }
     links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:edgePoints(from,to),stroke:'#9b99c9',fill:'#9b99c9',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
     syncing=false;
     renderEdges(canvas.getState().nodes);
@@ -382,18 +457,18 @@ export function createDirectorWorkspace(host, bridge) {
     // a media task.
     const conversationBusy=drainingSubmissions||switchingConversation;
     modelButton?.setAttribute('title',`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`);
-    if(modelButton)modelButton.disabled=!agentState||conversationBusy||!models.length;
+    if(modelButton)modelButton.disabled=!agentReady||conversationBusy||!models.length;
     const modelList=root.querySelector('[data-agent-model-list]');
     const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${conversationBusy?'disabled':''}>${escape(m.label)}${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
     if(modelList&&modelList.innerHTML!==options)modelList.innerHTML=options;
     const uploadButton=root.querySelector('[data-agent-upload]');
-    if(uploadButton){uploadButton.disabled=uploading||switchingConversation;uploadButton.title=uploading?'正在上传…':'上传文件';}
+    if(uploadButton){uploadButton.disabled=!agentReady||uploading||switchingConversation;uploadButton.title=uploading?'正在上传…':'上传文件';}
     const attachmentList=root.querySelector('[data-agent-attachments]');
     if(attachmentList)attachmentList.innerHTML=attachments.map(f=>`<span class="dw-attachment${['image','video'].includes(f.kind)&&(f.previewUrl||f.url)?' dw-attachment-preview':''}" title="${escape(f.name)}">${f.kind==='image'&&(f.previewUrl||f.url)?`<img src="${escape(f.previewUrl||f.url)}" alt="${escape(f.name)}">`:f.kind==='video'&&(f.previewUrl||f.url)?`<video src="${escape(f.previewUrl||f.url)}" preload="metadata" muted playsinline aria-label="${escape(f.name)}"></video>`:`<span>${escape(f.name)}</span>`}<button type="button" data-remove-attachment="${escape(f.id)}" aria-label="移除 ${escape(f.name)}" ${sending?'disabled':''}>×</button></span>`).join('')+(uploading?'<span role="status">正在上传文件…</span>':'');
     const newButton=root.querySelector('[data-agent-new]');
-    if(newButton)newButton.disabled=conversationBusy||!agentConfig;
+    if(newButton)newButton.disabled=conversationBusy||!agentReady;
     const historyButton=root.querySelector('[data-agent-history]');
-    historyButton?.toggleAttribute('disabled',!agentClient);
+    historyButton?.toggleAttribute('disabled',!agentReady);
     root.querySelector('[data-agent-retry]')?.toggleAttribute('hidden',!connectionError);
     const history=root.querySelector('.dw-conversations');
 
@@ -408,8 +483,8 @@ export function createDirectorWorkspace(host, bridge) {
     if(budget&&document.activeElement!==budget)budget.value=String((agentState?.settings.generationBudgetMicro||0)/1000000);
     const status=root.querySelector('.dw-mode-help');
     if(status){status.textContent=connectionError||agentState?.activity||'';status.setAttribute('role','status');}
-    root.querySelector('[data-director-stop]')?.toggleAttribute('hidden',!busy);
-    root.querySelector('[data-director-delegate]')?.toggleAttribute('hidden',agentState?.state!=='paused');
+    root.querySelector('[data-director-stop]')?.toggleAttribute('hidden',!busy||!agentReady);
+    root.querySelector('[data-director-delegate]')?.toggleAttribute('hidden',!agentReady||agentState?.state!=='paused');
     const stickToBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
     const items=agentState?.messages||[];
     if(streamSession!==agentState?.id){
@@ -425,7 +500,7 @@ export function createDirectorWorkspace(host, bridge) {
     renderConversationMessages(messages,items,visibleDraft);
     if(targetDraft&&!streamFrame)streamFrame=requestAnimationFrame(animateDraft);
     root.querySelectorAll('[data-example]').forEach(button=>button.onclick=()=>{const input=root.querySelector('#directorMessage');if(input){input.value=button.dataset.example;input.focus();}});
-    const approval=agentState?.approval;
+    const approval=agentReady?agentState?.approval:null;
     const plan=root.querySelector('.dw-plan');
     if(!plan)return;
     const approvalSignature=approval?JSON.stringify([approval.id,approval.title,approval.modelId,approval.quantity,approval.credits,approval.prompt]):'';
@@ -438,7 +513,7 @@ export function createDirectorWorkspace(host, bridge) {
       plan.querySelector('[data-agent-decline]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,false)));
     }
     const sendButton=root.querySelector('[data-director-send]');
-    if(sendButton){sendButton.disabled=uploading||switchingConversation||!agentState||!agentConfig?.configured;sendButton.textContent=busy?'补充要求':sending?'发送中…':'发送';sendButton.setAttribute('aria-busy',String(sending));}
+    if(sendButton){sendButton.disabled=!agentReady||uploading||switchingConversation||!agentState||!agentConfig?.configured;sendButton.textContent=busy?'补充要求':sending?'发送中…':'发送';sendButton.setAttribute('aria-busy',String(sending));}
     const composer=root.querySelector('#directorMessage');
     if(composer)composer.placeholder=busy?'生成进行中也可以继续补充创作要求':'想聊什么，或希望我帮你创作什么？';
     if(stickToBottom)messages.scrollTop=messages.scrollHeight;
@@ -545,23 +620,28 @@ export function createDirectorWorkspace(host, bridge) {
     el.querySelector('[data-ask-node]').onclick=()=>{const input=host.querySelector('.dw-composer textarea');input.value=`修改「${n.title}」：`;input.focus();};
   }
   function mount() {
-    if(projectId===get().id&&canvas&&host.querySelector('.dw-canvas')){drawPanels();return;}
+    if(projectId===get().id&&host.querySelector('.dw-canvas')){drawPanels();return;}
     dispose();projectId=get().id;
     host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas reference-canvas-host" aria-label="无限分镜画布"></div><button class="dw-agent-reopen" data-show-agent hidden>打开对话</button><section class="dw-inspector" hidden></section></section><aside class="dw-agent"><div class="dw-agent-resizer" role="separator" aria-label="调整对话区域宽度" aria-orientation="vertical" tabindex="0"></div><header><b>GuGu</b><nav aria-label="对话操作"><button type="button" data-agent-new title="新建对话">＋ 新对话</button><button type="button" data-agent-history aria-expanded="false" aria-haspopup="dialog" popovertarget="directorHistoryPicker">历史</button><button type="button" data-hide-agent aria-label="收起对话" title="收起对话">›</button></nav></header><section id="directorHistoryPicker" class="dw-conversations dw-history-picker" aria-label="历史对话" popover role="dialog"></section><details class="dw-agent-options"><summary>生成设置</summary><label><input type="checkbox" data-agent-auto> 预算内自动生成</label><label>本次对话生成预算（积分）<input type="number" data-agent-budget min="0" max="10000" step="1" value="0"></label><button type="button" data-agent-save-settings>保存设置</button></details><div class="dw-messages" aria-live="polite"><div class="dw-turn-activity"><p class="dw-mode-help"></p><button type="button" class="dw-agent-retry" data-agent-retry hidden>重新连接</button></div></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉 GuGu 你的想法</label><textarea id="directorMessage" placeholder="想聊什么，或希望我帮你创作什么？" rows="3"></textarea><div data-agent-attachments class="dw-attachments"></div><div class="dw-composer-actions"><button type="button" data-agent-upload class="dw-icon-button" aria-label="上传文件" title="上传文件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l10-10a4 4 0 0 1 5.66 5.66l-10 10a2 2 0 0 1-2.83-2.83l9.19-9.19"/></svg></button><small>Enter 发送 · Shift + Enter 换行</small><button data-director-delegate type="button" title="继续当前创作">继续</button><button data-director-stop type="button" hidden>暂停</button><button type="button" data-agent-model-toggle class="dw-icon-button" aria-label="切换对话模型" aria-haspopup="dialog" aria-expanded="false" popovertarget="directorModelPicker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/></svg></button><button data-director-send class="dw-primary" type="submit" aria-label="发送消息">发送</button></div></form><div id="directorModelPicker" class="dw-model-picker" popover role="dialog" aria-label="选择对话模型"><strong>选择对话模型</strong><div data-agent-model-list></div></div></aside></section>`;
+    if(typeof IntersectionObserver==='function')mediaLoadObserver=new IntersectionObserver(entries=>{
+      for(const entry of entries){
+        if(!entry.isIntersecting)continue;
+        const media=entry.target,url=media.dataset.canvasSrc;
+        mediaLoadObserver?.unobserve(media);
+        if(!url)continue;
+        media.src=url;delete media.dataset.canvasSrc;
+        if(media.tagName==='VIDEO')media.preload='metadata';
+      }
+    },{root:host.querySelector('.dw-canvas'),rootMargin:'400px'});
     const bindCanvas=api=>{
       canvas=api;
       mainLayer=canvas.getMainLayer?.();
       if(workspace().viewport)canvas.updateViewport(workspace().viewport);
-      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else queueMicrotask(()=>{if(canvas&&!syncing&&!selected)syncCanvas();});});
+      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else window.setTimeout(()=>{if(canvas&&!syncing&&!selected)syncCanvas();},0);});
       canvas.on('nodes:deleted',deletedNodes=>{
         if(syncing||!Array.isArray(deletedNodes)||deletedNodes.length===0)return;
-        const knownIds=new Set([...nodes().map(item=>item.id),...(workspace().canvasNodes||[]).map(item=>item.id)]);
-        const deletedIds=deletedNodes.map(node=>node?.id).filter(id=>id&&knownIds.has(id));
+        const deletedIds=markCanvasItemsHidden(deletedNodes.map(node=>node?.id).filter(Boolean));
         if(deletedIds.length===0)return;
-        const hidden=new Set(workspace().hiddenIds||[]);
-        deletedIds.forEach(id=>hidden.add(id));
-        workspace().hiddenIds=[...hidden];
-        deletedIds.forEach(id=>{if(workspace().positions)delete workspace().positions[id];});
         clearTimeout(saveTimer);
         saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);
       });
@@ -571,8 +651,8 @@ export function createDirectorWorkspace(host, bridge) {
       const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
-      canvas.on('state:change',snapshot=>{if(syncing||resizingChat)return;const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
-      canvas.on('viewport:change',v=>{if(resizingChat)return;requestAnimationFrame(alignCards);persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
+      canvas.on('state:change',snapshot=>{if(syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
+      canvas.on('viewport:change',v=>{if(resizingChat)return;bridge.markCanvasDirty?.();requestAnimationFrame(alignCards);persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
       // The whiteboard emits the public state event at the end of a drag. The
       // Konva layer receives `dragmove` every frame, so draw arrow endpoints
       // directly on the native shape for a continuous, low-latency response.
@@ -585,7 +665,7 @@ export function createDirectorWorkspace(host, bridge) {
       canvas.createNodes((workspace().canvasNodes||[]).filter(node=>!hidden.has(node.id)),false);
       syncing=false;
       syncCanvas();
-      requestAnimationFrame(()=>{if(canvas){fitCanvas();alignCards();}});
+      requestAnimationFrame(()=>{if(canvas){syncCanvas();alignCards();}});
       drawPanels();
     };
     canvasMount=mountReferenceCanvas(host.querySelector('.dw-canvas'),{sessionKey:projectId,adapter:{
@@ -692,6 +772,7 @@ export function createDirectorWorkspace(host, bridge) {
     composerInput.addEventListener('blur',()=>host.querySelector('.dw-composer').classList.remove('is-focused'));
     resizeComposer();
     host.querySelector('.dw-canvas').addEventListener('dblclick',event=>{if(selected&&!event.target.closest('video,input,textarea,button')){inspectorOpen=true;drawInspector();}});
+    host.querySelector('.director-workspace').addEventListener('keydown',handleCanvasDeleteKeydown,true);
     host.querySelector('.director-workspace').addEventListener('keydown',event=>{if(event.key==='Escape'){inspectorOpen=false;selected='';canvas.selectNodes([]);drawInspector();}});
 
     const toggleAgent=collapsed=>{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed; if(!collapsed)requestAnimationFrame(()=>composerInput.focus());};
@@ -700,7 +781,22 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('[data-director-delegate]').onclick=()=>void agentAction(()=>agentClient.resume());
     host.querySelector('[data-director-stop]').onclick=()=>void agentAction(()=>agentClient.interrupt());
     const token=epoch;
-    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId,onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{if(token!==epoch)return;agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';drawPanels();},onError:error=>{if(token===epoch&&!error.stale){connectionError=error.message;drawPanels();}}});
+    void readCanvasSnapshot(bridge.snapshotKey?.('agent')).then(cached=>{
+      if(token!==epoch||agentState||!cached?.state?.id)return;
+      agentState=cached.state;agentConfig=cached.config||null;
+      lastAgentCacheSignature=JSON.stringify([cached.state.id,cached.state.version,cached.state.state,cached.state.settings,cached.state.messages?.length,cached.state.draft]);
+      drawPanels();
+    });
+    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId,onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{
+      if(token!==epoch)return;
+      if(!state&&agentState?.id){agentConfig=config;drawPanels();return;}
+      agentReady=Boolean(state?.id);
+      agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';drawPanels();
+      if(state?.id){
+        const signature=JSON.stringify([state.id,state.version,state.state,state.settings,state.messages?.length,state.draft]);
+        if(signature!==lastAgentCacheSignature){lastAgentCacheSignature=signature;void writeCanvasSnapshot(bridge.snapshotKey?.('agent'),{state:{...state,project:null,tasks:[]},config});}
+      }
+    },onError:error=>{if(token===epoch&&!error.stale){connectionError=error.message;drawPanels();}}});
     void agentClient.start().catch(error=>{if(token===epoch){connectionError=error.message;drawPanels();}});
     drawPanels();
   }
@@ -761,6 +857,6 @@ export function createDirectorWorkspace(host, bridge) {
     void drainSubmissions();
     return promise;
   }
-  function dispose(){resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;sending=false;switchingConversation=false;submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
+  function dispose(){mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];uploading=false;sending=false;switchingConversation=false;submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }

@@ -27,3 +27,23 @@ test('mixed-size batches wrap without overlaps and retain moved positions on lat
   const next=placeMediaFrames([...frames,{id:'b',batchId:'b'}],positions);
   assert.deepEqual(Object.keys(next),['b']);assert.ok(next.b.y>2120);assert.equal(positions['a-0'].x,900);
 });
+
+test('new generation frames are placed in the current viewport',()=>{
+  const view={viewport:{x:-1200,y:-800,scale:1},width:900,height:600};
+  const result=placeMediaFrames([{id:'new',aspectRatio:'16:9'}],{},[{x:0,y:1800,width:320,height:228}],view);
+  const frame=result.new;
+  assert.ok(frame.x>=1200&&frame.x+frame.width<=2076);
+  assert.ok(frame.y>=824&&frame.y+frame.height<=1376);
+  assert.ok(Math.abs(frame.x+frame.width/2-1650)<1);
+  assert.ok(Math.abs(frame.y+frame.height/2-1100)<1);
+});
+
+test('viewport placement finds the nearest visible space beside centered material',()=>{
+  const view={viewport:{x:0,y:0,scale:1},width:1000,height:700};
+  const centered={x:340,y:236,width:320,height:228};
+  const result=placeMediaFrames([{id:'new',aspectRatio:'1:1'}],{},[centered],view);
+  const frame=result.new;
+  assert.ok(frame.x>=12&&frame.x+frame.width<=988);
+  assert.ok(frame.y>=12&&frame.y+frame.height<=688);
+  assert.ok(frame.x>=centered.x+centered.width+8||frame.x+frame.width<=centered.x-8||frame.y>=centered.y+centered.height+8||frame.y+frame.height<=centered.y-8);
+});

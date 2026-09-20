@@ -8,7 +8,7 @@ test('loaded local images populate the native shape and invalidate empty drawing
   const url='gugu-media://asset/image-1';
   let painted,cleared=0,drawn=0,updated;
   const shape={image(value){painted=value;},clearCache(){cleared++;},getLayer(){return {batchDraw(){drawn++;}};}};
-  const context={epoch:0,assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
+  const context={epoch:0,syncing:false,assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),bridge:{markCanvasDirty(){}},canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
   vm.createContext(context);vm.runInContext(loading,context);
   context.loadAssetSize('image-1',url);
   const image=context.assetSizeLoads.get(url);image.onload();
@@ -22,7 +22,7 @@ test('loaded local images populate the native shape and invalidate empty drawing
 test('video picture presses reach the canvas while playback controls remain native',()=>{
   const handlers={},forwarded=[];
   const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
-  const element={style:{},querySelectorAll:()=>[video],querySelector:()=>null};
+  const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
   const context={selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
@@ -39,4 +39,31 @@ test('video picture presses reach the canvas while playback controls remain nati
   const controls=new MouseEvent('mousedown',{clientX:30,clientY:180,button:0});
   handlers.mousedown(controls);
   assert.equal(forwarded.length,1);assert.equal(controls.prevented,undefined);assert.equal(controls.stopped,true);
+});
+
+test('video picture wheel gestures reach the canvas while playback controls remain native',()=>{
+  const handlers={},forwarded=[];
+  const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
+  const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
+  const context={selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
+  context.alignCard('video');
+  class WheelEvent {
+    constructor(type,init){Object.assign(this,{type,...init});}
+    stopPropagation(){this.stopped=true;}
+    preventDefault(){this.prevented=true;}
+  }
+  const picture=new WheelEvent('wheel',{clientX:30,clientY:80,deltaX:0,deltaY:-120,deltaMode:0,ctrlKey:true});
+  handlers.wheel(picture);
+  assert.equal(forwarded.length,1);
+  assert.equal(forwarded[0].deltaY,-120);
+  assert.equal(forwarded[0].clientX,30);
+  assert.equal(forwarded[0].ctrlKey,true);
+  assert.equal(picture.prevented,true);
+  const controls=new WheelEvent('wheel',{clientX:30,clientY:180,deltaY:-120,ctrlKey:true});
+  handlers.wheel(controls);
+  assert.equal(forwarded.length,1);
+  assert.equal(controls.prevented,undefined);
+  assert.equal(controls.stopped,true);
 });

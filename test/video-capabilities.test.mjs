@@ -22,7 +22,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   assert.equal(request.provider, 'autodl');
   assert.equal(request.model, 'minimax_h3_image_audio_to_video_v2_15s');
   assert.equal(models.some(model => model.id === VIDEO_MODEL_IDS.MOTION_RETARGETING), false, '动作迁移只在实验室展示');
-  const motion = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MOTION_RETARGETING, generationType: 'REFERENCE', aspectRatio: '9:16', duration: 12, quality: '464*832px' }, 2);
+  const motion = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MOTION_RETARGETING, generationType: 'REFERENCE', aspectRatio: '9:16', duration: 12, quality: '464*832px(竖版)' }, 2);
   assert.equal(motion.provider, 'autodl-motion');
   assert.equal(motion.model, 'wan2.2animate-v4-motion_retargeting');
   assert.deepEqual(motion.referenceLimits, { image: 1, video: 1, audio: 0, total: 2 });

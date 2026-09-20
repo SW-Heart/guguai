@@ -2,7 +2,6 @@ export function createTaskPoller({
   setTimeoutFn = globalThis.setTimeout,
   clearTimeoutFn = globalThis.clearTimeout,
   isHidden = () => false,
-  canPollInBackground = () => false,
   getUser = () => null,
   getActiveIds = () => [],
   loadActiveTasks = async () => {},
@@ -25,7 +24,7 @@ export function createTaskPoller({
   function scheduleTaskPollForRun(delay, run) {
     clearTimeoutFn(taskTimer);
     taskTimer = 0;
-    if (!getUser() || (isHidden() && !canPollInBackground()) || !getActiveIds().length) return;
+    if (!getUser() || isHidden() || !getActiveIds().length) return;
     taskTimer = setTimeoutFn(async () => {
       if (run !== taskRun) return;
       try { await loadActiveTasks(); } catch {}
@@ -51,11 +50,12 @@ export function createTaskPoller({
     scheduleNotificationPollForRun(delay, notificationRun);
   }
   function onHidden() {
-    if (!canPollInBackground()) return stop();
-    // Keep the active task loop (including an in-flight request) intact.
-    notificationRun += 1;
-    clearTimeoutFn(notificationTimer);
-    notificationTimer = 0;
+    stop();
   }
-  return { scheduleTaskPoll, scheduleNotificationPoll, stop, onHidden };
+  async function pollActiveInBackground() {
+    if (!isHidden() || !getUser() || !getActiveIds().length) return false;
+    try { await loadActiveTasks(); } catch {}
+    return true;
+  }
+  return { scheduleTaskPoll, scheduleNotificationPoll, pollActiveInBackground, stop, onHidden };
 }

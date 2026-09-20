@@ -74,6 +74,7 @@ let paymentWindow;
 let paymentView;
 let tray;
 let trayMenu;
+let backgroundTaskPollTimer;
 let isQuitting = false;
 let settings;
 let workspace;
@@ -93,6 +94,7 @@ let downloadedUpdatePath = '';
 let downloadedUpdateVersion = '';
 let updateInstallStarted = false;
 let currentUpdateStatus = { status: 'idle' };
+let currentUpdateMandatory = false;
 // The reminder is intentionally scoped to this client process. Snoozing it
 // must not stop the download, and it should become visible again on the next
 // client launch.
@@ -959,9 +961,13 @@ function updateFeedUrl() {
 }
 function sendUpdateStatus(status, extra = {}) {
   startupUpdateGate?.onStatus(status);
+  if (status === 'checking') currentUpdateMandatory = currentUpdateMandatory || Boolean(currentUpdateStatus?.mandatory);
+  if (status === 'available') currentUpdateMandatory = Boolean(extra.mandatory);
+  if (['current', 'unconfigured', 'idle'].includes(status)) currentUpdateMandatory = false;
   currentUpdateStatus = {
     status,
     currentVersion: app.getVersion(),
+    mandatory: currentUpdateMandatory,
     promptOnStartup: updatePromptOnStartup && !startupUpdateGate?.finished,
     ...extra,
     snoozed: updateReminderSnoozed,
@@ -970,6 +976,7 @@ function sendUpdateStatus(status, extra = {}) {
 }
 
 function snoozeUpdateReminder() {
+  if (currentUpdateMandatory) return currentUpdateStatus;
   startupUpdateGate?.finish();
   updateReminderSnoozed = true;
   currentUpdateStatus = { ...currentUpdateStatus, snoozed: true };
@@ -1140,7 +1147,10 @@ function configureAutoUpdater() {
       updateConfigured = true;
       autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
       autoUpdater.on('update-available', info => {
-        sendUpdateStatus('available', { version: info.version });
+        sendUpdateStatus('available', {
+          version: info.version,
+          mandatory: Boolean(info.mandatory || info.forceUpdate || info.critical),
+        });
         if (manualMacUpdate) startMacUpdateDownload(info);
       });
       autoUpdater.on('update-not-available', info => sendUpdateStatus('current', { version: info.version }));
@@ -1310,6 +1320,20 @@ function showMainWindow() {
   mainWindow.show();
   mainWindow.focus();
 
+}
+
+function updateBackgroundTaskPolling() {
+  clearInterval(backgroundTaskPollTimer);
+  backgroundTaskPollTimer = null;
+  if (!mainWindow || mainWindow.isDestroyed() || (mainWindow.isVisible() && !mainWindow.isMinimized())) return;
+  backgroundTaskPollTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed() || isQuitting) {
+      clearInterval(backgroundTaskPollTimer);
+      backgroundTaskPollTimer = null;
+      return;
+    }
+    mainWindow.webContents.send('desktop:background-task-tick');
+  }, 6000);
 }
 
 function hideMainWindowToTray() {
@@ -1685,9 +1709,9 @@ async function createWindow({ loadStudioAfter = true } = {}) {
       nodeIntegration: false,
       sandbox: true,
       devTools: !app.isPackaged,
-      // Hidden/minimized studio windows still discover and download completed
-      // media. Keep their polling and delivery retry timers running normally.
-      backgroundThrottling: false,
+      // Let Chromium pause painting and ordinary timers while the window is
+      // hidden. The main process wakes only the active-task poll separately.
+      backgroundThrottling: true,
     },
   });
   mainWindow.on('close', event => {
@@ -1696,6 +1720,10 @@ async function createWindow({ loadStudioAfter = true } = {}) {
     hideMainWindowToTray();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('hide', updateBackgroundTaskPolling);
+  mainWindow.on('show', updateBackgroundTaskPolling);
+  mainWindow.on('minimize', updateBackgroundTaskPolling);
+  mainWindow.on('restore', updateBackgroundTaskPolling);
   // 页面自身的异常与崩溃只在渲染进程里可见，转录一份到日志文件，
   // 否则用户上传的日志会缺掉最关键的那一段。
   mainWindow.webContents.on('console-message', detail => {
@@ -1797,6 +1825,8 @@ app.whenReady().then(bootstrap).catch(async error => {
 
 app.on('before-quit', () => { isQuitting = true; });
 app.on('will-quit', () => {
+  clearInterval(backgroundTaskPollTimer);
+  backgroundTaskPollTimer = null;
   closeLocalLibrary();
   tray?.destroy();
   tray = null;

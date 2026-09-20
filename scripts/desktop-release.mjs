@@ -14,6 +14,7 @@ const packageJson = JSON.parse(originalPackageJson);
 const args = process.argv.slice(2);
 const publish = args.includes('--publish');
 const skipBuild = args.includes('--skip-build');
+const mandatory = args.includes('--mandatory') || ['1', 'true', 'yes'].includes(String(process.env.DESKTOP_UPDATE_MANDATORY || '').trim().toLowerCase());
 const builderTargets = args.filter(value => ['--mac', '--win', '--linux', '--all', '--x64', '--arm64', '--ia32', '--universal'].includes(value));
 const valueArg = name => args.find(value => value.startsWith(`${name}=`))?.slice(name.length + 1) || '';
 const version = packageJson.version;
@@ -41,11 +42,13 @@ function usage() {
   DESKTOP_API_BASE=https://api.example.com DESKTOP_UPDATE_PUBLIC_URL=https://download.example.com/gugu-ai npm run desktop:release -- --publish
                                                    构建并上传到 OSS
   npm run desktop:release -- --publish --skip-build 已有 release/ 文件时直接上传
+  npm run desktop:release -- --mandatory --publish 发布需要强制安装的破坏性更新
 
 发布时还会在同一 OSS 目录同步两个稳定官网别名：
   latest-windows.exe、latest-mac.dmg（仅这两个别名会被覆盖）
 
 可选参数：
+  --mandatory      将 latest*.yml 标记为必须更新，隐藏“稍后提醒”
   --prefix=...    OSS 更新目录，默认 model-studio/desktop-updates
   --base-url=...  用户端 GUGU_UPDATE_URL 对应的公开地址
   --api-base=...   用户端线上创作服务 API 地址（生产包必填）
@@ -86,6 +89,13 @@ function contentType(name) {
   const lower = name.toLowerCase();
   if (lower.endsWith('.nsis.7z')) return mimeTypes['.nsis.7z'];
   return mimeTypes[path.extname(name)] || 'application/octet-stream';
+}
+
+async function uploadBody(sourceName) {
+  if (!mandatory || !/^latest(?:-(?:mac|linux|win))?\.yml$/i.test(sourceName)) return path.join(releaseDir, sourceName);
+  const source = await fs.readFile(path.join(releaseDir, sourceName), 'utf8');
+  const marked = source.replace(/^mandatory:\s*.*$/m, 'mandatory: true');
+  return /^mandatory:/m.test(source) ? Buffer.from(marked) : Buffer.from(`mandatory: true\n${source}`);
 }
 
 function validateUrl(value, label) {
@@ -169,7 +179,7 @@ const uploadEntries = [
 for (const { objectName, sourceName } of uploadEntries) {
   const objectKey = `${updatePrefix}/${objectName}`;
   const cacheControl = /^latest(?:-|\.|$)/i.test(objectName) ? 'no-cache, max-age=0' : 'public, max-age=31536000, immutable';
-  await client.put(objectKey, path.join(releaseDir, sourceName), { headers: { 'Content-Type': contentType(objectName), 'Cache-Control': cacheControl } });
+  await client.put(objectKey, await uploadBody(sourceName), { headers: { 'Content-Type': contentType(objectName), 'Cache-Control': cacheControl } });
   console.log(`已上传 ${publicUrl}/${objectName}`);
 }
 

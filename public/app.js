@@ -4,7 +4,7 @@ import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferen
 import { createApiClient } from './api-client.js?v=3';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
-import { createTaskPoller } from './features/generation/polling.js?v=3';
+import { createTaskPoller } from './features/generation/polling.js?v=4';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=4';
 import { createCreditPresentation } from './features/credits/presentation.js?v=3';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
@@ -1077,16 +1077,21 @@ function updateFullscreenState(state) {
   const settledFullscreen = Boolean(payload.fullscreen) && !payload.transitioning;
   document.body.classList.toggle('desktop-fullscreen', settledFullscreen);
 }
+function isMandatoryDesktopUpdate(payload = desktopUpdateState) {
+  return Boolean(payload?.mandatory || payload?.forceUpdate || payload?.critical);
+}
 function closeDesktopUpdateDialog({ dismiss = false } = {}) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog) return;
+  if (dismiss && isMandatoryDesktopUpdate()) return;
   if (dismiss) desktopUpdateDialogDismissed = true;
   if (dialog.open) dialog.close();
   else dialog.hidden = true;
 }
 function openDesktopUpdateDialog() {
   const dialog = $('#desktopUpdateDialog');
-  if (desktopUpdateDialogDismissed || !dialog || !['available', 'downloading', 'downloaded', 'installing', 'error'].includes(desktopUpdateState.status)) return;
+  const mandatory = isMandatoryDesktopUpdate();
+  if ((desktopUpdateDialogDismissed && !mandatory) || !dialog || !['available', 'downloading', 'downloaded', 'installing', 'error', 'checking'].includes(desktopUpdateState.status)) return;
   dialog.hidden = false;
   if (!dialog.open) dialog.showModal();
 }
@@ -1106,7 +1111,13 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   const hint = $('#desktopUpdateHint');
   const action = $('#desktopUpdateAction');
   const later = $('#laterDesktopUpdate');
+  const closeButton = $('#closeDesktopUpdate');
   if (!title || !message || !current || !next || !progressWrap || !progress || !hint || !action || !later) return;
+  const mandatory = isMandatoryDesktopUpdate();
+  toggleClass(closeButton, 'hidden', mandatory);
+  toggleClass(later, 'hidden', mandatory);
+  closeButton?.setAttribute('aria-hidden', String(mandatory));
+  later.setAttribute('aria-hidden', String(mandatory));
   const setProgressLabel = text => progressWrap.setAttribute('aria-label', text);
   current.textContent = currentVersion;
   next.textContent = version;
@@ -1115,32 +1126,41 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   progress.classList.remove('is-indeterminate');
   progressWrap.classList.remove('hidden');
   later.disabled = status === 'installing';
-  if (status === 'available') {
-    title.textContent = '发现新版本';
-    message.textContent = `GuGu AI ${version} 可更新。`;
+  if (status === 'checking' && mandatory) {
+    title.textContent = '需要更新客户端';
+    message.textContent = '当前版本需要更新后才能继续使用。';
+    progress.style.width = '0%';
+    progress.classList.add('is-indeterminate');
+    setProgressLabel('正在检查更新…');
+    hint.textContent = '请保持客户端打开，更新完成后即可继续使用。';
+    action.textContent = '正在检查…';
+    action.disabled = true;
+  } else if (status === 'available') {
+    title.textContent = mandatory ? '需要更新客户端' : '发现新版本';
+    message.textContent = mandatory ? '当前版本需要更新后才能继续使用。' : `GuGu AI ${version} 可更新。`;
     progress.style.width = '0%';
     progress.classList.add('is-indeterminate');
     setProgressLabel('准备下载…');
-    hint.textContent = '下载完成后可重启更新。';
+    hint.textContent = mandatory ? '更新完成后将重启客户端。' : '下载完成后可重启更新。';
     action.textContent = '准备下载…';
     action.disabled = true;
   } else if (status === 'downloading') {
     const percent = Number(desktopUpdateState.percent);
     const hasProgress = Number.isFinite(percent) && percent >= 0;
-    title.textContent = '正在下载更新';
-    message.textContent = `GuGu AI ${version} 正在下载。`;
+    title.textContent = mandatory ? '正在准备客户端更新' : '正在下载更新';
+    message.textContent = mandatory ? '更新完成前暂时无法继续使用。' : `GuGu AI ${version} 正在下载。`;
     progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
     if (!hasProgress) progress.classList.add('is-indeterminate');
     setProgressLabel(hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…');
-    hint.textContent = '下载完成后可重启更新。';
+    hint.textContent = mandatory ? '请保持客户端打开，下载完成后重启更新。' : '下载完成后可重启更新。';
     action.textContent = '正在下载…';
     action.disabled = true;
   } else if (status === 'downloaded') {
-    title.textContent = '下载已完成';
-    message.textContent = `GuGu AI ${version} 已下载。`;
+    title.textContent = mandatory ? '更新已准备好' : '下载已完成';
+    message.textContent = mandatory ? '请重启客户端完成更新后继续使用。' : `GuGu AI ${version} 已下载。`;
     progress.style.width = '100%';
     setProgressLabel('下载完成');
-    hint.textContent = '重启后立即应用。';
+    hint.textContent = mandatory ? '必须完成更新才能继续使用。' : '重启后立即应用。';
     action.textContent = '重启更新';
     action.disabled = false;
   } else if (status === 'installing') {
@@ -1152,20 +1172,21 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
     action.textContent = '正在退出…';
     action.disabled = true;
   } else if (status === 'error') {
-    title.textContent = '更新暂不可用';
-    message.textContent = desktopUpdateState.message || '更新下载失败，请稍后重试。';
+    title.textContent = mandatory ? '必须更新客户端' : '更新暂不可用';
+    message.textContent = mandatory ? '更新暂时未完成，请检查网络后重试。' : (desktopUpdateState.message || '更新下载失败，请稍后重试。');
     progressWrap.classList.add('hidden');
-    hint.textContent = '可以稍后再次检查更新。';
+    hint.textContent = mandatory ? '完成更新后才能继续使用。' : '可以稍后再次检查更新。';
     action.textContent = '重新检查';
     action.disabled = false;
   }
-  if (open && ['available', 'downloading', 'downloaded', 'installing', 'error'].includes(status)) openDesktopUpdateDialog();
+  if ((open || mandatory) && ['available', 'downloading', 'downloaded', 'installing', 'error', 'checking'].includes(status)) openDesktopUpdateDialog();
 }
 function initDesktopUpdateDialog(bridge) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog || !bridge?.updates || dialog.dataset.bound === 'true') return;
-  const close = () => closeDesktopUpdateDialog({ dismiss: true });
+  const close = () => { if (!isMandatoryDesktopUpdate()) closeDesktopUpdateDialog({ dismiss: true }); };
   const snooze = async () => {
+    if (isMandatoryDesktopUpdate()) return;
     // Hide immediately even if the IPC round trip is slow. The main process
     // also keeps this state so a renderer reload cannot bring the reminder
     // back during the same client session.
@@ -1182,7 +1203,7 @@ function initDesktopUpdateDialog(bridge) {
   $('#laterDesktopUpdate').onclick = () => void snooze();
   $('#desktopUpdateAction').onclick = async () => {
     if (desktopUpdateState.status === 'error') {
-      close();
+      if (!isMandatoryDesktopUpdate()) close();
       try { await bridge.updates.check(); } catch (error) { console.warn('[desktop] 重新检查更新失败', error); }
       return;
     }
@@ -1402,16 +1423,22 @@ async function initDesktopBridge() {
       const applyUpdateStatus = payload => {
         const status = payload?.status;
         desktopUpdateState = { ...desktopUpdateState, ...(payload || {}) };
-        if (desktopUpdateReminderSnoozed || payload?.snoozed) {
+        const mandatory = isMandatoryDesktopUpdate(payload);
+        if (mandatory) {
+          desktopUpdateDialogDismissed = false;
+          desktopUpdateReminderSnoozed = false;
+        }
+        if (!mandatory && (desktopUpdateReminderSnoozed || payload?.snoozed)) {
           desktopUpdateReminderSnoozed = true;
           hideUpdateButton();
           closeDesktopUpdateDialog();
           return;
         }
-        const shouldPrompt = payload?.promptOnStartup === true || payload?.promptOnOpen === true;
+        const shouldPrompt = mandatory || payload?.promptOnStartup === true || payload?.promptOnOpen === true;
         if (payload?.promptOnOpen) desktopUpdateDialogDismissed = false;
-        if (status === 'unconfigured' || status === 'current' || status === 'idle') { hideUpdateButton(); closeDesktopUpdateDialog(); return; }
+        if (!mandatory && (status === 'unconfigured' || status === 'current' || status === 'idle')) { hideUpdateButton(); closeDesktopUpdateDialog(); return; }
         if (status === 'checking') {
+          if (mandatory) { renderDesktopUpdateDialog(payload, { open: true }); return; }
           if (payload?.promptOnStartup) desktopUpdateDialogDismissed = false;
           hideUpdateButton(); closeDesktopUpdateDialog(); setUpdateLabel('检查更新…'); setUpdateTitle('正在检查更新'); updateButton.disabled = true; return;
         }
@@ -1710,7 +1737,7 @@ let viralController = null;
 let viralControllerPromise = null;
 function ensureViralController() {
   if (viralController) return Promise.resolve(viralController);
-  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=20').then(({createViralLab}) => {
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=23').then(({createViralLab}) => {
     viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
     return viralController;
   }).catch(error => { viralControllerPromise = null; throw error; });
@@ -1722,8 +1749,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=141').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+    dramaControllerPromise = import('./drama-studio.js?v=142').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     });
   }
@@ -4237,7 +4264,6 @@ const taskPoller = createTaskPoller({
   setTimeoutFn: window.setTimeout.bind(window),
   clearTimeoutFn: window.clearTimeout.bind(window),
   isHidden: () => document.hidden,
-  canPollInBackground: () => Boolean(window.guguDesktop),
   getUser: () => state.user,
   getActiveIds: activeGenerationIds,
   loadActiveTasks: () => loadTasks({ background: true, activeOnly: true }),
@@ -4247,6 +4273,9 @@ const taskPoller = createTaskPoller({
 });
 const scheduleTaskPoll = taskPoller.scheduleTaskPoll;
 const scheduleNotificationPoll = taskPoller.scheduleNotificationPoll;
+window.guguDesktop?.window?.onBackgroundTaskTick?.(() => {
+  void taskPoller.pollActiveInBackground();
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     taskPoller.onHidden();

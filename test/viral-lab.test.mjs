@@ -100,9 +100,9 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   const controller=readFileSync(new URL('../public/features/viral-lab/controller.js',import.meta.url),'utf8');
   const styles=readFileSync(new URL('../public/features/viral-lab/styles.css',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=337\b/);assert.doesNotMatch(html,/app\.js\?v=336\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
-  assert.match(html,/features\/viral-lab\/styles\.css\?v=19/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=20/);
+  assert.match(html,/app\.js\?v=347\b/);assert.doesNotMatch(html,/app\.js\?v=346\b/);assert.doesNotMatch(html,/app\.js\?v=345\b/);assert.doesNotMatch(html,/app\.js\?v=344\b/);assert.doesNotMatch(html,/app\.js\?v=343\b/);assert.doesNotMatch(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
+  assert.match(html,/features\/viral-lab\/styles\.css\?v=21/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=23/);
   assert.doesNotMatch(html,/features\/viral-lab\/styles\.css\?v=15/);
   assert.doesNotMatch(app,/features\/viral-lab\/controller\.js\?v=15/);
   assert.match(controller,/data-vl="create-motion"/);
@@ -113,6 +113,9 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   assert.doesNotMatch(controller,/class="[^"]*content-panel/);
   assert.doesNotMatch(controller,/vl-motion-shell|vl-motion-generator-panel|vl-motion-content/);
   assert.match(controller,/vl-motion-creation-grid/);
+  assert.match(controller,/videoProgressMarkup\(task\)/);assert.doesNotMatch(controller,/card-meta|status-pill/);
+  assert.match(controller,/<span class="button-cost"><b data-motion-cost>/);assert.doesNotMatch(controller,/data-motion-duration|motion-summary|参考视频 \$\{duration\} 秒/);
+  assert.doesNotMatch(controller,/Wan 2\.2 Animate|面部表情强度|动作幅度|帧率|种子（可选）|data-motion-field="seed"|seed:motion\.seed/);
   assert.match(styles,/\.app-shell\.lab-motion-open #routeTitle \{ display: block; \}/);
   assert.match(styles,/\.app-shell\.lab-motion-open \.content-panel/);
   assert.doesNotMatch(styles,/vl-motion-shell|vl-motion-generator-panel|vl-motion-content/);

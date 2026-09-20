@@ -788,11 +788,15 @@ const autodlProvider = createAutodlProvider({
 });
 function buildAutodlMotionPayload(_task, refs) {
   const groups = refs && !Array.isArray(refs) ? refs : { images: [], videos: [] };
+  const quality = String(_task.quality || '').trim();
+  const horizontal = _task.aspectRatio === '16:9'
+    || quality === '832*464px'
+    || quality === '832*464px(横版)';
   return {
     seed: _task.seed === undefined || _task.seed === null || _task.seed === '' ? undefined : Number(_task.seed),
     ref_image: groups.images?.[0] || '',
     ref_video: groups.videos?.[0] || '',
-    resolution: _task.quality || '464*832px',
+    resolution: horizontal ? '832*464px(横版)' : '464*832px(竖版)',
   };
 }
 const autodlMotionProvider = createAutodlProvider({

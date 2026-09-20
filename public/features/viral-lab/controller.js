@@ -1,3 +1,5 @@
+import { createGenerationPresentation } from '../generation/presentation.js?v=4';
+
 const roles = { product:'商品图', identity:'人物参考图', look:'服装参考图', storyboard:'分镜图片', scene:'场景参考', audio:'声音参考' };
 export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles, loadTasks, scheduleTaskPoll, setCreditBalance, accountSnapshot, isAccountCurrent }) {
   const root = document.querySelector('#viralLabView');
@@ -9,7 +11,8 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
   let capabilities = {};
   let tasks = [], taskTimer = null, visible = false, tasksOpen = false, taskRefreshVersion = 0, taskRefreshError = false;
   let motionOpen = false, motionTasks = [], motionTaskTimer = null, motionRefreshVersion = 0, motionRefreshError = false;
-  const motion = { imageAssetIds: [], videoAssetId: '', videoDuration: 0, resolution: '464*832px', seed: '', faceStrength: 'medium', actionScale: '1', fps: 'source' };
+  const { videoProgressMarkup } = createGenerationPresentation({ escapeHtml:esc });
+  const motion = { imageAssetIds: [], videoAssetId: '', videoDuration: 0, resolution: '464*832px(竖版)' };
   const base = '/api/viral-lab/projects';
   const post = (url, body, options = {}) => api(url, { method:'POST', body:JSON.stringify(body), ...options });
   const file = id => state.files.find(item => item.id === id) || assets.find(item => item.id === id);
@@ -49,17 +52,11 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
   }
   function collectMotion() {
     if (!motionOpen) return;
-    motionPanel?.querySelectorAll('[data-motion-field]').forEach(el => { motion[el.dataset.motionField] = el.value; });
     const duration = Number(motion.videoDuration);
     motion.videoDuration = Number.isFinite(duration) && duration > 0 ? Math.min(120, Math.ceil(duration)) : 0;
   }
-  function motionAspectRatio() { return motion.resolution === '832*464px' ? '16:9' : '9:16'; }
-  function motionPrompt() {
-    const face = { subtle:'轻微', medium:'自然', strong:'明显' }[motion.faceStrength] || '自然';
-    const amplitude = { '0.8':'收敛', '1':'自然', '1.2':'舒展' }[motion.actionScale] || '自然';
-    const fps = motion.fps === 'source' ? '跟随参考视频' : `${motion.fps} FPS`;
-    return `将参考视频中的全身舞蹈和动作迁移到人物照片上，保持照片人物的服装、发型和五官特征稳定。面部表情${face}，动作幅度${amplitude}，帧率${fps}。`;
-  }
+  function motionAspectRatio() { return motion.resolution === '832*464px(横版)' ? '16:9' : '9:16'; }
+  function motionPrompt() { return '将动作参考视频中的动作迁移到人物照片上。'; }
   function motionFileUrl(asset) { return asset?.url || `/api/files/${encodeURIComponent(asset?.id || '')}/content`; }
   function collect() {
     if (!project) return;
@@ -153,17 +150,14 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
     const count = root.querySelector('[data-motion-task-count]');
     if (count) count.textContent = `${motionTasks.length} 条`;
     const rows = motionTasks.map(task => {
-      const status = ({ queued:'排队中', running:'生成中', completed:'已完成', succeeded:'已完成', failed:'生成失败' })[task.status] || task.status;
-      const progress = Number(task.progress);
-      const progressValue = Number.isFinite(progress) ? Math.max(0, Math.min(100, Math.round(progress))) : 0;
       const stateClass = task.status === 'succeeded' ? 'completed' : task.status;
+      const progressMarkup = videoProgressMarkup(task);
       const media = task.assetId
         ? `<div class="card-media video"><video controls preload="metadata" src="/api/files/${encodeURIComponent(task.assetId)}/content"></video></div>`
         : task.status === 'failed'
-          ? `<div class="card-failure"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>动作迁移失败</b><p>${esc(task.error || '请检查输入素材后重试')}</p></div>`
-          : `<div class="card-placeholder ${esc(stateClass)}"><div class="skeleton-frame"><i></i><i></i><i></i></div><div class="skeleton-progress"><div class="skeleton-progress-head"><span><i></i>${esc(status)}</span><b>${progressValue}%</b></div><div class="skeleton-progress-track"><i style="--progress:${progressValue}%"></i></div></div></div>`;
-      const meta = `<div class="card-meta"><span class="status-pill ${esc(stateClass)}"><i></i>${esc(status)}</span><time>${esc(task.createdAt ? new Date(task.createdAt).toLocaleString() : '')}</time></div>`;
-      return `<article class="task-card ${esc(stateClass)}"><div class="card-visual">${media}</div>${meta}</article>`;
+          ? `<div class="card-failure"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>生成失败</b><p>${esc(task.error || '请检查输入素材后重试')}</p></div>`
+          : `<div class="card-placeholder ${esc(stateClass)}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;
+      return `<article class="task-card ${esc(stateClass)}"><div class="card-visual">${media}</div></article>`;
     }).join('');
     const empty = '<div class="empty-state"><div class="empty-orbit"><i></i><i></i><i></i></div><h3>还没有动作迁移作品</h3><p>完成左侧参数设置后，生成结果会显示在这里。</p></div>';
     host.innerHTML = rows || empty;
@@ -204,14 +198,14 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
     video.src = motionFileUrl(asset);
     try {
       const duration = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('读取视频时长超时')), 10000);
+        const timer = setTimeout(() => reject(new Error('读取参考素材超时')), 10000);
         video.onloadedmetadata = () => { clearTimeout(timer); resolve(video.duration); };
-        video.onerror = () => { clearTimeout(timer); reject(new Error('无法读取视频时长')); };
+        video.onerror = () => { clearTimeout(timer); reject(new Error('参考素材不可用')); };
       });
       current();
       if (Number.isFinite(duration) && duration > 0) motion.videoDuration = Math.min(120, Math.ceil(duration));
     } catch (error) {
-      if (!error.stale) notice('未能自动读取视频时长，请手动填写参考时长');
+      if (!error.stale) notice('无法处理该参考视频，请更换视频后重试');
     } finally { video.removeAttribute('src'); video.load(); }
   }
   function motionWorkbenchMarkup(region) {
@@ -224,7 +218,8 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
     const submitDisabled = !selectedImages.length || !selectedVideo || !motion.videoDuration;
     const option = (key, value, label) => `<button type="button" class="${motion[key] === value ? 'selected' : ''}" data-vl="motion-option" data-motion-key="${key}" data-motion-value="${esc(value)}">${label}</button>`;
     if (region === 'works') return `<section class="vl-motion-gallery"><header class="content-head"><div class="generation-tabs" role="tablist" aria-label="动作迁移作品视图"><button class="generation-tab active" type="button" role="tab" aria-selected="true">我的作品</button></div></header><div data-motion-tasks class="creation-grid vl-motion-creation-grid"></div></section>`;
-    return `<div class="vl-motion-generator generator-form"><p class="vl-motion-live vl-motion-sr-only" data-vl-message role="status" aria-live="polite"></p><div class="reference-head"><span class="field-label">人物照片</span></div><div class="reference-strip motion-reference-strip">${imageAction}${imageCards}</div>${selectedImages.length > 1 ? `<p class="vl-motion-selection-note">已选 ${selectedImages.length} 个角色</p>` : ''}<div class="reference-head"><span class="field-label">动作参考视频</span></div><div class="reference-strip motion-reference-strip motion-video-strip">${videoAction}${videoCard}</div><label class="motion-field"><span class="field-label">参考时长</span><input type="number" data-motion-field="videoDuration" min="1" max="120" step="1" value="${motion.videoDuration || ''}" placeholder="自动读取"></label><div class="video-model-control motion-model-control"><span class="field-label">模型</span><div class="product-select motion-fixed-model"><div class="product-select-trigger"><span class="select-model-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2L12 3Z"/></svg></span><span><b>Wan 2.2 Animate</b></span></div></div></div><div class="control-section motion-control-section"><span class="field-label">分辨率</span><div class="ratio-grid motion-resolution-grid">${option('resolution','464*832px','<span class="ratio-frame"><i style="width:16px;height:23px"></i></span>竖版')} ${option('resolution','832*464px','<span class="ratio-frame"><i style="width:27px;height:16px"></i></span>横版')}</div></div><div class="two-cols motion-two-cols"><label class="motion-field"><span class="field-label">面部表情强度</span>${select('data-motion-field="faceStrength"', {subtle:'轻微',medium:'自然',strong:'明显'}, motion.faceStrength)}</label><label class="motion-field"><span class="field-label">动作幅度</span>${select('data-motion-field="actionScale"', {'0.8':'收敛','1':'自然','1.2':'舒展'}, motion.actionScale)}</label></div><div class="two-cols motion-two-cols"><label class="motion-field"><span class="field-label">帧率</span>${select('data-motion-field="fps"', {source:'跟随参考视频','24':'24 FPS','30':'30 FPS'}, motion.fps)}</label><label class="motion-field"><span class="field-label">种子（可选）</span><input type="number" data-motion-field="seed" min="0" max="4294967295" step="1" value="${esc(motion.seed)}" placeholder="随机"></label></div><button class="gradient-button generate" type="button" data-vl="motion-generate" ${submitDisabled ? 'disabled' : ''}><span>生成视频</span><span class="button-cost"><b data-motion-cost>${motion.videoDuration && selectedImages.length ? `${motion.videoDuration * selectedImages.length}` : '—'}</b> 积分</span></button></div>`;
+    const totalCost = motion.videoDuration && selectedImages.length ? `${motion.videoDuration * selectedImages.length}` : '—';
+    return `<div class="vl-motion-generator generator-form"><p class="vl-motion-live vl-motion-sr-only" data-vl-message role="status" aria-live="polite"></p><div class="reference-head"><span class="field-label">人物照片</span></div><div class="reference-strip motion-reference-strip">${imageAction}${imageCards}</div>${selectedImages.length > 1 ? `<p class="vl-motion-selection-note">已选 ${selectedImages.length} 个角色</p>` : ''}<div class="reference-head"><span class="field-label">动作参考视频</span></div><div class="reference-strip motion-reference-strip motion-video-strip">${videoAction}${videoCard}</div><div class="control-section motion-control-section"><span class="field-label">分辨率</span><div class="ratio-grid motion-resolution-grid">${option('resolution','464*832px(竖版)','<span class="ratio-frame"><i style="width:16px;height:23px"></i></span><span>竖版</span><small>464 × 832</small>')} ${option('resolution','832*464px(横版)','<span class="ratio-frame"><i style="width:27px;height:16px"></i></span><span>横版</span><small>832 × 464</small>')}</div></div><button class="gradient-button generate" type="button" data-vl="motion-generate" ${submitDisabled ? 'disabled' : ''}><span>生成视频</span><span class="button-cost"><b data-motion-cost>${totalCost}</b> 积分</span></button></div>`;
   }
   async function refreshTasks() {
     clearTimeout(taskTimer);
@@ -346,12 +341,12 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
         project = result.project; assets = result.assets; dirty = false; render(); return;
       }
       if (action === 'create') { const result = await post(base, { type:el.dataset.type, title:el.dataset.type === 'outfit' ? '我的换装实验' : '我的视频复刻' }); current(); project = result.project; assets = []; dirty = false; render(); return; }
-      if (action === 'create-motion') { motionOpen = true; project = null; assets = []; dirty = false; motion.imageAssetIds = []; motion.videoAssetId = ''; motion.videoDuration = 0; motion.resolution = '464*832px'; motion.seed = ''; motion.faceStrength = 'medium'; motion.actionScale = '1'; motion.fps = 'source'; render(); void refreshMotionTasks(); return; }
+      if (action === 'create-motion') { motionOpen = true; project = null; assets = []; dirty = false; motion.imageAssetIds = []; motion.videoAssetId = ''; motion.videoDuration = 0; motion.resolution = '464*832px(竖版)'; render(); void refreshMotionTasks(); return; }
       if (action === 'back') { if (motionOpen) { motionOpen = false; render(); return; } await save(); current(); project = null; render(); return; }
       if (motionOpen) {
         if (action === 'motion-option') {
           const key = el.dataset.motionKey;
-          if (['resolution', 'faceStrength', 'actionScale', 'fps'].includes(key)) { motion[key] = el.dataset.motionValue; render(); }
+          if (key === 'resolution') { motion[key] = el.dataset.motionValue; render(); }
           return;
         }
         if (action === 'pick-motion-image') {
@@ -371,16 +366,16 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
           const duration = Number(motion.videoDuration);
           if (!imageIds.length) throw new Error('请先选择至少一张人物照片');
           if (!motion.videoAssetId) throw new Error('请先选择动作参考视频');
-          if (!Number.isSafeInteger(duration) || duration < 1 || duration > 120) throw new Error('请填写 1～120 秒的有效视频时长');
+          if (!Number.isSafeInteger(duration) || duration < 1 || duration > 120) throw new Error('请更换参考视频后重试');
           const quote = await post('/api/model-quote', { modelId:'motion-retargeting', generationType:'REFERENCE', aspectRatio:motionAspectRatio(), duration, quality:motion.resolution, referenceAssetIds:[imageIds[0], motion.videoAssetId] }); current();
           const unitCost = Number(quote.credits ?? duration);
           const totalCost = unitCost * imageIds.length;
-          if (!await confirmCost('生成动作迁移视频', `共 ${imageIds.length} 个角色，参考视频 ${duration} 秒，预计消耗 ${totalCost} 积分（1 积分 / 秒 / 角色）。`)) return;
+          if (!await confirmCost('生成动作迁移视频', `共 ${imageIds.length} 个角色，预计消耗 ${totalCost} 积分。`)) return;
           const submitted = []; const failures = [];
           for (const imageId of imageIds) {
             current();
             try {
-              const task = await post('/api/generations', { type:'video', modelId:'motion-retargeting', generationType:'REFERENCE', aspectRatio:motionAspectRatio(), duration, quality:motion.resolution, resolution:motion.resolution, referenceAssetIds:[imageId, motion.videoAssetId], seed:motion.seed, prompt:motionPrompt(), requestId:`motion-${crypto.randomUUID()}` });
+              const task = await post('/api/generations', { type:'video', modelId:'motion-retargeting', generationType:'REFERENCE', aspectRatio:motionAspectRatio(), duration, quality:motion.resolution, resolution:motion.resolution, referenceAssetIds:[imageId, motion.videoAssetId], prompt:motionPrompt(), requestId:`motion-${crypto.randomUUID()}` });
               current(); submitted.push(task); setCreditBalance(task.balance);
             } catch (error) { failures.push(error.message); }
           }

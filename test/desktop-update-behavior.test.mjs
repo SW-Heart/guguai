@@ -12,7 +12,7 @@ test('desktop updates check before studio entry and do not prompt on window rest
   assert.doesNotMatch(desktopMain, /promptOnOpen: true/);
 
   const bridgeSource = app.slice(app.indexOf('async function initDesktopBridge('));
-  assert.match(bridgeSource, /const shouldPrompt = payload\?\.promptOnStartup === true \|\| payload\?\.promptOnOpen === true/);
+  assert.match(bridgeSource, /const shouldPrompt = mandatory \|\| payload\?\.promptOnStartup === true \|\| payload\?\.promptOnOpen === true/);
   assert.match(bridgeSource, /if \(status === 'available' \|\| status === 'downloading'\) \{\s+if \(shouldPrompt\) showUpdateButton\(\);\s+else hideUpdateButton\(\);/);
   assert.match(bridgeSource, /renderDesktopUpdateDialog\(payload, \{ open: shouldPrompt \}\)/);
   assert.match(bridgeSource, /if \(status === 'downloaded'\) \{[^}]*updateButton\.onclick = openDesktopUpdateDialog;/s);
@@ -21,7 +21,21 @@ test('desktop updates check before studio entry and do not prompt on window rest
   assert.ok(statusSubscription >= 0 && initialStatusRead > statusSubscription);
   assert.doesNotMatch(bridgeSource.slice(statusSubscription, initialStatusRead), /updateButton\.onclick = \(\) => bridge\.updates\.check\(\)/);
   assert.match(app, /function closeDesktopUpdateDialog\(\{ dismiss = false \} = \{\}\)/);
-  assert.match(app, /if \(desktopUpdateDialogDismissed \|\| !dialog/);
+  assert.match(app, /function isMandatoryDesktopUpdate\(/);
+  assert.match(app, /if \(dismiss && isMandatoryDesktopUpdate\(\)\) return/);
+  assert.match(app, /toggleClass\(closeButton, 'hidden', mandatory\)/);
+  assert.match(app, /if \(!mandatory && \(desktopUpdateReminderSnoozed \|\| payload\?\.snoozed\)\)/);
+  assert.match(desktopMain, /mandatory: Boolean\(info\.mandatory \|\| info\.forceUpdate \|\| info\.critical\)/);
+  assert.match(desktopMain, /if \(currentUpdateMandatory\) return currentUpdateStatus/);
+  assert.match(bridgeSource, /if \(mandatory\) \{ renderDesktopUpdateDialog\(payload, \{ open: true \}\); return; \}/);
+});
+
+test('mandatory update metadata cannot be dismissed or snoozed', async () => {
+  const startup = await readFile(new URL('../desktop/renderer/startup.html', import.meta.url), 'utf8');
+  assert.match(startup, /function isMandatoryUpdate\(/);
+  assert.match(startup, /if \(isMandatoryUpdate\(\)\) return/);
+  assert.match(startup, /\$\('#closeUpdate'\)\.classList\.toggle\('hidden', mandatory\)/);
+  assert.match(startup, /renderUpdate\(payload, \{ open: mandatory \|\| payload\?\.promptOnStartup === true \}\)/);
 });
 
 test('Windows update starts a detached handoff before allowing the tray app to quit', () => {

@@ -245,7 +245,12 @@
       Promise.resolve(windowApi.isMaximized?.()).then(updateState).catch(() => updateState(false));
     }
 
+    function isMandatoryUpdate(payload = updateState) {
+      return Boolean(payload?.mandatory || payload?.forceUpdate || payload?.critical);
+    }
+
     function closeUpdateDialog() {
+      if (isMandatoryUpdate()) return;
       void bridge?.updates?.snooze?.();
       updateDismissed = true;
       $('#updateDialog').classList.add('hidden');
@@ -253,7 +258,7 @@
     }
 
     function openUpdateDialog() {
-      if (updateDismissed) return;
+      if (updateDismissed && !isMandatoryUpdate()) return;
       $('#updateDialog').classList.remove('hidden');
       void bridge?.window?.setModalState?.(true);
     }
@@ -268,36 +273,50 @@
       const progressWrap = $('#progressWrap');
       const percent = Number(updateState.percent);
       const hasProgress = Number.isFinite(percent) && percent >= 0;
+      const mandatory = isMandatoryUpdate();
+      $('#closeUpdate').classList.toggle('hidden', mandatory);
+      $('#laterUpdate').classList.toggle('hidden', mandatory);
+      $('#closeUpdate').setAttribute('aria-hidden', String(mandatory));
+      $('#laterUpdate').setAttribute('aria-hidden', String(mandatory));
       $('#currentVersion').textContent = updateState.currentVersion || '—';
       $('#nextVersion').textContent = updateState.version || '新版本';
       card.classList.toggle('ready', status === 'downloaded');
       card.classList.toggle('error', status === 'error');
       progress.classList.remove('is-indeterminate');
       progressWrap.classList.remove('hidden');
-      if (status === 'available') {
-        $('#updateTitle').textContent = '发现新版本';
-        $('#updateMessage').textContent = '新版本可更新。';
+      if (status === 'checking' && mandatory) {
+        $('#updateTitle').textContent = '需要更新客户端';
+        $('#updateMessage').textContent = '当前版本需要更新后才能继续使用。';
+        progress.style.width = '0%';
+        progress.classList.add('is-indeterminate');
+        progressWrap.setAttribute('aria-label', '正在检查更新…');
+        $('#updateHint').textContent = '请保持客户端打开，更新完成后即可继续使用。';
+        $('#updateAction').textContent = '正在检查…';
+        $('#updateAction').disabled = true;
+      } else if (status === 'available') {
+        $('#updateTitle').textContent = mandatory ? '需要更新客户端' : '发现新版本';
+        $('#updateMessage').textContent = mandatory ? '当前版本需要更新后才能继续使用。' : '新版本可更新。';
         progress.style.width = '0%';
         progress.classList.add('is-indeterminate');
         progressWrap.setAttribute('aria-label', '准备下载…');
-        $('#updateHint').textContent = '下载完成后重启更新。';
+        $('#updateHint').textContent = mandatory ? '更新完成后将重启客户端。' : '下载完成后重启更新。';
         $('#updateAction').textContent = '准备下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloading') {
-        $('#updateTitle').textContent = '正在下载更新';
-        $('#updateMessage').textContent = '正在下载最新版本。';
+        $('#updateTitle').textContent = mandatory ? '正在准备客户端更新' : '正在下载更新';
+        $('#updateMessage').textContent = mandatory ? '更新完成前暂时无法继续使用。' : '正在下载最新版本。';
         progress.style.width = `${Math.max(0, Math.min(100, hasProgress ? percent : 0))}%`;
         if (!hasProgress) progress.classList.add('is-indeterminate');
         progressWrap.setAttribute('aria-label', hasProgress ? `${Math.round(percent)}% · 正在下载` : '正在下载…');
-        $('#updateHint').textContent = '下载完成后重启更新。';
+        $('#updateHint').textContent = mandatory ? '请保持客户端打开，下载完成后重启更新。' : '下载完成后重启更新。';
         $('#updateAction').textContent = '正在下载…';
         $('#updateAction').disabled = true;
       } else if (status === 'downloaded') {
-        $('#updateTitle').textContent = '下载已完成';
-        $('#updateMessage').textContent = '新版本已下载。';
+        $('#updateTitle').textContent = mandatory ? '更新已准备好' : '下载已完成';
+        $('#updateMessage').textContent = mandatory ? '请重启客户端完成更新后继续使用。' : '新版本已下载。';
         progress.style.width = '100%';
         progressWrap.setAttribute('aria-label', '下载完成');
-        $('#updateHint').textContent = '重启客户端完成更新。';
+        $('#updateHint').textContent = mandatory ? '必须完成更新才能继续使用。' : '重启客户端完成更新。';
         $('#updateAction').textContent = '重启更新';
         $('#updateAction').disabled = false;
       } else if (status === 'installing') {
@@ -309,14 +328,14 @@
         $('#updateAction').textContent = '正在退出…';
         $('#updateAction').disabled = true;
       } else if (status === 'error') {
-        $('#updateTitle').textContent = '更新失败';
-        $('#updateMessage').textContent = updateState.message || '更新下载失败，请稍后重试。';
+        $('#updateTitle').textContent = mandatory ? '必须更新客户端' : '更新失败';
+        $('#updateMessage').textContent = mandatory ? '更新暂时未完成，请检查网络后重试。' : (updateState.message || '更新下载失败，请稍后重试。');
         progressWrap.classList.add('hidden');
-        $('#updateHint').textContent = '请稍后重新检查。';
+        $('#updateHint').textContent = mandatory ? '完成更新后才能继续使用。' : '请稍后重新检查。';
         $('#updateAction').textContent = '重新检查';
         $('#updateAction').disabled = false;
       }
-      if (open && ['available', 'downloading', 'downloaded', 'error'].includes(status)) openUpdateDialog();
+      if ((open || mandatory) && ['available', 'downloading', 'downloaded', 'error', 'checking'].includes(status)) openUpdateDialog();
     }
 
     $('#closeUpdate').onclick = $('#laterUpdate').onclick = closeUpdateDialog;
@@ -338,7 +357,8 @@
 
     bridge?.updates?.onStatus?.(payload => {
       updateState = { ...updateState, ...(payload || {}) };
-      if (['current', 'unconfigured', 'idle'].includes(payload?.status)) {
+      const mandatory = isMandatoryUpdate(payload);
+      if (!mandatory && ['current', 'unconfigured', 'idle'].includes(payload?.status)) {
         $('#startupStatus').textContent = '正在连接服务…';
         $('#updateDialog').classList.add('hidden');
         updateDismissed = false;
@@ -346,13 +366,13 @@
         return;
       }
       if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查更新…';
-      renderUpdate(payload, { open: payload?.promptOnStartup === true });
+      renderUpdate(payload, { open: mandatory || payload?.promptOnStartup === true });
     });
     Promise.all([bridge?.getInfo?.(), bridge?.updates?.getStatus?.()]).then(([info, status]) => {
       setupWindowControls(info || {});
       if (status?.status && status.status !== 'idle') {
         updateState = { ...updateState, ...status };
-        renderUpdate(status, { open: status.promptOnStartup === true });
+        renderUpdate(status, { open: isMandatoryUpdate(status) || status.promptOnStartup === true });
       }
     }).catch(() => {});
   </script>

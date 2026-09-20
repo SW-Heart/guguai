@@ -1,5 +1,6 @@
 import { isRemoteReferenceReady } from './desktop-media-sync.js?v=14';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=45';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=50';
+import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
 import { buildShotVideoPrompt } from './video-prompt.js?v=5';
 import {
@@ -72,7 +73,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true }) {
+export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -84,6 +85,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   const deletingProjectIds = new Set();
   let project = null;
   let projectBaseSnapshot = null;
+  let canvasChangeVersion=0;
+  const snapshotKey = (id, kind='project', account=accountSnapshot()) => canvasSnapshotKey({ userId:account?.userId, deviceId:getDesktopSyncInfo()?.deviceId, workspaceId:getDesktopSyncInfo()?.workspaceId, projectId:id, kind });
+  const cacheProject = (value, account=accountSnapshot()) => { if(value?.mode==='smart') void writeCanvasSnapshot(snapshotKey(value.id,'project',account),value); };
   let projectTitleEditing = false;
   let projectTitleDraft = '';
   let viewStep = null;
@@ -801,6 +805,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     try {
       await api(`/api/drama/projects/${encodeURIComponent(targetId)}`, { method:'DELETE', body:'{}' });
       if (!isAccountCurrent(requestAccount)) return;
+      void deleteCanvasSnapshot(snapshotKey(targetId,'project',requestAccount));
+      void deleteCanvasSnapshot(snapshotKey(targetId,'agent',requestAccount));
       projects = projects.filter(value => String(value.id) !== targetId);
       renderProjects();
       toast('短剧项目已删除，生成的视频和素材已保留');
@@ -871,7 +877,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       projects=result.projects;
       if(project&&!force&&project.id===activeProjectId){
         const fresh=projects.find(item=>item.id===project.id);
-        if(fresh){project=restoreLocalProjectOutputs(normalizeProjectData(fresh));projectBaseSnapshot=cloneProjectValue(project);}
+        if(fresh){project=restoreLocalProjectOutputs(normalizeProjectData(fresh));projectBaseSnapshot=cloneProjectValue(project);cacheProject(project,requestAccount);}
         state.dramaProject=project;
         if(loadToken!==projectLoadToken||project?.id!==activeProjectId)return;
         render();
@@ -884,33 +890,53 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   async function openProject(id) {
     const loadToken=++projectLoadToken;
     const requestAccount=accountSnapshot();
-    try {
-      const result=await api(`/api/drama/projects/${id}`);
-      if(loadToken!==projectLoadToken||!isAccountCurrent(requestAccount))return false;
-      projectEpoch+=1;
-      pendingKeys.clear();
-      projectKeyVersions.clear();
-      professionalPreviewTaskIds.clear();
-      professionalGenerationPending.clear();
-
-      project=restoreLocalProjectOutputs(normalizeProjectData(result.project));
-      projectTitleEditing=false;
-      projectTitleDraft='';
-      projectBaseSnapshot=cloneProjectValue(project);
-      projectAssetIds=[...project.projectAssetIds];
-      projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{}));
-      viewStep=project.step;
-      scriptDraft=null;
-      state.dramaProject=project;
-      if(loadToken!==projectLoadToken||project?.id!==id)return false;
+    const current=()=>loadToken===projectLoadToken&&isAccountCurrent(requestAccount);
+    const remoteRequest=api(`/api/drama/projects/${id}`).then(result=>({result}),error=>({error}));
+    let shownCached=false;
+    let cachedCanvasVersion=canvasChangeVersion;
+    const activate=value=>{
+      if(!shownCached){
+        projectEpoch+=1;
+        pendingKeys.clear();projectKeyVersions.clear();professionalPreviewTaskIds.clear();professionalGenerationPending.clear();
+      }
+      project=restoreLocalProjectOutputs(normalizeProjectData(value));
+      projectTitleEditing=false;projectTitleDraft='';projectBaseSnapshot=cloneProjectValue(project);
+      projectAssetIds=[...project.projectAssetIds];projectAssetCategories=new Map(Object.entries(project.projectAssetCategories||{}));
+      viewStep=project.step;scriptDraft=null;state.dramaProject=project;
       setStudioVisible(true);syncProjectHeader();modelState();render();
+    };
+    try {
+      const cached=await readCanvasSnapshot(snapshotKey(id,'project',requestAccount));
+      if(!current())return false;
+      if(cached?.id===id&&cached.mode==='smart'){
+        activate(cached);shownCached=true;
+        cachedCanvasVersion=canvasChangeVersion;
+      }
+      const response=await remoteRequest;
+      if(!current())return false;
+      if(response.error)throw response.error;
+      const {result}=response;
+      const canRefresh=!shownCached||(!pendingKeys.size&&!projectKeyVersions.size&&canvasChangeVersion===cachedCanvasVersion);
+      if(canRefresh&&(!shownCached||Number(result.project.revision)>Number(project.revision))){
+        activate(result.project);
+      }
+      if(canRefresh)cacheProject(result.project,requestAccount);
       void loadTasks({background:true,projectOnly:true});
       // The app boot already hydrates the first local-library page. Only warm
       // it here when the in-memory library is genuinely empty; opening a
       // project must not rescan 200 unrelated local files on every visit.
       if(!state.files.length)void loadFiles({background:true});
       return true;
-    }catch(error){if(loadToken===projectLoadToken&&isAccountCurrent(requestAccount))toast(error.message);return false;}
+    }catch(error){
+      if(!current())return false;
+      if(error.status===404&&shownCached){
+        void deleteCanvasSnapshot(snapshotKey(id,'project',requestAccount));
+        void deleteCanvasSnapshot(snapshotKey(id,'agent',requestAccount));
+        directorWorkspaceView?.dispose();project=null;projectBaseSnapshot=null;state.dramaProject=null;syncProjectHeader();renderProjects();
+        return false;
+      }
+      toast(error.message);return shownCached;
+    }
   }
   async function closeProject(){
     const request=projectRequest();
@@ -946,6 +972,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
         const serverProject=restoreLocalProjectOutputs(normalizeProjectData(result.project));
         projectBaseSnapshot=cloneProjectValue(serverProject);
         project=mergeProjectResponseWithNewerKeys(serverProject,localProject,requestVersions,projectKeyVersions);
+        cacheProject(project,requestAccount);
         projects=mergeDramaProjectList(projects,project);state.dramaProject=project;saveLabel('已保存');if(!quiet)render(true);return project;
       }catch(error){
         const currentRequest=projectEpoch===targetEpoch&&project?.id===targetProjectId&&isAccountCurrent(requestAccount);
@@ -972,6 +999,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
               const savedProject=restoreLocalProjectOutputs(normalizeProjectData(mergedResult.project));
               projectBaseSnapshot=cloneProjectValue(savedProject);
               project=mergeProjectResponseWithNewerKeys(savedProject,project,mergedVersions,projectKeyVersions);
+              cacheProject(project,requestAccount);
               for(const key of pendingKeys)if(Number(projectKeyVersions.get(key)||0)<=Number(mergedVersions.get(key)||0))pendingKeys.delete(key);
               projects=mergeDramaProjectList(projects,project);state.dramaProject=project;saveLabel(pendingKeys.size?'未保存…':'已合并保存');if(!quiet)render(true);return project;
             }
@@ -1076,6 +1104,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       },
       media:id=>{const f=taskAsset(id);return f&&String(f.url||'').startsWith('gugu-media://')?{kind:f.kind,url:f.url,width:f.width,height:f.height}:null;},
       patch:changes=>patch(changes,{quiet:true}),
+      markCanvasDirty:()=>{canvasChangeVersion+=1;},
+      snapshotKey:kind=>snapshotKey(project.id,kind),
       agentApi:async (url,options)=>{
         const request=projectRequest();const result=await api(url,options);assertProjectRequest(request);
         if(result.balance!==undefined)setCreditBalance(result.balance);
@@ -1093,7 +1123,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
         if(result.project&&Number(result.project.revision)>Number(project.revision)){
           const remote=normalizeProjectData(result.project);
           const merged=mergeProjectThreeWay({base:projectBaseSnapshot||project,local:project,remote});
-          if(!merged.conflicts?.length){project={...merged.project,directorWorkspace:project.directorWorkspace};projectBaseSnapshot=cloneProjectValue(remote);state.dramaProject=project;}
+          if(!merged.conflicts?.length){project={...merged.project,directorWorkspace:project.directorWorkspace};projectBaseSnapshot=cloneProjectValue(remote);state.dramaProject=project;cacheProject(project,request.account);}
         }
         return result;
       },

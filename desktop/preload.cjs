@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
       ipcRenderer.on('desktop:window-state', listener);
       return () => ipcRenderer.removeListener('desktop:window-state', listener);
     },
+    onBackgroundTaskTick: callback => {
+      const listener = () => callback();
+      ipcRenderer.on('desktop:background-task-tick', listener);
+      return () => ipcRenderer.removeListener('desktop:background-task-tick', listener);
+    },
   }),
   updates: Object.freeze({
     check: () => invoke('updates:check'),

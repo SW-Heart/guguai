@@ -70,7 +70,7 @@ test('every floating toolbar action has a specific translated tooltip',()=>{
 test('chat resize isolates canvas state and restores the pre-resize scene',()=>{
   assert.match(source,/resizingChat=false, resizeCanvasSnapshot=null/);
   assert.match(source,/if\(syncing\|\|resizingChat\)return/);
-  assert.match(source,/if\(resizingChat\)return;requestAnimationFrame\(alignCards\)/);
+  assert.match(source,/if\(resizingChat\)return;.*requestAnimationFrame\(alignCards\)/);
   assert.match(source,/event\.stopPropagation\(\);[\s\S]*resizeCanvasSnapshot=captureCanvasForResize\(\)/);
   assert.match(source,/restoreCanvasAfterResize\(\);[\s\S]*resizingChat=false/);
 });

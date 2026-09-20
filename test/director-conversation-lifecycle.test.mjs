@@ -66,6 +66,6 @@ test('changing sessions preserves the activity controls nested inside old histor
   assert.equal(activity.parent,'messages');assert.equal(activity.removed,undefined);assert.equal(context.streamSession,'new');
 });
 test('generation state keeps the composer available for follow-up requirements',()=>{
-  assert.match(source,/sendButton\.disabled=uploading\|\|switchingConversation\|\|!agentState/);
+  assert.match(source,/sendButton\.disabled=.*uploading\|\|switchingConversation\|\|!agentState/);
   assert.match(source,/busy\?'补充要求'/);
 });

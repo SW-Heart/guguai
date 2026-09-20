@@ -31,6 +31,7 @@ function conflictHarness({ choose = async () => ({ title:'local' }) } = {}) {
     markProjectKeys:keys => keys.forEach(key => context.projectKeyVersions.set(key, (context.projectKeyVersions.get(key) || 0) + 1)),
     cloneProjectValue:structuredClone,
     mergeProjectThreeWay, mergeProjectResponseWithNewerKeys,
+    cacheProject:() => {},
     chooseProjectConflict:choose,
     normalizeProjectData:value => value, restoreLocalProjectOutputs:value => value,
     mergeDramaProjectList:(_items, item) => [item],

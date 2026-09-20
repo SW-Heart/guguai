@@ -119,12 +119,14 @@ type LayerNodeConfig = NodeConfig & {
 const getNodeLayerType = (node: LayerNodeConfig) => {
   const type = node.$_type?.toLowerCase()
   if (type === 'video') return 'video'
-  if (
-    type === 'html' &&
-    (node.$_actualType?.toLowerCase() === 'video' ||
-      /<video(?:\s|>)/i.test(node.$_htmlContent || ''))
-  ) {
-    return 'video'
+  if (type === 'html') {
+    const actualType = node.$_actualType?.toLowerCase()
+    if (actualType === 'video' || /<video(?:\s|>)/i.test(node.$_htmlContent || '')) {
+      return 'video'
+    }
+    if (actualType === 'image' || /<img(?:\s|>)/i.test(node.$_htmlContent || '')) {
+      return 'image'
+    }
   }
   return type || 'node'
 }
@@ -133,7 +135,8 @@ const getNodeThumbnail = (node: NodeConfig, thumbnailLabel: string) => {
   const layerType = getNodeLayerType(node as LayerNodeConfig)
   const thumbnailUrl =
     layerType === 'image'
-      ? node.$_imageUrl
+      ? node.$_imageUrl ||
+        (node as LayerNodeConfig).$_htmlContent?.match(/<img\b[^>]*\bsrc=["']([^"']+)/i)?.[1]
       : layerType === 'video'
         ? (node as LayerNodeConfig).$_coverUrl
         : undefined
