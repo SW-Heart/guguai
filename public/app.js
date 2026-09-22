@@ -14,6 +14,7 @@ import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=10';
 import { createSupportLogController } from './features/support/controller.js?v=2';
+import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -53,6 +54,7 @@ let desktopUpdateDialogDismissed = false;
 const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
+const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo, closeWindow: () => window.close() });
 let routeRenderFrame = 0;
 let routeRenderTimer = 0;
 let routeRenderEpoch = 0;
@@ -1212,8 +1214,7 @@ function initDesktopUpdateDialog(bridge) {
     action.disabled = true;
     renderDesktopUpdateDialog({ status: 'installing', version: desktopUpdateState.version });
     try {
-      const started = await bridge.updates.install();
-      if (!started) throw new Error('更新安装包尚未准备好，请稍后再试');
+      await desktopUpdateExit.install();
     } catch (error) {
       action.disabled = false;
       renderDesktopUpdateDialog({ status: 'error', message: error.message, version: desktopUpdateState.version }, { open: true });
@@ -1264,7 +1265,7 @@ function initDesktopModalState(bridge) {
   let active = false;
   const sync = () => {
     queuedFrame = 0;
-    const next = Boolean(document.querySelector('dialog[open]'));
+    const next = !desktopUpdateExit.pending && Boolean(document.querySelector('dialog[open]'));
     if (next === active) return;
     active = next;
     void Promise.resolve(setModalState(active)).catch(error => console.warn('[desktop] 弹窗标题栏状态同步失败', error));
@@ -1423,6 +1424,11 @@ async function initDesktopBridge() {
       const applyUpdateStatus = payload => {
         const status = payload?.status;
         desktopUpdateState = { ...desktopUpdateState, ...(payload || {}) };
+        if (status === 'installing') {
+          void desktopUpdateExit.resume(status).catch(error => {
+            renderDesktopUpdateDialog({ status: 'error', message: error.message }, { open: true });
+          });
+        }
         const mandatory = isMandatoryDesktopUpdate(payload);
         if (mandatory) {
           desktopUpdateDialogDismissed = false;
@@ -1432,6 +1438,19 @@ async function initDesktopBridge() {
           desktopUpdateReminderSnoozed = true;
           hideUpdateButton();
           closeDesktopUpdateDialog();
+          // Leaving the bundled startup reminder must not hide the only
+          // working upgrade route for clients with the old quit bug.
+          if (status === 'downloaded' && desktopUpdateExit.isLegacyWindows()) {
+            showUpdateButton();
+            setUpdateState('downloaded');
+            setUpdateLabel('重启更新');
+            setUpdateTitle(`安装 GuGu AI ${payload.version || '新版本'}`);
+            updateButton.disabled = false;
+            updateButton.onclick = () => {
+              desktopUpdateDialogDismissed = false;
+              renderDesktopUpdateDialog(payload, { open: true });
+            };
+          }
           return;
         }
         const shouldPrompt = mandatory || payload?.promptOnStartup === true || payload?.promptOnOpen === true;
