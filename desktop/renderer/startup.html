@@ -250,6 +250,7 @@
     }
 
     function closeUpdateDialog() {
+      if (updateState.status === 'installing') return;
       if (isMandatoryUpdate()) return;
       void bridge?.updates?.snooze?.();
       updateDismissed = true;
@@ -260,7 +261,7 @@
     function openUpdateDialog() {
       if (updateDismissed && !isMandatoryUpdate()) return;
       $('#updateDialog').classList.remove('hidden');
-      void bridge?.window?.setModalState?.(true);
+      void bridge?.window?.setModalState?.(updateState.status !== 'installing');
     }
 
     function renderUpdate(payload, { open = true } = {}) {
@@ -278,6 +279,8 @@
       $('#laterUpdate').classList.toggle('hidden', mandatory);
       $('#closeUpdate').setAttribute('aria-hidden', String(mandatory));
       $('#laterUpdate').setAttribute('aria-hidden', String(mandatory));
+      $('#closeUpdate').disabled = status === 'installing';
+      $('#laterUpdate').disabled = status === 'installing';
       $('#currentVersion').textContent = updateState.currentVersion || '—';
       $('#nextVersion').textContent = updateState.version || '新版本';
       card.classList.toggle('ready', status === 'downloaded');
@@ -348,6 +351,10 @@
       if (updateState.status !== 'downloaded') return;
       renderUpdate({ status: 'installing', version: updateState.version }, { open: false });
       try {
+        const info = await bridge?.getInfo?.();
+        if (info?.platform === 'win32' && await bridge?.window?.setModalState?.(false) !== true) {
+          throw new Error('暂时无法重启更新，请稍后重试。');
+        }
         const started = await bridge?.updates?.install?.();
         if (!started) throw new Error('更新安装包尚未准备好，请稍后再试');
       } catch (error) {

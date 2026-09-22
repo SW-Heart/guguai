@@ -14,7 +14,7 @@ import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=10';
 import { createSupportLogController } from './features/support/controller.js?v=2';
-import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=1';
+import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=2';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -54,7 +54,7 @@ let desktopUpdateDialogDismissed = false;
 const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
-const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo, closeWindow: () => window.close() });
+const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo });
 let routeRenderFrame = 0;
 let routeRenderTimer = 0;
 let routeRenderEpoch = 0;
@@ -1085,6 +1085,7 @@ function isMandatoryDesktopUpdate(payload = desktopUpdateState) {
 function closeDesktopUpdateDialog({ dismiss = false } = {}) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog) return;
+  if (dismiss && (desktopUpdateExit.pending || desktopUpdateState.status === 'installing')) return;
   if (dismiss && isMandatoryDesktopUpdate()) return;
   if (dismiss) desktopUpdateDialogDismissed = true;
   if (dialog.open) dialog.close();
@@ -1128,6 +1129,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   progress.classList.remove('is-indeterminate');
   progressWrap.classList.remove('hidden');
   later.disabled = status === 'installing';
+  if (closeButton) closeButton.disabled = status === 'installing';
   if (status === 'checking' && mandatory) {
     title.textContent = '需要更新客户端';
     message.textContent = '当前版本需要更新后才能继续使用。';
@@ -1188,6 +1190,7 @@ function initDesktopUpdateDialog(bridge) {
   if (!dialog || !bridge?.updates || dialog.dataset.bound === 'true') return;
   const close = () => { if (!isMandatoryDesktopUpdate()) closeDesktopUpdateDialog({ dismiss: true }); };
   const snooze = async () => {
+    if (desktopUpdateExit.pending || desktopUpdateState.status === 'installing') return;
     if (isMandatoryDesktopUpdate()) return;
     // Hide immediately even if the IPC round trip is slow. The main process
     // also keeps this state so a renderer reload cannot bring the reminder
@@ -1424,11 +1427,6 @@ async function initDesktopBridge() {
       const applyUpdateStatus = payload => {
         const status = payload?.status;
         desktopUpdateState = { ...desktopUpdateState, ...(payload || {}) };
-        if (status === 'installing') {
-          void desktopUpdateExit.resume(status).catch(error => {
-            renderDesktopUpdateDialog({ status: 'error', message: error.message }, { open: true });
-          });
-        }
         const mandatory = isMandatoryDesktopUpdate(payload);
         if (mandatory) {
           desktopUpdateDialogDismissed = false;
