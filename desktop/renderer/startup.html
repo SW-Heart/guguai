@@ -335,7 +335,7 @@
         $('#updateAction').textContent = '重新检查';
         $('#updateAction').disabled = false;
       }
-      if ((open || mandatory) && ['available', 'downloading', 'downloaded', 'error', 'checking'].includes(status)) openUpdateDialog();
+      if ((open || mandatory) && (status !== 'checking' || mandatory) && ['available', 'downloading', 'downloaded', 'error', 'checking'].includes(status)) openUpdateDialog();
     }
 
     $('#closeUpdate').onclick = $('#laterUpdate').onclick = closeUpdateDialog;
@@ -366,13 +366,13 @@
         return;
       }
       if (payload?.status === 'checking') $('#startupStatus').textContent = '正在检查更新…';
-      renderUpdate(payload, { open: mandatory || payload?.promptOnStartup === true });
+      renderUpdate(payload, { open: mandatory || (payload?.status !== 'checking' && payload?.promptOnStartup === true) });
     });
     Promise.all([bridge?.getInfo?.(), bridge?.updates?.getStatus?.()]).then(([info, status]) => {
       setupWindowControls(info || {});
       if (status?.status && status.status !== 'idle') {
         updateState = { ...updateState, ...status };
-        renderUpdate(status, { open: isMandatoryUpdate(status) || status.promptOnStartup === true });
+        renderUpdate(status, { open: isMandatoryUpdate(status) || (status.status !== 'checking' && status.promptOnStartup === true) });
       }
     }).catch(() => {});
   </script>

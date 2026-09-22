@@ -1179,7 +1179,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
     action.textContent = '重新检查';
     action.disabled = false;
   }
-  if ((open || mandatory) && ['available', 'downloading', 'downloaded', 'installing', 'error', 'checking'].includes(status)) openDesktopUpdateDialog();
+  if ((open || mandatory) && (status !== 'checking' || mandatory) && ['available', 'downloading', 'downloaded', 'installing', 'error', 'checking'].includes(status)) openDesktopUpdateDialog();
 }
 function initDesktopUpdateDialog(bridge) {
   const dialog = $('#desktopUpdateDialog');

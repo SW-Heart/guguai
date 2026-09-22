@@ -22,6 +22,7 @@ test('desktop updates check before studio entry and do not prompt on window rest
   assert.doesNotMatch(bridgeSource.slice(statusSubscription, initialStatusRead), /updateButton\.onclick = \(\) => bridge\.updates\.check\(\)/);
   assert.match(app, /function closeDesktopUpdateDialog\(\{ dismiss = false \} = \{\}\)/);
   assert.match(app, /function isMandatoryDesktopUpdate\(/);
+  assert.match(app, /\(status !== 'checking' \|\| mandatory\)[^\n]*openDesktopUpdateDialog\(\)/);
   assert.match(app, /if \(dismiss && isMandatoryDesktopUpdate\(\)\) return/);
   assert.match(app, /toggleClass\(closeButton, 'hidden', mandatory\)/);
   assert.match(app, /if \(!mandatory && \(desktopUpdateReminderSnoozed \|\| payload\?\.snoozed\)\)/);
@@ -42,16 +43,20 @@ test('mandatory update metadata cannot be dismissed or snoozed', async () => {
   assert.match(startup, /function isMandatoryUpdate\(/);
   assert.match(startup, /if \(isMandatoryUpdate\(\)\) return/);
   assert.match(startup, /\$\('#closeUpdate'\)\.classList\.toggle\('hidden', mandatory\)/);
-  assert.match(startup, /renderUpdate\(payload, \{ open: mandatory \|\| payload\?\.promptOnStartup === true \}\)/);
+  assert.match(startup, /renderUpdate\(payload, \{ open: mandatory \|\| \(payload\?\.status !== 'checking' && payload\?\.promptOnStartup === true\) \}\)/);
+  assert.match(startup, /\(status !== 'checking' \|\| mandatory\)[^\n]*openUpdateDialog\(\)/);
 });
 
 test('Windows update starts a detached handoff before allowing the tray app to quit', () => {
   const installer = desktopMain.slice(desktopMain.indexOf('async function launchDownloadedUpdateInstaller()'), desktopMain.indexOf('function configureAutoUpdater()'));
   const helperSpawn = installer.indexOf('const helper = spawn(launcher.command, launcher.args');
   const helperReady = installer.indexOf("helper.once('spawn', resolve)");
+  const restoreClosable = installer.indexOf('setWindowsModalState(false);');
   const allowQuit = installer.indexOf('isQuitting = true;');
   const quit = installer.indexOf('app.quit();');
-  assert.ok(helperSpawn >= 0 && helperReady > helperSpawn && allowQuit > helperReady && quit > allowQuit);
+  assert.ok(helperSpawn >= 0 && helperReady > helperSpawn && restoreClosable > helperReady && allowQuit > restoreClosable && quit > allowQuit);
+  assert.match(installer, /setTimeout\(\(\) => \{[\s\S]*?app\.exit\(0\);[\s\S]*?\}, 5_000\);/);
+  assert.match(desktopMain, /if \(updateInstallStarted && process\.platform === 'win32'\) return setWindowsModalState\(false\)/);
   assert.match(installer, /helper\.unref\(\)/);
   assert.doesNotMatch(installer, /quitAndInstall/);
 });

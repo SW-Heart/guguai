@@ -1090,11 +1090,22 @@ async function launchDownloadedUpdateInstaller() {
       helper.unref();
       updateInstallStarted = true;
       sendUpdateStatus('installing', { version: downloadedUpdateVersion });
-      // The detached helper is already alive and waiting before the client is
-      // allowed to quit. It starts NSIS only after this process has completely
-      // exited, so closing the tray process cannot interrupt the installer.
+      // The update dialog disables the native Windows close command. Restore
+      // it before quitting, or the detached helper can wait for this process
+      // indefinitely while the renderer stays on the exit screen.
+      setWindowsModalState(false);
       isQuitting = true;
-      app.quit();
+      // A renderer or native window can still veto the normal quit path. The
+      // helper is ready, so make sure it is never left waiting on our PID.
+      setTimeout(() => {
+        console.warn('[desktop] 更新退出超时，强制结束客户端');
+        clearInterval(backgroundTaskPollTimer);
+        closeLocalLibrary();
+        try { tray?.destroy(); }
+        finally { flushDesktopLog(); app.exit(0); }
+      }, 5_000);
+      try { app.quit(); }
+      catch (error) { console.warn('[desktop] 正常退出更新失败，等待退出兜底', error); }
       return true;
     } catch (error) {
       updateInstallStarted = false;
@@ -1562,6 +1573,7 @@ function registerIpc() {
   handle('window:is-fullscreen', event => isMainWindowEvent(event) && mainWindow.isFullScreen());
   handle('window:set-modal-state', (event, active) => {
     if (!isMainWindowEvent(event)) return false;
+    if (updateInstallStarted && process.platform === 'win32') return setWindowsModalState(false);
     return setWindowsModalState(Boolean(active));
   });
   handle('window:close', event => {
