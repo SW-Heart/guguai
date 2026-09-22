@@ -11,11 +11,18 @@ test('dismissing an installing update cannot unlock the window or snooze the ins
   for (const state of [{ pending: true, status: 'downloaded' }, { pending: false, status: 'installing' }]) {
     vm.runInNewContext(`${close}\ncloseDesktopUpdateDialog({ dismiss: true });`, {
       $: () => ({ open: true, close: () => { closed = true; } }),
-      desktopUpdateExit: { pending: state.pending }, desktopUpdateState: { status: state.status },
+      desktopUpdateExit: { pending: state.pending, isLegacyWindows: () => false }, desktopUpdateState: { status: state.status },
       isMandatoryDesktopUpdate: () => false,
     });
     assert.equal(closed, false);
   }
+  vm.runInNewContext(`${close}\ncloseDesktopUpdateDialog({ dismiss: true });`, {
+    $: () => ({ open: true, close: () => { closed = true; } }),
+    desktopUpdateExit: { pending: false, isLegacyWindows: () => true },
+    desktopUpdateState: { status: 'installing' },
+    isMandatoryDesktopUpdate: () => false,
+  });
+  assert.equal(closed, true);
   const startup = await readFile(new URL('../desktop/renderer/startup.html', import.meta.url), 'utf8');
   const startupClose = startup.slice(startup.indexOf('function closeUpdateDialog()'), startup.indexOf('function openUpdateDialog()'));
   vm.runInNewContext(`${startupClose}\ncloseUpdateDialog();`, { updateState: { status: 'installing' } });
@@ -24,7 +31,7 @@ test('dismissing an installing update cannot unlock the window or snooze the ins
 test('updated entry loads the legacy exit fix with the current cache key', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=354'));
+  assert.ok(html.includes('/app.js?v=355'));
   assert.ok(source.includes('./platform/desktop-update-exit.js?v=3'));
   assert.doesNotMatch(source, /desktopUpdateExit\.resume/);
 });
@@ -116,29 +123,53 @@ test('normal native window close still hides to tray; an explicit quit permits c
   }
 });
 
-test('snoozing cannot remove the legacy pending-install recovery entry', async () => {
+test('legacy Windows updates show the official download prompt even after startup was snoozed', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const start = source.indexOf('const applyUpdateStatus = payload => {');
   const end = source.indexOf('desktopUpdateUnsubscribe?.();', start);
-  for (const status of ['downloaded', 'installing']) {
+  for (const status of ['available', 'downloading', 'downloaded', 'installing', 'error']) {
     let visible = false;
     let opened = false;
+    let label = '';
     const updateButton = {};
     vm.runInNewContext(`${source.slice(start, end)}\napplyUpdateStatus({ status: '${status}', snoozed: true });`, {
       desktopUpdateState: {}, desktopUpdateReminderSnoozed: true,
+      legacyWindowsUpdateStatuses: new Set(['available', 'downloading', 'downloaded', 'installing', 'error']),
       isMandatoryDesktopUpdate: () => false,
       hideUpdateButton: () => { visible = false; }, showUpdateButton: () => { visible = true; },
       closeDesktopUpdateDialog: () => {}, desktopUpdateExit: { isLegacyWindows: () => true },
-      setUpdateState: () => {}, setUpdateLabel: () => {}, setUpdateTitle: () => {},
+      setUpdateState: () => {}, setUpdateLabel: value => { label = value; }, setUpdateTitle: () => {},
       updateButton, desktopUpdateDialogDismissed: true,
       renderDesktopUpdateDialog: (_payload, options) => { opened = options.open; },
     });
     assert.equal(visible, true);
     assert.equal(updateButton.disabled, false);
+    assert.equal(label, '下载新版');
     assert.equal(opened, false);
     updateButton.onclick();
     assert.equal(opened, true);
   }
+});
+
+test('legacy Windows update action opens the official website without installing', async () => {
+  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  const start = source.indexOf("  $('#desktopUpdateAction').onclick = async () => {");
+  const end = source.indexOf("  dialog.addEventListener('click'", start);
+  assert.ok(start >= 0 && end > start);
+  let opened = null;
+  let installed = false;
+  const action = { onclick: null };
+  vm.runInNewContext(source.slice(start, end), {
+    $: () => action,
+    desktopUpdateExit: { isLegacyWindows: () => true, pending: false, install: () => { installed = true; } },
+    desktopUpdateState: { status: 'downloaded', version: '0.7.4' },
+    legacyWindowsUpdateStatuses: new Set(['available', 'downloading', 'downloaded', 'installing', 'error']),
+    desktopDownloadUrl: 'https://guguai.xyz/#download',
+    window: { open: (...args) => { opened = args; } },
+  });
+  await action.onclick();
+  assert.deepEqual(Array.from(opened), ['https://guguai.xyz/#download', '_blank', 'noopener,noreferrer']);
+  assert.equal(installed, false);
 });
 
 test('failed native unlock does not start installer and permits retry', async () => {

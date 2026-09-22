@@ -55,6 +55,8 @@ const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
 const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo, closeWindow: () => window.close() });
+const desktopDownloadUrl = 'https://guguai.xyz/#download';
+const legacyWindowsUpdateStatuses = new Set(['available', 'downloading', 'downloaded', 'installing', 'error']);
 let routeRenderFrame = 0;
 let routeRenderTimer = 0;
 let routeRenderEpoch = 0;
@@ -1085,7 +1087,7 @@ function isMandatoryDesktopUpdate(payload = desktopUpdateState) {
 function closeDesktopUpdateDialog({ dismiss = false } = {}) {
   const dialog = $('#desktopUpdateDialog');
   if (!dialog) return;
-  if (dismiss && (desktopUpdateExit.pending || desktopUpdateState.status === 'installing')) return;
+  if (dismiss && (desktopUpdateExit.pending || (desktopUpdateState.status === 'installing' && !desktopUpdateExit.isLegacyWindows()))) return;
   if (dismiss && isMandatoryDesktopUpdate()) return;
   if (dismiss) desktopUpdateDialogDismissed = true;
   if (dialog.open) dialog.close();
@@ -1118,7 +1120,6 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   if (!title || !message || !current || !next || !progressWrap || !progress || !hint || !action || !later) return;
   const mandatory = isMandatoryDesktopUpdate();
   toggleClass(closeButton, 'hidden', mandatory);
-  toggleClass($('#desktopUpdateRepair'), 'hidden', !(desktopUpdateExit.isLegacyWindows() && version === '0.7.4' && ['downloaded', 'installing', 'error'].includes(status)));
   toggleClass(later, 'hidden', mandatory);
   closeButton?.setAttribute('aria-hidden', String(mandatory));
   later.setAttribute('aria-hidden', String(mandatory));
@@ -1131,6 +1132,18 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   progressWrap.classList.remove('hidden');
   later.disabled = status === 'installing';
   if (closeButton) closeButton.disabled = status === 'installing';
+  if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(status)) {
+    title.textContent = '请下载新版客户端';
+    message.textContent = `GuGu AI ${version} 已发布，请前往官网下载并安装。`;
+    progressWrap.classList.add('hidden');
+    hint.textContent = '下载后打开安装包，按提示完成安装。';
+    action.textContent = '前往官网下载';
+    action.disabled = false;
+    later.disabled = false;
+    if (closeButton) closeButton.disabled = false;
+    if (open && !desktopUpdateDialogDismissed) openDesktopUpdateDialog();
+    return;
+  }
   if (status === 'checking' && mandatory) {
     title.textContent = '需要更新客户端';
     message.textContent = '当前版本需要更新后才能继续使用。';
@@ -1167,10 +1180,6 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
     setProgressLabel('下载完成');
     hint.textContent = mandatory ? '必须完成更新才能继续使用。' : '重启后立即应用。';
     action.textContent = '重启更新';
-    if (desktopUpdateExit.isLegacyWindows() && version === '0.7.4') {
-      action.textContent = '安装更新';
-      hint.textContent = '运行更新助手即可使用已下载的安装包完成更新，无需重新下载客户端。';
-    }
     action.disabled = false;
   } else if (status === 'installing') {
     title.textContent = '正在退出客户端';
@@ -1196,7 +1205,7 @@ function initDesktopUpdateDialog(bridge) {
   if (!dialog || !bridge?.updates || dialog.dataset.bound === 'true') return;
   const close = () => { if (!isMandatoryDesktopUpdate()) closeDesktopUpdateDialog({ dismiss: true }); };
   const snooze = async () => {
-    if (desktopUpdateExit.pending || desktopUpdateState.status === 'installing') return;
+    if (desktopUpdateExit.pending || (desktopUpdateState.status === 'installing' && !desktopUpdateExit.isLegacyWindows())) return;
     if (isMandatoryDesktopUpdate()) return;
     // Hide immediately even if the IPC round trip is slow. The main process
     // also keeps this state so a renderer reload cannot bring the reminder
@@ -1211,19 +1220,10 @@ function initDesktopUpdateDialog(bridge) {
     catch (error) { console.warn('[desktop] 稍后提醒状态保存失败', error); }
   };
   $('#closeDesktopUpdate').onclick = close;
-  $('#desktopUpdateRepair').onclick = () => {
-    const link = document.createElement('a');
-    link.href = '/downloads/GuGu-Update-Repair.cmd';
-    link.download = 'GuGu-Update-Repair.cmd';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    $('#desktopUpdateHint').textContent = '保存并运行更新助手，使用已下载的安装包完成更新，无需重新下载客户端。';
-  };
   $('#laterDesktopUpdate').onclick = () => void snooze();
   $('#desktopUpdateAction').onclick = async () => {
-    if (desktopUpdateExit.isLegacyWindows() && desktopUpdateState.version === '0.7.4' && ['downloaded', 'installing'].includes(desktopUpdateState.status)) {
-      $('#desktopUpdateRepair').click();
+    if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(desktopUpdateState.status)) {
+      window.open(desktopDownloadUrl, '_blank', 'noopener,noreferrer');
       return;
     }
     if (desktopUpdateState.status === 'error') {
@@ -1452,23 +1452,23 @@ async function initDesktopBridge() {
           desktopUpdateDialogDismissed = false;
           desktopUpdateReminderSnoozed = false;
         }
+        if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(status)) {
+          showUpdateButton();
+          setUpdateState('available');
+          setUpdateLabel('下载新版');
+          setUpdateTitle('前往官网下载新版客户端');
+          updateButton.disabled = false;
+          updateButton.onclick = () => {
+            desktopUpdateDialogDismissed = false;
+            renderDesktopUpdateDialog(desktopUpdateState, { open: true });
+          };
+          renderDesktopUpdateDialog(payload, { open: !desktopUpdateDialogDismissed });
+          return;
+        }
         if (!mandatory && (desktopUpdateReminderSnoozed || payload?.snoozed)) {
           desktopUpdateReminderSnoozed = true;
           hideUpdateButton();
           closeDesktopUpdateDialog();
-          // Leaving the bundled startup reminder must not hide the only
-          // working upgrade route for clients with the old quit bug.
-          if (['downloaded', 'installing'].includes(status) && desktopUpdateExit.isLegacyWindows()) {
-            showUpdateButton();
-            setUpdateState('downloaded');
-            setUpdateLabel(status === 'installing' ? '继续更新' : '重启更新');
-            setUpdateTitle(`安装 GuGu AI ${payload.version || '新版本'}`);
-            updateButton.disabled = false;
-            updateButton.onclick = () => {
-              desktopUpdateDialogDismissed = false;
-              renderDesktopUpdateDialog(payload, { open: true });
-            };
-          }
           return;
         }
         const shouldPrompt = mandatory || payload?.promptOnStartup === true || payload?.promptOnOpen === true;
