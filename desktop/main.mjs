@@ -1170,6 +1170,12 @@ function configureAutoUpdater() {
   return autoUpdaterConfigPromise;
 }
 async function checkForUpdates({ promptOnStartup = false } = {}) {
+  if (!app.isPackaged) {
+    updatePromptOnStartup = false;
+    startupUpdateGate?.finish();
+    sendUpdateStatus('unconfigured');
+    return { status: 'unconfigured' };
+  }
   updatePromptOnStartup = Boolean(promptOnStartup) && !startupUpdateGate?.finished;
   if (updatePromptOnStartup) sendUpdateStatus('checking');
   await configureAutoUpdater();

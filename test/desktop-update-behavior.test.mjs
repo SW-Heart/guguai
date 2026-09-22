@@ -30,6 +30,13 @@ test('desktop updates check before studio entry and do not prompt on window rest
   assert.match(bridgeSource, /if \(mandatory\) \{ renderDesktopUpdateDialog\(payload, \{ open: true \}\); return; \}/);
 });
 
+test('unpackaged development skips the online update prompt', () => {
+  const start = desktopMain.indexOf('async function checkForUpdates(');
+  const end = desktopMain.indexOf('\nasync function loadStudio()', start);
+  const source = desktopMain.slice(start, end);
+  assert.match(source, /if \(!app\.isPackaged\) \{[\s\S]*?startupUpdateGate\?\.finish\(\);[\s\S]*?sendUpdateStatus\('unconfigured'\);[\s\S]*?return \{ status: 'unconfigured' \};/);
+});
+
 test('mandatory update metadata cannot be dismissed or snoozed', async () => {
   const startup = await readFile(new URL('../desktop/renderer/startup.html', import.meta.url), 'utf8');
   assert.match(startup, /function isMandatoryUpdate\(/);
