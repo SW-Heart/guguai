@@ -249,6 +249,7 @@
 .rail-button.active .rail-beta { background: linear-gradient(135deg, #605bd5, #a657c2); }
 .rail-spacer { flex: 1; }
 .rail-button.quiet { min-height: 52px; }
+.desktop-version { display: block; margin: 8px 0 1px; color: rgba(113,113,122,.72); font: 10px/1.2 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .01em; text-align: center; }
 
 /* Creator property panel */
 .creator-panel { grid-area: creator; overflow: auto; padding: 16px 18px 82px; border-right: 1px solid var(--line); background: var(--panel); }
@@ -1628,7 +1629,7 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .rail-update-button { margin-top: 0; }
   .rail-beta { top: 1px; right: -4px; }
   .rail-button.active::before { left: 18px; right: 18px; top: -6px; bottom: auto; width: auto; height: 2px; }
-  .rail-spacer, .rail-button.quiet { display: none; }
+  .rail-spacer, .rail-button.quiet, .desktop-version { display: none !important; }
   .creator-panel { overflow: visible; padding: 20px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .creator-panel .generate { position: static; width: 100%; margin-top: 10px; }
   .text-button, .generation-tab, .type-tabs button { min-height: 44px; }

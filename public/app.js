@@ -1411,6 +1411,13 @@ async function initDesktopBridge() {
     desktopWorkspacePath = String(info.workspacePath || '');
     if (!desktopSyncInfo.deviceId && bridge.sync?.getState) desktopSyncInfo = { ...desktopSyncInfo, ...(await bridge.sync.getState()) };
     desktopClientInfo = info;
+    const desktopVersion = $('#desktopVersion');
+    const version = String(info.version || '').trim();
+    if (desktopVersion) {
+      desktopVersion.textContent = version ? `v${version}` : '';
+      desktopVersion.classList.toggle('hidden', !version);
+      if (version) desktopVersion.title = `当前版本 v${version}`;
+    }
     document.body.classList.add(`desktop-${info.platform}`);
     initWindowControls(bridge, info);
     initDesktopModalState(bridge);
