@@ -1737,7 +1737,7 @@ let viralController = null;
 let viralControllerPromise = null;
 function ensureViralController() {
   if (viralController) return Promise.resolve(viralController);
-  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=23').then(({createViralLab}) => {
+  if (!viralControllerPromise) viralControllerPromise = import('./features/viral-lab/controller.js?v=24').then(({createViralLab}) => {
     viralController = createViralLab({api,state,esc,toast,uploadAsset:pickAndUploadDramaAsset,loadFiles,loadTasks,scheduleTaskPoll,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent});
     return viralController;
   }).catch(error => { viralControllerPromise = null; throw error; });
