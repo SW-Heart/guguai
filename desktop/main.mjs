@@ -2,7 +2,7 @@ import { createStartupUpdateGate } from './startup-update.mjs';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, readFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Transform, Readable } from 'node:stream';
@@ -39,6 +39,17 @@ const rendererDir = path.join(here, 'renderer');
 const productName = 'GuGu AI';
 const defaultApiBase = 'http://127.0.0.1:4317';
 const settingsFileName = 'desktop-settings.json';
+const projectVersion = (() => {
+  try {
+    const metadata = JSON.parse(readFileSync(path.join(here, '..', 'package.json'), 'utf8'));
+    return typeof metadata.version === 'string' ? metadata.version.trim() : '';
+  } catch {
+    return '';
+  }
+})();
+function clientVersion() {
+  return projectVersion || app.getVersion();
+}
 let autoUpdater;
 let autoUpdaterConfigPromise;
 let settingsReadyResolve;
@@ -52,7 +63,7 @@ function resolveLogDirectory() {
 }
 initDesktopLogging({
   dir: resolveLogDirectory(),
-  header: { version: app.getVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron, packaged: app.isPackaged },
+  header: { version: clientVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron, packaged: app.isPackaged },
 });
 function startupTrace(stage) {
   const line = `[desktop-startup] ${stage} +${Date.now() - startupStartedAt}ms`;
@@ -966,7 +977,7 @@ function sendUpdateStatus(status, extra = {}) {
   if (['current', 'unconfigured', 'idle'].includes(status)) currentUpdateMandatory = false;
   currentUpdateStatus = {
     status,
-    currentVersion: app.getVersion(),
+    currentVersion: clientVersion(),
     mandatory: currentUpdateMandatory,
     promptOnStartup: updatePromptOnStartup && !startupUpdateGate?.finished,
     ...extra,
@@ -1228,7 +1239,7 @@ function isMainWindowEvent(event) {
 function desktopDiagnostics() {
   return {
     productName,
-    version: app.getVersion(),
+    version: clientVersion(),
     platform: process.platform,
     arch: process.arch,
     packaged: app.isPackaged,
@@ -1498,7 +1509,7 @@ function registerIpc() {
     productName,
     platform: process.platform,
     arch: process.arch,
-    version: app.getVersion(),
+    version: clientVersion(),
     nativeWindowControls: process.platform === 'win32',
     apiBase: configuredApiBase(),
     workspacePath: workspace || workspaceRoot || '',
