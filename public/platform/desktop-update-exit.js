@@ -1,4 +1,4 @@
-export function createDesktopUpdateExit({ getBridge, getInfo }) {
+export function createDesktopUpdateExit({ getBridge, getInfo, closeWindow }) {
   let pending = false;
   const isLegacyWindows = () => {
     const info = getInfo();
@@ -24,6 +24,14 @@ export function createDesktopUpdateExit({ getBridge, getInfo }) {
         // Await the IPC acknowledgement before asking that client to install.
         await unlock(bridge);
         if (!await bridge?.updates?.install?.()) throw new Error('更新安装包尚未准备好，请稍后再试');
+        if (isLegacyWindows()) {
+          // Only an acknowledged install may close the actual BrowserWindow.
+          // window.close IPC merely hides this client's window to the tray.
+          const status = await bridge?.updates?.getStatus?.();
+          if (status?.status !== 'installing') throw new Error('更新尚未开始，请重新尝试。');
+          await unlock(bridge);
+          closeWindow();
+        }
       } catch (error) {
         pending = false;
         throw error;

@@ -1,5 +1,15 @@
 import path from 'node:path';
 
+export async function openWindowsUpdateInstaller(filePath, openPath) {
+  const installerPath = String(filePath || '').trim();
+  if (!path.win32.isAbsolute(installerPath) || !installerPath.toLowerCase().endsWith('.exe') || /[\0\r\n]/.test(installerPath)) {
+    throw new Error('Windows 更新安装包路径无效');
+  }
+  const error = await openPath(installerPath);
+  if (error) throw new Error(`无法打开更新安装包：${error}`);
+  return true;
+}
+
 const waitThenInstallScript = [
   "$ErrorActionPreference='Stop'",
   '$targetPid=[int]$env:GUGU_UPDATE_PARENT_PID',

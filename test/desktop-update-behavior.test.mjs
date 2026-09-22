@@ -47,17 +47,16 @@ test('mandatory update metadata cannot be dismissed or snoozed', async () => {
   assert.match(startup, /\(status !== 'checking' \|\| mandatory\)[^\n]*openUpdateDialog\(\)/);
 });
 
-test('Windows update starts a detached handoff before allowing the tray app to quit', () => {
+test('Windows update opens the installer before allowing the tray app to quit', () => {
   const installer = desktopMain.slice(desktopMain.indexOf('async function launchDownloadedUpdateInstaller()'), desktopMain.indexOf('function configureAutoUpdater()'));
-  const helperSpawn = installer.indexOf('const helper = spawn(launcher.command, launcher.args');
-  const helperReady = installer.indexOf("helper.once('spawn', resolve)");
+  const installerOpened = installer.indexOf('await openWindowsUpdateInstaller(installerPath, file => shell.openPath(file))');
   const restoreClosable = installer.indexOf('setWindowsModalState(false);');
   const allowQuit = installer.indexOf('isQuitting = true;');
   const quit = installer.indexOf('app.quit();');
-  assert.ok(helperSpawn >= 0 && helperReady > helperSpawn && restoreClosable > helperReady && allowQuit > restoreClosable && quit > allowQuit);
+  assert.ok(installerOpened >= 0 && restoreClosable > installerOpened && allowQuit > restoreClosable && quit > allowQuit);
   assert.match(installer, /setTimeout\(\(\) => \{[\s\S]*?app\.exit\(0\);[\s\S]*?\}, 5_000\);/);
   assert.match(desktopMain, /if \(updateInstallStarted && process\.platform === 'win32'\) return setWindowsModalState\(false\)/);
-  assert.match(installer, /helper\.unref\(\)/);
+  assert.doesNotMatch(installer, /windowsNsisInstallerLauncher|helper\.unref/);
   assert.doesNotMatch(installer, /quitAndInstall/);
 });
 

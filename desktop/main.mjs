@@ -32,7 +32,7 @@ import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
 import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
 import { normalizeControlledUrl } from './remote-settings.mjs';
-import { windowsNsisInstallerLauncher } from './windows-update.mjs';
+import { openWindowsUpdateInstaller } from './windows-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -1075,28 +1075,18 @@ async function launchDownloadedUpdateInstaller() {
   if (!installerPath) throw new Error('更新安装包尚未准备好，请稍后再试');
   await fs.access(installerPath);
   if (process.platform === 'win32') {
-    const launcher = windowsNsisInstallerLauncher(installerPath);
-    const helper = spawn(launcher.command, launcher.args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      env: { ...process.env, ...launcher.env },
-    });
     try {
-      await new Promise((resolve, reject) => {
-        helper.once('spawn', resolve);
-        helper.once('error', reject);
-      });
-      helper.unref();
+      // ShellExecute opens the cached installer directly and handles elevation.
+      // Never quit just because a separate waiting helper managed to spawn.
+      await openWindowsUpdateInstaller(installerPath, file => shell.openPath(file));
       updateInstallStarted = true;
       sendUpdateStatus('installing', { version: downloadedUpdateVersion });
       // The update dialog disables the native Windows close command. Restore
-      // it before quitting, or the detached helper can wait for this process
-      // indefinitely while the renderer stays on the exit screen.
+      // it before quitting so the installer can replace the running client.
       setWindowsModalState(false);
       isQuitting = true;
       // A renderer or native window can still veto the normal quit path. The
-      // helper is ready, so make sure it is never left waiting on our PID.
+      // installer has been opened, so do not leave the old client running.
       setTimeout(() => {
         console.warn('[desktop] 更新退出超时，强制结束客户端');
         clearInterval(backgroundTaskPollTimer);
