@@ -31,7 +31,7 @@ test('dismissing an installing update cannot unlock the window or snooze the ins
 test('updated entry loads the legacy exit fix with the current cache key', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=355'));
+  assert.ok(html.includes('/app.js?v=356'));
   assert.ok(source.includes('./platform/desktop-update-exit.js?v=3'));
   assert.doesNotMatch(source, /desktopUpdateExit\.resume/);
 });
@@ -123,7 +123,21 @@ test('normal native window close still hides to tray; an explicit quit permits c
   }
 });
 
-test('legacy Windows updates show the official download prompt even after startup was snoozed', async () => {
+const websiteRedirectPredicate = source => source.slice(source.indexOf('const isWindows071 ='), source.indexOf('\n', source.indexOf('const isWindows071 =')));
+
+test('only Windows 0.7.1 qualifies for the official download prompt', async () => {
+  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  for (const [platform, version, expected] of [
+    ['win32', '0.7.0', false], ['win32', '0.7.1', true], ['win32', '0.7.2', false],
+    ['win32', '0.7.3', false], ['win32', '0.6.9', false], ['darwin', '0.7.1', false],
+  ]) {
+    assert.equal(vm.runInNewContext(`${websiteRedirectPredicate(source)}\nisWindows071()`, {
+      desktopClientInfo: { platform, version },
+    }), expected, `${platform} ${version}`);
+  }
+});
+
+test('Windows 0.7.1 updates show the official download prompt even after startup was snoozed', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const start = source.indexOf('const applyUpdateStatus = payload => {');
   const end = source.indexOf('desktopUpdateUnsubscribe?.();', start);
@@ -132,7 +146,8 @@ test('legacy Windows updates show the official download prompt even after startu
     let opened = false;
     let label = '';
     const updateButton = {};
-    vm.runInNewContext(`${source.slice(start, end)}\napplyUpdateStatus({ status: '${status}', snoozed: true });`, {
+    vm.runInNewContext(`${websiteRedirectPredicate(source)}\n${source.slice(start, end)}\napplyUpdateStatus({ status: '${status}', snoozed: true });`, {
+      desktopClientInfo: { platform: 'win32', version: '0.7.1' },
       desktopUpdateState: {}, desktopUpdateReminderSnoozed: true,
       legacyWindowsUpdateStatuses: new Set(['available', 'downloading', 'downloaded', 'installing', 'error']),
       isMandatoryDesktopUpdate: () => false,
@@ -151,25 +166,30 @@ test('legacy Windows updates show the official download prompt even after startu
   }
 });
 
-test('legacy Windows update action opens the official website without installing', async () => {
+test('Windows 0.7.1 opens the website while other versions keep the native installer', async () => {
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   const start = source.indexOf("  $('#desktopUpdateAction').onclick = async () => {");
   const end = source.indexOf("  dialog.addEventListener('click'", start);
   assert.ok(start >= 0 && end > start);
-  let opened = null;
-  let installed = false;
-  const action = { onclick: null };
-  vm.runInNewContext(source.slice(start, end), {
-    $: () => action,
-    desktopUpdateExit: { isLegacyWindows: () => true, pending: false, install: () => { installed = true; } },
-    desktopUpdateState: { status: 'downloaded', version: '0.7.4' },
-    legacyWindowsUpdateStatuses: new Set(['available', 'downloading', 'downloaded', 'installing', 'error']),
-    desktopDownloadUrl: 'https://guguai.xyz/#download',
-    window: { open: (...args) => { opened = args; } },
-  });
-  await action.onclick();
-  assert.deepEqual(Array.from(opened), ['https://guguai.xyz/#download', '_blank', 'noopener,noreferrer']);
-  assert.equal(installed, false);
+  for (const version of ['0.7.0', '0.7.1', '0.7.2', '0.7.3']) {
+    let opened = null;
+    let installed = false;
+    const action = { onclick: null };
+    vm.runInNewContext(`${websiteRedirectPredicate(source)}\n${source.slice(start, end)}`, {
+      $: () => action,
+      desktopClientInfo: { platform: 'win32', version },
+      desktopUpdateExit: { isLegacyWindows: () => true, pending: false, install: () => { installed = true; } },
+      desktopUpdateState: { status: 'downloaded', version: '0.7.4' },
+      legacyWindowsUpdateStatuses: new Set(['available', 'downloading', 'downloaded', 'installing', 'error']),
+      desktopDownloadUrl: 'https://guguai.xyz/#download',
+      renderDesktopUpdateDialog: () => {},
+      window: { open: (...args) => { opened = args; } },
+    });
+    await action.onclick();
+    assert.equal(Boolean(opened), version === '0.7.1', version);
+    assert.equal(installed, version !== '0.7.1', version);
+    if (opened) assert.deepEqual(Array.from(opened), ['https://guguai.xyz/#download', '_blank', 'noopener,noreferrer']);
+  }
 });
 
 test('failed native unlock does not start installer and permits retry', async () => {
@@ -185,10 +205,12 @@ test('installer failure releases pending state so a subsequent click can retry',
   assert.equal(controller.pending, false);
 });
 
-test('version detection includes the affected 0.7.1 client', () => {
+test('native legacy handling keeps its original version range', () => {
+  assert.equal(setup({ version: '0.7.0' }).controller.isLegacyWindows(), true);
   assert.equal(setup({ version: '0.7.1' }).controller.isLegacyWindows(), true);
   assert.equal(setup({ version: '0.7.2' }).controller.isLegacyWindows(), true);
   assert.equal(setup({ version: '0.7.3' }).controller.isLegacyWindows(), false);
+  assert.equal(setup({ version: '0.6.9' }).controller.isLegacyWindows(), true);
   assert.equal(setup({ platform: 'darwin' }).controller.isLegacyWindows(), false);
 });
 

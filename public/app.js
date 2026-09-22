@@ -56,6 +56,7 @@ let desktopUpdateState = { status: 'idle' };
 let desktopClientInfo = {};
 const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo, closeWindow: () => window.close() });
 const desktopDownloadUrl = 'https://guguai.xyz/#download';
+const isWindows071 = () => desktopClientInfo.platform === 'win32' && desktopClientInfo.version === '0.7.1';
 const legacyWindowsUpdateStatuses = new Set(['available', 'downloading', 'downloaded', 'installing', 'error']);
 let routeRenderFrame = 0;
 let routeRenderTimer = 0;
@@ -1132,7 +1133,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   progressWrap.classList.remove('hidden');
   later.disabled = status === 'installing';
   if (closeButton) closeButton.disabled = status === 'installing';
-  if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(status)) {
+  if (isWindows071() && legacyWindowsUpdateStatuses.has(status)) {
     title.textContent = '请下载新版客户端';
     message.textContent = `GuGu AI ${version} 已发布，请前往官网下载并安装。`;
     progressWrap.classList.add('hidden');
@@ -1222,7 +1223,7 @@ function initDesktopUpdateDialog(bridge) {
   $('#closeDesktopUpdate').onclick = close;
   $('#laterDesktopUpdate').onclick = () => void snooze();
   $('#desktopUpdateAction').onclick = async () => {
-    if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(desktopUpdateState.status)) {
+    if (isWindows071() && legacyWindowsUpdateStatuses.has(desktopUpdateState.status)) {
       window.open(desktopDownloadUrl, '_blank', 'noopener,noreferrer');
       return;
     }
@@ -1452,7 +1453,7 @@ async function initDesktopBridge() {
           desktopUpdateDialogDismissed = false;
           desktopUpdateReminderSnoozed = false;
         }
-        if (desktopUpdateExit.isLegacyWindows() && legacyWindowsUpdateStatuses.has(status)) {
+        if (isWindows071() && legacyWindowsUpdateStatuses.has(status)) {
           showUpdateButton();
           setUpdateState('available');
           setUpdateLabel('下载新版');
