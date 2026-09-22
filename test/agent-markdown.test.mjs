@@ -12,6 +12,6 @@ test('Markdown escapes HTML and disallows unsafe link protocols',()=>{
 });
 test('conversation assets use the updated cache chain',async()=>{
  const {readFile}=await import('node:fs/promises');
- const entries=[['public/index.html',['/app.js?v=353','/styles.css?v=265']],['public/app.js',['./drama-studio.js?v=142']],['public/drama-studio.js',['./features/drama/director-workspace.js?v=50','./features/drama/local-snapshot.js?v=1']],['public/features/drama/director-workspace.js',["./director-actions.js?v=8", "./local-snapshot.js?v=1", "../agent/markdown.js?v=1", "../agent/image-bounds.js?v=1", "../agent/frames.js?v=2", "../../vendor/director/reference-canvas.js?v=30"]]];
+ const entries=[['public/index.html',['/app.js?v=354','/styles.css?v=265']],['public/app.js',['./drama-studio.js?v=142']],['public/drama-studio.js',['./features/drama/director-workspace.js?v=50','./features/drama/local-snapshot.js?v=1']],['public/features/drama/director-workspace.js',["./director-actions.js?v=8", "./local-snapshot.js?v=1", "../agent/markdown.js?v=1", "../agent/image-bounds.js?v=1", "../agent/frames.js?v=2", "../../vendor/director/reference-canvas.js?v=30"]]];
  for(const [path,urls] of entries){const source=await readFile(new URL(`../${path}`,import.meta.url),'utf8');for(const url of urls)assert.ok(source.includes(url),`${path}: ${url}`);}
 });

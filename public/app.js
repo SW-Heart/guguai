@@ -1118,7 +1118,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   if (!title || !message || !current || !next || !progressWrap || !progress || !hint || !action || !later) return;
   const mandatory = isMandatoryDesktopUpdate();
   toggleClass(closeButton, 'hidden', mandatory);
-  toggleClass($('#desktopUpdateRepair'), 'hidden', !(desktopUpdateExit.isLegacyWindows() && version === '0.7.3' && ['downloaded', 'installing', 'error'].includes(status)));
+  toggleClass($('#desktopUpdateRepair'), 'hidden', !(desktopUpdateExit.isLegacyWindows() && version === '0.7.4' && ['downloaded', 'installing', 'error'].includes(status)));
   toggleClass(later, 'hidden', mandatory);
   closeButton?.setAttribute('aria-hidden', String(mandatory));
   later.setAttribute('aria-hidden', String(mandatory));
@@ -1167,7 +1167,7 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
     setProgressLabel('下载完成');
     hint.textContent = mandatory ? '必须完成更新才能继续使用。' : '重启后立即应用。';
     action.textContent = '重启更新';
-    if (desktopUpdateExit.isLegacyWindows() && version === '0.7.3') {
+    if (desktopUpdateExit.isLegacyWindows() && version === '0.7.4') {
       action.textContent = '安装更新';
       hint.textContent = '运行更新助手即可使用已下载的安装包完成更新，无需重新下载客户端。';
     }
@@ -1222,7 +1222,7 @@ function initDesktopUpdateDialog(bridge) {
   };
   $('#laterDesktopUpdate').onclick = () => void snooze();
   $('#desktopUpdateAction').onclick = async () => {
-    if (desktopUpdateExit.isLegacyWindows() && desktopUpdateState.version === '0.7.3' && ['downloaded', 'installing'].includes(desktopUpdateState.status)) {
+    if (desktopUpdateExit.isLegacyWindows() && desktopUpdateState.version === '0.7.4' && ['downloaded', 'installing'].includes(desktopUpdateState.status)) {
       $('#desktopUpdateRepair').click();
       return;
     }
