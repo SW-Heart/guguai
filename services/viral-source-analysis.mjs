@@ -156,7 +156,7 @@ export function normalizeReplicaPlan(project, observation, parsed = {}) {
     unit.modelId = unit.modelId === 'seedance-2.0' ? 'seedance-2.0' : 'seedance-2.5';
     unit.duration = unit.modelId === 'seedance-2.0' ? 15 : 30;
     unit.aspectRatio = ['9:16', '16:9', '1:1'].includes(unit.aspectRatio) ? unit.aspectRatio : '9:16';
-    unit.quality = unit.quality === '480p' ? '480p' : '720p';
+    unit.quality = unit.modelId === 'seedance-2.5' && unit.quality === '1080p' ? '1080p' : unit.quality === '480p' ? '480p' : '720p';
     unit.sourceRange = unit.sourceRange || original?.sourceRange;
     unit.timelineSpanIds = Array.isArray(unit.timelineSpanIds) ? unit.timelineSpanIds : (original?.timelineSpanIds || []);
     unit.referenceAssetIds = Array.isArray(unit.referenceAssetIds) ? unit.referenceAssetIds.map(String).filter(id => project.materials.some(item => item.assetId === id)) : [...(original?.referenceAssetIds || [])];

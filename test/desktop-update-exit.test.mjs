@@ -31,7 +31,7 @@ test('dismissing an installing update cannot unlock the window or snooze the ins
 test('updated entry loads the legacy exit fix with the current cache key', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=356'));
+  assert.ok(html.includes('/app.js?v=363'));
   assert.ok(source.includes('./platform/desktop-update-exit.js?v=3'));
   assert.doesNotMatch(source, /desktopUpdateExit\.resume/);
 });
@@ -159,7 +159,7 @@ test('Windows 0.7.1 updates show the official download prompt even after startup
     });
     assert.equal(visible, true);
     assert.equal(updateButton.disabled, false);
-    assert.equal(label, '下载新版');
+    assert.equal(label, '更新');
     assert.equal(opened, false);
     updateButton.onclick();
     assert.equal(opened, true);

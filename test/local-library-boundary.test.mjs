@@ -64,11 +64,11 @@ test('each login activates its account workspace before the legacy claim', () =>
 test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(app.includes('./features/credits/presentation.js?v=3'));
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(admin.includes('/guguadmin.js?v=22'));
+  assert.ok(admin.includes('/guguadmin.js?v=23'));
   assert.ok(admin.includes('/guguadmin.css?v=18'));
-  assert.match(index, /\/app\.js\?v=356\b/);
+  assert.match(index, /\/app\.js\?v=363\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=266/);
+  assert.match(index, /\/styles\.css\?v=268/);
   assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
   assert.match(index, /\/styles\/base\.css\?v=2/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=14/);
@@ -193,7 +193,7 @@ test('image prompt supports reference mentions and compiles them before submissi
   assert.match(app, /openReferenceDialog\('image', \{ mentionRequest:imagePromptMentionRequest \}\)/);
   assert.match(app, /prompt:replaceAssetMentions\(prompt, state\.imagePromptMentions\)/);
   assert.match(app, /data-image-prompt-mention-id/);
-  assert.match(app, /button\.dataset\.target === 'image'\) removeImagePromptMentionNodes/);
+  assert.match(app, /target === 'image' && !state\.refs\.image\.includes\(id\)\) removeImagePromptMentionNodes/);
 });
 
 test('desktop updater uses single-range differential downloads for Aliyun OSS', () => {

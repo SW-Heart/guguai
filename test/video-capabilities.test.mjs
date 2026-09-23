@@ -76,6 +76,11 @@ test('reference image order is preserved in the provider payload', () => {
   assert.deepEqual(payload.image_urls, ordered);
 });
 
+test('repeated reference images keep their positions in the provider payload', () => {
+  const payload = buildVideoPayload({ videoModelId:VIDEO_MODEL_IDS.SEEDANCE_2, model:'seedance', prompt:'test', aspectRatio:'16:9', duration:15, quality:'720p', referenceLimits:{ image:9 } }, { images:Array(8).fill('https://example.test/same.png'), videos:[], audios:[] });
+  assert.deepEqual(payload.reference_image_urls, Array(8).fill('https://example.test/same.png'));
+});
+
 test('legacy image to video requests retain standard model compatibility', () => {
   const request = validateVideoRequest({ aspectRatio:'9:16', duration:20 }, 4);
   assert.equal(request.profileKey, 'standard');

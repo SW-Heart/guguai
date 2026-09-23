@@ -27,6 +27,7 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
   });
   const button = (action, label, extra = '', primary = false) => `<button type="button" class="${primary ? 'gradient-button' : 'secondary-button'}" data-vl="${action}" ${extra}>${label}</button>`;
   const select = (attr, options, value) => `<select ${attr}>${Object.entries(options).map(([id, label]) => `<option value="${esc(id)}" ${id === value ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`;
+  const qualityOptions = modelId => capabilities.qualityOptions?.[modelId] || [];
   function media(id, controls = false) {
     const asset = file(id);
     if (!asset) return '<div class="vl-placeholder">素材不可用，请重新选择</div>';
@@ -117,7 +118,7 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
       const task = attempts.find(task => task.id === project?.planApproval?.requests?.[el.dataset.id]);
       el.dataset.vl = task?.status === 'failed' ? 'retry' : 'generate';
       el.textContent = task?.status === 'failed' ? attempts.length < 2 ? '重试这一段' : '请修改方案后生成' : task ? task.assetId ? '已生成' : '正在生成' : '生成';
-      el.disabled = Boolean(task && (task.status !== 'failed' || attempts.length >= 2));
+      el.disabled = !qualityOptions(project.units.find(unit => unit.id === el.dataset.id)?.modelId).length || Boolean(task && (task.status !== 'failed' || attempts.length >= 2));
     });
     const active = tasks.filter(task => ['queued','running'].includes(task.status)).length;
     if (!host.firstElementChild) {
@@ -274,7 +275,7 @@ export function createViralLab({ api, state, esc, toast, uploadAsset, loadFiles,
   }
   function unitMarkup(unit, index) {
     const sourceRange = unit.sourceRange ? `<span class="vl-unit-source-range">原片 ${Number(unit.sourceRange.startSeconds).toFixed(1)}–${Number(unit.sourceRange.endSeconds).toFixed(1)} 秒</span>` : '';
-    return `<article class="vl-card vl-unit"><div class="vl-section-title"><div class="vl-unit-title"><span>${String(index + 1).padStart(2,'0')}</span><b>${esc(unit.title)}</b>${sourceRange}</div>${button('remove-unit','移除',`data-id="${esc(unit.id)}"`)}</div><div class="vl-parameters"><label>模型与时长${select(`data-unit-field="modelId" data-unit="${esc(unit.id)}"`,project.type === 'outfit' ? {'seedance-2.5':'Seedance 2.5 · 30 秒'} : {'seedance-2.5':'Seedance 2.5 · 30 秒','seedance-2.0':'Seedance 2.0 · 15 秒'},unit.modelId)}</label><label>画幅${select(`data-unit-field="aspectRatio" data-unit="${esc(unit.id)}"`,{'9:16':'9:16','16:9':'16:9','1:1':'1:1'},unit.aspectRatio)}</label><label>清晰度${select(`data-unit-field="quality" data-unit="${esc(unit.id)}"`,{'720p':'720p','480p':'480p'},unit.quality)}</label></div><div class="vl-unit-refs">${project.materials.map(m => `<label><input type="checkbox" data-unit-ref data-unit="${esc(unit.id)}" value="${esc(m.assetId)}" ${unit.referenceAssetIds.includes(m.assetId) ? 'checked' : ''}>${esc(m.label || roles[m.role])}</label>`).join('')}</div><textarea data-unit-field="prompt" data-unit="${esc(unit.id)}" class="vl-prompt" aria-label="第 ${index+1} 段描述" placeholder="写下这一段要发生的画面、动作和声音。">${esc(unit.prompt)}</textarea><div class="vl-unit-footer">${button('generate','生成',`data-id="${esc(unit.id)}"`,true)}</div></article>`;
+    return `<article class="vl-card vl-unit"><div class="vl-section-title"><div class="vl-unit-title"><span>${String(index + 1).padStart(2,'0')}</span><b>${esc(unit.title)}</b>${sourceRange}</div>${button('remove-unit','移除',`data-id="${esc(unit.id)}"`)}</div><div class="vl-parameters"><label>模型与时长${select(`data-unit-field="modelId" data-unit="${esc(unit.id)}"`,project.type === 'outfit' ? {'seedance-2.5':'Seedance 2.5 · 30 秒'} : {'seedance-2.5':'Seedance 2.5 · 30 秒','seedance-2.0':'Seedance 2.0 · 15 秒'},unit.modelId)}</label><label>画幅${select(`data-unit-field="aspectRatio" data-unit="${esc(unit.id)}"`,{'9:16':'9:16','16:9':'16:9','1:1':'1:1'},unit.aspectRatio)}</label><label>清晰度${select(`data-unit-field="quality" data-unit="${esc(unit.id)}"`,Object.fromEntries(qualityOptions(unit.modelId).map(quality => [quality, quality])),unit.quality)}</label></div><div class="vl-unit-refs">${project.materials.map(m => `<label><input type="checkbox" data-unit-ref data-unit="${esc(unit.id)}" value="${esc(m.assetId)}" ${unit.referenceAssetIds.includes(m.assetId) ? 'checked' : ''}>${esc(m.label || roles[m.role])}</label>`).join('')}</div><textarea data-unit-field="prompt" data-unit="${esc(unit.id)}" class="vl-prompt" aria-label="第 ${index+1} 段描述" placeholder="写下这一段要发生的画面、动作和声音。">${esc(unit.prompt)}</textarea><div class="vl-unit-footer">${button('generate','生成',`data-id="${esc(unit.id)}"`,true)}</div></article>`;
   }
   async function choose(kind, onSelect, current) {
     await loadFiles(); current();

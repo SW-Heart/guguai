@@ -639,7 +639,7 @@ http://127.0.0.1:4317/guguadmin
 
 | 模式 | 图片要求 | 时长 | 画幅 | 清晰度 |
 | --- | --- | --- | --- | --- |
-| 文生视频 | 不可带参考素材 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒；Seedance 2.5：30 秒 | 依模型能力 | MiniMax H3：768p / 2K；Seedance 2.0/2.5：480p / 720p |
+| 文生视频 | 不可带参考素材 | Grok Video：6、12 秒；Grok Video 1.5 Fast：10、15、20、30 秒；Veo：8 秒；Omni Flash：10 秒；Veo 3.1：8 秒；MiniMax H3：4–15 秒；Seedance 2.0：15 秒；Seedance 2.5：30 秒 | 依模型能力 | MiniMax H3：768p / 2K；Seedance 2.0：480p / 720p；Seedance 2.5：480p / 720p / 1080p（仅显示当前有可用线路的清晰度） |
 | 参考素材视频 | 1 张图片（Grok Video；Veo 3.1：1 张）；MiniMax H3：图片 5 / 视频 3 / 音频 3，合计 15；Seedance 2.0/Fast：图片 9 / 视频 3 / 音频 3；Seedance 2.5：图片 30 / 视频 10 / 音频 10 | Seedance 2.0/Fast：15 秒；Seedance 2.5：30 秒；其他依模型能力 | Seedance：16:9 / 9:16 / 1:1 | 依模型能力 |
 | GuGu 2.0 参考素材视频 | 图片最多 9 张、音频最多 3 段，合计最多 12 个；不支持参考视频 | 1–15 秒 | 16:9 / 9:16 | 480p / 768p |
 | 首尾帧视频 | 1–2 张图片 | Veo：固定 8 秒；Omni Flash：10 秒；MiniMax H3：4–15 秒 | 依模型能力 | 依模型能力 |

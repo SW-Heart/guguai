@@ -487,7 +487,7 @@ import { createApiClient } from './api-client.js?v=3';
     const items = data.items || [];
     const seedance20Pools = ['seedance-2.0-text', 'seedance-2.0-img'];
     const configuredGroups = items.map(item => `${item.logicalModelId}:${item.quality}`);
-    const emptyPoolGroups = seedance20Pools.flatMap(modelId => ['480p', '720p'].map(quality => `${modelId}:${quality}`));
+    const emptyPoolGroups = [...seedance20Pools.flatMap(modelId => ['480p', '720p'].map(quality => `${modelId}:${quality}`)), ...['480p', '720p', '1080p'].map(quality => `seedance-2.5:${quality}`)];
     const groups = [...new Set([...emptyPoolGroups, ...configuredGroups])];
     root.innerHTML = `<div class="panel-head"><div><h3>Seedance 调用线路</h3><p class="detail">状态来自渠道目录，每 10 分钟自动检查；自动模式按优先级选择可用线路。</p></div><button class="small-button" id="checkAllRoutes" type="button">立即检查全部</button></div>${groups.length ? `<div class="route-groups">${groups.map(key => {
       const [modelId, quality] = key.split(':');

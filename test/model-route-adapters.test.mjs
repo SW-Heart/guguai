@@ -24,3 +24,9 @@ test('dynamic route adapters preserve each supplier field contract', () => {
     reference_image_urls: ['image-1'], reference_videos: ['video-1'], reference_audios: ['audio-1'],
   });
 });
+
+test('DIW receives every repeated reference position', () => {
+  const repeated = Array(8).fill('https://example.test/same.png');
+  const payload = __test.routedVideoPayload({ ...task, routeAdapter:'diw-video', referenceLimits:{ image:9, video:0, audio:0 } }, { images:repeated, videos:[], audios:[] });
+  assert.deepEqual(payload.images, repeated);
+});

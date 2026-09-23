@@ -4947,33 +4947,47 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
   .loading-skeleton .skeleton-frame::after { animation: none; }
 }
 
-/* Compact update UI: centered iconography, short copy, explicit actions. */
-.rail-update-button {
-  min-height: 78px;
-  padding: 10px 6px 8px;
-  gap: 6px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+/* A single raised glass button for the desktop update entry. */
+.rail .rail-update-button,
+.rail .rail-update-button.has-update,
+.rail .rail-update-button.has-update:disabled {
+  width: 48px;
+  min-width: 48px;
+  min-height: 36px;
+  margin-top: 4px;
+  padding: 0;
+  align-self: center;
+  border: 1px solid rgba(255,255,255,.92);
+  border-radius: 11px;
+  color: #514ab7;
+  background: linear-gradient(155deg, rgba(255,255,255,.94) 0%, rgba(231,228,255,.88) 45%, rgba(202,196,249,.82) 100%);
+  box-shadow: inset 0 2px 2px rgba(255,255,255,.98), inset 0 -2px 5px rgba(102,85,198,.12), 0 3px 0 rgba(117,105,205,.18), 0 6px 12px rgba(71,56,164,.14);
+  backdrop-filter: blur(16px) saturate(1.25);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
   text-align: center;
 }
-.rail-update-button .rail-update-icon {
-  flex: 0 0 30px;
-  width: 30px;
-  height: 30px;
+.rail .rail-update-button.has-update:hover:not(:disabled) {
+  color: #40399e;
+  border-color: rgba(255,255,255,.96);
+  background: linear-gradient(155deg, #fff, rgba(224,218,255,.96) 52%, rgba(189,180,246,.9));
+  box-shadow: inset 0 2px 2px #fff, inset 0 -2px 5px rgba(102,85,198,.14), 0 4px 0 rgba(117,105,205,.17), 0 8px 14px rgba(71,56,164,.17);
+  transform: translateY(-1px);
 }
-.rail-update-button .rail-update-label {
+.rail .rail-update-button.has-update:active:not(:disabled) {
+  box-shadow: inset 0 2px 5px rgba(91,77,178,.2), inset 0 1px rgba(255,255,255,.7), 0 2px 0 rgba(117,105,205,.2);
+  transform: translateY(2px);
+}
+.rail .rail-update-button.has-update::after { content: none; }
+.rail .rail-update-button .rail-update-label,
+.rail .rail-update-button.has-update .rail-update-label {
   width: auto;
-  max-width: 100%;
   overflow: visible;
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
 }
-.rail-update-button:not([data-update-state]) .rail-update-icon [data-update-icon="download"] { display: grid; }
 
 .desktop-update-card,
 .desktop-restart-card {

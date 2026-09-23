@@ -26,6 +26,14 @@ test('完整提示词不静默截断，错误引用与重复分段被拒绝', ()
   input.units[0].referenceAssetIds=['product'];input.units.push({...input.units[0]});
   assert.throws(()=>normalizeViralInput(input),/编号不能重复/);
 });
+test('Seedance 2.5 分段保留 1080p，2.0 不接受该档', () => {
+  const input = fixture();
+  input.units[0].quality = '1080p';
+  assert.equal(normalizeViralInput(input).units[0].quality, '1080p');
+  input.units[0].modelId = 'seedance-2.0';
+  input.units[0].duration = 15;
+  assert.equal(normalizeViralInput(input).units[0].quality, '720p');
+});
 test('项目保存按账号和设备工作区隔离，CAS 拒绝旧稿覆盖', () => {
   const p=createViralProject('a',scope,fixture());
   assert.equal(findViralProject('b',p.id,scope),null);
@@ -100,9 +108,9 @@ test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   const controller=readFileSync(new URL('../public/features/viral-lab/controller.js',import.meta.url),'utf8');
   const styles=readFileSync(new URL('../public/features/viral-lab/styles.css',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=356\b/);assert.doesNotMatch(html,/app\.js\?v=350\b/);assert.doesNotMatch(html,/app\.js\?v=348\b/);assert.doesNotMatch(html,/app\.js\?v=347\b/);assert.doesNotMatch(html,/app\.js\?v=346\b/);assert.doesNotMatch(html,/app\.js\?v=345\b/);assert.doesNotMatch(html,/app\.js\?v=344\b/);assert.doesNotMatch(html,/app\.js\?v=343\b/);assert.doesNotMatch(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
+  assert.match(html,/app\.js\?v=363\b/);assert.doesNotMatch(html,/app\.js\?v=350\b/);assert.doesNotMatch(html,/app\.js\?v=348\b/);assert.doesNotMatch(html,/app\.js\?v=347\b/);assert.doesNotMatch(html,/app\.js\?v=346\b/);assert.doesNotMatch(html,/app\.js\?v=345\b/);assert.doesNotMatch(html,/app\.js\?v=344\b/);assert.doesNotMatch(html,/app\.js\?v=343\b/);assert.doesNotMatch(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
   assert.match(html,/features\/viral-lab\/styles\.css\?v=21/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=24/);
+  assert.match(app,/features\/viral-lab\/controller\.js\?v=25/);
   assert.doesNotMatch(html,/features\/viral-lab\/styles\.css\?v=15/);
   assert.doesNotMatch(app,/features\/viral-lab\/controller\.js\?v=15/);
   assert.match(controller,/data-vl="create-motion"/);

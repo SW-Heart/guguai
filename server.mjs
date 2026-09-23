@@ -1434,10 +1434,12 @@ async function resolveImageRefs(userId, ids, task = {}) {
   // short-lived copy in the dedicated reference bucket.
   return withMediaTempDir(`image-reference-${task.id}`, async jobDir => {
     const refs = [];
+    const staged = new Map();
     for (const id of referenceIds) {
       const asset = findAsset(userId, id, scope);
       if (!asset || asset.kind !== 'image') continue;
-      refs.push(await stageImageReference(userId, task, asset, jobDir));
+      if (!staged.has(id)) staged.set(id, await stageImageReference(userId, task, asset, jobDir));
+      refs.push(staged.get(id));
     }
     return refs;
   });
@@ -1449,17 +1451,22 @@ async function resolveRefs(userId, ids, task = {}) {
   // Image references use the dedicated reference bucket; video and audio
   // references use longer-lived signed URLs from the private media bucket.
   return withMediaTempDir(`video-reference-${task.id}`, async jobDir => {
+    const staged = new Map();
     for (const id of ids.slice(0, task.referenceLimits?.total || 15)) {
       const asset = findAsset(userId, id, scope);
       if (!asset || !['image', 'video', 'audio'].includes(asset.kind)) continue;
       if (!mixed && asset.kind !== 'image') continue;
-      let url;
-      if (asset.kind === 'image') {
-        url = await stageImageReference(userId, task, asset, jobDir);
-      } else {
-        const key = asset.objectKey || await uploadAsset(userId, asset);
-        url = await signedAssetUrl(key, modelInputUrlExpiresSeconds);
+      if (!staged.has(id)) {
+        let url;
+        if (asset.kind === 'image') {
+          url = await stageImageReference(userId, task, asset, jobDir);
+        } else {
+          const key = asset.objectKey || await uploadAsset(userId, asset);
+          url = await signedAssetUrl(key, modelInputUrlExpiresSeconds);
+        }
+        staged.set(id, url);
       }
+      const url = staged.get(id);
       if (mixed) refs[`${asset.kind}s`].push(url);
       else refs.push(url);
     }
@@ -1468,18 +1475,24 @@ async function resolveRefs(userId, ids, task = {}) {
 }
 async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true, scope = {} } = {}) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
-  const ids = [...new Set((value || []).map(safeId).filter(Boolean))];
+  const ids = (value || []).map(safeId).filter(Boolean);
   const referenceLimits = limits || { image: 7, video: 0, audio: 0, total: 7 };
   if (ids.length > referenceLimits.total) throw Object.assign(new Error(`参考素材最多支持 ${referenceLimits.total} 个（图片 ${referenceLimits.image} / 视频 ${referenceLimits.video} / 音频 ${referenceLimits.audio}）`), { statusCode: 400 });
   const counts = { image: 0, video: 0, audio: 0 };
+  const assets = new Map();
+  const readable = new Set();
   for (const id of ids) {
-    const asset = findAsset(userId, id, scope);
+    const asset = assets.get(id) || findAsset(userId, id, scope);
     if (!asset || !Object.hasOwn(counts, asset.kind)) throw Object.assign(new Error('参考素材不存在或类型不受当前模型支持'), { statusCode: 400 });
+    assets.set(id, asset);
     counts[asset.kind]++;
     if (counts[asset.kind] > Number(referenceLimits[asset.kind] || 0)) throw Object.assign(new Error(`参考${asset.kind === 'image' ? '图片' : asset.kind === 'video' ? '视频' : '音频'}最多支持 ${referenceLimits[asset.kind]} 个`), { statusCode: 400 });
     if (asset.kind === 'image' && Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 20 MB`), { statusCode: 400 });
     if (asset.kind !== 'image' && Number(asset.size) > maxUploadBytes) throw Object.assign(new Error(`参考素材“${asset.name}”超过 25 MB`), { statusCode: 400 });
-    if (requireReadable && !await referenceAssetHasReadableSource(userId, asset)) throw Object.assign(new Error(`参考素材“${asset.name}”尚未同步到云端，请重新选择或上传后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
+    if (requireReadable && !readable.has(id)) {
+      if (!await referenceAssetHasReadableSource(userId, asset)) throw Object.assign(new Error(`参考素材“${asset.name}”尚未同步到云端，请重新选择或上传后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
+      readable.add(id);
+    }
   }
   return ids;
 }

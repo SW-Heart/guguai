@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import ffmpegPath from 'ffmpeg-static';
 import { createViralProject, findViralProject, listViralProjects, listViralTasks, saveViralProject, viralGenerationRecords } from '../../repositories/viral-projects.mjs';
 import { normalizeViralInput, assetSnapshot, assetApprovalHash, planApprovalHash, assertViralReady, viralError, fingerprint, viralPlanSystem } from '../../lib/viral-lab.mjs';
+import { availableModelRouteQualities } from '../../lib/model-routes.mjs';
 import { buildSourceAnalysisPrompt, normalizeReplicaPlan, normalizeSourceObservation, sourceAnalysisFingerprint, sourceAnalysisSystemPrompt, splitSourceTimeline } from '../../services/viral-source-analysis.mjs';
 
 export function createViralLabRouteHandler({ bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, findAsset, publicAsset, publicGeneration,
@@ -91,7 +92,7 @@ export function createViralLabRouteHandler({ bodyJson, sendJson, requireUser, re
       return true;
     }
     if (path === 'projects' && req.method === 'GET') {
-      sendJson(res, 200, { projects: listViralProjects(user.id, scope).map(p => ({ id: p.id, title: p.title, type: p.type, updatedAt: p.updatedAt, unitCount: p.units.length, approved: Boolean(p.planApproval), sourceAnalyzed: Boolean(p.sourceObservation) })), capabilities: { aiPlan: isLlmConfigured(llmConfig), automaticSourceAnalysis: Boolean(isLlmConfigured(llmConfig) && ensureLocalAsset && sourceAnalysisExecutable), identityReview: false } });
+      sendJson(res, 200, { projects: listViralProjects(user.id, scope).map(p => ({ id: p.id, title: p.title, type: p.type, updatedAt: p.updatedAt, unitCount: p.units.length, approved: Boolean(p.planApproval), sourceAnalyzed: Boolean(p.sourceObservation) })), capabilities: { aiPlan: isLlmConfigured(llmConfig), automaticSourceAnalysis: Boolean(isLlmConfigured(llmConfig) && ensureLocalAsset && sourceAnalysisExecutable), identityReview: false, qualityOptions: Object.fromEntries(['seedance-2.0', 'seedance-2.5'].map(modelId => [modelId, availableModelRouteQualities(modelId, { referenceCounts: { image:1 } })])) } });
       return true;
     }
     if (path === 'projects' && req.method === 'POST') {

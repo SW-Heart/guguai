@@ -122,7 +122,7 @@ export function createGenerationRouteHandler({
     const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
     const input = await bodyJson(req);
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds)
-      ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size
+      ? input.referenceAssetIds.map(safeId).filter(Boolean).length
       : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
     const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
@@ -288,7 +288,7 @@ export function createGenerationRouteHandler({
     const imageQuality = String(input.quality || (isTuziImage ? '1k' : 'medium')).toLowerCase();
     if (type === 'image' && isTuziImage && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 清晰度' }), true;
     if (type === 'image' && !isMidjourney && !isTuziImage && !imageQualities.has(imageQuality)) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
-    const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? new Set(input.referenceAssetIds.map(safeId).filter(Boolean)).size : 0;
+    const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? input.referenceAssetIds.map(safeId).filter(Boolean).length : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
     const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
     const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;

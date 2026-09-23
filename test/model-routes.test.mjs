@@ -11,6 +11,7 @@ import {
   ensureDefaultModelRoutes,
   listModelRouteChannels,
   listModelRoutes,
+  availableModelRouteQualities,
   publicModelPrices,
   routeCredential,
   SEEDANCE_ROUTE_MODEL_IDS,
@@ -18,6 +19,7 @@ import {
   updateModelRoute,
   updateRoutePolicy,
 } from '../lib/model-routes.mjs';
+import { publicVideoCapabilitiesWithControls } from '../lib/model-controls.mjs';
 
 const originalKeys = {};
 for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
@@ -74,6 +76,31 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(fast.salePriceYuan, 1.8);
     assert.equal(fast.salePriceCredits, 18);
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 7.2);
+  });
+
+  await t.test('Seedance 2.5 1080p appears only with an available configured route', () => {
+    const qualities = modelId => publicVideoCapabilitiesWithControls().models.find(model => model.id === modelId).modes.map(mode => mode.qualityOptions);
+    assert.ok(qualities('seedance-2.5').every(options => !options.includes('1080p')));
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').available, false);
+    const route = createModelRoute({ logicalModelId:'seedance-2.5', quality:'1080p', credentialId:'diw-main', upstreamModelId:'seedance-2.5-1080p-test', priority:1, costYuan:10, salePriceYuan:12 });
+    assert.ok(qualities('seedance-2.5').every(options => options.includes('1080p')));
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').yuan, 12);
+    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.5', quality:'1080p', duration:30, aspectRatio:'16:9' }).id, route.id);
+    updateRoutePolicy('seedance-2.5', '1080p', route.id);
+    updateModelRoute(route.id, { adminEnabled:false }, { expectedVersion:route.version });
+    assert.ok(qualities('seedance-2.5').every(options => !options.includes('1080p')));
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').available, false);
+    assert.throws(() => createModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', credentialId:'diw-main', upstreamModelId:'invalid-1080p', priority:1, costYuan:1, salePriceYuan:2 }), { statusCode:400 });
+  });
+
+  await t.test('Seedance 2.0 hides a resolution when its routes are unavailable', () => {
+    assert.ok(availableModelRouteQualities('seedance-2.0').includes('480p'));
+    for (const route of listModelRoutes().filter(item => item.logicalModelId === 'seedance-2.0' && item.quality === '480p')) {
+      updateModelRoute(route.id, { adminEnabled:false }, { expectedVersion:route.version });
+    }
+    const model = publicVideoCapabilitiesWithControls().models.find(item => item.id === 'seedance-2.0');
+    assert.ok(model.modes.every(mode => !mode.qualityOptions.includes('480p')));
+    assert.ok(model.modes.every(mode => mode.qualityOptions.includes('720p')));
   });
 
   await t.test('Fast route is included in the public dynamic price catalog', () => {
