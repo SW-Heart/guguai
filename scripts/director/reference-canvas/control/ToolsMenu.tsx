@@ -404,7 +404,7 @@ export function ToolsMenu() {
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="canvas-tools-row flex items-center gap-2">
         {tools.map((it, idx) => {
           if (!it) {
             return <div key={idx} className="w-px h-5 bg-[#e5e5e5]" />

@@ -169,6 +169,9 @@ import { createApiClient } from './api-client.js?v=3';
   let purchaseUser = null;
   let purchaseSessionReady = false;
   let paymentPollTimer = 0;
+  let paymentPollingStartedAt = 0;
+  const paymentProvider = () => pendingOrderNo.startsWith('WX') ? 'wechat' : 'alipay';
+  const wechatQr = document.querySelector('#wechatPaymentQr');
   let loading = false;
 
   const showPurchaseAccount = user => {
@@ -209,25 +212,31 @@ import { createApiClient } from './api-client.js?v=3';
   const schedulePaymentPolling = () => {
     stopPaymentPolling();
     if (!pendingOrderNo) return;
-    paymentPollTimer = window.setTimeout(() => { void refreshPayment({ polling:true }); }, 3000);
+    paymentPollingStartedAt ||= Date.now();
+    if (Date.now() - paymentPollingStartedAt > 600000) { setPaymentTracker('自动查询已暂停', '请点击刷新支付状态确认付款结果。'); return; }
+    paymentPollTimer = window.setTimeout(() => { void refreshPayment({ polling:true }); }, 5000);
   };
   const refreshPayment = async ({ polling = false } = {}) => {
     if (!pendingOrderNo) return;
+    const requestedOrderNo = pendingOrderNo;
     paymentRefresh.disabled = true;
-    if (!polling) setPaymentTracker('正在确认支付结果', '正在向支付宝查询这笔订单，请稍候。');
+    if (!polling) setPaymentTracker('正在确认支付结果', '正在查询这笔订单，请稍候。');
     try {
-      const result = await api(`/api/payments/alipay/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', body:'{}' });
+      const result = await api(`/api/payments/${paymentProvider()}/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', body:'{}' });
+      if (pendingOrderNo !== requestedOrderNo) return;
       if (result.order?.status === 'PAID') {
         stopPaymentPolling();
+        wechatQr.hidden = true;
         sessionStorage.removeItem(paymentOrderStorageKey(purchaseUser));
         pendingOrderNo = '';
         setPaymentTracker('积分已经到账', `${formatNumber(result.order.credits, 0)} 积分已加入你的账户。`, 'paid');
         await loadPurchaseAccount();
-      } else if (result.order?.status === 'CLOSED') {
+      } else if (['CLOSED', 'REFUNDED', 'REFUNDING'].includes(result.order?.status)) {
         stopPaymentPolling();
-        setPaymentTracker('订单已关闭', '这笔订单没有完成付款，可以重新选择积分包。');
+        wechatQr.hidden = true;
+        setPaymentTracker(result.order.status === 'CLOSED' ? '订单已关闭' : result.order.status === 'REFUNDED' ? '订单已退款' : '退款处理中', '请稍后查看账户余额，或重新选择积分包。');
       } else {
-        setPaymentTracker('等待扫码付款', '请使用支付宝扫描二维码，支付后积分会自动到账。');
+        setPaymentTracker('等待扫码付款', `请使用${paymentProvider() === 'wechat' ? '微信' : '支付宝'}扫描二维码，支付后积分会自动到账。`);
         schedulePaymentPolling();
       }
     } catch (error) {
@@ -240,12 +249,28 @@ import { createApiClient } from './api-client.js?v=3';
       paymentRefresh.disabled = false;
     }
   };
-  const purchaseCredits = async (credits, button) => {
+  const purchaseCredits = async (credits, button, amount = undefined) => {
     button.disabled = true;
     try {
-      const result = await api('/api/payments/alipay/orders', { method:'POST', body:JSON.stringify({ credits }) });
+      const provider = document.querySelector('#purchasePaymentMethod').value;
+      if (provider === 'wechat' && (!/^\d{1,5}$/.test(String(amount)) || Number(amount) < 1 || Number(amount) > 10000)) throw new Error('请输入 1–10000 元的整数金额');
+      const result = await api(`/api/payments/${provider}/orders`, { method:'POST', body:JSON.stringify(provider === 'wechat' ? { amount } : { credits }) });
       pendingOrderNo = result.order.outTradeNo;
       sessionStorage.setItem(paymentOrderStorageKey(purchaseUser), pendingOrderNo);
+      paymentPollingStartedAt = Date.now();
+      wechatQr.hidden = true;
+      if (provider === 'wechat') {
+        if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && result.paymentUrl) {
+          window.location.assign(result.paymentUrl);
+          return;
+        }
+        if (!result.qrCodeUrl) throw new Error('暂时无法显示微信二维码，请稍后重新购买');
+        wechatQr.querySelector('img').src = result.qrCodeUrl;
+        wechatQr.hidden = false;
+        setPaymentTracker('等待微信付款', `请使用微信扫码支付 ¥${result.order.totalAmount}，二维码有效期为 5 分钟。`);
+        schedulePaymentPolling();
+        return;
+      }
       setPaymentTracker('正在进入支付宝收银台', `将在当前页面展示 ¥${result.order.totalAmount} 的支付宝扫码入口。`);
       submitPaymentForm(result.paymentHtml);
     } catch (error) {
@@ -266,6 +291,30 @@ import { createApiClient } from './api-client.js?v=3';
     }
     void purchaseCredits(credits, button);
   }));
+  const paymentMethodSelect = document.querySelector('#purchasePaymentMethod');
+  const renderPaymentPackages = () => {
+    const wechat = paymentMethodSelect.value === 'wechat';
+    document.querySelector('#creditPackGrid').hidden = wechat;
+    document.querySelector('#wechatWebPackages').hidden = !wechat;
+  };
+  paymentMethodSelect.addEventListener('change', renderPaymentPackages);
+  renderPaymentPackages();
+  let selectedWechatWebAmount = '1';
+  const selectedWechatWebPaymentAmount = () => document.querySelector('#wechatWebCustomAmount').value.trim() || selectedWechatWebAmount;
+  const renderWechatWebAmount = () => {
+    const amount = selectedWechatWebPaymentAmount();
+    const valid = /^\d{1,5}$/.test(amount) && Number(amount) >= 1 && Number(amount) <= 10000;
+    document.querySelector('#wechatWebCustomCredits').textContent = valid ? `${Math.round(Number(amount) * 100) / 10} 积分 · 应付 ¥${Number(amount).toFixed(2)}` : '请输入 1–10000 元的整数金额';
+    document.querySelectorAll('[data-buy-wechat-amount]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.buyWechatAmount === selectedWechatWebAmount)));
+  };
+  document.querySelector('#wechatWebCustomAmount').addEventListener('input', renderWechatWebAmount);
+  document.querySelectorAll('[data-buy-wechat-amount]').forEach(button => button.addEventListener('click', () => {
+    selectedWechatWebAmount = button.dataset.buyWechatAmount;
+    renderWechatWebAmount();
+  }));
+  document.querySelector('#wechatWebPayButton').addEventListener('click', event => {
+    void purchaseCredits(undefined, event.currentTarget, selectedWechatWebPaymentAmount());
+  });
   paymentRefresh?.addEventListener('click', () => { void refreshPayment(); });
 
   const requestedCredits = Number(new URLSearchParams(window.location.search).get('purchase'));

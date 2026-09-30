@@ -2,13 +2,14 @@ import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/lab', '/files']);
+const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
 const marketingRouteFiles = new Map([
   ['/features', 'features.html'],
   ['/features/', 'features.html'],
   ['/pricing', 'pricing.html'],
   ['/pricing/', 'pricing.html'],
 ]);
+const isProjectRoute = pathname => /^\/projects\/[\w-]+\/?$/.test(pathname);
 
 export function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
@@ -21,7 +22,7 @@ export function staticEntryFile(pathname, { desktop = false, appOnly = true } = 
   return marketingRouteFiles.get(pathname)
     || (pathname === '/guguadmin' || pathname === '/guguadmin/'
       ? 'guguadmin.html'
-      : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))
+      : (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname) || isProjectRoute(pathname))
         ? (desktop || !appOnly ? 'index.html' : 'home.html')
         : pathname.slice(1));
 }
@@ -52,7 +53,7 @@ export async function serveStatic(res, pathname, req = null, { publicDir, appOnl
   const revalidate = ['.js', '.css'].includes(ext);
   const versioned = revalidate && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
   const cacheControl = staticCacheControl(ext, { versioned });
-  if (appOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
+  if (appOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname) || isProjectRoute(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
   try { await serveFile(res, file, mime, cacheControl, revalidate && !versioned ? { ifNoneMatch:req?.headers['if-none-match'] || '' } : null); }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }

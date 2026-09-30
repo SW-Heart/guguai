@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 
 const { __test } = await import('../server.mjs');
 
-test('all video polling defaults to a 60-minute task budget', () => {
-  assert.equal(__test.videoMaxPollDurationMs, 60 * 60_000);
-  assert.equal(__test.oaiMaxPollDurationMs, 60 * 60_000);
-  assert.equal(__test.autodlMaxPollDurationMs, 60 * 60_000);
-  assert.equal(__test.oaiMaxPolls, 900);
+test('all video polling defaults to a 120-minute task budget', () => {
+  assert.equal(__test.videoMaxPollDurationMs, 120 * 60_000);
+  assert.equal(__test.oaiMaxPollDurationMs, 120 * 60_000);
+  assert.equal(__test.autodlMaxPollDurationMs, 120 * 60_000);
+  assert.equal(__test.oaiMaxPolls, 1800);
 });
 
 test('video polling timeouts are terminal and retain the provider task id', () => {

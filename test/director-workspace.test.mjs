@@ -71,6 +71,13 @@ test('canvas snapshot keeps positions that are not present in a partial event',(
  assert.deepEqual(workspace.positions,{file:{x:220,y:300},other:{x:40,y:80}});
 });
 
+test('manually resized canvas cards keep their dimensions after snapshots and reload',()=>{
+ const workspace=normalizeDirectorWorkspace({positions:{frame:{x:10,y:20,width:280,height:228,manualSize:true}}});
+ persistCanvasSnapshot(workspace,{nodes:[{id:'frame',$_type:'html',x:10,y:20,width:420,height:310}]},new Set(['frame']));
+ assert.deepEqual(workspace.positions.frame,{x:10,y:20,width:420,height:310,manualSize:true});
+ assert.deepEqual(normalizeDirectorWorkspace(workspace).positions.frame,workspace.positions.frame);
+});
+
 test('canvas notes preserve text while stripping active markup attributes',()=>{
  const state=normalizeDirectorWorkspace({canvasNodes:[{id:'note',$_type:'rich-text',$_htmlContent:'<p onclick="bad()">镜头 <strong>一</strong></p><img src=x onerror=bad()>'}]});
  const html=state.canvasNodes[0].$_htmlContent;

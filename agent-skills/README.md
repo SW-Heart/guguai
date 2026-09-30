@@ -34,6 +34,34 @@ description: 用户要求撰写产品介绍、推广文案时使用。
 
 也可用 `AGENT_SKILLS_DIRS` 指定外部目录，使用系统路径分隔符（Linux/macOS 为冒号，Windows 为分号）。每个目录包含多个 Skill 子目录。支持按需读取 `references/`、`assets/` 中的文本参考文件，禁止越界路径和符号链接逃逸。Skill 热读取，无需修改运行循环。Skill 是专业方法，不是必须完成的工作流，也不提供脚本执行权限。
 
+运行时默认只把每项 Skill 的名称和简介放入模型上下文。模型判断确有帮助时调用 `skills_read` 读取正文，再按需要读参考文件；界面选择的 Skill 也是提示，不会强制装载其内容。无关的新一轮请求不会继续携带上一轮读取的 Skill 正文。外部技能目录由部署方管理；同名 Skill 以先配置的目录为准，内置目录优先。
+
+## Hypit 复刻方法
+
+`video-replication` 直接读取 `references/hypit/` 中的 Hypit 原技能与全部参考资料；正文逐字节保留，执行接口由 `references/gugu-tools.md` 统一替换为 GuGu 工具。不引入 Hypit Runtime 或 Studio；GuGu 的 `video_edit` / `video_edit_read` 提供声明式图层、移动缩放和目标台词定位，支持常见图文、画中画、分屏和排名卡片。
+
+源副本位于 `vendor-hypit-skill/`。更新副本时先确认版本与许可证，再执行 `node scripts/agent/sync-hypit-skill.mjs`，同步更新版本记录；`--check` 校验活跃副本和清单。长技能资料由 `skills_read` 返回 `nextOffset`，模型需对同一资源继续传入 `offset` 读完；无需把大段原文塞入默认上下文。
+
+## 基础设计能力
+
+系统指令包含面向视觉任务的简短设计准则：从用途与内容建立方向，把抽象审美要求转成可执行决定，保留品牌与用户约束，并按实际作品修订。非视觉任务和简单局部修改不强制走设计流程。
+
+`image-design` 覆盖品牌、海报、包装、产品图、角色场景、信息图和界面视觉；详细方法放在 `references/visual-foundations.md`、`references/deliverable-playbook.md` 和 `references/critique-and-refinement.md`，按问题读取。视频美术和作品检查可复用这些资料。此增强不新增网页浏览、代码执行、矢量导出或印前制作能力，也不改变费用确认。调研来源、取舍与真实模型评估题见 [设计能力调研](../docs/agent-design-capability.md)。
+
+## 五个内置技能的交付方法
+
+2026-09-28 补充了各阶段的交付要求、实例、失败归因与完成条件。正文负责入口判断，专题按任务读取，不通过增加默认上下文来加载全部资料。
+
+| 技能 | 本次新增的按需资料 |
+| --- | --- |
+| 图像设计 | [方案到画面](image-design/references/design-to-prompt.md)：参考职责、可复制描述、保留产品的局部改图 |
+| 短剧创作 | [故事开发](short-drama/references/story-development.md)、[场景与对白](short-drama/references/scene-writing.md)、[分镜交接](short-drama/references/storyboard-handoff.md) |
+| 视频制作 | [制作计划](video-production/references/production-planning.md)、[剪辑与交付](video-production/references/editing-delivery.md)：素材依赖、真实入出点和成片时间 |
+| 视频复刻 | [交付与变更](video-replication/references/adaptation-delivery.md)：原片证据到目标作品的对应；保留已有 Hypit 原文 |
+| 作品检查 | [证据与结论](creative-review/references/evidence-and-verdict.md)、[局部修订](creative-review/references/repair-playbook.md) |
+
+来源复核与后续行为评估题见 [创作技能调研](creative-agent-assessment.md#2026-09-28-五个技能的深化)。本次只改技能与维护文档，技能仍热读取；无需修改前端缓存键或重新打桌面安装包。方法与例子不是新工具能力，实际制作仍取决于会话提供的工具、当前模型与授权。
+
 ## 工具与运行机制
 
 - 语言模型循环根据用户消息自主决定回答、读取 Skill 或调用工具。

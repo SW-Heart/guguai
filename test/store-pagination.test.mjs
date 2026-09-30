@@ -98,7 +98,7 @@ test('store pagination', async t => {
     for (let i = 0; i < 30; i++) {
       const createdAt = new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString();
       saveGenerationRecord(userId, {
-        id: `g-${i}`, type: i % 3 === 0 ? 'video' : 'image',
+        id: `g-${i}`, type: i % 3 === 0 ? 'video' : 'image', modelId:i % 2 ? 'model-b' : 'model-a',
         status: 'completed', createdAt, updatedAt: createdAt,
       });
     }
@@ -108,6 +108,9 @@ test('store pagination', async t => {
 
     const pagedVideos = drain(opts => listGenerations(userId, { type: 'video', ...opts }), 3);
     assert.deepEqual(pagedVideos.map(i => i.id), videos.items.map(i => i.id));
+    const modelA = listGenerations(userId, { modelId:'model-a', limit:MAX_PAGE_LIMIT });
+    assert.equal(modelA.total,15);
+    assert.ok(modelA.items.every(item=>item.modelId==='model-a'));
   });
 
   await t.test('client views exclude user-deleted audit rows and works excludes non-work records', () => {

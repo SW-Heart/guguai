@@ -1,5 +1,5 @@
-import { isRemoteReferenceReady } from './desktop-media-sync.js?v=14';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=50';
+import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=109';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
 import { buildShotVideoPrompt } from './video-prompt.js?v=5';
@@ -45,12 +45,10 @@ export {
 const dramaProjectModeLabels = Object.freeze({ smart:'智能画布', professional:'分镜工作台' });
 const dramaProjectModeKey = project => project?.mode === 'smart' ? 'smart' : 'professional';
 
-export function filterDramaProjects(items, { mode = 'all', query = '' } = {}) {
-  const selectedMode = ['all', 'smart', 'professional'].includes(mode) ? mode : 'all';
+export function filterDramaProjects(items, { query = '' } = {}) {
   const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
   return (Array.isArray(items) ? items : []).filter(item => {
     const itemMode = dramaProjectModeKey(item);
-    if (selectedMode !== 'all' && itemMode !== selectedMode) return false;
     if (!normalizedQuery) return true;
     const modeSearchText = itemMode === 'smart' ? '智能画布 智能导演' : '分镜工作台 专业编辑';
     return [item?.title, item?.synopsis, item?.input, modeSearchText]
@@ -78,7 +76,6 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   let directorWorkspaceView;
   let projects = [];
   let projectQuery = '';
-  let projectFilter = 'all';
   let projectMenuId = '';
   let renameProjectId = '';
   let renameProjectRestoreFocus = null;
@@ -206,9 +203,6 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const failure = taskFailure(generation) || { message:'生成失败，服务未返回具体原因', suggestion:'请调整创作描述或参考图片后重试。' };
     return `<div class="wb-preview-failure" role="alert" aria-live="polite"><span class="wb-preview-failure-icon" aria-hidden="true">${generationFailureIcon}</span><div class="wb-preview-failure-copy"><b>生成失败</b><strong>${esc(failure.message)}</strong><p>${esc(failure.suggestion)}</p></div></div>`;
   };
-  document.querySelector('#closeCreateDramaProject').onclick=()=>document.querySelector('#createDramaProjectDialog').close();
-  document.querySelector('#createDramaProjectDialog').addEventListener('close',resetCreateProjectDialog);
-  document.querySelectorAll('[data-create-drama-mode]').forEach(button=>button.onclick=()=>chooseProjectMode(button.dataset.createDramaMode));
   let projectConflictResolver = null;
   let projectConflictRestoreFocus = null;
   function conflictValue(value) {
@@ -612,8 +606,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     return String(right?.id||'').localeCompare(String(left?.id||''));
   };
   const sortFilesByRecency = files => [...files].sort(compareFilesByRecency);
-  const imageAssets = () => sortFilesByRecency(state.files.filter(file=>file.kind==='image'&&file.localStatus!=='missing'&&!assetSyncing(file)));
-  const frameOptions = current => `<option value="">未指定</option>${imageAssets().map(file=>`<option value="${file.id}" ${file.id===current?'selected':''}>${esc(file.name)}</option>`).join('')}`;
+  // Hide local copies already uploaded for reference, but keep an explicitly chosen id visible.
+  const imageAssets = (keepId='') => { const listed=new Set(withoutSupersededLocalFiles(state.files).map(file=>file.id)); return sortFilesByRecency(state.files.filter(file=>(listed.has(file.id)||(keepId&&file.id===keepId))&&file.kind==='image'&&file.localStatus!=='missing'&&!assetSyncing(file))); };
+  const frameOptions = current => `<option value="">未指定</option>${imageAssets(current).map(file=>`<option value="${file.id}" ${file.id===current?'selected':''}>${esc(file.name)}</option>`).join('')}`;
   const generationModeName = value => ({TEXT:'文本生成','FIRST&LAST':'首尾帧','REFERENCE':'参考图片'}[value] || '文本生成');
   const optionList = (values,current,suffix='') => values.map(value => `<option value="${value}" ${String(value)===String(current)?'selected':''}>${value}${suffix}</option>`).join('');
   const selectedResourceAssetIds = shot => [...new Set([...(shot.resourceIds || []).map(id => project.resources.find(item => item.id === id)).map(item => taskAsset(item?.selectedTaskId)?.id).filter(id => id && !assetSyncing(asset(id))), ...(shot.referenceAssetIds || []).filter(id => !assetSyncing(asset(id)))])];
@@ -746,18 +741,18 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const projectsRoot = document.querySelector('#dramaProjects');
     if (!projectsRoot) return;
     setStudioVisible(false);
-    projectsRoot.innerHTML=`<div class="project-library-toolbar"><nav class="project-library-filters" role="tablist" aria-label="短剧项目类型"><button type="button" role="tab" data-project-filter="all" aria-selected="${projectFilter === 'all'}" aria-controls="dramaProjectGrid">全部</button><button type="button" role="tab" data-project-filter="smart" aria-selected="${projectFilter === 'smart'}" aria-controls="dramaProjectGrid">智能画布</button><button type="button" role="tab" data-project-filter="professional" aria-selected="${projectFilter === 'professional'}" aria-controls="dramaProjectGrid">分镜工作台</button></nav><label class="project-library-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索短剧项目</span><input id="dramaProjectSearch" type="search" value="${esc(projectQuery)}" placeholder="搜索项目" autocomplete="off"></label><span id="dramaProjectCount" class="project-library-count"></span></div><div id="dramaProjectGrid" class="project-library-grid"></div>`;
+    projectsRoot.innerHTML=`<div class="project-library-toolbar"><label class="project-library-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索短剧项目</span><input id="dramaProjectSearch" type="search" value="${esc(projectQuery)}" placeholder="搜索项目" autocomplete="off"></label><span id="dramaProjectCount" class="project-library-count"></span></div><div id="dramaProjectGrid" class="project-library-grid"></div>`;
     const search = projectsRoot.querySelector('#dramaProjectSearch');
     const count = projectsRoot.querySelector('#dramaProjectCount');
     const grid = projectsRoot.querySelector('#dramaProjectGrid');
     const renderCards = () => {
       closeProjectMenu();
       const query = projectQuery.trim().toLocaleLowerCase();
-      const visibleProjects = filterDramaProjects(projects, { mode:projectFilter, query });
-      const isFiltered = projectFilter !== 'all' || query;
-      count.textContent = isFiltered ? `${visibleProjects.length} / ${projects.length} 个项目` : `${projects.length} 个项目`;
-      const emptyTitle = query ? '没有找到匹配的项目' : `还没有${dramaProjectModeLabels[projectFilter] || ''}项目`;
-      grid.innerHTML=`<button type="button" class="create-project-card" id="openCreateDramaProject"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><b>创建项目</b></button>${visibleProjects.map(projectCardMarkup).join('')||`<div class="project-library-empty"><b>${emptyTitle}</b><p>换个筛选条件试试，或创建一个新项目。</p></div>`}`;
+      const visibleProjects = filterDramaProjects(projects, { query });
+      count.textContent = query ? `${visibleProjects.length} / ${projects.length} 个项目` : `${projects.length} 个项目`;
+      const emptyTitle = query ? '没有找到匹配的项目' : '还没有项目';
+      const emptyHint = query ? '换个关键词试试，或创建一个新项目。' : '创建一个新项目，开始短剧创作。';
+      grid.innerHTML=`<button type="button" class="create-project-card" id="openCreateDramaProject"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><b>创建项目</b></button>${visibleProjects.map(projectCardMarkup).join('')||`<div class="project-library-empty"><b>${emptyTitle}</b><p>${emptyHint}</p></div>`}`;
       grid.querySelector('#openCreateDramaProject').onclick=openCreateProjectDialog;
       grid.querySelectorAll('[data-project-open]').forEach(button=>button.onclick=()=>openProject(button.dataset.projectOpen));
       grid.querySelectorAll('[data-project-menu]').forEach(button=>button.setAttribute('aria-haspopup','menu'));
@@ -765,23 +760,6 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       grid.querySelectorAll('[data-project-rename]').forEach(button=>button.onclick=event=>{event.stopPropagation();const trigger=button.closest('.project-card-menu')?.querySelector('[data-project-menu]');openRenameProjectDialog(button.dataset.projectRename,trigger);});
       grid.querySelectorAll('[data-project-delete]').forEach(button=>button.onclick=event=>{event.stopPropagation();void deleteProject(button.dataset.projectDelete,button);});
     };
-    const filterButtons = [...projectsRoot.querySelectorAll('[data-project-filter]')];
-    const setProjectFilter = mode => {
-      projectFilter = ['all', 'smart', 'professional'].includes(mode) ? mode : 'all';
-      filterButtons.forEach(button => button.setAttribute('aria-selected', String(button.dataset.projectFilter === projectFilter)));
-      renderCards();
-    };
-    filterButtons.forEach(button => {
-      button.onclick = () => setProjectFilter(button.dataset.projectFilter);
-      button.onkeydown = event => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault();
-        const index = filterButtons.indexOf(button);
-        const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? filterButtons.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + filterButtons.length) % filterButtons.length;
-        filterButtons[nextIndex]?.focus();
-        setProjectFilter(filterButtons[nextIndex]?.dataset.projectFilter);
-      };
-    });
     search.oninput = event => { projectQuery = event.target.value; renderCards(); };
     projectsRoot.onkeydown = event => {
       if (event.key !== 'Escape' || !projectMenuId) return;
@@ -854,9 +832,8 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       if (isAccountCurrent(requestAccount)) { setRenameProjectError(error.message); button.disabled = false; button.textContent = '保存名称'; input.focus(); input.select(); }
     }
   });
-  function resetCreateProjectDialog(){document.querySelectorAll('[data-create-drama-mode]').forEach(button=>{button.disabled=button.hasAttribute('data-unavailable');button.classList.remove('creating');});}
-  function openCreateProjectDialog(){const dialog=document.querySelector('#createDramaProjectDialog');resetCreateProjectDialog();dialog.showModal();requestAnimationFrame(()=>dialog.querySelector('[data-create-drama-mode]:not(:disabled)')?.focus());}
-  async function chooseProjectMode(mode){const dialog=document.querySelector('#createDramaProjectDialog');const selected=dialog.querySelector(`[data-create-drama-mode="${mode}"]`);dialog.querySelectorAll('[data-create-drama-mode]').forEach(button=>button.disabled=true);selected?.classList.add('creating');const created=await createProject(mode);if(created)dialog.close();else resetCreateProjectDialog();}
+  let creatingProject=false;
+  async function openCreateProjectDialog(){if(creatingProject)return;creatingProject=true;try{await createProject('professional');}finally{creatingProject=false;}}
   async function load(force=false) {
     const requestAccount=accountSnapshot();
     if(busy){
@@ -1085,6 +1062,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function renderDirectorWorkspace(){
     directorWorkspaceView ||= createDirectorWorkspace(root, {
       project:()=>project, task, toast, images:()=>imageAssets(),
+      generationConfig:()=>state.config,
+      generationPricing:()=>({config:state.config,pricing:state.pricing}),
+      formatCredits:creditText,
       imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
       importAsset:async()=>{const request=projectRequest();const file=importCanvasAsset?await importCanvasAsset():null;assertProjectRequest(request);if(!file)return null;state.files=[file,...state.files.filter(f=>f.id!==file.id)];await patch({projectAssetIds:[...new Set([...project.projectAssetIds,file.id])]},{quiet:true});assertProjectRequest(request);return file;},
       prepareChatAsset:async({assetId,taskId})=>{
@@ -1102,7 +1082,15 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
         const [id]=await ensureCloudReferenceIds([file.id]);assertProjectRequest(request);
         return {...file,id,previewUrl:assetPreviewUrl(file)};
       },
-      media:id=>{const f=taskAsset(id);return f&&String(f.url||'').startsWith('gugu-media://')?{kind:f.kind,url:f.url,width:f.width,height:f.height}:null;},
+      uploadGenerationFile:async()=>{
+        const request=projectRequest();
+        const file=await importCanvasAsset({generation:true});assertProjectRequest(request);
+        if(!file)return null;
+        state.files=[file,...state.files.filter(f=>f.id!==file.id)];
+        const [id]=await ensureCloudReferenceIds([file.id]);assertProjectRequest(request);
+        return {...file,id,previewUrl:assetPreviewUrl(file)};
+      },
+      media:id=>{const f=taskAsset(id);return f?{kind:f.kind,url:assetPreviewUrl(f),width:f.width,height:f.height}:null;},
       patch:changes=>patch(changes,{quiet:true}),
       markCanvasDirty:()=>{canvasChangeVersion+=1;},
       snapshotKey:kind=>snapshotKey(project.id,kind),
@@ -2157,7 +2145,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const query=projectAssetQuery.trim().toLocaleLowerCase('zh-CN');
     const assetKinds=['image','video','audio'];
     const kindLabels={all:'全部',image:'图片',video:'视频',audio:'音频'};
-    const availableFiles=sortFilesByRecency(state.files.filter(file=>file.localStatus!=='missing'&&assetKinds.includes(file.kind)&&!assetSyncing(file)));
+    const availableFiles=sortFilesByRecency(withoutSupersededLocalFiles(state.files).filter(file=>file.localStatus!=='missing'&&assetKinds.includes(file.kind)&&!assetSyncing(file)));
     const kindCounts=availableFiles.reduce((counts,file)=>{counts[file.kind]=(counts[file.kind]||0)+1;return counts;},{image:0,video:0,audio:0});
     const files=availableFiles.filter(file=>(projectAssetKindFilter==='all'||file.kind===projectAssetKindFilter)&&(!query||String(file.name).toLocaleLowerCase('zh-CN').includes(query)));
     const chosen=new Set(projectAssetSelection);
@@ -2976,7 +2964,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function shotGenerationAssetIds(shot){if(shot.generation.type==='TEXT')return [];if(shot.generation.type==='FIRST&LAST')return [shot.generation.firstFrameAssetId,shot.generation.lastFrameAssetId].filter(id=>asset(id));return availableShotReferenceIds(shot);}
   function shotGenerationReady(shot){const count=shotGenerationAssetIds(shot).length;if(shot.generation.type==='TEXT')return true;if(shot.generation.type==='FIRST&LAST')return count>=1&&count<=professionalMaxImages(shot);return count>=1&&count<=professionalMaxImages(shot);}
   function professionalVideoModels(shot){const models=state.config?.videoCapabilities?.models;return Array.isArray(models)?models.filter(model=>{const supportsMode=Array.isArray(model.modes)&&model.modes.some(mode=>mode.generationType===shot.generation.type);return !['minimax-h3','seedance-2.0-fast'].includes(model.id)&&(model.enabled!==false||model.availability==='coming-soon')&&(supportsMode||model.availability==='coming-soon');}).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model).sort((a,b)=>{const order=['minimax-h3-15s','seedance-2.0','seedance-2.5','oai','veo-31','grok','veo'];return (order.indexOf(a.id)<0?99:order.indexOf(a.id))-(order.indexOf(b.id)<0?99:order.indexOf(b.id));}):[];}
-  function professionalVideoParameters(shot){return professionalVideoModels(shot).find(model=>model.id===shot.generation.modelId)?.modes?.find(mode=>mode.generationType===shot.generation.type)||null;}
+  function professionalVideoParameters(shot){const mode=professionalVideoModels(shot).find(model=>model.id===shot.generation.modelId)?.modes?.find(mode=>mode.generationType===shot.generation.type);return mode?{...mode,durations:mode.durationsByQuality?.[shot.generation.quality]?.[shot.aspectRatio]||mode.durations}:null;}
   function professionalMaxImages(shot){const parameters=professionalVideoParameters(shot);return parameters?.maxImages||parameters?.referenceLimits?.total||7;}
   function professionalReferenceLimit(shot){const parameters=professionalVideoParameters(shot);return parameters?.referenceLimits||{image:7,video:0,audio:0,total:professionalMaxImages(shot)};}
   function professionalVideoUsesDynamicQuote(shot){return ROUTED_VIDEO_MODEL_IDS.has(canonicalVideoModelId(shot?.generation?.modelId));}
@@ -3000,9 +2988,13 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const compatibleModel=models.find(model=>professionalModelIsAvailable(model)&&model.modes?.some(mode=>mode.generationType===shot.generation.type&&mode.aspectRatios.includes(shot.aspectRatio)&&mode.durations.includes(Number(shot.duration))&&mode.qualityOptions.includes(shot.generation.quality)));
     const selected=currentModel||compatibleModel||models.find(model=>shot.generation.type==='FIRST&LAST'&&['veo','veo-31'].includes(model.id)&&professionalModelIsAvailable(model))||models.find(professionalModelIsAvailable);
     const modelId=selected?.id||'';
-    const parameters=selected?.modes?.find(mode=>mode.generationType===shot.generation.type)||null;
+    let parameters=selected?.modes?.find(mode=>mode.generationType===shot.generation.type)||null;
     shot.generation.modelId=modelId;
     normalizeShotVideoParameters(shot,parameters);
+    if(parameters?.durationsByQuality) {
+      parameters={...parameters,durations:parameters.durationsByQuality[shot.generation.quality]?.[shot.aspectRatio]||[]};
+      normalizeShotVideoParameters(shot,parameters);
+    }
     return {models,parameters,modelId};
   }
   function videoReferencePicker(shot){const selected=new Set(shot.generation.referenceAssetIds||[]);const images=imageAssets().filter(file=>!selected.has(file.id));return `<div class="video-reference-picker"><header><b>添加参考图片</b><button type="button" data-close-video-assets="${shot.id}" aria-label="关闭素材选择">×</button></header>${images.length?`<div>${images.map(file=>`<button type="button" data-add-video-asset="${file.id}" data-shot-id="${shot.id}"><img src="${file.url}" alt="${esc(file.name)}"><span>${esc(file.name)}</span></button>`).join('')}</div>`:'<p>没有其他可添加的图片</p>'}</div>`;}
@@ -3018,7 +3010,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       finalDownload.onclick = event => { event.preventDefault(); void showAssetInFolder(final, finalDownload); };
     }
     document.querySelectorAll('[data-generation-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
-    document.querySelectorAll('[data-video-shot]').forEach(card=>{const shot=project.shots.find(item=>item.id===card.dataset.videoShot);const mode=shot.generation.type;const route=videoRoute(shot);const summary=card.querySelector(':scope > header p');if(summary)summary.textContent+=" · 已自动匹配";const modeHints=card.querySelectorAll('[data-generation-mode] small');if(modeHints[0])modeHints[0].textContent='仅创作描述，可选时长与画幅';if(modeHints[1])modeHints[1].textContent='1～2 张图，固定 8 秒';if(modeHints[2])modeHints[2].textContent='1～7 张参考图片，可选时长与画幅';const config=card.querySelector('.generation-config');if(mode==='REFERENCE'){config.querySelector('p').textContent='使用分镜中锁定的角色、场景与物品参考图片，最多取 7 张。';config.querySelectorAll('.mode-warning').forEach(node=>{if(node.textContent.includes('暂不支持 9:16'))node.remove();});}const quality=config.querySelector('[data-generation-field="quality"]');const qualityOptions=professionalVideoParameters(shot)?.qualityOptions||['720p'];const selectedQuality=qualityOptions.some(value=>String(value)===String(shot.generation.quality))?shot.generation.quality:qualityOptions[0];quality.innerHTML=qualityOptions.map(value=>`<option value="${esc(value)}" ${String(value)===String(selectedQuality)?'selected':''}>${esc(value)}</option>`).join('');quality.disabled=false;quality.closest('label').insertAdjacentHTML('beforebegin',`<div class="video-route-card"><span>自动匹配</span><b>已根据你的设置匹配</b></div><div class="video-parameter-grid"><label>时长<select data-video-field="duration" ${mode==='FIRST&LAST'?'disabled':''}>${optionList(mode==='FIRST&LAST'?[8]:durations,shot.duration,' 秒')}</select></label><label>画幅<select data-video-field="aspectRatio">${optionList(mode==='FIRST&LAST'?['9:16','16:9']:ratios,shot.aspectRatio)}</select></label></div>`);const promptPanel=card.querySelector('.generation-inputs');const promptTitle=promptPanel.querySelectorAll('h3')[1];const promptText=promptTitle?.nextElementSibling;if(promptTitle)promptTitle.textContent='生成内容';if(promptText){promptText.textContent=shotVideoPrompt(shot);promptText.classList.add('compiled-video-prompt');}});
+    document.querySelectorAll('[data-video-shot]').forEach(card=>{const shot=project.shots.find(item=>item.id===card.dataset.videoShot);const mode=shot.generation.type;const route=videoRoute(shot);const summary=card.querySelector(':scope > header p');if(summary)summary.textContent+=" · 已自动匹配";const modeHints=card.querySelectorAll('[data-generation-mode] small');if(modeHints[0])modeHints[0].textContent='仅创作描述，可选时长与画幅';if(modeHints[1])modeHints[1].textContent='1～2 张图，固定 8 秒';if(modeHints[2])modeHints[2].textContent='1～7 张参考图片，可选时长与画幅';const config=card.querySelector('.generation-config');if(mode==='REFERENCE'){config.querySelector('p').textContent='使用分镜中锁定的角色、场景与物品参考图片，最多取 7 张。';config.querySelectorAll('.mode-warning').forEach(node=>{if(node.textContent.includes('暂不支持 9:16'))node.remove();});}const quality=config.querySelector('[data-generation-field="quality"]');const qualityOptions=professionalVideoParameters(shot)?.qualityOptions||['720p'];const selectedQuality=qualityOptions.some(value=>String(value)===String(shot.generation.quality))?shot.generation.quality:qualityOptions[0];quality.innerHTML=qualityOptions.map(value=>`<option value="${esc(value)}" ${String(value)===String(selectedQuality)?'selected':''}>${esc(value)}</option>`).join('');quality.disabled=false;quality.closest('label').insertAdjacentHTML('beforebegin',`<div class="video-route-card"><span>自动匹配</span><b>已根据你的设置匹配</b></div><div class="video-parameter-grid"><label>时长<select data-video-field="duration" ${mode==='FIRST&LAST'?'disabled':''}>${optionList(professionalVideoParameters(shot)?.durations||durations,shot.duration,' 秒')}</select></label><label>画幅<select data-video-field="aspectRatio">${optionList(mode==='FIRST&LAST'?['9:16','16:9']:ratios,shot.aspectRatio)}</select></label></div>`);const promptPanel=card.querySelector('.generation-inputs');const promptTitle=promptPanel.querySelectorAll('h3')[1];const promptText=promptTitle?.nextElementSibling;if(promptTitle)promptTitle.textContent='生成内容';if(promptText){promptText.textContent=shotVideoPrompt(shot);promptText.classList.add('compiled-video-prompt');}});
     document.querySelectorAll('[data-video-shot]').forEach(card=>{const shot=project.shots.find(item=>item.id===card.dataset.videoShot);const preview=card.querySelector('.compiled-video-prompt');if(!shot||!preview)return;const systemPrompt=compiledShotVideoPrompt(shot);const editor=document.createElement('textarea');editor.className='compiled-video-prompt editable-video-prompt';editor.dataset.promptOverride=shot.id;editor.dataset.systemPrompt=systemPrompt;editor.value=shot.promptOverride||systemPrompt;preview.replaceWith(editor);const hint=document.createElement('small');hint.className='prompt-edit-hint';hint.textContent=shot.promptOverride?'当前使用你保存的描述；清空并保存可恢复自动内容。':'可直接修改，保存后按此内容生成。';editor.insertAdjacentElement('afterend',hint);const save=card.querySelector('[data-save-generation]');if(save)save.textContent='保存本镜设置';});
     bindVideoReferenceEditors();document.querySelector('#videoBack').onclick=()=>navigateStep('storyboard');document.querySelector('#generateAllVideos').onclick=generateAllVideos;document.querySelector('#assembleProject')?.addEventListener('click',assemble);document.querySelectorAll('[data-generation-mode]').forEach(button=>button.onclick=()=>setGenerationMode(button.dataset.shotId,button.dataset.generationMode));document.querySelectorAll('[data-save-generation]').forEach(button=>button.onclick=()=>saveGenerationConfig(button.dataset.saveGeneration));document.querySelectorAll('[data-generate-shot-video]').forEach(button=>button.onclick=()=>generateShotVideo(button.dataset.generateShotVideo,button));document.querySelectorAll('[data-select-video]').forEach(button=>button.onclick=()=>selectVideo(button.dataset.shotId,button.dataset.selectVideo));document.querySelectorAll('[data-wb-delete-preview-video]').forEach(button=>button.onclick=event=>{event.stopPropagation();void deletePreviewVideo(button.dataset.wbDeletePreviewShot,button.dataset.wbDeletePreviewVideo,button);});document.querySelectorAll('[data-tail-frame]').forEach(button=>button.onclick=()=>extractTail(button.dataset.tailFrame,button));
   }
@@ -3118,7 +3110,6 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     projectMutationChain=Promise.resolve();
     projects=[];
     projectQuery='';
-    projectFilter='all';
     project=null;
     projectBaseSnapshot=null;
     viewStep=null;

@@ -69,8 +69,22 @@ function placeFrameInViewport(size, occupied, bounds) {
     const rect={left:candidate.x,top:candidate.y,right:candidate.x+size.width,bottom:candidate.y+size.height};
     if(!occupied.some(item=>overlaps(rect,item,8)))return {x:candidate.x,y:candidate.y,...size};
   }
-  // If the visible area is completely filled, still keep the new item inside
-  // the current view. The next sync can place later items around it.
+  // Keep extra outputs separate when the visible area is full. Place them
+  // nearest the viewport so a later output never covers an earlier one.
+  const stepX=size.width+40,stepY=size.height+40;
+  for(let radius=1;radius<=20;radius++){
+    const nearby=[];
+    for(let column=-radius;column<=radius;column++)for(let row=-radius;row<=radius;row++){
+      if(Math.max(Math.abs(column),Math.abs(row))!==radius)continue;
+      const x=baseX+column*stepX,y=baseY+row*stepY;
+      nearby.push({x,y,distance:Math.hypot(x+size.width/2-centerX,y+size.height/2-centerY)});
+    }
+    nearby.sort((a,b)=>a.distance-b.distance);
+    for(const candidate of nearby){
+      const rect={left:candidate.x,top:candidate.y,right:candidate.x+size.width,bottom:candidate.y+size.height};
+      if(!occupied.some(item=>overlaps(rect,item,8)))return {x:candidate.x,y:candidate.y,...size};
+    }
+  }
   return {x:baseX,y:baseY,...size};
 }
 

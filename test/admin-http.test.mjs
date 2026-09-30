@@ -83,7 +83,7 @@ test('admin HTTP permissions and core workflows', async t => {
     .run({ userId: refundedUserId, docJson: paymentDoc });
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_KEY:'test-diw', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
   const admin = client(base);
@@ -93,7 +93,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=23/);
+  assert.match(adminHtml, /guguadmin\.js\?v=26/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -131,10 +131,15 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual({ nickname: phoneUser.data.items[0].nickname, phoneNumber: phoneUser.data.items[0].phoneNumber }, { nickname: '手机号用户', phoneNumber: '13800138000' });
   const refundedUserDetail = await admin.call(`/api/admin/users/${refundedUserId}`);
   assert.equal(refundedUserDetail.data.user.totalSpent, 0);
-  const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
+  const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', durations:[5,7,15], priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
   assert.equal(createdRoute.response.status, 201);
   assert.equal(createdRoute.data.route.salePriceYuan, 2.2);
   assert.equal(createdRoute.data.route.adminEnabled, false);
+  assert.deepEqual(createdRoute.data.route.durations, [5,7,15]);
+  const editedRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[30], expectedVersion:createdRoute.data.route.version } });
+  assert.equal(editedRoute.response.status, 200);
+  assert.deepEqual(editedRoute.data.route.durations, [30]);
+  assert.equal(editedRoute.data.route.salePriceYuan, 2.2);
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
   const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2 }, expectedVersion: 1 } });
@@ -155,6 +160,23 @@ test('admin HTTP permissions and core workflows', async t => {
   const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote.response.status, 200);
   assert.equal(quote.data.credits, 27.5);
+  const activeRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,7,30], adminEnabled:true } });
+  assert.equal(activeRoute.response.status, 200);
+  for (const duration of [5,7,30]) {
+    const result = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'720p', duration, aspectRatio:'16:9' } });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.data.credits, duration * 22);
+    assert.equal(result.data.yuan, Number((duration * 2.2).toFixed(8)));
+  }
+  const beforeChange = await userClient.call('/api/config');
+  const durationsOf = data => data.videoCapabilities.models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === 'TEXT').durationsByQuality['720p']['16:9'];
+  assert.deepEqual(durationsOf(beforeChange.data), [5,7,30]);
+  await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,10,15] } });
+  const afterChange = await userClient.call('/api/config');
+  assert.equal(afterChange.response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(durationsOf(afterChange.data), [5,10,15]);
+  const invalidDuration = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'720p', duration:6, aspectRatio:'16:9' } });
+  assert.equal(invalidDuration.response.status, 503);
   const forbidden = await userClient.call('/api/admin/overview');
   assert.equal(forbidden.response.status, 401);
   const userLoginAsAdmin = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_user', password: 'user-password-123' } });

@@ -44,7 +44,7 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
       .get({ id, userId, ...scoped.params }));
   }
 
-  function listGenerations(userId, { type = null, deviceId = '', workspaceId = '', view = 'all', limit = defaultPageLimit, cursor = null, includeTotal = true } = {}) {
+  function listGenerations(userId, { type = null, modelId = null, deviceId = '', workspaceId = '', view = 'all', limit = defaultPageLimit, cursor = null, includeTotal = true } = {}) {
     if (!['all', 'works', 'history'].includes(view)) throw Object.assign(new Error('生成记录视图无效'), { statusCode:400 });
     const scoped = scopeWhere({ deviceId, workspaceId });
     const viewWhere = view === 'works'
@@ -52,7 +52,7 @@ export function createGenerationRepository({ sql, keysetPage, scopeWhere, parseD
       : [];
     return keysetPage({
       table: 'generations', timeColumn: 'created_at', scope: 'gen',
-      userId, filters: { type }, extraWhere: [...scoped.where, "COALESCE(json_extract(doc_json, '$.userDeleted'), 0) != 1", ...viewWhere], extraParams: scoped.params, limit, cursor, includeTotal,
+      userId, filters: { type, model_id: modelId }, extraWhere: [...scoped.where, "COALESCE(json_extract(doc_json, '$.userDeleted'), 0) != 1", ...viewWhere], extraParams: scoped.params, limit, cursor, includeTotal,
     });
   }
 

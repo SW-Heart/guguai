@@ -1,3 +1,5 @@
+import { isPreconnectFailure, transportErrorCodes } from './transport.mjs';
+
 export function createDuomiProvider({
   baseUrl,
   apiKey,
@@ -117,14 +119,45 @@ export function createDuomiProvider({
       : { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality };
     if (!midjourney && refs.length) payload.image = refs.slice(0, 7);
     const submission = await trackProviderSubmission((async () => {
-      const created = await fetchJson(midjourney ? `${baseUrl}/api/midjourney/imagine/fast` : `${baseUrl}/v1/images/generations?async=true`, {
-        method: 'POST',
-        headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const signal = AbortSignal.timeout(180_000);
+      const maxSubmitAttempts = 5;
+      let created;
+      for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
+        task.submissionAttemptCount = attempt;
+        try {
+          created = await fetchJson(midjourney ? `${baseUrl}/api/midjourney/imagine/fast` : `${baseUrl}/v1/images/generations?async=true`, {
+            method: 'POST',
+            headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal,
+          });
+          break;
+        } catch (error) {
+          const safeToRetry = isPreconnectFailure(error);
+          const phase = error.requestPhase || (safeToRetry ? 'connect' : 'request');
+          task.submissionAttempts = [...(task.submissionAttempts || []), {
+            generationAttempt:(Number(task.generationRetryCount) || 0) + 1,
+            attempt, at:new Date().toISOString(), phase, codes:transportErrorCodes(error), safeToRetry,
+          }].slice(-20);
+          console.error('[image] Duomi submission transport failure', {
+            generationId:task.id, attempt, phase, safeToRetry,
+            detail:upstreamRequestErrorDetail(error),
+          });
+          if (safeToRetry && attempt < maxSubmitAttempts && !signal.aborted) {
+            await sleep(1000 * 2 ** (attempt - 1));
+            if (!signal.aborted) continue;
+          }
+          if (!safeToRetry && (!error.upstreamStatus || [408, 409, 425].includes(Number(error.upstreamStatus)))) {
+            throw Object.assign(new Error(`图片提交结果待确认：${upstreamRequestErrorDetail(error)}`, { cause:error }), {
+              provider:'duomi', submissionUncertain:true,
+            });
+          }
+          throw error;
+        }
+      }
       if (midjourney && created.code !== undefined && Number(created.code) !== 200) throw Object.assign(new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败')), { upstreamTerminal:true });
       const submittedTaskId = midjourney ? created.data?.task_id : (created.id || created.task_id);
-      if (!submittedTaskId) throw new Error('图片任务没有返回任务 ID');
+      if (!submittedTaskId) throw Object.assign(new Error('图片任务没有返回任务 ID，提交结果待核对'), { provider:'duomi', submissionUncertain:true });
       await hooks.onSubmitted?.({ provider: 'duomi', taskId: String(submittedTaskId) });
       if (hooks.deferPolling) return { pending: true, provider: 'duomi', taskId: String(submittedTaskId) };
       return String(submittedTaskId);

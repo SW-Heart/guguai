@@ -1,4 +1,4 @@
-import { isPreconnectFailure } from './transport.mjs';
+import { isPreconnectFailure, transportErrorCodes } from './transport.mjs';
 
 export function createTuziProvider({
   baseUrl,
@@ -81,8 +81,10 @@ export function createTuziProvider({
     for (const reference of refs) form.append('input_reference', reference);
     const submission = await trackProviderSubmission((async () => {
       const signal = AbortSignal.timeout(180_000);
+      const maxSubmitAttempts = 5;
       let created;
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
+        task.submissionAttemptCount = attempt;
         try {
           created = await fetchJson(`${baseUrl}/v1/videos`, {
             method:'POST',
@@ -93,12 +95,17 @@ export function createTuziProvider({
           break;
         } catch (error) {
           const safeToRetry = isPreconnectFailure(error);
+          const phase = error.requestPhase || (safeToRetry ? 'connect' : 'request');
+          task.submissionAttempts = [...(task.submissionAttempts || []), {
+            generationAttempt:(Number(task.generationRetryCount) || 0) + 1,
+            attempt, at:new Date().toISOString(), phase, codes:transportErrorCodes(error), safeToRetry,
+          }].slice(-20);
           console.error('[image] Tuzi submission transport failure', {
-            generationId:task.id, attempt, phase:error.requestPhase || (safeToRetry ? 'connect' : 'request'),
+            generationId:task.id, attempt, phase, safeToRetry,
             detail:upstreamRequestErrorDetail(error),
           });
-          if (safeToRetry && attempt < 3 && !signal.aborted) {
-            await sleep(attempt * 1000);
+          if (safeToRetry && attempt < maxSubmitAttempts && !signal.aborted) {
+            await sleep(1000 * 2 ** (attempt - 1));
             if (!signal.aborted) continue;
           }
           // A response may have been lost after acceptance. Never replay it.

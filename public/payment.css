@@ -1,0 +1,15 @@
+.payment-choice { display:flex; align-items:center; gap:12px; margin:16px 0; color:inherit; font-size:14px; }
+.payment-choice select { min-width:144px; padding:10px 14px; border:1px solid rgba(99,102,241,.2); border-radius:12px; background:rgba(255,255,255,.85); color:#30334b; font:inherit; }
+.payment-choice select:focus-visible { outline:2px solid #6366f1; outline-offset:3px; }
+.wechat-payment-qr { margin:16px 0; padding:18px; text-align:center; border:1px solid rgba(99,102,241,.15); border-radius:16px; background:rgba(255,255,255,.8); box-shadow:0 8px 24px rgba(40,40,90,.06); }
+.wechat-payment-qr img { max-width:100%; height:auto; border-radius:8px; }
+.wechat-payment-qr p { margin:12px 0 0; font-size:13px; line-height:1.6; color:#62677e; }
+
+#wechatAmountPackages { grid-template-columns:repeat(3,minmax(0,1fr)); }
+#alipayCreditPackages[hidden], #wechatAmountPackages[hidden], #wechatCustomAmountField[hidden], #creditPackGrid[hidden], #wechatWebPackages[hidden] { display:none; }
+.payment-custom-amount { display:flex; flex-direction:column; gap:8px; margin:12px 0; font-size:14px; }
+.payment-custom-amount input { width:100%; box-sizing:border-box; border:1px solid rgba(99,102,241,.25); border-radius:10px; padding:10px 12px; background:rgba(255,255,255,.9); color:#30334b; font:inherit; }
+.payment-custom-amount small { color:#62677e; font-size:12px; }
+
+.wechat-web-amounts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.wechat-web-amounts button[aria-pressed="true"] { outline:2px solid #6366f1; outline-offset:2px; background:#eef2ff; color:#4338ca; }

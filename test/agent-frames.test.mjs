@@ -47,3 +47,12 @@ test('viewport placement finds the nearest visible space beside centered materia
   assert.ok(frame.y>=12&&frame.y+frame.height<=688);
   assert.ok(frame.x>=centered.x+centered.width+8||frame.x+frame.width<=centered.x-8||frame.y>=centered.y+centered.height+8||frame.y+frame.height<=centered.y-8);
 });
+
+test('multiple portrait videos remain separate when the viewport fills up',()=>{
+  const frames=Array.from({length:4},(_,index)=>({id:`video-${index}`,width:720,height:1280}));
+  const positions=Object.values(placeMediaFrames(frames,{},[],{viewport:{x:0,y:0,scale:1},width:700,height:500}));
+  assert.equal(positions.length,4);
+  for(const [index,a] of positions.entries())for(const b of positions.slice(index+1)){
+    assert.ok(a.x+a.width+8<=b.x||b.x+b.width+8<=a.x||a.y+a.height+8<=b.y||b.y+b.height+8<=a.y);
+  }
+});

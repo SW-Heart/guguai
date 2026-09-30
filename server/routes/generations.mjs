@@ -1,3 +1,4 @@
+import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice } from '../../lib/pricing.mjs';
 
 export function createGenerationRouteHandler({
@@ -137,11 +138,8 @@ export function createGenerationRouteHandler({
       : null;
     if (request.provider === 'route' && !route) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     if (route) {
-      const displayRoute = request.modelId === videoModelIds.SEEDANCE_2 && !input.exactReferencePrice
-        ? selectModelRoute({ logicalModelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, referenceCounts:{} })
-        : route;
-      const visiblePrice = displayRoute || route;
-      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:visiblePrice.salePriceCredits, yuan:visiblePrice.salePriceYuan, priceVersion:publicRoutePriceVersion(route) }), true;
+      const visiblePrice = modelRouteCharge(route, request.duration);
+      return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits:visiblePrice.total, yuan:visiblePrice.salePriceYuan, priceVersion:publicRoutePriceVersion(route) }), true;
     }
     const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
     const pricing = currentPricing();
@@ -333,9 +331,9 @@ export function createGenerationRouteHandler({
       ? { ...pricingForTask, videoPerSecondMicro:creditsToMicro(videoRequest.modelId === videoModelIds.MOTION_RETARGETING ? videoRequest.pricing.amount : modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
       : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, modelId === 'gpt-image-2.5' ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
     const pricingSnapshotValue = routeSelection
-      ? { version:pricing.version, contentType:type, billingUnit:'request', quantity:1, unitPriceMicro:routeSelection.salePriceMicro, totalMicro:routeSelection.salePriceMicro, unitPrice:routeSelection.salePriceCredits, total:routeSelection.salePriceCredits, routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, costYuan:routeSelection.costYuan, markupPercent:20, salePriceYuan:routeSelection.salePriceYuan, priceVersion:publicRoutePriceVersion(routeSelection) }
+      ? { version:pricing.version, contentType:type, ...modelRouteCharge(routeSelection, videoRequest.duration), routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, markupPercent:20, priceVersion:publicRoutePriceVersion(routeSelection) }
       : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);
-    if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error:'当前价格已变化，请刷新价格后重试', code:'PRICE_CHANGED', price:{ credits:pricingSnapshotValue.total, yuan:pricingSnapshotValue.salePriceYuan, priceVersion:pricingSnapshotValue.priceVersion } }), true;
+    if (routeSelection && input.expectedPriceVersion && input.expectedPriceVersion !== pricingSnapshotValue.priceVersion) return sendJson(res, 409, { error:'当前价格已变化，请刷新价格后重试', code:'PRICE_CHANGED', price:{ credits:pricingSnapshotValue.total, yuan:pricingSnapshotValue.total / 10, priceVersion:pricingSnapshotValue.priceVersion } }), true;
     const batchId = quantity > 1 ? randomId() : '';
     const totalCostMicro = pricingSnapshotValue.totalMicro * (isMidjourney ? quantity / midjourneyOutputCount : quantity);
     if (previewOnly) return sendJson(res, 200, { modelId, type, quantity, credits:totalCostMicro / 1000000, costMicro:totalCostMicro, priceVersion:pricingSnapshotValue.priceVersion || '', duration, size, quality:type === 'image' ? imageQuality : videoRequest.quality }), true;

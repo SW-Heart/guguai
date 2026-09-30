@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=14';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=15';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
@@ -420,7 +420,11 @@ export function createMediaController({
           const failureCount = (desktopHydrationFailureCounts.get(assetId) || 0) + 1;
           desktopHydrationFailureCounts.set(assetId, failureCount);
           const retryDelay = error?.unavailable || error?.retryable === false ? 0 : desktopHydrationRetryDelay(failureCount);
-          desktopDownloadStates.set(assetId, { status:retryDelay ? 'retrying' : 'failed', error:error.message });
+          desktopDownloadStates.set(assetId, {
+            status:retryDelay ? 'retrying' : 'failed',
+            error:error.message,
+            backupReady:file?.deliveryStatus === 'remote_backed_up' && file?.remoteStatus === 'ready',
+          });
           if (failureCount === 2 && retryDelay) {
             void api(`/api/files/${encodeURIComponent(assetId)}/archive`, { method:'POST', timeoutMs:15_000 }).catch(() => {});
           }
@@ -459,7 +463,15 @@ export function createMediaController({
       const assetId = String(file?.id || '');
       if (forcedIds.has(assetId)) desktopHydrationForced.add(assetId);
       const forced = desktopHydrationForced.has(assetId);
-      if (desktopDownloadStates.get(assetId)?.status === 'failed') continue;
+      const downloadState = desktopDownloadStates.get(assetId);
+      if (downloadState?.status === 'failed') {
+        const backupBecameReady = !downloadState.backupReady
+          && file?.deliveryStatus === 'remote_backed_up'
+          && file?.remoteStatus === 'ready';
+        if (!backupBecameReady) continue;
+        desktopHydrationFailureCounts.delete(assetId);
+        desktopDownloadStates.delete(assetId);
+      }
       if (!shouldHydrateDesktopAsset(file, { force:forced }) || desktopHydrationQueued.has(file.id) || desktopHydrationAttempted.has(file.id) || desktopHydrationRetryTimers.has(file.id)) continue;
       desktopHydrationAttempted.add(file.id);
       desktopHydrationQueued.add(file.id);

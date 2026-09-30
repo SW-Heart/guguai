@@ -68,19 +68,43 @@ test('Tuzi retries only failed connections and persists one successful submissio
   assert.equal(result.taskId, 'recovered');
 });
 
-test('Tuzi stops after three preconnect failures without marking acceptance uncertain', async () => {
+test('Tuzi stops after five preconnect failures without marking acceptance uncertain', async () => {
   let calls = 0;
   const tuzi = provider(async () => {
     calls++;
     throw new TypeError('fetch failed', { cause:Object.assign(new Error('DNS failure'), { code:'EAI_AGAIN' }) });
   });
   await assert.rejects(tuzi.createImage({ prompt:'test' }, []), error => isPreconnectFailure(error) && !error.submissionUncertain);
+  assert.equal(calls, 5);
+});
+
+test('Tuzi retries a TLS reset before any HTTP request and records each attempt', async () => {
+  let calls = 0;
+  const transport = createProviderTransport({
+    fetchImpl:async () => {
+      calls++;
+      if (calls < 3) throw new TypeError('fetch failed', { cause:Object.assign(
+        new Error('Client network socket disconnected before secure TLS connection was established'),
+        { code:'ECONNRESET' },
+      ) });
+      return new Response(JSON.stringify({ id:'recovered-after-tls-reset' }), { status:200 });
+    },
+    errorMessage:(_value, fallback) => fallback, videoProgress:value => value, sleep:async () => {},
+  });
+  const task = { id:'tls-reset', prompt:'test' };
+  const result = await provider(transport.fetchJson).createImage(task, [], { deferPolling:true });
+  assert.equal(result.taskId, 'recovered-after-tls-reset');
   assert.equal(calls, 3);
+  assert.equal(task.submissionAttemptCount, 3);
+  assert.deepEqual(task.submissionAttempts.map(({ attempt, phase, codes, safeToRetry }) => ({ attempt, phase, codes, safeToRetry })), [
+    { attempt:1, phase:'connect', codes:['ECONNRESET'], safeToRetry:true },
+    { attempt:2, phase:'connect', codes:['ECONNRESET'], safeToRetry:true },
+  ]);
 });
 
 test('Tuzi never replays uncertain submissions or explicit HTTP rejections', async () => {
   for (const failure of [
-    new TypeError('fetch failed', { cause:Object.assign(new Error('socket closed'), { code:'ECONNRESET' }) }),
+    new TypeError('fetch failed', { cause:Object.assign(new Error('socket hang up'), { code:'ECONNRESET' }) }),
     Object.assign(new Error('headers timeout'), { code:'UND_ERR_HEADERS_TIMEOUT' }),
     Object.assign(new Error('gateway failure'), { upstreamStatus:502 }),
     Object.assign(new Error('invalid request'), { upstreamStatus:400 }),

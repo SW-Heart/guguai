@@ -1,9 +1,14 @@
+import { editVideoLayers } from './services/agent-video-edit.mjs';
 import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
 import { createAgentGateway } from './lib/agent/gateway.mjs';
 import { createAgentSkills } from './lib/agent/skills.mjs';
 import { createAgentTools } from './lib/agent/tools.mjs';
+import { createModelExperienceRepository } from './repositories/model-experience.mjs';
 import { createAgentRuntime } from './lib/agent/runtime.mjs';
 import { createAgentRouteHandler } from './server/routes/agent.mjs';
+import { probeVideo, readVideoFrames, detectVideoBoundaries, extractSourceAudio, inspectVideoAudio, composeVideoClips, burnVideoCaptions, probeAudioTrack, prepareSpeechAudio } from './services/agent-video-analysis.mjs';
+import { transcribeDeepgramAudio } from './services/agent-speech-transcription.mjs';
+import { createAgentImageReader } from './services/agent-image-analysis.mjs';
 import { createViralLabRouteHandler } from './server/routes/viral-lab.mjs';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
@@ -41,6 +46,7 @@ import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
 import { createGenerationLifecycleService } from './services/generations.mjs';
+import { uploadReferenceFileWithRetry } from './services/reference-upload.mjs';
 import { createGenerationRecoveryService } from './services/generation-recovery.mjs';
 import { createMediaArchiveService } from './services/media-archive.mjs';
 import { createMidjourneyGridService } from './services/midjourney-grid.mjs';
@@ -59,6 +65,8 @@ import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/s
 import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
+import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
+import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
@@ -107,7 +115,7 @@ const oaiVeoConfigured = Boolean(process.env.OAIAPI_VEO_KEY);
 const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
-const videoMaxPollDurationMs = Math.max(60_000, Number(process.env.VIDEO_MAX_POLL_DURATION_MS || 60 * 60_000));
+const videoMaxPollDurationMs = Math.max(60_000, Number(process.env.VIDEO_MAX_POLL_DURATION_MS || 120 * 60_000));
 const imagePollIntervalMs = Math.max(10, Number(process.env.IMAGE_POLL_INTERVAL_MS || 6_000));
 const imageMaxPollDurationMs = Math.max(imagePollIntervalMs, Number(process.env.IMAGE_MAX_POLL_DURATION_MS || 10 * 60_000));
 const providerSubmissionShutdownGraceMs = Math.max(1_000, Number(process.env.PROVIDER_SUBMISSION_SHUTDOWN_GRACE_MS || 15_000));
@@ -386,6 +394,7 @@ const generationFailureCatalog = Object.freeze({
   REFERENCE_REQUIRED: Object.freeze({ message: '当前视频服务要求参考图片', suggestion: '请添加符合要求的参考图片，或切换到支持纯文本生成的视频服务后重试。', action: 'edit_input' }),
   INVALID_REFERENCE: Object.freeze({ message: '参考图片不符合生成要求', suggestion: '请检查图片格式、大小和数量，移除异常图片后重新生成。', action: 'edit_input' }),
   REFERENCE_UPLOAD_FAILED: Object.freeze({ message: '参考图片上传失败', suggestion: '请重新上传或更换参考图片后重试。', action: 'edit_input' }),
+  REFERENCE_PREPARATION_FAILED: Object.freeze({ message: '参考图片暂时无法使用', suggestion: '请稍后重试；若持续失败，请重新上传参考图片或联系支持。', action: 'retry_later' }),
   REFERENCE_UNAVAILABLE: Object.freeze({ message: '参考图片暂时无法读取', suggestion: '请重新上传参考图片，确认素材已同步后再试。', action: 'edit_input' }),
   PORTRAIT_RESTRICTED: Object.freeze({ message: '参考图片未通过真人肖像检查', suggestion: '当前服务不接受这张真人参考图片，请更换图片或切换支持该类素材的模型后重试。', action: 'edit_input' }),
   INVALID_REQUEST: Object.freeze({ message: '生成参数不符合要求', suggestion: '请检查提示词、画幅、时长和生成模式后重试。', action: 'edit_input' }),
@@ -406,33 +415,6 @@ const generationFailureCatalog = Object.freeze({
   REFUND_PENDING: Object.freeze({ message: '任务失败，积分退回待处理', suggestion: '请勿重复提交，联系支持并提供本平台任务编号。', action: 'contact_support' }),
   UNKNOWN: Object.freeze({ message: '生成失败，服务未返回具体原因', suggestion: '可调整提示词或参考图片后重试；若持续失败，请联系支持。', action: 'edit_input' }),
 });
-function generationFailureCode(task) {
-  if (task.creditStatus === 'refund_failed') return 'REFUND_PENDING';
-  const raw = String(task.error || '').toLowerCase();
-  if (task.sourceUrl && (task.providerTaskId || task.archivePending)) return 'ARCHIVE_FAILED';
-  if (/服务重启|任务.*中断|interrupted|cancelled|canceled/.test(raw)) return 'INTERRUPTED';
-  if (/模型无响应|未获得上游任务\s*id|未返回上游任务编号/.test(raw)) return 'MODEL_UNRESPONSIVE';
-  if (/insufficient[_ -]?credits|insufficient balance|insufficient funds|account balance|余额不足|账户余额|余额不够/.test(raw)) return 'UPSTREAM_BILLING';
-  if (/may contain real person|real person|肖像保护|本人肖像/.test(raw)) return 'PORTRAIT_RESTRICTED';
-  if (/content[_ ]policy|content review|moderation|safety|policy|nsfw|审核|违规|敏感|涉政|色情/.test(raw)) return 'CONTENT_REJECTED';
-  if (/requires?\s+\d+\s+to\s+\d+\s+reference images?|reference images?\s+(?:is|are)?\s*required|参考图.*必需|必须.*参考图/.test(raw)) return 'REFERENCE_REQUIRED';
-  if (/image upload failed|upload failed.*image|图片上传失败/.test(raw)) return 'REFERENCE_UPLOAD_FAILED';
-  if (/(?:reference|参考).*(?:\b(?:404|403)\b|链接.*(?:过期|失效)|download.*failed)|(?:\b(?:404|403)\b).*(?:reference|参考图|图片)/.test(raw)) return 'REFERENCE_UNAVAILABLE';
-  if (/unmarshal.*images|image.*\[\]string|参考图|参考素材.*(本地|同步|读取|云端|源地址)|文件本地缓存缺失|没有可用的云端归档|reference image|image[_ ]url|图片.*(格式|大小|尺寸|数量)|unsupported image/.test(raw)) return 'INVALID_REFERENCE';
-  if (/prompt length exceeds|prompt.*(?:too long|maximum allowed length)|提示词.*过长|创作描述.*过长/.test(raw)) return 'PROMPT_TOO_LONG';
-  if (/aspect ratio.*(?:not supported|unsupported)|不支持画幅|画幅.*不支持/.test(raw)) return 'UNSUPPORTED_ASPECT_RATIO';
-  if (/模型不存在|模型.*未开放|model.*(?:does not exist|not found|not available|not enabled|not open)/.test(raw)) return 'MODEL_UNAVAILABLE';
-  if (/\bupstream[_ -]?rejected\b/.test(raw)) return 'UPSTREAM_REJECTED';
-  if (/\b429\b|rate.?limit|too many requests|overloaded|capacity|繁忙|请求过多|频率/.test(raw)) return 'RATE_LIMITED';
-  if (/timeout|timed out|超时|等待超时/.test(raw)) return 'TIMEOUT';
-  if (/没有返回任务 id|没有返回结果|没有返回.*url|missing.*(task|result|url)|invalid response|结果地址/.test(raw)) return 'RESULT_INVALID';
-  if (/服务.*(尚未配置|未配置)|尚未配置/.test(raw)) return 'SERVICE_NOT_CONFIGURED';
-  if (/service(?:\s+is)?\s+unavailable|服务.*不可用/.test(raw)) return 'SERVICE_UNAVAILABLE';
-  if (/fetch failed|network|econn|socket/.test(raw)) return 'NETWORK_ERROR';
-  if (/\b400\b|\b409\b|\b422\b|invalid (parameter|argument|request)|bad request|参数|不支持.*(画幅|时长|模式)/.test(raw)) return 'INVALID_REQUEST';
-  if (/\b(401|403|404|500|502|503|504)\b|fetch failed|network|econn|socket|service unavailable|服务.*(未配置|不可用)|任务没有返回任务 id/.test(raw)) return 'SERVICE_UNAVAILABLE';
-  return 'UNKNOWN';
-}
 function referenceNumber(raw) {
   const match = String(raw || '').match(/(?:reference\s+(?:image\s+)?|image\s+reference\s+|参考(?:图片|图)\s*)#?(\d+)/i);
   return match ? Number(match[1]) : 0;
@@ -611,7 +593,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
         if (!item.available || item.credits === null || item.yuan === null) continue;
         const seconds = Math.max(1, Number(item.duration) || 1);
         const { selectedRouteId, selectedRouteName, ...safeItem } = item;
-        items.push({ ...safeItem, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits, totalYuan: item.yuan, credits: item.credits / seconds, yuan: item.yuan / seconds });
+        items.push({ ...safeItem, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits * seconds, totalYuan: Number((item.yuan * seconds).toFixed(8)), credits: item.credits, yuan: item.yuan });
       }
       continue;
     }
@@ -1228,12 +1210,10 @@ async function putObject(key, sourceFile, mimeType) {
   await r2.send(new PutObjectCommand({ Bucket: r2Bucket, Key: key, Body: body, ...(contentLength === undefined ? {} : { ContentLength: contentLength }), ContentType: mimeType }));
   return key;
 }
-async function putR2ReferenceObject(key, sourceFile, mimeType) {
+async function putR2ReferenceObject(key, sourceFile, mimeType, onRetry) {
   if (!r2Reference) throw storageUnavailable('r2-reference');
-  const body = typeof sourceFile === 'string' ? createReadStream(sourceFile) : sourceFile;
-  const contentLength = typeof sourceFile === 'string' ? (await fs.stat(sourceFile)).size : undefined;
-  await r2Reference.send(new PutObjectCommand({ Bucket: r2ReferenceBucket, Key: key, Body: body, ...(contentLength === undefined ? {} : { ContentLength: contentLength }), ContentType: mimeType }));
-  return key;
+  const attempts = await uploadReferenceFileWithRetry({ client:r2Reference, bucket:r2ReferenceBucket, key, sourceFile, mimeType, sleep, onRetry });
+  return { key, attempts };
 }
 async function deleteR2ReferenceObject(key) {
   if (!r2Reference) throw storageUnavailable('r2-reference');
@@ -1410,19 +1390,35 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
 }
 async function stageImageReference(userId, task, asset, targetDir) {
   if (!r2Reference) throw storageUnavailable('r2-reference');
-  const sourceFile = await ensureLocalAsset(userId, asset, targetDir);
+  let sourceFile;
+  try {
+    sourceFile = await ensureLocalAsset(userId, asset, targetDir);
+  } catch (error) {
+    if (error.code === 'REFERENCE_NOT_READY') throw error;
+    task.referencePreparationStage = 'source';
+    console.error('[image-reference] 参考图读取失败', { generationId:task.id, assetId:asset.id, message:error.message });
+    throw new Error(`参考图片准备失败：${error.message}`, { cause:error });
+  }
   const key = r2ReferenceImageKey(userId, task.id, asset);
   let uploaded = false;
   try {
-    await putR2ReferenceObject(key, sourceFile, asset.mimeType);
+    task.referencePreparationStage = 'upload';
+    const upload = await putR2ReferenceObject(key, sourceFile, asset.mimeType, ({ attempt, error }) => {
+      console.warn('[image-reference] 临时参考图上传重试', { generationId:task.id, assetId:asset.id, attempt, message:error.message });
+    });
+    task.referenceUploadAttempts = upload.attempts;
     uploaded = true;
+    task.referencePreparationStage = 'url';
     const publicUrl = publicR2ReferenceUrl(key);
     const url = publicUrl || await getSignedUrl(r2Reference, new GetObjectCommand({ Bucket: r2ReferenceBucket, Key: key, ResponseCacheControl: 'private, no-store' }), { expiresIn: Math.ceil(r2ReferenceImageTtlMs / 1_000) });
     scheduleR2ReferenceImageCleanup(key);
+    task.referencePreparationStage = 'ready';
     return url;
   } catch (error) {
     if (uploaded) await deleteR2ReferenceObject(key).catch(cleanupError => console.error('[image-reference] R2 临时参考图回滚失败', { key, message: cleanupError.message }));
-    throw error;
+    if (error.referenceUploadAttempts) task.referenceUploadAttempts = error.referenceUploadAttempts;
+    console.error('[image-reference] 参考图暂存失败', { generationId:task.id, assetId:asset.id, phase:task.referencePreparationStage, attempts:task.referenceUploadAttempts || 0, message:error.message });
+    throw new Error(`参考图片准备失败：${error.message}`, { cause:error });
   }
 }
 async function resolveImageRefs(userId, ids, task = {}) {
@@ -1803,6 +1799,16 @@ function findMidjourneyGridTasks(userId, task) {
     .filter(Boolean)
     .sort((left, right) => Number(left.midjourneyOutputIndex || 0) - Number(right.midjourneyOutputIndex || 0));
 }
+async function markMidjourneyGridOutputsRunning(userId, task) {
+  if (!isMidjourneyGridTask(task) || isMidjourneyGridChild(task)) return;
+  for (const outputTask of findMidjourneyGridTasks(userId, task)) {
+    if (outputTask.id === task.id || outputTask.status !== 'queued') continue;
+    outputTask.status = 'running';
+    outputTask.finishedAt = null;
+    outputTask.error = '';
+    await saveGenerationWithRetry(userId, outputTask, 'midjourney-output-running');
+  }
+}
 async function archiveGenerationWithRetry(userId, task) {
   let current = findGeneration(userId, task.id) || task;
   if (!current.archivePending || current.localReadyAt) { Object.assign(task, current); return true; }
@@ -1881,6 +1887,7 @@ async function archiveGenerationWithRetry(userId, task) {
 }
 async function completeGenerationResult(userId, task, result) {
   assertGenerationJobLease(task);
+  trackModelRouteSuccess(task);
   task.provider = result.provider || task.provider;
   task.providerTaskId = result.taskId || task.providerTaskId;
   task.sourceUrl = result.url;
@@ -1932,8 +1939,31 @@ function dispatchGenerationFailureNotification(userId, task, error) {
     });
   });
 }
+const recordedRouteFailures = new Set();
+function trackModelRouteFailure(task, error) {
+  if (!task?.routeId) return;
+  // One generation attempt counts at most once for its channel model.
+  const key = `${task.id}:${Number(task.generationRetryCount) || 0}:${task.routeId}`;
+  if (recordedRouteFailures.has(key)) return;
+  if (recordedRouteFailures.size >= 10_000) recordedRouteFailures.delete(recordedRouteFailures.values().next().value);
+  recordedRouteFailures.add(key);
+  try {
+    const outcome = recordModelRouteFailure({ routeId:task.routeId, error, generationId:task.id });
+    if (outcome.autoDisabled) console.warn('[model-routes] route auto-disabled', { routeId:task.routeId, generationId:task.id, failures:outcome.failures, code:outcome.code });
+  } catch (healthError) {
+    console.error('[model-routes] route failure tracking failed', { routeId:task.routeId, generationId:task.id, message:healthError.message });
+  }
+}
+function trackModelRouteSuccess(task) {
+  if (!task?.routeId) return;
+  try { recordModelRouteSuccess(task.routeId); }
+  catch (healthError) { console.error('[model-routes] route success tracking failed', { routeId:task.routeId, generationId:task.id, message:healthError.message }); }
+}
 async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
+  // Record before the retry decision so the retry re-selects a route after a
+  // possible automatic disable of the one that just failed.
+  trackModelRouteFailure(task, error);
   if (prepareGenerationRetry(task, error)) {
     clearProviderTaskIdTimeout(task.id);
     await saveGenerationWithRetry(userId, task, 'generation-retry-scheduled');
@@ -1990,7 +2020,9 @@ function clearProviderTaskIdTimeout(generationId) {
 async function failMissingProviderTaskId(userId, task) {
   clearProviderTaskIdTimeout(task.id);
   generationLifecycle.markSubmissionTimedOut(task);
-  await failGeneration(userId, task, new Error('模型无响应：超过5分钟未获得上游任务 ID'));
+  // The channel accepted the connection but never produced a task ID, which
+  // counts as a channel failure for route health tracking.
+  await failGeneration(userId, task, Object.assign(new Error('模型无响应：超过5分钟未获得上游任务 ID'), { routeAttempt:true }));
   task.finishedAt = now();
   await saveGenerationWithRetry(userId, task, 'provider-task-id-timeout');
 }
@@ -2031,6 +2063,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       task.attemptStartedAt = now();
       generationLifecycle.markRunning(task);
       await saveGenerationWithRetry(userId, task, 'generation-running');
+      await markMidjourneyGridOutputsRunning(userId, task);
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
@@ -2379,6 +2412,8 @@ function startGenerationJobPoller() {
 function websiteApiAllowed(pathname) {
   return pathname.startsWith('/api/auth/')
     || pathname === '/api/credits'
+    || pathname === '/api/payments/wechat/orders'
+    || /^\/api\/payments\/wechat\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|refunds))?$/.test(pathname)
     || pathname === '/api/payments/alipay/orders'
     || /^\/api\/payments\/alipay\/orders\/[A-Za-z0-9_-]+(?:\/(?:query|close|refunds)(?:\/[A-Za-z0-9_-]+)?)?$/.test(pathname);
 }
@@ -2650,6 +2685,19 @@ const generationRoute = createGenerationRouteHandler({
 const agentGateway = createAgentGateway();
 const agentSkills = createAgentSkills();
 const agentRepository = createAgentSessionRepository({ sql, tx });
+const modelExperienceRepository = createModelExperienceRepository({ sql });
+async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
+  const storageName=`${id}.mp4`,createdAt=now();
+  await ensureUserDirs(userId);
+  const target=path.join(assetFilesDir(userId),storageName);
+  await fs.writeFile(target,video.data,{flag:'w'});
+  const output={id,ownerId:userId,name,kind:'video',mimeType:video.mimeType,size:video.data.length,sha256:createHash('sha256').update(video.data).digest('hex'),storageName,sourceGenerationId:'',sourceUrl:'',createdAt,updatedAt:createdAt,duration:video.durationSeconds,width:video.width,height:video.height,...details,...(scope.deviceId&&scope.workspaceId?{originDeviceId:scope.deviceId,originWorkspaceId:scope.workspaceId}:{})};
+  try{
+    if(r2Configured)await uploadAsset(userId,output);
+    else await saveAsset(userId,output);
+  }catch(error){await fs.unlink(target).catch(()=>{});throw error;}
+  return output;
+}
 function agentMediaCatalog() {
   const images = imageModelCatalog.filter(m => isModelEnabled(m.id)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
@@ -2664,8 +2712,72 @@ function agentMediaCatalog() {
 const agentTools = createAgentTools({
   skills:agentSkills, catalog:agentMediaCatalog, generate:args => generationRoute.submit(args),
   loadProject:loadDramaProject, saveProject:saveDramaProject, publicProject:publicDramaProject,
-  findAsset, publicAsset, listAssets, findGeneration,
-  inspectImage:asset => asset.objectKey && r2Configured ? signedAssetUrl(asset.objectKey, 900) : null,
+  findAsset, publicAsset, listAssets, findGeneration, listGenerations,
+  modelExperienceStore:modelExperienceRepository,
+  observationStore:{read:(session,assetId)=>agentRepository.readObservation(session,assetId),list:session=>agentRepository.listObservations(session),write:(session,record,revision,invocationId)=>agentRepository.saveObservation(session,record,revision,invocationId)},
+  transcriptStore:{list:(session,assetId)=>agentRepository.listTranscripts(session,assetId),write:(session,record)=>agentRepository.saveTranscript(session,record)},
+  compositionStore:{list:session=>agentRepository.artifacts(session).compositions},
+  inspectImage:createAgentImageReader({ r2Configured, signedAssetUrl, ensureLocalAsset, withMediaTempDir }),
+  inspectVideo:{
+    probe:async(userId,asset)=>probeVideo(await ensureLocalAsset(userId,asset)),
+    ensureDigest:async(userId,asset)=>{
+      const file=await ensureLocalAsset(userId,asset);
+      const hash=createHash('sha256');
+      for await(const chunk of createReadStream(file))hash.update(chunk);
+      const digest=hash.digest('hex');
+      const current=findAsset(userId,asset.id);
+      if(!current)throw new Error('素材不存在，请重新添加');
+      if(!/^[a-f0-9]{64}$/.test(current.sha256||'')){
+        current.sha256=digest;
+        await saveAsset(userId,current);
+      }
+      return current.sha256;
+    },
+    audioInfo:async(userId,asset)=>probeAudioTrack(await ensureLocalAsset(userId,asset)),
+    transcribe:async(userId,asset,options)=>transcribeDeepgramAudio(await prepareSpeechAudio(await ensureLocalAsset(userId,asset),options),{language:options.language}),
+    frames:async(userId,asset,times)=>readVideoFrames(await ensureLocalAsset(userId,asset),times),
+    boundaries:async(userId,asset,options)=>detectVideoBoundaries(await ensureLocalAsset(userId,asset),options),
+    audioCheck:async(userId,asset,options)=>inspectVideoAudio(await ensureLocalAsset(userId,asset),options),
+    compose:async(userId,scope,clips,options)=>{
+      const id=options.id;
+      const existing=findAsset(userId,id,scope);
+      if(existing)return existing;
+      const [sources,audioTracks]=await Promise.all([
+        Promise.all(clips.map(async clip=>({...clip,file:await ensureLocalAsset(userId,clip.asset)}))),
+        Promise.all((options.audioTracks||[]).map(async track=>({...track,file:await ensureLocalAsset(userId,track.asset)}))),
+      ]);
+      const video=await composeVideoClips(sources,{...options,audioTracks});
+      return saveAgentRenderedVideo(userId,scope,id,'复刻成片.mp4',video,{source:'agent-composed-video',sourceAssetIds:[...clips.map(clip=>clip.asset.id),...audioTracks.map(track=>track.asset.id)],sourceRanges:clips.map(clip=>({startSeconds:clip.startSeconds??0,endSeconds:clip.endSeconds??null})),audioTracks:audioTracks.map(({asset,atSeconds,sourceStartSeconds,sourceEndSeconds,gainDb,fadeInSeconds,fadeOutSeconds,role})=>({assetId:asset.id,atSeconds,sourceStartSeconds,sourceEndSeconds,gainDb,fadeInSeconds,fadeOutSeconds,role})),aspectRatio:video.aspectRatio});
+    },
+    edit:async(userId,scope,asset,layers,options)=>{
+      const existing=findAsset(userId,options.id,scope);
+      if(existing)return existing;
+      const prepared=await Promise.all(layers.map(async layer=>({...layer,...(layer.asset?{file:await ensureLocalAsset(userId,layer.asset)}:{})})));
+      const video=await editVideoLayers(await ensureLocalAsset(userId,asset),prepared);
+      return saveAgentRenderedVideo(userId,scope,options.id,'画面编辑成片.mp4',video,{source:'agent-edited-video',sourceAssetIds:Object.keys(options.editPlan.sourceDigests),editPlan:options.editPlan});
+    },
+    caption:async(userId,scope,asset,cues,options)=>{
+      const id=options.id;
+      const existing=findAsset(userId,id,scope);
+      if(existing)return existing;
+      const video=await burnVideoCaptions(await ensureLocalAsset(userId,asset),cues,options);
+      return saveAgentRenderedVideo(userId,scope,id,'字幕成片.mp4',video,{source:'agent-captioned-video',sourceAssetIds:[asset.id],sourceAssetId:asset.id,captionCount:video.captionCount,captionStyle:video.style});
+    },
+    extract:async(userId,scope,asset,options)=>{
+      const source=await ensureLocalAsset(userId,asset);
+      const audio=await extractSourceAudio(source,options);
+      const id=randomUUID(),storageName=`${id}.m4a`,createdAt=now();
+      await ensureUserDirs(userId);
+      const target=path.join(assetFilesDir(userId),storageName);
+      await fs.writeFile(target,audio.data,{flag:'wx'});
+      const output={id,ownerId:userId,name:`${asset.name.replace(/\.[^.]+$/,'')} 音轨.m4a`,kind:'audio',mimeType:audio.mimeType,size:audio.data.length,sha256:createHash('sha256').update(audio.data).digest('hex'),storageName,source:'extracted-audio',sourceAssetId:asset.id,sourceRange:{startSeconds:audio.startSeconds,endSeconds:audio.endSeconds},sourceGenerationId:'',sourceUrl:'',createdAt,updatedAt:createdAt,...(scope.deviceId&&scope.workspaceId?{originDeviceId:scope.deviceId,originWorkspaceId:scope.workspaceId}:{})};
+      try{
+        if(r2Configured)await uploadAsset(userId,output);
+        else await saveAsset(userId,output);
+      }catch(error){await fs.unlink(target).catch(()=>{});throw error;}
+      return output;
+    },
+  },
 });
 const agentRuntime = createAgentRuntime({
   repository:agentRepository, gateway:agentGateway, tools:agentTools, skills:agentSkills,
@@ -2673,15 +2785,17 @@ const agentRuntime = createAgentRuntime({
   contextFor:async session => {
     const project = session.projectId ? await loadDramaProject(session.userId,session.projectId,session.scope) : null;
     return {
-      project:project ? { id:project.id,title:project.title,revision:project.revision,script:project.script?.slice(0,20000),resources:project.resources.slice(0,30),shots:project.shots.slice(0,30),lockedIds:project.directorWorkspace?.lockedIds || [],assetIds:project.projectAssetIds } : null,
-      selectedIds:session.doc.selection || [], documents:session.doc.documents.map(({id,title,revision}) => ({id,title,revision})), generations:session.doc.generations.slice(-30),
+      project:project ? { id:project.id,title:project.title,revision:project.revision,hasScript:Boolean(project.script),resourceCount:project.resources.length,shotCount:project.shots.length } : null,
+      selectedIds:session.doc.selection || [],
+      documents:session.doc.documents.map(({id,title,revision,source}) => ({id,title,revision,...(source==='attachment'?{source}: {})})),
+      recentGenerations:session.doc.generations.slice(-8).map(({id,type,modelId,title})=>({id,type,modelId,title})),
     };
   },
 });
 const agentRoute = createAgentRouteHandler({
   repository:agentRepository,runtime:agentRuntime,gateway:agentGateway,skills:agentSkills,
   bodyJson,sendJson,requireUser,requireDesktopWorkspaceScope,loadProject:loadDramaProject,publicProject:publicDramaProject,
-  findGeneration,publicGeneration,walletOf,
+  findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
 export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, buildAutodlMotionPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };

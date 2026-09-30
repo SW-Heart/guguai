@@ -7,6 +7,7 @@ import { ViewerRuntimeProvider } from './reference-canvas-shims/components/previ
 
 export interface ReferenceCanvasOptions {
   sessionKey?: string | null
+  toolbarHost?: HTMLElement | null
   adapter?: Record<string, any>
   onReady?: (api: any) => void
   onDispose?: () => void
@@ -50,6 +51,7 @@ export function mountReferenceCanvas(container: HTMLElement, options: ReferenceC
     <Provider>
       <RuntimeBridge options={options}>
         <CanvasPreview
+          toolbarHost={options.toolbarHost}
           onReady={value => {
             const createNodes = value.createNodes.bind(value)
             value.createNodes = (nodes: any[], ...args: any[]) => createNodes(nodes.map(node =>

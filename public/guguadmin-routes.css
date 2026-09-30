@@ -15,6 +15,7 @@
 .route-table tr.is-selected td:first-child { box-shadow: inset 3px 0 var(--accent); }
 .route-table td:first-child b { display: inline-grid; place-items: center; min-width: 27px; min-height: 27px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: #162432; }
 .route-message { max-width: 190px; margin-top: 5px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.route-message.is-auto-disabled { max-width: 240px; overflow: visible; color: var(--danger); line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
 .route-group .actions { white-space: nowrap; }
 @media (max-width: 700px) {
   .route-group > header { align-items: stretch; flex-direction: column; gap: 15px; }

@@ -6,16 +6,34 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function setup(){
-  const input={value:''},sent=[],toasts=[];
-  const context={epoch:1,sending:false,switchingConversation:false,uploading:false,submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',agentState:{id:'first'},connectionError:'',historyOpen:true,
-    host:{querySelector:selector=>selector==='#directorMessage'?input:{hidePopover(){}}},
+  const input={value:'',style:{},scrollTop:0,get scrollHeight(){return 84+Math.ceil(this.value.length/30)*20;}},form={},sent=[],toasts=[];
+  const context={epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
+    host:{querySelector:selector=>selector==='#directorMessage'?input:selector==='.dw-composer'?form:{hidePopover(){}}},
     bridge:{toast:message=>toasts.push(message)},drawPanels(){},save:async()=>{},
     agentClient:{send:async text=>sent.push(text),open:async()=>{},newConversation:async()=>{}},
   };
   vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function resizeAgentComposer('),source.indexOf('\nfunction messageAttachments(')),context);
   vm.runInContext(source.slice(source.indexOf('  async function switchConversation('),source.indexOf('  function dispose(')),context);
-  return {context,input,sent,toasts};
+  return {context,input,form,sent,toasts};
 }
+test('composer grows to a limit, scrolls internally, and returns to its default height after sending',async()=>{
+  const {context,input,form,sent}=setup();
+  input.value='长内容'.repeat(500);
+  context.resizeAgentComposer(input);
+  assert.equal(input.style.height,'180px');
+  const start=source.indexOf("    host.querySelector('.dw-composer').onsubmit=e=>");
+  vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);
+  input.scrollTop=35;
+  form.onsubmit({preventDefault(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(input.value,'');
+  assert.equal(input.style.height,'76px');
+  assert.equal(input.scrollTop,0);
+  assert.equal(sent.length,1);
+  const css=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
+  assert.match(css,/\.dw-agent \.dw-composer textarea[^\n]*max-height:180px;overflow-y:auto/);
+});
 test('a project change during save cannot send into the replacement conversation',async()=>{
   const {context,sent}=setup(),saving=deferred();context.save=()=>saving.promise;
   const request=context.submit('old message');
@@ -61,11 +79,73 @@ test('changing sessions preserves the activity controls nested inside old histor
   const messages={querySelector:selector=>selector==='.dw-turn-activity'?activity:selector==='.dw-message-history'?history:null,append(node){node.parent='messages';}};
   const context={messages,streamSession:'old',agentState:{id:'new'},streamFrame:1,visibleDraft:'old',targetDraft:'old',cancelAnimationFrame(){}};
   vm.createContext(context);
-  const start=source.indexOf('    if(streamSession!==agentState?.id)');
+  const start=source.indexOf('    const sessionChanged=streamSession!==agentState?.id;');
   vm.runInContext(source.slice(start,source.indexOf("    targetDraft=agentState?.draft",start)),context);
   assert.equal(activity.parent,'messages');assert.equal(activity.removed,undefined);assert.equal(context.streamSession,'new');
 });
 test('generation state keeps the composer available for follow-up requirements',()=>{
-  assert.match(source,/sendButton\.disabled=.*uploading\|\|switchingConversation\|\|!agentState/);
+  assert.match(source,/button\.disabled=.*uploading\|\|switchingConversation\|\|skillUpdating\|\|!agentState/);
   assert.match(source,/busy\?'补充要求'/);
+});
+test('opening a ready conversation keeps saved canvas visible without failing',()=>{
+  const start=source.indexOf('onState:(state,config)=>{')+'onState:'.length;
+  const end=source.indexOf('},onError:error=>',start)+1;
+  assert.ok(start>='onState:'.length&&end>start);
+  const context={token:1,epoch:1,bridge:{agentMode:true,sessionChanged(){},snapshotKey:()=>''},agentState:{id:'cached'},agentReady:false,agentConfig:null,chatMode:'full',canvas:null,saveTimer:0,clearTimeout(){},autoOpenedGenerations:new Set(),hasSavedCanvasContent:()=>true,drawPanels(){},initialMessageSent:true,lastAgentCacheSignature:'',writeCanvasSnapshot:async()=>{}};
+  vm.createContext(context);
+  const onState=vm.runInContext(`(${source.slice(start,end)})`,context);
+  onState({id:'cached',messages:[]},{configured:true});
+  assert.equal(context.chatMode,'side');
+  assert.equal(context.agentReady,true);
+  onState({id:'next',messages:[]},{configured:true});
+  assert.equal(context.chatMode,'side');
+  context.chatMode='minimized';
+  context.canvas={deleteNodes(){assert.fail('switching sessions rebuilt the canvas');},createNodes(){assert.fail('switching sessions rebuilt the canvas');}};
+  onState({id:'third',messages:[]},{configured:true});
+  assert.equal(context.chatMode,'side');
+  context.hasSavedCanvasContent=()=>false;
+  onState({id:'empty',messages:[]},{configured:true});
+  assert.equal(context.chatMode,'full');
+});
+
+test('stream refreshes keep the working status mounted and place drafts before it',()=>{
+  let draftNode=null;
+  const content={};
+  const history={querySelectorAll:()=>[],replaceChildren(){}};
+  const activity={remove(){assert.fail('refresh detached the working status');}};
+  const container={dataset:{},setAttribute(){},
+    querySelector:selector=>selector==='.dw-turn-activity'?activity:selector==='.dw-message-history'?history:draftNode,
+    append(){assert.fail('refresh reinserted the working status');},
+    insertBefore(node,anchor){assert.equal(anchor,activity);draftNode=node;},
+  };
+  activity.parentNode=container;
+  const context={container,createDraftMessage:()=>({querySelector:()=>content,remove(){draftNode=null;}}),
+    patchStreamingContent(node,text){assert.equal(node,content);node.text=text;},
+  };
+  vm.createContext(context);
+  const start=source.indexOf('function renderConversationMessages(');
+  vm.runInContext(source.slice(start,source.indexOf('\nexport function createDirectorWorkspace',start)),context);
+  context.renderConversationMessages(container,[],'first','streaming',false,false,false);
+  const original=draftNode;
+  context.renderConversationMessages(container,[],'first second','streaming',false,false,false);
+  assert.equal(draftNode,original);assert.equal(content.text,'first second');
+  context.renderConversationMessages(container,[],'','complete',false,false,false);
+  assert.equal(draftNode,null);assert.equal(activity.parentNode,container);
+});
+
+test('switching project sessions preserves unsaved canvas nodes, asset IDs and viewport',()=>{
+  const workspaceSource=readFileSync(new URL('../public/features/agent/workspace.js',import.meta.url),'utf8');
+  const start=workspaceSource.indexOf('sessionChanged:session=>')+'sessionChanged:'.length;
+  const end=workspaceSource.indexOf('\n      project:()=>project',start);
+  const context={sessionId:'',project:{id:'project'},normalizeDirectorWorkspace:value=>value||{}};
+  vm.createContext(context);
+  const change=vm.runInContext(`(${workspaceSource.slice(start,end).trim().replace(/,$/, '')})`,context);
+  change({id:'first',agentProjectId:'project',canvas:{directorWorkspace:{canvasNodes:[{id:'saved'}],viewport:{x:5}},assetIds:['saved']}});
+  const live=context.project.directorWorkspace;
+  live.canvasNodes.push({id:'unsaved'});live.viewport.x=120;
+  context.project.assetIds.push('new-file');
+  change({id:'second',agentProjectId:'project',canvas:{directorWorkspace:{canvasNodes:[]},assetIds:[]}});
+  assert.equal(context.sessionId,'second');assert.equal(context.project.directorWorkspace,live);
+  assert.equal(live.viewport.x,120);assert.equal(live.canvasNodes.length,2);
+  assert.deepEqual(context.project.assetIds,['saved','new-file']);
 });

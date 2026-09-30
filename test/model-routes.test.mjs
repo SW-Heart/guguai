@@ -13,6 +13,7 @@ import {
   listModelRoutes,
   availableModelRouteQualities,
   publicModelPrices,
+  modelRouteCharge,
   routeCredential,
   SEEDANCE_ROUTE_MODEL_IDS,
   selectModelRoute,
@@ -66,16 +67,16 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(routeTest.saleMicroFromCostFen(215), 25_800_000);
     const selected = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', duration: 15, aspectRatio: '16:9' });
     assert.equal(selected.id, 'sd20-480-diw-nd');
-    assert.equal(selected.salePriceYuan, 2.58);
-    assert.equal(selected.salePriceCredits, 25.8);
+    assert.equal(selected.salePriceYuan, 0.172);
+    assert.equal(selected.salePriceCredits, 1.72);
     const fast = selectModelRoute({ logicalModelId: 'seedance-2.0-fast', quality: '720p', duration: 15, aspectRatio: '16:9' });
     assert.equal(fast.id, 'sd20-fast-720-diw-ed');
     assert.equal(fast.provider, 'diw');
     assert.equal(fast.upstreamModelId, 'ed-seedance 2.0 fast 720p');
-    assert.equal(fast.costYuan, 1.5);
-    assert.equal(fast.salePriceYuan, 1.8);
-    assert.equal(fast.salePriceCredits, 18);
-    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 7.2);
+    assert.equal(fast.costYuan, 0.1);
+    assert.equal(fast.salePriceYuan, 0.12);
+    assert.equal(fast.salePriceCredits, 1.2);
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 0.24);
   });
 
   await t.test('Seedance 2.5 1080p appears only with an available configured route', () => {
@@ -113,7 +114,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
       yuan: price.yuan,
       selectedRouteId: price.selectedRouteId,
     }, {
-      label: 'Seedance 2.0 Fast', duration: 15, available: true, credits: 18, yuan: 1.8,
+      label: 'Seedance 2.0 Fast', duration: 15, available: true, credits: 1.2, yuan: 0.12,
       selectedRouteId: 'sd20-fast-720-diw-ed',
     });
   });
@@ -136,6 +137,26 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(publicPrice.selectedRouteId, text.id);
     assert.equal(publicPrice.yuan, 2);
     assert.equal(publicPrice.credits, 20);
+  });
+
+  await t.test('route priorities stay unique inside a pool and other routes make room', () => {
+    const pool = { logicalModelId: 'seedance-2.5', quality: '720p' };
+    const priorities = () => listModelRoutes().filter(item => item.logicalModelId === pool.logicalModelId && item.quality === pool.quality).map(item => [item.id, item.priority]);
+    for (const route of listModelRoutes().filter(item => item.logicalModelId === pool.logicalModelId && item.quality === pool.quality)) deleteModelRoute(route.id, { expectedVersion: route.version });
+    const make = (name, priority) => createModelRoute({ ...pool, credentialId: 'diw-main', upstreamModelId: name, priority, costYuan: 1, salePriceYuan: 2 });
+    const [a, b, c] = [make('a', 1), make('b', 2), make('c', 3)];
+    const d = make('d', 1);
+    assert.deepEqual(priorities(), [[d.id, 1], [a.id, 2], [b.id, 3], [c.id, 4]]);
+    const current = listModelRoutes().find(item => item.id === c.id);
+    updateModelRoute(c.id, { priority: 1 }, { expectedVersion: current.version });
+    assert.deepEqual(priorities(), [[c.id, 1], [d.id, 2], [a.id, 3], [b.id, 4]]);
+    assert.equal(selectModelRoute({ ...pool, duration: c.durationSeconds, aspectRatio: '16:9' }).id, c.id);
+    // Routes of other pools keep their priorities.
+    const outside = () => listModelRoutes().filter(item => item.logicalModelId !== pool.logicalModelId || item.quality !== pool.quality).map(item => [item.id, item.priority, item.version]);
+    const before = outside();
+    assert.ok(before.length > 0);
+    make('e', 1);
+    assert.deepEqual(outside(), before);
   });
 
   await t.test('manual choice is preferred but still falls back after it is disabled', () => {
@@ -213,4 +234,35 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(authorization, 'Bearer wj-new-model-key');
     assert.equal(listModelRouteChannels().find(item => item.id === credential.id).label, 'WJ · Seedance 2.5 专用 Key');
   });
+});
+
+
+test('channel durations are editable for historical routes and drive selected capabilities', () => {
+  freshDb();
+  try {
+    const id = 'sd25-480-diw-vd';
+    const historical = listModelRoutes().find(route => route.id === id);
+    assert.deepEqual(historical.durations, [30]);
+    assert.equal(historical.costYuan, 0.15);
+    const edited = updateModelRoute(id, { durations: '30, 5, 6, 7, 15, 20, 5', costYuan: 0.125, salePriceYuan: 0.25 });
+    assert.deepEqual(edited.durations, [5,6,7,15,20,30]);
+    assert.equal(edited.costYuan, 0.125);
+    assert.equal(edited.salePriceMicro * 7, 17_500_000);
+    assert.equal(modelRouteCharge(edited, 7).totalMicro, 17_500_000);
+    assert.equal(modelRouteCharge(edited, 7).costYuan, 0.875);
+    assert.equal(modelRouteCharge(edited, 30).total, 75);
+    assert.throws(() => modelRouteCharge(edited, 8), /不支持所选时长/);
+    const parameters = publicVideoCapabilitiesWithControls().models.find(model => model.id === 'seedance-2.5').modes[0];
+    assert.deepEqual(parameters.durationsByQuality['480p']['16:9'], edited.durations);
+    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.5', quality:'480p', duration:7 }).id, id);
+    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.5', quality:'480p', duration:8 }), null);
+    updateModelRoute(id, { durations:[30] });
+    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.5', quality:'480p', duration:7 }), null);
+    assert.throws(() => updateModelRoute(id, { durations:[] }), /整数秒数/);
+    assert.deepEqual(listModelRoutes().find(route => route.id === id).durations, [30]);
+    const created = createModelRoute({ logicalModelId:'seedance-2.5', quality:'720p', credentialId:'diw-main', upstreamModelId:'custom-duration', priority:1, costYuan:0.1, salePriceYuan:0.2, durations:[5,7] });
+    assert.deepEqual(created.durations, [5,7]);
+    assert.equal(created.salePriceMicro * 5, 10_000_000);
+    assert.ok(availableModelRouteQualities('seedance-2.5').includes('720p'));
+  } finally { cleanupDb(); }
 });

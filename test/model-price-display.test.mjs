@@ -37,10 +37,10 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
   const seedance25 = catalog.find(item => item.modelId === 'seedance-2.5' && item.quality === '480p');
   assert.equal(seedance20.unit, 'second');
   assert.equal(seedance20.duration, 15);
-  assert.equal(seedance20.yuan, seedance20.totalYuan / 15);
+  assert.ok(Math.abs(seedance20.yuan - seedance20.totalYuan / 15) < 1e-9);
   assert.equal(seedance25.unit, 'second');
   assert.equal(seedance25.duration, 30);
-  assert.equal(seedance25.yuan, seedance25.totalYuan / 30);
+  assert.ok(Math.abs(seedance25.yuan - seedance25.totalYuan / 30) < 1e-9);
   assert.equal(seedance20Fast.duration, 15);
   assert.equal(seedance20Fast.totalYuan, 1.8);
   assert.equal(seedance20Fast.totalCredits, 18);

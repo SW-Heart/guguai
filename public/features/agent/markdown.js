@@ -10,6 +10,37 @@ function inline(text) {
   return value.replace(/\u0000(\d+)\u0000/g,(_,i)=>tokens[Number(i)]);
 }
 export function renderMarkdown(source) {
+  return renderMarkdownBlocks(source).join('');
+}
+// Closes emphasis and inline code that are still being typed on the last line,
+// so streamed text renders as formatted text instead of flashing raw markers.
+export function closeStreamingMarkdown(source) {
+  const text=String(source??'').replace(/\r\n?/g,'\n');
+  const lines=text.split('\n');
+  const fences=lines.filter(line=>/^\s*(`{3,}|~{3,})/.test(line)).length;
+  if(fences%2)return text;
+  let last=lines.pop();
+  if(/^\s*(`{1,2}|~{1,2})\s*$/.test(last))last='';
+  const close=(value,marker,counted)=>{
+    const count=counted.split(marker).length-1;
+    if(count%2===0)return value;
+    const at=value.lastIndexOf(marker);
+    return value.slice(at+marker.length).trim()?value+marker:value.slice(0,at).replace(/\s+$/,'');
+  };
+  last=close(last,'`',last);
+  const outsideCode=value=>value.replace(/`[^`]*`/g,'');
+  last=close(last,'**',outsideCode(last));
+  last=close(last,'~~',outsideCode(last));
+  // A lone trailing "*" is usually the first half of "**" that has not arrived yet.
+  if(/[^*\s]\*$/.test(last)&&(outsideCode(last).replace(/\*\*/g,'').split('*').length-1)%2)last=last.slice(0,-1);
+  return [...lines,last].join('\n');
+}
+export function renderStreamingMarkdownBlocks(source) {
+  return renderMarkdownBlocks(closeStreamingMarkdown(source));
+}
+// Each top-level block renders as exactly one element, so streamed replies can
+// keep finished blocks mounted and only replace the block still being written.
+export function renderMarkdownBlocks(source) {
   const lines=String(source??'').replace(/\r\n?/g,'\n').split('\n'), out=[];
   for(let i=0;i<lines.length;) {
     const line=lines[i];
@@ -27,5 +58,5 @@ export function renderMarkdown(source) {
     while(i<lines.length&&lines[i].trim()&&!/^(#{1,6}\s|>|\s*[-+*]\s|\s*\d+\.\s|\s*`{3}|\s*~{3})/.test(lines[i])&&!(lines[i].includes('|')&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1]||'')))paragraph.push(inline(lines[i++]));
     out.push(`<p>${paragraph.join('<br>')}</p>`);
   }
-  return out.join('');
+  return out;
 }

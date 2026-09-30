@@ -96,6 +96,27 @@ test('schema migration metadata rejects a tampered checksum before startup', asy
   }
 });
 
+test('existing v1 database gains the WeChat payment table without changing its baseline checksum', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'wechat-schema-extension-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    const creator = await isolatedDbModule();
+    const original = creator.openDatabase({ file });
+    const checksum = original.prepare('SELECT checksum FROM schema_migrations WHERE version = 1').get().checksum;
+    original.exec('DROP TABLE wechat_payment_orders');
+    creator.closeDatabase({ checkpoint: false });
+
+    const reopener = await isolatedDbModule();
+    const upgraded = reopener.openDatabase({ file });
+    assert.equal(upgraded.prepare('SELECT checksum FROM schema_migrations WHERE version = 1').get().checksum, checksum);
+    assert.deepEqual(upgraded.prepare('PRAGMA table_info(wechat_payment_orders)').all().map(column => column.name),
+      ['out_trade_no', 'user_id', 'app_id', 'doc_json']);
+    reopener.closeDatabase({ checkpoint: false });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('existing R2 baseline adds the drama project revision column without losing data', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'drama-revision-migration-'));
   const file = path.join(dir, 'studio.db');

@@ -1,5 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createDuomiProvider } from '../providers/duomi.mjs';
+
+function isolatedDuomi(fetchJson) {
+  return createDuomiProvider({
+    baseUrl:'https://duomi.example', apiKey:'test-key', fetchJson,
+    trackProviderSubmission:operation => operation, sleep:async () => {},
+    videoPollRemainingMs:() => 1000, videoPollRequestSignal:() => undefined,
+    videoPollTimeoutError:() => new Error('timeout'), videoPollStartedAt:() => Date.now(),
+    imageMaxPollDurationMs:1000, videoMaxPollDurationMs:1000,
+    buildVideoPayload:() => ({}), errorMessage:value => String(value),
+    upstreamRequestErrorDetail:error => error.message,
+  });
+}
 
 process.env.DUOMI_API_BASE = 'https://duomi.example';
 process.env.IMAGE_POLL_INTERVAL_MS = '10';
@@ -52,6 +65,37 @@ test('durable image submission stops after persisting the upstream task ID', asy
   const result = await __test.createImage({ id:'generation-submit-only', model:'gpt-image-2', prompt:'test', size:'1:1', quality:'medium', createdAt:new Date().toISOString() }, [], { deferPolling:true });
   assert.deepEqual(result, { pending:true, provider:'duomi', taskId:'upstream-image-submit-only' });
   assert.equal(pollCalls, 0);
+});
+
+test('Duomi retries only pre-TLS image submission failures', async () => {
+  let calls = 0;
+  const task = { id:'duomi-pre-tls', model:'gpt-image-2', prompt:'test' };
+  const provider = isolatedDuomi(async () => {
+    calls++;
+    if (calls < 3) throw new TypeError('fetch failed', { cause:Object.assign(
+      new Error('Client network socket disconnected before secure TLS connection was established'),
+      { code:'ECONNRESET' },
+    ) });
+    return { id:'duomi-task' };
+  });
+  const result = await provider.createImage(task, [], { deferPolling:true });
+  assert.equal(result.taskId, 'duomi-task');
+  assert.equal(calls, 3);
+  assert.equal(task.submissionAttemptCount, 3);
+  assert.deepEqual(task.submissionAttempts.map(value => value.safeToRetry), [true, true]);
+});
+
+test('Duomi keeps an ambiguous socket reset pending and does not submit again', async () => {
+  let calls = 0;
+  const task = { id:'duomi-socket-reset', model:'gpt-image-2', prompt:'test' };
+  const provider = isolatedDuomi(async () => {
+    calls++;
+    throw new TypeError('fetch failed', { cause:Object.assign(new Error('socket hang up'), { code:'ECONNRESET' }) });
+  });
+  await assert.rejects(provider.createImage(task, []), error => error.submissionUncertain === true);
+  assert.equal(calls, 1);
+  assert.equal(task.submissionAttemptCount, 1);
+  assert.equal(task.submissionAttempts[0].safeToRetry, false);
 });
 
 test('shutdown grace waits for an in-flight provider submission checkpoint', async () => {

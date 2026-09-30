@@ -13,7 +13,7 @@ export function createAutodlProvider({
   providerName = 'autodl',
   pollIntervalMs = 10_000,
   requestTimeoutMs = 60_000,
-  maxPollDurationMs = 60 * 60_000,
+  maxPollDurationMs = 120 * 60_000,
   maxPolls = Math.ceil(maxPollDurationMs / pollIntervalMs),
 } = {}) {
   for (const [name, dependency] of Object.entries({ baseUrl, workflowId, apiKey, fetchJson, sleep, notifyVideoProgress, upstreamRequestErrorDetail, isDefinitiveSubmitRejection, errorMessage, videoPollTimeoutError })) {

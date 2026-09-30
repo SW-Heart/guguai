@@ -34,7 +34,11 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceC
 }
 
 export function prepareGenerationRetry(task, error, at = new Date().toISOString()) {
+  const failureText = String(error?.message || '');
+  const contentRejected = Number(error?.upstreamStatus) === 451
+    || /\b451\b|content[_ -]?policy|content review|moderation|unsafe|nsfw|审核|违规|敏感/i.test(failureText);
   if (!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
+    || contentRejected
     || error.submissionUncertain || error.pollTimedOut || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
     || (Number(task.generationRetryCount) || 0) >= maxGenerationRetries) return false;

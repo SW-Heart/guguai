@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import {importedImageBounds} from '../public/features/agent/image-bounds.js';
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 const loading=source.slice(source.indexOf('  function assetBounds('),source.indexOf('  function nodeContent('));
 test('loaded local images populate the native shape and invalidate empty drawing caches',()=>{
   const url='gugu-media://asset/image-1';
   let painted,cleared=0,drawn=0,updated;
   const shape={image(value){painted=value;},clearCache(){cleared++;},getLayer(){return {batchDraw(){drawn++;}};}};
-  const context={epoch:0,syncing:false,assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),bridge:{markCanvasDirty(){}},canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
+  const context={epoch:0,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),bridge:{markCanvasDirty(){}},canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
   vm.createContext(context);vm.runInContext(loading,context);
   context.loadAssetSize('image-1',url);
   const image=context.assetSizeLoads.get(url);image.onload();
@@ -17,6 +18,21 @@ test('loaded local images populate the native shape and invalidate empty drawing
   context.loadAssetSize('image-1',url);assert.equal(context.assetSizeLoads.size,0);
   painted=null;context.epoch++;context.assetSizes.clear();context.loadAssetSize('image-1',url);
   const stale=context.assetSizeLoads.get(url);context.epoch++;stale.onload();assert.equal(painted,null);
+});
+
+test('decoding a fresh portrait image keeps it inside the space reserved for it',()=>{
+  const url='gugu-media://portrait';
+  const node={id:'portrait',$_type:'image',$_imageUrl:url,x:600,y:200,width:280,height:220};
+  let updated;
+  const context={epoch:1,syncing:false,mainLayer:null,automaticImageSizing:new Set(['portrait']),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),importedImageBounds,
+    Image:class {naturalWidth=800;naturalHeight=1600;},workspace:()=>({positions:{}}),bridge:{},
+    canvas:{getState:()=>({nodes:[node]}),getCanvasNodeById:()=>null,getNodeConfigById:()=>node,updateNodes(ids,bounds){updated=bounds;}}};
+  vm.createContext(context);vm.runInContext(loading,context);
+  context.loadAssetSize('portrait',url);context.assetSizeLoads.get(url).onload();
+  assert.ok(Math.abs(updated.width-110)<1e-8);assert.ok(Math.abs(updated.height-220)<1e-8);
+  assert.ok(Math.abs(updated.x+updated.width/2-(node.x+node.width/2))<1e-8);
+  assert.ok(Math.abs(updated.y+updated.height/2-(node.y+node.height/2))<1e-8);
+  assert.equal(node.x,600);assert.equal(node.y,200);
 });
 
 test('video picture presses reach the canvas while playback controls remain native',()=>{

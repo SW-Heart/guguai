@@ -47,6 +47,16 @@ export function needsReferenceUpload(file) {
   return Boolean(file && !isRemoteReferenceReady(file) && (file.localOnly || file.localId || file.remoteStatus === 'local_only'));
 }
 
+// Uploading a local-only file for reference keeps the local record (other
+// surfaces may still point at its id) and adds a cloud record whose localId
+// points back to it. Pickers must list that source file only once.
+export function withoutSupersededLocalFiles(files) {
+  const list = Array.isArray(files) ? files : [];
+  const syncedLocalIds = new Set(list.filter(file => file && !file.localOnly && file.localId).map(file => String(file.localId)));
+  if (!syncedLocalIds.size) return list;
+  return list.filter(file => !(file?.localOnly && syncedLocalIds.has(String(file.localId || file.id))));
+}
+
 export function isAwaitingDesktopDelivery(file) {
   return Boolean(
     (file?.deliveryStatus === 'awaiting_local' && file?.remoteStatus === 'pending')

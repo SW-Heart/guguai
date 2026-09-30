@@ -32,6 +32,7 @@ export function persistCanvasSnapshot(workspace, snapshot, visibleIds = []) {
    x:node.x,
    y:node.y,
    ...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(key => Number.isFinite(node[key])).map(key => [key, node[key]])),
+   ...(positions[node.id]?.manualSize === true ? { manualSize:true } : {}),
    };
   });
  workspace.positions = positions;
@@ -47,8 +48,16 @@ export function normalizeDirectorWorkspace(value = {}) {
   const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return { version:1, delegated:Boolean(object.delegated), autonomy:['assist','director','auto'].includes(object.autonomy)?object.autonomy:'director',
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
+    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,100).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
+      id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),
+      aspect:String(item.aspect||'').slice(0,20),quality:String(item.quality||'').slice(0,20),mode:String(item.mode||'').slice(0,20),
+      duration:Number.isFinite(Number(item.duration))?Number(item.duration):0,quantity:Number.isFinite(Number(item.quantity))?Number(item.quantity):1,
+      attachments:(Array.isArray(item.attachments)?item.attachments:[]).slice(0,50).filter(file=>file&&typeof file.id==='string').map(file=>({id:String(file.id).slice(0,200),kind:String(file.kind||'').slice(0,20),name:String(file.name||'').slice(0,200),url:String(file.url||'').slice(0,2000)})),
+      midjourney:item.midjourney&&typeof item.midjourney==='object'?Object.fromEntries(Object.entries(item.midjourney).filter(([key])=>['version','stylize','chaos','weird','seed','negativePrompt','imageWeight','raw','tile','draft'].includes(key))):{},
+      taskId:String(item.taskId||'').slice(0,200),status:String(item.status||'').slice(0,30),
+    })),
     hiddenIds:[...new Set((Array.isArray(object.hiddenIds)?object.hiddenIds:[]).map(String).filter(id=>id.length>0&&id.length<200))].slice(0,500),
-    positions:Object.fromEntries(Object.entries(object.positions||{}).filter(([id,p])=>id.length<200&&Number.isFinite(p?.x)&&Number.isFinite(p?.y)).slice(0,500).map(([id,p])=>[id,{x:Math.max(-100000,Math.min(100000,p.x)),y:Math.max(-100000,Math.min(100000,p.y)),...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(k=>Number.isFinite(p[k])).map(k=>[k,Math.max(-100000,Math.min(100000,p[k]))]))}])),
+    positions:Object.fromEntries(Object.entries(object.positions||{}).filter(([id,p])=>id.length<200&&Number.isFinite(p?.x)&&Number.isFinite(p?.y)).slice(0,500).map(([id,p])=>[id,{x:Math.max(-100000,Math.min(100000,p.x)),y:Math.max(-100000,Math.min(100000,p.y)),...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(k=>Number.isFinite(p[k])).map(k=>[k,Math.max(-100000,Math.min(100000,p[k]))])),...(p.manualSize===true?{manualSize:true}:{})}])),
     viewport:{x:Number.isFinite(object.viewport?.x)?object.viewport.x:40,y:Number.isFinite(object.viewport?.y)?object.viewport.y:40,scale:Math.max(.1,Math.min(3,Number(object.viewport?.scale)||.75))},
     lockedIds:[...new Set((Array.isArray(object.lockedIds)?object.lockedIds:[]).map(String))].slice(0,500),
     messages:(Array.isArray(object.messages)?object.messages:[]).slice(-80).map(m=>({id:String(m.id||''),role:m.role==='user'?'user':'assistant',text:String(m.text||'').slice(0,10000)})),

@@ -32,6 +32,7 @@ import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
 import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
 import { normalizeControlledUrl } from './remote-settings.mjs';
+import { installResponseHeaderGuard } from './response-headers.mjs';
 import { openWindowsUpdateInstaller } from './windows-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -121,7 +122,9 @@ const paymentToolbarHeight = 64;
 
 const windowsTitleBarOverlayHeight = 56;
 const windowsTitleBarOverlay = {
-  color: '#ffffff',
+  // Transparent so the caption buttons sit on the shell background and the
+  // rounded workspace frame instead of a white block in the corner.
+  color: 'rgba(0, 0, 0, 0)',
   symbolColor: '#667085',
   height: windowsTitleBarOverlayHeight,
 };
@@ -1795,6 +1798,11 @@ async function bootstrap() {
   // the startup page can come up while disk/database work happens in the
   // background. The temporary defaults are replaced once settings load.
   settings = { deviceId: randomUUID(), assetSyncCursors: {} };
+  installResponseHeaderGuard(session.defaultSession.webRequest, (url, names) => {
+    let host = '';
+    try { host = new URL(url).host; } catch {}
+    appendDesktopLog({ level:'warn', scope:'network', message:`已忽略无法解析的响应头：${host} ${names.join(', ')}` });
+  });
   protocol.handle('gugu-media', serveLocalMedia);
   registerIpc();
   // This is a web-based studio inside Electron, so the browser-style default

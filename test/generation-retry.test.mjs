@@ -29,6 +29,15 @@ test('pending, ambiguous submissions, local errors, timeouts and delivered resul
   assert.equal(prepareGenerationRetry({ type:'image', sourceUrl:'https://result' }, { upstreamTerminal:true }), false);
 });
 
+test('content safety rejections are not submitted again', () => {
+  for (const error of [
+    Object.assign(new Error('request rejected'), { upstreamStatus:451 }),
+    Object.assign(new Error('The generated images appear to be unsafe'), { upstreamTerminal:true }),
+  ]) {
+    assert.equal(prepareGenerationRetry({ type:'image', status:'running' }, error), false);
+  }
+});
+
 test('recovery keeps a terminal provider failure pending when a retry is scheduled', async () => {
   const task = { id:'g', type:'video', providerTaskId:'old' };
   const service = createGenerationRecoveryService({ activeGenerations:new Map(), now:() => 'now', saveGeneration:async () => {}, saveGenerationWithRetry:async () => {}, completeGenerationResult:async () => assert.fail(), failGeneration:async (_, task, error) => prepareGenerationRetry(task, error) });

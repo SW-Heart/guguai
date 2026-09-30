@@ -102,40 +102,14 @@ test('真人参考不能绕过未接入的审核；AI 无效结果已计费不�
   await assert.rejects(()=>invoke('POST',`${path}/plan`,{revision:p.revision,quoteId:q.quoteId}),/数量不一致/);
   p=findViralProject('a',p.id,scope);assert.equal(p.planning,null);assert.equal(p.units[0].prompt,input.units[0].prompt);assert.equal(settles,1);assert.equal(releases,0);
 });
-test('新入口刷新可打开，HTML 与模块缓存链路对应',()=>{
+test('旧实验室页面已移除，旧链接仍由应用入口接管',()=>{
   assert.equal(staticEntryFile('/lab',{desktop:true}),'index.html');
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  const controller=readFileSync(new URL('../public/features/viral-lab/controller.js',import.meta.url),'utf8');
-  const styles=readFileSync(new URL('../public/features/viral-lab/styles.css',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=363\b/);assert.doesNotMatch(html,/app\.js\?v=350\b/);assert.doesNotMatch(html,/app\.js\?v=348\b/);assert.doesNotMatch(html,/app\.js\?v=347\b/);assert.doesNotMatch(html,/app\.js\?v=346\b/);assert.doesNotMatch(html,/app\.js\?v=345\b/);assert.doesNotMatch(html,/app\.js\?v=344\b/);assert.doesNotMatch(html,/app\.js\?v=343\b/);assert.doesNotMatch(html,/app\.js\?v=342\b/);assert.doesNotMatch(html,/app\.js\?v=341\b/);assert.doesNotMatch(html,/app\.js\?v=340\b/);assert.doesNotMatch(html,/app\.js\?v=339\b/);assert.doesNotMatch(html,/app\.js\?v=338\b/);assert.doesNotMatch(html,/app\.js\?v=312\b/);
-  assert.match(html,/features\/viral-lab\/styles\.css\?v=21/);
-  assert.match(app,/features\/viral-lab\/controller\.js\?v=25/);
-  assert.doesNotMatch(html,/features\/viral-lab\/styles\.css\?v=15/);
-  assert.doesNotMatch(app,/features\/viral-lab\/controller\.js\?v=15/);
-  assert.match(controller,/data-vl="create-motion"/);
-  assert.match(controller,/data-vl="create-motion" data-vl-coming-soon="true" aria-disabled="true"/);
-  assert.match(html,/id="motionGeneratorPanel"/);
-  assert.match(html,/id="labMotionBack"/);
-  assert.match(controller,/setMotionHeader\(true\)/);
-  assert.match(controller,/vl-motion-gallery/);
-  assert.doesNotMatch(controller,/class="[^"]*content-panel/);
-  assert.doesNotMatch(controller,/vl-motion-shell|vl-motion-generator-panel|vl-motion-content/);
-  assert.match(controller,/vl-motion-creation-grid/);
-  assert.match(controller,/videoProgressMarkup\(task\)/);assert.doesNotMatch(controller,/card-meta|status-pill/);
-  assert.match(controller,/<span class="button-cost"><b data-motion-cost>/);assert.doesNotMatch(controller,/data-motion-duration|motion-summary|参考视频 \$\{duration\} 秒/);
-  assert.doesNotMatch(controller,/Wan 2\.2 Animate|面部表情强度|动作幅度|帧率|种子（可选）|data-motion-field="seed"|seed:motion\.seed/);
-  assert.match(styles,/\.app-shell\.lab-motion-open #routeTitle \{ display: block; \}/);
-  assert.match(styles,/\.app-shell\.lab-motion-open \.content-panel/);
-  assert.doesNotMatch(styles,/vl-motion-shell|vl-motion-generator-panel|vl-motion-content/);
-  assert.doesNotMatch(styles,/\.vl-motion-generator[^\n]*\.generate/);
-  assert.doesNotMatch(controller,/vl-coming-soon-overlay/);
-  assert.match(controller,/const message = '功能即将推出，敬请期待';\s*toast\(message\);/);
-  assert.doesNotMatch(controller,/notice\(message\);\s*toast\(message\)/);
-  assert.doesNotMatch(styles,/vl-coming-soon-overlay/);
-  assert.match(styles,/\.vl-home-heading \{ display: none; \}/);
-  assert.match(styles,/\.app-shell\.lab-motion-open #routeTitle \{ display: block; \}/);
-  assert.match(html,/id="viralLabView"/);assert.match(html,/data-route="lab"/);
+  assert.match(html,/app\.js\?v=422\b/);
+  assert.doesNotMatch(html,/viralLabView|motionGeneratorPanel|labMotionBack|data-rail-legacy|features\/viral-lab\/styles\.css/);
+  assert.doesNotMatch(app,/lab:'\/lab'|features\/viral-lab\/controller\.js|ensureViralController/);
+  assert.match(app,/\|\| 'agent';/);
 });
 
 function insertTask(id, userId, project, status='failed', taskScope=scope) {

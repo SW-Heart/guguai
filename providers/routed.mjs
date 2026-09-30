@@ -124,5 +124,13 @@ export function createRoutedProvider({
   }
 
   function taskIdFromResponse(value) { return taskId(value); }
-  return { payload, pollVideo, createVideo, videoUrl, taskId };
+  // Mark every error raised while talking to the channel so route health
+  // tracking can tell channel failures apart from local preparation errors.
+  function markRouteAttempt(error) {
+    if (error && typeof error === 'object') error.routeAttempt = true;
+    return error;
+  }
+  const trackedPollVideo = (...args) => pollVideo(...args).catch(error => { throw markRouteAttempt(error); });
+  const trackedCreateVideo = (...args) => createVideo(...args).catch(error => { throw markRouteAttempt(error); });
+  return { payload, pollVideo: trackedPollVideo, createVideo: trackedCreateVideo, videoUrl, taskId };
 }

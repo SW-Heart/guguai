@@ -12,6 +12,7 @@ import {
   type DragEvent,
 } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { createPortal } from 'react-dom'
 
 import {
   canvasQuickEditDraftAtom,
@@ -100,6 +101,7 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 interface CanvasPrevewProps {
+  toolbarHost?: HTMLElement | null
   onReady?: (api: CanvasApi) => void
   onDispose?: () => void
   initialState?: any
@@ -877,9 +879,11 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
       className="canvas-layer-panel-attach-container h-full flex flex-col canvas-preview overflow-hidden relative"
       id={layerPanelAttachContainerId}
     >
-      {!(globalThis as any).__directorCanvasAdapter?.workspaceToolbar && <div className="px-4 py-1.5 border-b border-solid border-border">
-        <ToolsMenu />
-      </div>}
+      {!(globalThis as any).__directorCanvasAdapter?.workspaceToolbar && (
+        props.toolbarHost
+          ? createPortal(<ToolsMenu />, props.toolbarHost)
+          : <div className="canvas-tools-bar px-4 py-1.5 border-b border-solid border-border"><ToolsMenu /></div>
+      )}
       <div
         className="canvas-whiteboard-container relative w-full h-full"
         id={whiteboardContainerId}

@@ -91,6 +91,26 @@ test('admin core controls', async t => {
     assert.equal(sql('SELECT COUNT(*) AS count FROM audit_events WHERE action = \'model.update_control\'').get().count, 1);
   });
 
+  await t.test('model sort order stays unique inside a kind and other models make room', () => {
+    const admin = makeUser('admin_sort', 'admin');
+    const order = kind => sql('SELECT model_id, sort_order FROM model_controls WHERE kind = :kind ORDER BY sort_order, model_id').all({ kind }).map(row => [row.model_id, row.sort_order]);
+    const version = modelId => sql('SELECT version FROM model_controls WHERE model_id = :modelId').get({ modelId }).version;
+    // Image defaults are gpt-image-2=0, gpt-image-2.5=1, midjourney=2.
+    updateModelControl('midjourney', { sortOrder: 0 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
+    assert.deepEqual(order('image'), [['midjourney', 0], ['gpt-image-2', 1], ['gpt-image-2.5', 2]]);
+    assert.equal(version('gpt-image-2'), 2);
+    assert.throws(() => updateModelControl('gpt-image-2', { enabled: false }, { actorUserId: admin.id, expectedVersion: 1 }), { statusCode: 409 });
+    updateModelControl('midjourney', { sortOrder: 2 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
+    assert.deepEqual(order('image'), [['gpt-image-2', 0], ['gpt-image-2.5', 1], ['midjourney', 2]]);
+    // Video models are a separate group and were not touched.
+    assert.equal(sql("SELECT COUNT(*) AS count FROM model_controls WHERE kind = 'video' AND version > 1").get().count, 0);
+    // Saving without changing the order leaves historical duplicates alone.
+    updateModelControl('grok', { enabled: true }, { actorUserId: admin.id, expectedVersion: version('grok') });
+    assert.equal(sql("SELECT sort_order FROM model_controls WHERE model_id = 'minimax-h3'").get().sort_order, 60);
+    assert.equal(sql("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'model.update_control' AND target_id = 'midjourney' AND metadata_json LIKE '%gpt-image-2%'").get().count, 2);
+    assert.equal(sql("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'model.update_control' AND target_id = 'grok' AND metadata_json IS NOT NULL").get().count, 0);
+  });
+
   await t.test('manual adjustment is idempotent and preserves ledger invariants', async () => {
     const user = makeUser('adjust_target');
     grantSignupBonus(user.id, 20);

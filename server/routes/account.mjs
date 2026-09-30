@@ -1,3 +1,5 @@
+import { createWechatOrder, queryWechatOrder, wechatOrderForUser, handleWechatNotification, refundWechatOrder } from '../../lib/wechat-payments.mjs';
+
 export function createAccountRouteHandler({
   bodyForm,
   bodyJson,
@@ -29,6 +31,16 @@ export function createAccountRouteHandler({
   markAllNotificationsRead,
 } = {}) {
   return async function handleAccountRoute(req, res, url, { publicOnly = false } = {}) {
+    if (url.pathname === '/api/payments/wechat/notify' && req.method === 'POST') {
+      try {
+        await handleWechatNotification(await bodyForm(req));
+        sendText(res, 200, 'success');
+      } catch (error) {
+        console.warn('[wechat] notification rejected', { message: error.message });
+        sendText(res, 200, 'fail');
+      }
+      return true;
+    }
     if (url.pathname === '/api/payments/alipay/notify' && req.method === 'POST') {
       try {
         await handleAlipayNotification(await bodyForm(req));
@@ -82,6 +94,24 @@ export function createAccountRouteHandler({
         },
         transactions,
       });
+      return true;
+    }
+    if (url.pathname === '/api/payments/wechat/orders' && req.method === 'POST') {
+      const user = requireUser(req, res);
+      if (!user) return true;
+      const input = await bodyJson(req);
+      sendJson(res, 201, await createWechatOrder({ userId: user.id, amount: input.amount, credits: input.credits }));
+      return true;
+    }
+    const wechatMatch = url.pathname.match(/^\/api\/payments\/wechat\/orders\/([A-Za-z0-9_-]+)(?:\/(query|refunds))?$/);
+    if (wechatMatch && ((req.method === 'GET' && !wechatMatch[2]) || (req.method === 'POST' && wechatMatch[2]))) {
+      const user = requireUser(req, res);
+      if (!user) return true;
+      const [, id, action] = wechatMatch;
+      const result = action === 'query' ? await queryWechatOrder(user.id, id)
+        : action === 'refunds' ? await refundWechatOrder(user.id, id, await bodyJson(req))
+        : { order: wechatOrderForUser(user.id, id) };
+      sendJson(res, 200, result);
       return true;
     }
     if (url.pathname === '/api/payments/alipay/orders' && req.method === 'POST') {

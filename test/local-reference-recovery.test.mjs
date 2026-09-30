@@ -6,7 +6,7 @@ import os from 'node:os';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { openLocalLibrary, closeLocalLibrary, upsertLocalAsset, getLocalAsset } from '../desktop/local-library.mjs';
-import { mergeDesktopAssetRecord, shouldRemoveUploadJobLocalAsset } from '../public/desktop-media-sync.js';
+import { mergeDesktopAssetRecord, shouldRemoveUploadJobLocalAsset, withoutSupersededLocalFiles } from '../public/desktop-media-sync.js';
 
 const main = await fs.readFile(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
 const frontend = await fs.readFile(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -39,10 +39,28 @@ test('batch import skips an unreadable image and still selects the next decodabl
 test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=363'));
+  const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
+  assert.ok(html.includes('/app.js?v=444'));
   assert.ok(frontend.includes('./features/generation/polling.js?v=4'));
-  assert.ok(frontend.includes('./features/media/controller.js?v=10'));
-  for (const source of [frontend, controller]) assert.ok(source.includes('desktop-media-sync.js?v=14'));
+  assert.ok(frontend.includes('./features/media/controller.js?v=12'));
+  assert.ok(frontend.includes('./drama-studio.js?v=192'));
+  for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=15'));
+});
+
+test('a local image uploaded for reference is listed once in pickers', () => {
+  const localA = { id:'local-a', kind:'image', localOnly:true, localStatus:'saved', url:'gugu-media://asset/local-a' };
+  const localB = { id:'local-b', kind:'image', localOnly:true, localStatus:'saved', url:'gugu-media://asset/local-b' };
+  const cloudA = { id:'cloud-a', kind:'image', localId:'local-a', remoteStatus:'ready', localStatus:'saved', url:'gugu-media://asset/local-a' };
+  const libraryCopy = { id:'cloud-c', localId:'local-c', cloudAssetId:'cloud-c', kind:'image', localOnly:false };
+  assert.deepEqual(withoutSupersededLocalFiles([localA, localB, cloudA, libraryCopy]).map(file => file.id), ['local-b', 'cloud-a', 'cloud-c']);
+  assert.deepEqual(withoutSupersededLocalFiles([localA, localB]).map(file => file.id), ['local-a', 'local-b']);
+});
+
+test('queued reference uploads keep a link to their local source', () => {
+  const body = extract(frontend, 'async function uploadPendingReferenceJob(', 'async function resolveReferenceAssetIds(');
+  assert.match(body, /localId:job\.localAssetId/);
+  const dialog = extract(frontend, 'function renderReferenceDialog(', 'function syncSegmentedControl(');
+  assert.match(dialog, /withoutSupersededLocalFiles\(state\.files\)/);
 });
 
 test('reimport restores missing bytes at the indexed path and preserves identity', async () => {

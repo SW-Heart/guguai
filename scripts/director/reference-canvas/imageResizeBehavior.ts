@@ -258,7 +258,6 @@ export function configureImageResizeBehavior(
       syncImageMarkersForImage(nodeId, element)
     }
     const handleTransform = () => {
-      refreshImageRenderCache(element, false)
       syncImageMarkersForImage(nodeId, element)
     }
     const handleTransformEnd = () => {

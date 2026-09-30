@@ -101,8 +101,10 @@ OAI_VEO_31_MODEL=firefly-veo-3.1
 OAIAPI_MINIMAX_KEY=your_oai_minimax_key
 OAI_MINIMAX_H3_768_MODEL=minimax-h3-768p
 OAI_MINIMAX_H3_2K_MODEL=minimax-h3-2k
-# OAI 兼容视频任务的最长轮询时长（默认 30 分钟；单次 HTTP 请求超时仍为 300 秒）
-OAI_MAX_POLL_DURATION_MS=1800000
+# 视频任务最长等待时间（默认 120 分钟）
+VIDEO_MAX_POLL_DURATION_MS=7200000
+# OAI 兼容视频任务的最长轮询时长（默认沿用视频任务设置；单次 HTTP 请求超时仍为 300 秒）
+OAI_MAX_POLL_DURATION_MS=7200000
 
 CNTCN_API_BASE=https://api.ai.kbai.cc
 CNTCN_KEY=your_cntcn_key
@@ -646,7 +648,7 @@ http://127.0.0.1:4317/guguadmin
 
 Seedance 2.0/2.5/Fast 使用 DIW、WJ、CNTCN 的动态完整调用线路。服务每 10 分钟按“渠道地址 + API Key”请求 `/v1/models`：目录缺失会自动停用，重新出现会自动恢复。后台可修改线路启停、优先级和成本，也可指定一条手动优先线路；指定线路不可用时仍按其余优先级降级。WJ 按 `seconds` 提交，DIW 按 `duration` 提交，CNTCN 使用 `reference_image_urls` 等参考字段；任务 ID、线路快照和价格快照都会持久化，重启后只轮询原线路，不会重复提交。
 
-其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。OAI 任务最长等待 30 分钟，可用 `OAI_MAX_POLL_DURATION_MS` 调整。
+其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。视频任务最长等待 120 分钟，可用 `VIDEO_MAX_POLL_DURATION_MS` 调整；OAI 可用 `OAI_MAX_POLL_DURATION_MS` 单独调整。
 
 ## 常用命令
 

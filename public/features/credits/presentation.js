@@ -7,6 +7,22 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
     return (Number(balance) || 0).toLocaleString('zh-CN', { maximumFractionDigits: 4 });
   }
 
+  // Short balance for narrow surfaces such as the sidebar. Values are rounded
+  // down so the short form never shows more credits than the account holds.
+  function compactCreditText(balance) {
+    const value = Number(balance) || 0;
+    // Anything that floors to zero must not render as "-0".
+    const sign = value <= -0.1 ? '-' : '';
+    const amount = Math.abs(value);
+    const floorTo = (number, digits) => Math.floor(number * 10 ** digits) / 10 ** digits;
+    const format = (number, digits = 0) => floorTo(number, digits).toLocaleString('zh-CN', { maximumFractionDigits: digits, useGrouping: false });
+    if (amount >= 100_000_000) return `${sign}${format(amount / 100_000_000, 1)}亿`;
+    if (amount >= 1_000_000) return `${sign}${format(amount / 10_000)}万`;
+    if (amount >= 10_000) return `${sign}${format(amount / 10_000, 1)}万`;
+    if (amount >= 100) return `${sign}${format(amount)}`;
+    return `${sign}${format(amount, 1)}`;
+  }
+
   function creditEntryAmount(entry) {
     const amount = Number(entry?.amount);
     if (Number.isFinite(amount)) return amount;
@@ -42,6 +58,8 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
 
   function creditEarnType(entry) {
     if (entry?.type === 'generation_refund') return '任务失败退款';
+    if (entry?.type === 'wechat_purchase') return '微信充值';
+    if (entry?.type === 'wechat_refund') return '微信退款';
     if (entry?.type === 'alipay_purchase') return '支付宝充值';
     if (entry?.type === 'signup_bonus') return '赠送积分';
     if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
@@ -73,6 +91,7 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
 
   return Object.freeze({
     creditText,
+    compactCreditText,
     creditEntryAmount,
     creditDateText,
     creditModelName,

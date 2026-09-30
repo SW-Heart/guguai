@@ -61,10 +61,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .native-hidden { position: absolute !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none; }
 /* The parked transform is derived from the resting offset so the link is always
    fully off-screen, whatever `--skip-link-top` the current shell uses. */
-.skip-link { --skip-link-top: 10px; position: fixed; left: 12px; top: var(--skip-link-top); z-index: 1000; transform: translateY(calc(-100% - var(--skip-link-top) - 8px)); padding: 9px 12px; border-radius: 6px; color: white; background: var(--brand); text-decoration: none; transition: transform var(--ease); -webkit-app-region: no-drag; }
+.skip-link { --skip-link-top: 10px; position: fixed; left: 12px; top: var(--skip-link-top); z-index: 1000; transform: translateY(calc(-100% - var(--skip-link-top) - 8px)); padding: 9px 12px; border-radius: 6px; color: white; background: var(--brand); text-decoration: none; -webkit-app-region: no-drag; }
 /* Explicit keyboard intent only, tracked by `keyboard-nav` in app.js. A pointer
    click, or a focus the desktop shell restores when the window returns from the
-   tray, must not park this panel over the window chrome. */
+   tray, must not park this panel over the window chrome. Keep the transition
+   here so the desktop offset change at startup cannot animate the hidden link
+   through the visible viewport. */
+body.keyboard-nav .skip-link { transition: transform var(--ease); }
 body.keyboard-nav .skip-link:focus-visible { transform: none; }
 
 /* Desktop chrome: the workbench topbar becomes the native-feeling titlebar. */

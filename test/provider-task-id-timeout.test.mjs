@@ -116,6 +116,10 @@ test('historical upstream failures expose actionable public diagnostics', () => 
       task: { type:'image', error:'任务执行失败: API Error: openai returned 451: {"error":{"code":"content_policy_violation","message":"The generated images appear to be unsafe."}}' },
       code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
     },
+    {
+      task: { type:'image', error:'任务执行失败: API Error: openai returned 451: The generated images appear to be unsafe.' },
+      code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
+    },
   ];
 
   for (const item of cases) {
@@ -145,11 +149,12 @@ test('customer generation responses do not expose provider or route internals', 
     provider: 'wj', providerTaskId: 'upstream-task-123', model: 'sd-2.0-720-900',
     pricingSnapshot: { routeId: 'sd20-720-wj-py900', upstreamModelId: 'sd-2.0-720-900' },
     requestUrl: 'https://upstream.example/v1/videos', rawResponse: { secret: true },
+    submissionAttemptCount:3, submissionAttempts:[{ attempt:1, phase:'connect', codes:['ECONNRESET'] }],
     error: 'WJ-seedance特价 upstream rejected: upstream-task-123', creditStatus: 'refunded',
   });
 
   assert.equal(value.id, 'generation-public-1');
-  for (const field of ['routeId', 'routeDisplayName', 'routeAdapter', 'routeBaseUrl', 'routeCredentialId', 'provider', 'providerTaskId', 'model', 'pricingSnapshot', 'requestUrl', 'rawResponse']) {
+  for (const field of ['routeId', 'routeDisplayName', 'routeAdapter', 'routeBaseUrl', 'routeCredentialId', 'provider', 'providerTaskId', 'model', 'pricingSnapshot', 'requestUrl', 'rawResponse', 'submissionAttemptCount', 'submissionAttempts']) {
     assert.equal(Object.hasOwn(value, field), false, field);
   }
   assert.doesNotMatch(JSON.stringify(value), /WJ-seedance|upstream-task-123|upstream\.example|sd-2\.0-720-900/);

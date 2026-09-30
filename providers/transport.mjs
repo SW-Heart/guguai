@@ -5,6 +5,10 @@ import { generationAttemptContext, generationRequestLog } from '../services/gene
 export function isPreconnectFailure(error) {
   if (!error || error.upstreamStatus || error.requestPhase === 'response_body') return false;
   if (error.errors?.length) return error.errors.every(isPreconnectFailure);
+  // Node can report a reset during the TLS handshake as ECONNRESET. The
+  // explicit handshake diagnostic proves no HTTP request was sent; a generic
+  // ECONNRESET or "socket hang up" does not.
+  if (/client network socket disconnected before secure tls connection was established/i.test(String(error.message || ''))) return true;
   if (error.cause) return isPreconnectFailure(error.cause);
   return ['ENOTFOUND', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT'].includes(error.code)
     || (error.syscall === 'connect' && ['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'].includes(error.code));

@@ -3,7 +3,10 @@ data/
 data.quarantine-*/
 node_modules/
 .kiro/
-docs/
+docs/*
+!docs/lab-agent-rebuild-plan.md
+!docs/hypit-model-integration-assessment.md
+!docs/agent-video-api-requirements.md
 .DS_Store
 *.log
 release/

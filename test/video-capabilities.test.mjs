@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
 
+test('Seedance image reference limits support 9 images for 2.0 and 30 for 2.5', () => {
+  for (const [modelId, duration, count] of [[VIDEO_MODEL_IDS.SEEDANCE_2,15,9], [VIDEO_MODEL_IDS.SEEDANCE_25,30,30]]) {
+    const model = publicVideoCapabilities().models.find(item => item.id === modelId);
+    const mode = model.modes.find(item => item.generationType === 'REFERENCE');
+    assert.equal(mode.referenceLimits.image, count);
+    const request = validateVideoRequest({modelId,generationType:'REFERENCE',duration,quality:'720p',aspectRatio:'16:9'}, count);
+    assert.equal(request.referenceLimits.image, count);
+  }
+});
+
 test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
@@ -131,7 +141,7 @@ test('Seedance 2.0 exposes the dynamic route capabilities', () => {
   const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2, generationType: 'REFERENCE', aspectRatio: '1:1', duration: 15, quality: '720p' }, 2);
   assert.equal(request.provider, 'route');
   assert.equal(request.model, '');
-  assert.throws(() => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2, generationType: 'TEXT', aspectRatio: '16:9', duration: 10, quality: '720p' }), /不支持 10 秒/);
+  assert.equal(validateVideoRequest({ modelId: VIDEO_MODEL_IDS.SEEDANCE_2, generationType: 'TEXT', aspectRatio: '16:9', duration: 10, quality: '720p' }).duration, 10);
   assert.deepEqual(buildVideoPayload({
     videoModelId: VIDEO_MODEL_IDS.SEEDANCE_2, model: request.model, prompt: '混合参考', aspectRatio: '16:9', duration: 15, quality: '720p', referenceLimits: request.referenceLimits,
   }, { images: ['image-url'], videos: ['video-url'], audios: ['audio-url'] }), {
