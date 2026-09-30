@@ -7,15 +7,17 @@ import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.j
 import { createMessageScroller } from '../agent/message-scroller.js?v=2';
 import { mediaFrameSize } from '../agent/frames.js?v=3';
 import { placeCanvasNodes, focusCanvasViewport } from './canvas-layout.js?v=1';
-import { createCreativeAgentClient } from '../agent/client.js?v=12';
+import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=32';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=10';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=3';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=4';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=3';
+import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
@@ -198,7 +200,7 @@ export function createDirectorWorkspace(host, bridge) {
   let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver, mediaLoadObserver;
   // settlingMessageId: a finished reply whose remaining text is still being revealed.
   let streamPacer=createStreamPacer(), settlingMessageId='', messageScroller=null, reasoning=null;
-  let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, connectionError='', conversations=[], historyOpen=false;
+  let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, modelPreferencePicker=null, preferenceUpdating=false, connectionError='', conversations=[], historyOpen=false;
   let lastAgentCacheSignature='';
   let submissionQueue=[], drainingSubmissions=false;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
@@ -699,18 +701,24 @@ export function createDirectorWorkspace(host, bridge) {
       emptyEntry=document.createElement('div');emptyEntry.className='agent-conversation-entry';root.append(emptyEntry);
       emptyEntrySession=agentState.id;
       const token=epoch,session=agentState.id;
-      disposeEmptyEntry=bridge.renderEmptyConversation(emptyEntry,{config:agentConfig,skill:agentState.settings?.skill||'',onSubmit:async(text,files,documents,skill)=>{
+      disposeEmptyEntry=bridge.renderEmptyConversation(emptyEntry,{config:agentConfig,skill:agentState.settings?.skill||'',modelPreferences:agentState.settings?.modelPreferences,onModelPreferencesChange:async value=>{
+        if(token!==epoch||session!==agentState?.id||switchingConversation)throw new Error('对话已切换，请重新选择');
+        preferenceUpdating=true;drawPanels();
+        try{await agentClient.settings({modelPreferences:value});}
+        finally{if(token===epoch){preferenceUpdating=false;drawPanels();}}
+      },onSubmit:async(text,files,documents,skill,modelPreferences)=>{
         if(token!==epoch||session!==agentState?.id||switchingConversation)return;
         if(!agentConfig?.configured)throw new Error('对话功能暂时无法使用，请稍后再试');
         skillUpdating=true;
         try{
           if(skill!==(agentState.settings?.skill||''))await agentClient.settings({skill});
           if(token!==epoch||session!==agentState?.id)return;
-          await submit(text,files,[],documents);
+          await submit(text,files,[],documents,modelPreferences);
         }finally{if(token===epoch){skillUpdating=false;drawPanels();}}
       }});
     }
     const visible=Boolean(emptyEntry)&&chatMode==='full';
+    disposeEmptyEntry?.updateModelPreferences?.(agentState.settings?.modelPreferences);
     root.classList.toggle('has-conversation-entry',visible);
     if(emptyEntry){emptyEntry.hidden=!visible;emptyEntry.inert=switchingConversation;}
     return true;
@@ -761,6 +769,7 @@ export function createDirectorWorkspace(host, bridge) {
     // composer must remain usable while the agent is thinking or waiting for
     // a media task.
     const conversationBusy=drainingSubmissions||switchingConversation;
+    modelPreferencePicker?.update({value:agentState?.settings?.modelPreferences,scope:agentState?.id||'',disabled:!agentReady||conversationBusy||skillUpdating||preferenceUpdating});
     modelButton?.setAttribute('title',`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`);
     if(modelButton)modelButton.disabled=!agentReady||conversationBusy||!models.length;
     const modelList=root.querySelector('[data-agent-model-list]');
@@ -773,9 +782,9 @@ export function createDirectorWorkspace(host, bridge) {
       ...documentAttachments.map((file,index)=>({...file,key:`document:${file.id||index}`,kind:'document',removeDisabled:sending||switchingConversation})),
     ],{uploading});
     const newButton=root.querySelector('[data-agent-new]');
-    if(newButton)newButton.disabled=conversationBusy||skillUpdating||!agentReady;
+    if(newButton)newButton.disabled=conversationBusy||skillUpdating||preferenceUpdating||!agentReady;
     const historyButton=root.querySelector('[data-agent-history]');
-    historyButton?.toggleAttribute('disabled',!agentReady);
+    historyButton?.toggleAttribute('disabled',!agentReady||preferenceUpdating);
     root.querySelector('[data-agent-retry]')?.toggleAttribute('hidden',!connectionError);
     const history=root.querySelector('.dw-conversations');
 
@@ -864,11 +873,11 @@ export function createDirectorWorkspace(host, bridge) {
     const button=host.querySelector('[data-director-send]');if(!button)return;
     const hasSkill=bridge.agentMode&&Boolean(skillSelection??agentState?.settings?.skill);
     const hasContent=Boolean(host.querySelector('#directorMessage')?.value.trim()||attachments.length||documentAttachments.length||hasSkill);
-    button.disabled=!agentReady||uploading||switchingConversation||skillUpdating||!agentState||!agentConfig?.configured||!hasContent;
+    button.disabled=!agentReady||uploading||switchingConversation||skillUpdating||preferenceUpdating||!agentState||!agentConfig?.configured||!hasContent;
     const label=busy?'补充要求':sending?'发送中…':'发送';
     if(bridge.agentMode){const accessibleLabel=label==='发送'?'发送消息':label;button.setAttribute('aria-label',accessibleLabel);button.title=accessibleLabel;}
     else button.textContent=label;
-    button.setAttribute('aria-busy',String(sending||skillUpdating));
+    button.setAttribute('aria-busy',String(sending||skillUpdating||preferenceUpdating));
   }
   async function runImageAction(action,ids) {
     if(uploading||switchingConversation)throw new Error('请等待当前操作完成');
@@ -1553,6 +1562,19 @@ export function createDirectorWorkspace(host, bridge) {
       if(historyPicker.matches(':popover-open'))positionPopover(historyPicker,host.querySelector('[data-agent-history]'),false);
     };
     popoverEvents=new AbortController();
+    modelPreferencePicker=mountModelPreferencePicker(host.querySelector('[data-agent-upload]'),{
+      signal:popoverEvents.signal,
+      loadCatalog:()=>bridge.agentApi('/api/agent/media-models',{signal:popoverEvents.signal}),
+      onOpen:()=>{host.querySelector('[data-agent-skill-menu]')?.setAttribute('hidden','');host.querySelector('[data-agent-skill-trigger]')?.setAttribute('aria-expanded','false');},
+      onError:error=>bridge.toast(error.message||'保存失败，请重试。'),
+      onSave:async value=>{
+        if(!agentReady||switchingConversation)throw new Error('对话正在连接，请稍后重试');
+        const saveToken=epoch,session=agentState.id;
+        preferenceUpdating=true;drawPanels();
+        try{await agentClient.settings({modelPreferences:value});if(saveToken!==epoch||session!==agentState?.id)throw new Error('对话已切换，请重新选择');}
+        finally{if(saveToken===epoch){preferenceUpdating=false;drawPanels();}}
+      },
+    });
     messagePreviews=mountAttachmentPreviews(messagePanel,{signal:popoverEvents.signal,renderCards:false});
     window.addEventListener('resize',positionPopovers,{signal:popoverEvents.signal});
     document.addEventListener('pointerdown',event=>{
@@ -1603,7 +1625,7 @@ export function createDirectorWorkspace(host, bridge) {
     };
     const saveSettingsButton=host.querySelector('[data-agent-save-settings]');
     if(saveSettingsButton)saveSettingsButton.onclick=()=>void agentAction(()=>agentClient.settings({autoGenerate:host.querySelector('[data-agent-auto]').checked,generationBudgetCredits:Number(host.querySelector('[data-agent-budget]').value)}));
-    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage'),selectedSkill=skillSelection??agentState?.settings?.skill??'',selected=agentConfig?.skills?.find(item=>item.name===selectedSkill);const text=input.value.trim()||(selectedSkill?(attachments.length||documentAttachments.length?`请根据我添加的文件，帮我完成${selected?.title||'创作'}。`:`我想进行${selected?.title||'创作'}，请告诉我需要提供什么。`):(attachments.length||documentAttachments.length?'请查看这些附件':''));if(text&&!uploading&&!switchingConversation&&!skillUpdating&&agentState&&agentConfig?.configured){draft='';input.value='';resizeAgentComposer(input);void submit(text);}};
+    host.querySelector('.dw-composer').onsubmit=e=>{e.preventDefault();const input=host.querySelector('#directorMessage'),selectedSkill=skillSelection??agentState?.settings?.skill??'',selected=agentConfig?.skills?.find(item=>item.name===selectedSkill);const text=input.value.trim()||(selectedSkill?(attachments.length||documentAttachments.length?`请根据我添加的文件，帮我完成${selected?.title||'创作'}。`:`我想进行${selected?.title||'创作'}，请告诉我需要提供什么。`):(attachments.length||documentAttachments.length?'请查看这些附件':''));if(text&&!uploading&&!switchingConversation&&!skillUpdating&&!preferenceUpdating&&agentState&&agentConfig?.configured){draft='';input.value='';resizeAgentComposer(input);void submit(text);}};
     host.querySelector('#directorMessage').value=draft;
     const composerInput=host.querySelector('#directorMessage');
     const closeMentions=bindDirectorMentions(composerInput,{items:()=>nodes().filter(n=>n.kind==='asset'||n.taskId),attach:id=>attachCanvasFiles([id]),signal:popoverEvents.signal});
@@ -1631,7 +1653,7 @@ export function createDirectorWorkspace(host, bridge) {
       lastAgentCacheSignature=JSON.stringify([cached.state.id,cached.state.version,cached.state.state,cached.state.settings,cached.state.messages?.length,cached.state.draft]);
       drawPanels();
     });
-    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId:bridge.agentProjectId?.()??projectId,agentProjectId:bridge.creativeProjectId?.()||'',initialSessionId:bridge.initialSessionId?.()||'',initialSkill:bridge.initialSkill?.()||'',onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{
+    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId:bridge.agentProjectId?.()??projectId,agentProjectId:bridge.creativeProjectId?.()||'',initialSessionId:bridge.initialSessionId?.()||'',initialSkill:bridge.initialSkill?.()||'',initialModelPreferences:bridge.initialModelPreferences?.(),onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{
       if(token!==epoch)return;
       if(!state&&agentState?.id){agentConfig=config;drawPanels();return;}
       const firstReadySession=bridge.agentMode&&!agentReady&&Boolean(state?.id);
@@ -1664,7 +1686,7 @@ export function createDirectorWorkspace(host, bridge) {
     drawPanels();
   }
   async function switchConversation(id){
-    if(sending||uploading||switchingConversation||skillUpdating)return;
+    if(sending||uploading||switchingConversation||skillUpdating||preferenceUpdating)return;
     const token=epoch,client=agentClient,input=host.querySelector('#directorMessage'),previousDraft=input?.value;
     switchingConversation=true;
     try{drawPanels();await (id?client.open(id):client.newConversation());if(token!==epoch)return;host.querySelector('#directorHistoryPicker')?.hidePopover();historyOpen=false;attachments=[];documentAttachments=[];if(input&&input.value===previousDraft){input.value='';resizeAgentComposer(input);}connectionError='';}
@@ -1687,7 +1709,7 @@ export function createDirectorWorkspace(host, bridge) {
         const mediaText=request.files.length?'\n\n附件：\n'+request.files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'';
         const documentText=request.documents.length?'\n\n附带文件：\n'+request.documents.map(file=>file.title).join('\n'):'';
         const content=request.text+mediaText+documentText;
-        await client.send(content,[...new Set([...request.selectionIds,...request.files.map(f=>f.id)])],request.documents);
+        await client.send(content,[...new Set([...request.selectionIds,...request.files.map(f=>f.id)])],request.documents,request.modelPreferences);
         if(!current()){request.resolve?.();continue;}
         connectionError='';
         request.resolve?.();
@@ -1714,10 +1736,10 @@ export function createDirectorWorkspace(host, bridge) {
     drainingSubmissions=false;
     redrawComposer();
   }
-  function submit(text,files=attachments,selectionIds=selected?[selected]:[],documents=files===attachments?documentAttachments:[]){
-    if(uploading||switchingConversation)return Promise.resolve();
+  function submit(text,files=attachments,selectionIds=selected?[selected]:[],documents=files===attachments?documentAttachments:[],modelPreferences=agentState?.settings?.modelPreferences){
+    if(uploading||switchingConversation||preferenceUpdating)return Promise.resolve();
     const composerSend=files===attachments&&documents===documentAttachments;
-    const request={text:String(text||''),files:[...files],documents:[...documents],selectionIds:[...selectionIds],composerSend};
+    const request={text:String(text||''),files:[...files],documents:[...documents],selectionIds:[...selectionIds],modelPreferences:normalizeModelPreferences(modelPreferences),composerSend};
     if(!request.text&&!request.files.length&&!request.documents.length)return Promise.resolve();
     // Snapshot and release attachments immediately so the next prompt can be
     // prepared while this one is being added to the conversation.
@@ -1726,6 +1748,6 @@ export function createDirectorWorkspace(host, bridge) {
     void drainSubmissions();
     return promise;
   }
-  function dispose(){if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
+  function dispose(){if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }

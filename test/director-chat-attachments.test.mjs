@@ -1,3 +1,4 @@
+import {normalizeModelPreferences} from '../public/features/agent/model-preferences.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -5,7 +6,7 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 function setup(prepareChatAsset){
   const input={value:'保留我的草稿',focus(){}};
-  const context={sending:false,switchingConversation:false,uploading:false,submissionQueue:[],drainingSubmissions:false,epoch:1,agentState:{id:'chat'},attachments:[],nodes:()=>[{id:'local',kind:'asset'},{id:'generated',kind:'generation',taskId:'task'}],bridge:{prepareChatAsset,toast(){}},drawPanels(){},host:{querySelector:selector=>selector==='#directorMessage'?input:{classList:{remove(){}},hidden:true}}};
+  const context={normalizeModelPreferences,preferenceUpdating:false,sending:false,switchingConversation:false,uploading:false,submissionQueue:[],drainingSubmissions:false,epoch:1,agentState:{id:'chat'},attachments:[],nodes:()=>[{id:'local',kind:'asset'},{id:'generated',kind:'generation',taskId:'task'}],bridge:{prepareChatAsset,toast(){}},drawPanels(){},host:{querySelector:selector=>selector==='#directorMessage'?input:{classList:{remove(){}},hidden:true}}};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  async function attachCanvasFiles'),source.indexOf('  function drawInspector')),context);
   return {context,input};

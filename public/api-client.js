@@ -75,6 +75,15 @@ function normalizeAbortError(error, signal) {
   return Object.assign(new Error('请求已取消'), { code: 'API_ABORTED', cause: error });
 }
 
+async function readResponseJson(response, signal) {
+  try { return await response.json(); }
+  catch (error) {
+    if (signal?.aborted) throw error;
+    if (!response.ok) return {};
+    throw Object.assign(new Error('服务响应读取失败，请稍后重试', { cause:error }), { code:'INVALID_RESPONSE_JSON', status:502 });
+  }
+}
+
 export function createApiClient({ fetchImpl = globalThis.fetch?.bind(globalThis), scopeHeaders = () => ({}), timeoutMs = DEFAULT_TIMEOUT_MS, responseShapeFor = null } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('当前环境不支持 fetch');
 
@@ -84,8 +93,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch?.bind(globalThis)
     const control = requestSignal(callerSignal, requestTimeout);
     try {
       const response = await fetchImpl(url, { credentials:'same-origin', ...fetchOptions, signal:control.signal, headers:requestHeaders(scopeHeaders, fetchOptions) });
-      let data = {};
-      try { data = await response.json(); } catch {}
+      const data = await readResponseJson(response, control.signal);
       if (!response.ok) throw responseError(data, response);
       return validateResponseShape(data, responseShape);
     } catch (error) {
@@ -101,8 +109,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch?.bind(globalThis)
     const control = requestSignal(callerSignal, requestTimeout);
     try {
       const response = await fetchImpl(url, { credentials:'same-origin', ...fetchOptions, signal:control.signal, headers:requestHeaders(scopeHeaders, fetchOptions) });
-      let data = {};
-      try { data = await response.json(); } catch {}
+      const data = await readResponseJson(response, control.signal);
       if (!response.ok) throw responseError(data, response);
       validateResponseShape(data, responseShape);
       const headers = response.headers || { get: () => '' };

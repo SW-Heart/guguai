@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const { __test } = await import('../server.mjs');
 
-test('uncertain async submission times out five minutes after task creation', () => {
+test('uncertain async submission times out seven minutes after task creation', () => {
   const createdAt = '2026-08-24T06:44:07.975Z';
   const task = {
     id: 'generation-1', provider: 'cntcn', status: 'running', providerTaskId: '',
@@ -12,9 +12,10 @@ test('uncertain async submission times out five minutes after task creation', ()
   const created = Date.parse(createdAt);
 
   assert.equal(__test.awaitingProviderTaskId(task), true);
-  assert.equal(__test.providerTaskIdDeadline(task), created + 5 * 60_000);
-  assert.equal(__test.providerTaskIdTimedOut(task, created + 5 * 60_000 - 1), false);
-  assert.equal(__test.providerTaskIdTimedOut(task, created + 5 * 60_000), true);
+  assert.equal(__test.providerTaskIdDeadline(task), created + 7 * 60_000);
+  assert.equal(__test.providerTaskIdTimedOut(task, created + 5 * 60_000), false);
+  assert.equal(__test.providerTaskIdTimedOut(task, created + 7 * 60_000 - 1), false);
+  assert.equal(__test.providerTaskIdTimedOut(task, created + 7 * 60_000), true);
 });
 
 test('routed video submission timeout leaves margin for slow channel responses', () => {
@@ -39,8 +40,8 @@ test('startup recovery grace also covers non-durable providers without a task ID
   };
 
   assert.equal(__test.awaitingProviderTaskId(task), true);
-  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:49:07.974Z')), false);
-  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:49:07.975Z')), true);
+  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:51:07.974Z')), false);
+  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:51:07.975Z')), true);
 });
 
 test('a generation result awaiting archive is not treated as a missing-task-ID timeout', () => {
@@ -55,7 +56,7 @@ test('a generation result awaiting archive is not treated as a missing-task-ID t
 
 test('model-unresponsive failures expose the dedicated public failure message', () => {
   const task = {
-    status: 'failed', error: '模型无响应：超过5分钟未获得上游任务 ID',
+    status: 'failed', error: '模型无响应：超过7分钟未获得上游任务 ID',
     creditStatus: 'refunded', createdAt: '2026-08-24T06:44:07.975Z',
   };
 

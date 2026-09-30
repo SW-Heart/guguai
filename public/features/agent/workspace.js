@@ -1,28 +1,29 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=110';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=113';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=10';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
-import { mountSkillGallery } from './skill-gallery.js?v=3';
+import { mountSkillGallery } from './skill-gallery.js?v=4';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=3';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
 export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
-  let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',screen='',navigationEpoch=0,creating=false;
+  let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,screen='',navigationEpoch=0,creating=false;
   let homeActionsController=null;
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/agent';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
   function dispatchRoute(){window.dispatchEvent(new PopStateEvent('popstate'));}
-  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';}
+  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;}
   function showHome(){
     resetView();account=accountSnapshot();screen='home';
     renderEntry(host);
   }
-  function renderEntry(host,{onSubmit=createProject,config=null,skill=''}={}){
+  function renderEntry(host,{onSubmit=createProject,config=null,skill='',modelPreferences,onModelPreferencesChange}={}){
     homeActionsController?.abort();
     host.innerHTML=`<section class="agent-entry"><div class="agent-entry-main">${agentWelcomeHeroMarkup('h1')}${creativePresetsMarkup()}<form class="agent-entry-form"><label class="dw-sr-only" for="agentEntryMessage">描述你的创作想法</label><div class="agent-entry-attachments attachment-strip" aria-label="已添加的文件"></div><textarea id="agentEntryMessage" rows="3" placeholder="写下你的想法，GuGu 会和你一起完成……"></textarea><div class="agent-entry-footer"><div class="agent-entry-add-wrap"><button type="button" class="agent-entry-add" data-entry-add aria-label="添加文件" title="添加文件" aria-haspopup="menu" aria-expanded="false" aria-controls="agentEntryActions"><span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span></button><div class="agent-entry-menu" id="agentEntryActions" role="menu" aria-label="添加文件" hidden><button type="button" role="menuitem" data-entry-action="library"><span class="agent-entry-menu-icon" aria-hidden="true"><span class="gugu-lucide gugu-lucide-folder-open"></span></span><span class="agent-entry-menu-copy"><span>从文件库选择</span><small>已保存的图片、视频或音频</small></span></button><button type="button" role="menuitem" data-entry-action="local"><span class="agent-entry-menu-icon" aria-hidden="true"><span class="gugu-lucide gugu-lucide-upload"></span></span><span class="agent-entry-menu-copy"><span>从本地上传</span><small>图片、音频、视频或文档</small></span></button></div></div><input type="file" data-entry-files multiple hidden accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/webm,audio/flac,.pdf,.docx,.txt,.md,.csv,.json,.html,.rtf"><span class="agent-entry-spacer"></span><button type="submit" class="dw-primary agent-entry-send" aria-label="发送消息" title="发送消息" disabled><span class="gugu-lucide gugu-lucide-arrow-up" aria-hidden="true"></span></button></div></form></div></section>`;
     const form=host.querySelector('.agent-entry-form'),input=host.querySelector('#agentEntryMessage'),filePicker=host.querySelector('[data-entry-files]'),chipList=host.querySelector('.agent-entry-attachments'),send=host.querySelector('.agent-entry-send');
@@ -32,8 +33,16 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     addWrap.insertAdjacentHTML('afterend',`<div class="agent-entry-skill-wrap"><button type="button" class="agent-entry-skill-trigger" data-entry-skill aria-label="选择创作方式" title="选择创作方式" aria-haspopup="menu" aria-expanded="false" aria-controls="agentEntrySkillMenu" disabled>${skillIcon}</button><div class="agent-entry-menu agent-entry-skill-menu" id="agentEntrySkillMenu" role="menu" aria-label="选择创作方式" hidden></div></div>`);
     const skillWrap=host.querySelector('.agent-entry-skill-wrap'),skillButton=host.querySelector('[data-entry-skill]'),skillMenu=host.querySelector('.agent-entry-skill-menu'),selectedSkillChip=host.querySelector('[data-entry-selected-skill]');
     const attachments=[],localPreviewUrls=new Set();
-    let busy=0,submitting=false,selectedSkill='',availableSkills=[];
+    let busy=0,submitting=false,modelUpdating=false,preferencesReady=modelPreferences!==undefined,selectedSkill='',availableSkills=[];
     const menuEvents=new AbortController();homeActionsController=menuEvents;
+    const modelPicker=mountModelPreferencePicker(addWrap,{
+      value:modelPreferences,signal:menuEvents.signal,
+      loadCatalog:()=>api('/api/agent/media-models',{signal:menuEvents.signal}),
+      onOpen:()=>setMenu('',false),
+      onError:error=>toast(error.message||'保存失败，请重试。'),
+      onReady:ready=>{preferencesReady=ready;updateComposer();},
+      onSave:async value=>{modelUpdating=true;updateComposer();try{if(onModelPreferencesChange)await onModelPreferencesChange(value);else await api('/api/agent/model-preferences',{method:'PUT',body:JSON.stringify({modelPreferences:value}),signal:menuEvents.signal});}finally{modelUpdating=false;if(!menuEvents.signal.aborted)updateComposer();}},
+    });
     const fitSkillMenu=()=>{
       if(skillMenu.hidden)return;
       const trigger=skillButton.getBoundingClientRect(),viewport=host.querySelector('.agent-entry').getBoundingClientRect();
@@ -57,8 +66,9 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       input.style.height='auto';
       const lineHeight=Number.parseFloat(getComputedStyle(input).lineHeight)||27;
       input.style.height=`${Math.min(Math.max(input.scrollHeight,3*lineHeight),8*lineHeight)}px`;
-      send.disabled=submitting||busy>0||(!input.value.trim()&&!ready().length&&!selectedSkill);
-      send.setAttribute('aria-busy',String(submitting||busy>0));
+      send.disabled=!preferencesReady||submitting||modelUpdating||busy>0||(!input.value.trim()&&!ready().length&&!selectedSkill);
+      send.setAttribute('aria-busy',String(submitting||modelUpdating||busy>0));
+      modelPicker.update({disabled:submitting});
     };
     const releasePreview=item=>{if(item?.previewUrl&&localPreviewUrls.delete(item.previewUrl))URL.revokeObjectURL(item.previewUrl);};
     const previews=mountAttachmentPreviews(chipList,{signal:menuEvents.signal,onRemove:file=>{
@@ -161,7 +171,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       const files=ready(),media=files.filter(item=>item.asset).map(item=>item.asset),documents=files.filter(item=>item.kind==='document').map(item=>({title:item.name,text:item.text}));
       const selected=availableSkills.find(item=>item.name===selectedSkill);
       const text=input.value.trim()||(selected?(files.length?`请根据我添加的文件，帮我完成${selected.title||'创作'}。`:`我想进行${selected.title||'创作'}，请告诉我需要提供什么。`):(documents.length?'请参考我附带的文件开始创作。':''));
-      submitting=true;updateComposer();void onSubmit(text,media,documents,selectedSkill).catch(error=>{if(!menuEvents.signal.aborted)toast(error.message);}).finally(()=>{if(!menuEvents.signal.aborted){submitting=false;updateComposer();}});
+      submitting=true;updateComposer();void onSubmit(text,media,documents,selectedSkill,modelPicker.getValue()).catch(error=>{if(!menuEvents.signal.aborted)toast(error.message);}).finally(()=>{if(!menuEvents.signal.aborted){submitting=false;updateComposer();}});
     };
     const gallery=mountSkillGallery(host.querySelector('.agent-entry'),{signal:menuEvents.signal,onChoose:name=>{
       chooseSkill(name);setMenu('',false);
@@ -172,26 +182,28 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const loadSkills=()=>api('/api/agent/skills',{signal:menuEvents.signal}).then(applyConfig).catch(()=>gallery.error());
     if(config)applyConfig(config);else void loadSkills();
     updateComposer();
-    return ()=>menuEvents.abort();
+    const dispose=()=>menuEvents.abort();
+    dispose.updateModelPreferences=value=>modelPicker.update({value});
+    return dispose;
   }
-  async function createProject(message='',attachments=[],documents=[],skill=''){
+  async function createProject(message='',attachments=[],documents=[],skill='',modelPreferences){
     if(creating)return;
     creating=true;const token=navigationEpoch;
     try{
       const title=defaultTitleFromMessage(message)||defaultTitleFromMessage(documents.length?`根据${documents[0].title}创作`:attachments.length?'基于附件开始创作':'')||'新项目';
       const {project:created}=await api('/api/agent/projects',{method:'POST',body:JSON.stringify({title})});
       if(token!==navigationEpoch)return;
-      changeLocation('workspace',created.id);await openProject(created.id,message,attachments,documents,skill);dispatchRoute();
+      changeLocation('workspace',created.id);await openProject(created.id,message,attachments,documents,skill,modelPreferences);dispatchRoute();
     }catch(error){if(token===navigationEpoch)toast(error.message);}
     finally{creating=false;}
   }
-  async function openProject(id,message='',attachments=[],documents=[],skill=''){
+  async function openProject(id,message='',attachments=[],documents=[],skill='',modelPreferences){
     if(screen==='workspace'&&project.id===id&&view)return;
     resetView();const token=navigationEpoch;screen='loading';host.innerHTML=`<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true">${projectLoadingMarkup}</div>`;
     try{
       const result=await api(`/api/agent/projects/${encodeURIComponent(id)}`);
       if(screen!=='loading'||token!==navigationEpoch)return;
-      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;screen='workspace';mountWorkspace();
+      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;screen='workspace';mountWorkspace();
     }catch(error){if(token!==navigationEpoch)return;toast(error.message);changeLocation('home');dispatchRoute();}
   }
   const asset=id=>state.files.find(file=>file.id===id&&file.localStatus!=='missing');
@@ -228,6 +240,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       initialAttachments:()=>{const files=initialAttachments;initialAttachments=[];return files;},
       initialDocuments:()=>{const files=initialDocuments;initialDocuments=[];return files;},
       initialSkill:()=>{const skill=initialSkill;initialSkill='';return skill;},
+      initialModelPreferences:()=>{const value=initialModelPreferences;initialModelPreferences=undefined;return value;},
       renderEmptyConversation:renderEntry,
       hasInitialContent:()=>Boolean(initialMessage||initialAttachments.length||initialDocuments.length),
       projectTitle:()=>project.title||'智能创作',onProjectBack:()=>{changeLocation('home');dispatchRoute();},

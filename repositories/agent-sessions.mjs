@@ -2,8 +2,13 @@ import { generationFrames } from '../public/features/agent/frames.js';
 import { defaultTitleFromMessage } from '../public/features/agent/default-title.js';
 import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
 import { randomUUID } from 'node:crypto';
+import { normalizeModelPreferences } from '../lib/agent/model-preferences.mjs';
 
 export const AGENT_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS agent_user_preferences (
+ user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+ model_preferences_json TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS agent_sessions (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  device_id TEXT NOT NULL, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT '',
@@ -15,7 +20,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_scope ON agent_sessions(user_id, device_id, workspace_id, project_id);
 CREATE TABLE IF NOT EXISTS agent_inputs (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
- client_id TEXT NOT NULL, text TEXT NOT NULL, selection_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+ client_id TEXT NOT NULL, text TEXT NOT NULL, selection_json TEXT NOT NULL, model_preferences_json TEXT, created_at INTEGER NOT NULL,
  UNIQUE(session_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_inputs_session ON agent_inputs(session_id, seq);
@@ -54,7 +59,21 @@ export function createAgentSessionRepository({ sql, tx }) {
     const text = String(value ?? '');
     return defaultTitleFromMessage(text.split(/\n\n(?:附件|附带文件)：\n/)[0]) || defaultTitleFromMessage(text);
   };
-  const parse = row => row ? { id: row.id, userId: row.user_id, scope: { deviceId: row.device_id, workspaceId: row.workspace_id }, projectId: row.project_id, agentProjectId: row.agent_project_id || '', settings: JSON.parse(row.settings_json), doc: JSON.parse(row.doc_json), state: row.state, interrupted: Boolean(row.interrupted), token: row.lease_token, leaseUntil: row.lease_until } : null;
+  const parse = row => row ? { id: row.id, userId: row.user_id, scope: { deviceId: row.device_id, workspaceId: row.workspace_id }, projectId: row.project_id, agentProjectId: row.agent_project_id || '', settings: {...JSON.parse(row.settings_json),modelPreferences:userModelPreferences(row.user_id)}, doc: JSON.parse(row.doc_json), state: row.state, interrupted: Boolean(row.interrupted), token: row.lease_token, leaseUntil: row.lease_until } : null;
+  function userModelPreferences(userId) {
+    const saved = sql('SELECT model_preferences_json FROM agent_user_preferences WHERE user_id=:userId').get({userId});
+    if (saved) return normalizeModelPreferences(JSON.parse(saved.model_preferences_json));
+    // Adopt the latest saved selection once when upgrading existing accounts.
+    const previous = sql("SELECT settings_json FROM agent_sessions WHERE user_id=:userId AND json_type(settings_json,'$.modelPreferences')='object' ORDER BY updated_at DESC,rowid DESC LIMIT 1").get({userId});
+    const preferences = normalizeModelPreferences(previous ? JSON.parse(previous.settings_json).modelPreferences : undefined);
+    saveUserModelPreferences(userId, preferences);
+    return preferences;
+  }
+  function saveUserModelPreferences(userId, value) {
+    const preferences = normalizeModelPreferences(value);
+    sql('INSERT INTO agent_user_preferences(user_id,model_preferences_json,updated_at) VALUES(:userId,:preferences,:now) ON CONFLICT(user_id) DO UPDATE SET model_preferences_json=:preferences,updated_at=:now').run({userId,preferences:JSON.stringify(preferences),now:Date.now()});
+    return preferences;
+  }
   const projectRow = row => row ? {id:row.id,title:row.title,createdAt:row.created_at,updatedAt:row.updated_at,sessionId:row.session_id||''} : null;
   function getProject(id,userId,scope){return projectRow(sql('SELECT * FROM agent_projects WHERE id=:id AND user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId').get({id,userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId}));}
   function createProject(userId,scope,title='新项目'){
@@ -93,6 +112,7 @@ export function createAgentSessionRepository({ sql, tx }) {
   function getForUser(id,userId){return parse(sql('SELECT * FROM agent_sessions WHERE id=:id AND user_id=:userId').get({id,userId}));}
   function create(userId, scope, projectId, settings, { fresh = false, agentProjectId = '' } = {}) {
     return tx(() => {
+      settings = {...settings,modelPreferences:userModelPreferences(userId)};
       if ((projectId||agentProjectId) && !fresh) {
         const existing = sql('SELECT * FROM agent_sessions WHERE user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND project_id=:projectId AND agent_project_id=:agentProjectId ORDER BY updated_at DESC LIMIT 1').get({ userId, deviceId: scope.deviceId, workspaceId: scope.workspaceId, projectId,agentProjectId });
         if (existing) return parse(existing);
@@ -123,6 +143,7 @@ export function createAgentSessionRepository({ sql, tx }) {
       if(incomingDocuments.reduce((total,item)=>total+item.text.length,0)>1_000_000)throw Object.assign(new Error('附带文件内容过多，请减少文件数量或选择较小的文件'),{statusCode:413});
       const existing = sql('SELECT * FROM agent_inputs WHERE session_id=:id AND client_id=:clientId').get({ id: session.id, clientId: input.clientId });
       if (existing) {
+        if (input.modelPreferences !== undefined && existing.model_preferences_json !== JSON.stringify(normalizeModelPreferences(input.modelPreferences))) throw Object.assign(new Error('同一消息不能使用不同模型偏好重试'), { statusCode: 409 });
         if (existing.text !== input.text || existing.selection_json !== JSON.stringify(input.selection || [])) throw Object.assign(new Error('同一消息不能使用不同内容重试'), { statusCode: 409 });
         const savedDocuments=session.doc.documents.filter(item=>item.source==='attachment'&&item.id.startsWith(`upload-${input.clientId}-`));
         if(savedDocuments.length!==incomingDocuments.length)throw Object.assign(new Error('同一消息不能使用不同文件重试'),{statusCode:409});
@@ -136,7 +157,12 @@ export function createAgentSessionRepository({ sql, tx }) {
         session.doc.documents.push({...document,revision:1,versions:[]});documentsChanged=true;
       }
       if(JSON.stringify(session.doc.documents).length>3_000_000)throw Object.assign(new Error('附带文件内容过多，请减少文件数量或选择较小的文件'),{statusCode:413});
-      sql('INSERT INTO agent_inputs(session_id,client_id,text,selection_json,created_at) VALUES(:id,:clientId,:text,:selection,:now)').run({ id: session.id, clientId: input.clientId, text: input.text, selection: JSON.stringify(input.selection || []), now: Date.now() });
+      // Store the turn's choices separately from mutable session settings.
+      const savedSettings = JSON.parse(sql('SELECT settings_json FROM agent_sessions WHERE id=:id').get({id:session.id}).settings_json);
+      const modelPreferences = normalizeModelPreferences(input.modelPreferences ?? userModelPreferences(session.userId));
+      sql('INSERT INTO agent_inputs(session_id,client_id,text,selection_json,model_preferences_json,created_at) VALUES(:id,:clientId,:text,:selection,:modelPreferences,:now)').run({ id: session.id, clientId: input.clientId, text: input.text, selection: JSON.stringify(input.selection || []), modelPreferences:JSON.stringify(modelPreferences), now: Date.now() });
+      // A queued or retried message must not overwrite newer account preferences.
+      if (input.modelPreferences !== undefined) sql('UPDATE agent_sessions SET settings_json=:settings WHERE id=:id').run({id:session.id,settings:JSON.stringify({...savedSettings,modelPreferences})});
       if(session.agentProjectId){
         const title=messageTitle(input.text);
         if(title)sql("UPDATE agent_projects SET title=:title WHERE id=:projectId AND user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND title='新项目' AND (SELECT COUNT(*) FROM agent_inputs i JOIN agent_sessions s ON s.id=i.session_id WHERE s.agent_project_id=:projectId)=1").run({title,projectId:session.agentProjectId,userId:session.userId,deviceId:session.scope.deviceId,workspaceId:session.scope.workspaceId});
@@ -199,7 +225,12 @@ export function createAgentSessionRepository({ sql, tx }) {
       return record;
     });
   }
-  function settings(session, value) { sql('UPDATE agent_sessions SET settings_json=:settings WHERE id=:id').run({ id: session.id, settings: JSON.stringify(value) }); }
+  function settings(session, value) {
+    return tx(() => {
+      if (value.modelPreferences !== undefined) saveUserModelPreferences(session.userId, value.modelPreferences);
+      sql('UPDATE agent_sessions SET settings_json=:settings WHERE id=:id').run({ id: session.id, settings: JSON.stringify(value) });
+    });
+  }
   function control(session, action) {
     if (action === 'resume') {
       tx(() => {
@@ -239,5 +270,5 @@ export function createAgentSessionRepository({ sql, tx }) {
       sql("UPDATE agent_sessions SET doc_json=:doc,state='queued',wake_at=0,interrupted=0 WHERE id=:id").run({ id: session.id, doc: JSON.stringify(current.doc) });
     });
   }
-  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, saveCanvas, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve };
+  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, saveCanvas, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
 }

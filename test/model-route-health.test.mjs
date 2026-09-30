@@ -39,7 +39,7 @@ test('availability failures are separated from user-caused failures', () => {
     ['400 model seedance-x does not exist', { upstreamStatus: 400 }],
     ['模型不存在或未开放', {}],
     ['402 insufficient balance', { upstreamStatus: 402 }],
-    ['模型无响应：超过5分钟未获得上游任务 ID', {}],
+    ['模型无响应：超过7分钟未获得上游任务 ID', {}],
     ['视频生成等待超时', { pollTimedOut: true }],
   ]) assert.ok(routeAvailabilityFailure(routeError(message, extra)), message);
 

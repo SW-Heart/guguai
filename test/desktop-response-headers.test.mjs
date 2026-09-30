@@ -31,3 +31,33 @@ test('removes only response header values that Electron cannot convert to ByteSt
     for (const value of values) assert.doesNotThrow(() => new Headers({ check:value }));
   }
 });
+
+test('removes invalid names and control characters before Electron constructs Headers', () => {
+  const headers = {
+    'bad name':['ok'],
+    '中文':['ok'],
+    'x-control':['a\0b', 'a\rb', 'a\nb', 'valid\ttab'],
+    'content-disposition':["attachment; filename*=UTF-8''%E8%BE%93%E5%87%BA.mp4"],
+    'set-cookie':['session=valid; HttpOnly', 'broken=中文'],
+  };
+  const result = sanitizeResponseHeaders(headers);
+  assert.deepEqual(result.responseHeaders, {
+    'x-control':['valid\ttab'],
+    'content-disposition':headers['content-disposition'],
+    'set-cookie':['session=valid; HttpOnly'],
+  });
+  const converted = new Headers();
+  for (const [name, values] of Object.entries(result.responseHeaders)) converted.set(name, values.join(', '));
+  assert.equal(converted.get('x-control'), 'valid\ttab');
+});
+
+test('diagnostic failures cannot interrupt the header callback', () => {
+  let handler;
+  installResponseHeaderGuard({ onHeadersReceived: (_filter, listener) => { handler = listener; } }, () => { throw new Error('log failure'); });
+  let calls = 0;
+  handler({ responseHeaders:{ 'x-invalid':['中文'] } }, result => {
+    calls++;
+    assert.deepEqual(result, { responseHeaders:{} });
+  });
+  assert.equal(calls, 1);
+});

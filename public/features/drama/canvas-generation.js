@@ -31,8 +31,8 @@ export function canvasGenerationFrameSize(type,aspect){
 }
 
 export function canvasGenerationModels(type,config={}){
-  if(type==='image')return (Array.isArray(config.imageModels)?config.imageModels:fallbackImageModels).filter(model=>model.enabled!==false||model.id==='gpt-image-2');
-  return (config.videoCapabilities?.models||[]).filter(model=>!['minimax-h3','seedance-2.0-fast'].includes(model.id)&&(model.enabled!==false||model.availability==='coming-soon')).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model).sort((a,b)=>(videoOrder.indexOf(a.id)<0?99:videoOrder.indexOf(a.id))-(videoOrder.indexOf(b.id)<0?99:videoOrder.indexOf(b.id)));
+  if(type==='image')return (Array.isArray(config.imageModels)?config.imageModels:fallbackImageModels).filter(model=>model.enabled!==false&&model.availability!=='coming-soon');
+  return (config.videoCapabilities?.models||[]).filter(model=>!['minimax-h3','seedance-2.0-fast'].includes(model.id)&&model.enabled!==false&&model.availability!=='coming-soon').map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model).sort((a,b)=>(videoOrder.indexOf(a.id)<0?99:videoOrder.indexOf(a.id))-(videoOrder.indexOf(b.id)<0?99:videoOrder.indexOf(b.id)));
 }
 
 export function createCanvasGenerationDraft(type,config={}){

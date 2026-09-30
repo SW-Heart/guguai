@@ -63,7 +63,7 @@ import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
-import { isModelEnabled, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
+import { isModelEnabled, listModelControls, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
@@ -127,7 +127,7 @@ const ttapiRequestTimeoutMs = 60_000;
 const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
 const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROUTE_SUBMIT_TIMEOUT_MS || 180_000));
-const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 5 * 60_000));
+const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 7 * 60_000));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
 const autodlMaxPollDurationMs = Math.max(autodlPollIntervalMs, Number(process.env.AUTODL_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
@@ -2022,7 +2022,7 @@ async function failMissingProviderTaskId(userId, task) {
   generationLifecycle.markSubmissionTimedOut(task);
   // The channel accepted the connection but never produced a task ID, which
   // counts as a channel failure for route health tracking.
-  await failGeneration(userId, task, Object.assign(new Error('模型无响应：超过5分钟未获得上游任务 ID'), { routeAttempt:true }));
+  await failGeneration(userId, task, Object.assign(new Error('模型无响应：超过7分钟未获得上游任务 ID'), { routeAttempt:true }));
   task.finishedAt = now();
   await saveGenerationWithRetry(userId, task, 'provider-task-id-timeout');
 }
@@ -2699,7 +2699,9 @@ async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
   return output;
 }
 function agentMediaCatalog() {
-  const images = imageModelCatalog.filter(m => isModelEnabled(m.id)).map(m => ({
+  const controls = new Map(listModelControls().map(item => [item.modelId, item]));
+  const images = imageModelCatalog.filter(m => isModelEnabled(m.id) && controls.get(m.id)?.userVisible !== false && (m.id !== imageModelIds.gptImage25 || Boolean(process.env.TUZI_DEFAULT_API_KEY)))
+    .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],
     qualities:m.id === imageModelIds.gptImage25 ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
@@ -2793,7 +2795,7 @@ const agentRuntime = createAgentRuntime({
   },
 });
 const agentRoute = createAgentRouteHandler({
-  repository:agentRepository,runtime:agentRuntime,gateway:agentGateway,skills:agentSkills,
+  repository:agentRepository,runtime:agentRuntime,gateway:agentGateway,skills:agentSkills,mediaCatalog:agentMediaCatalog,
   bodyJson,sendJson,requireUser,requireDesktopWorkspaceScope,loadProject:loadDramaProject,publicProject:publicDramaProject,
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });

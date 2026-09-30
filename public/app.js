@@ -3,7 +3,7 @@ import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=5';
 import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createApiClient } from './api-client.js?v=3';
+import { createApiClient } from './api-client.js?v=4';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=4';
@@ -2080,7 +2080,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=71').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=75').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2091,7 +2091,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=202').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=206').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     });
@@ -2105,8 +2105,13 @@ function renderRouteLoadingShell(route) {
     const count = library.files.length ? `${library.total} 个文件` : '正在加载…';
     $('#fileCount').textContent = count;
     const grid = $('#fileGrid');
-    if (grid) grid.innerHTML = fileLibraryLoadingSkeleton();
-    $('#loadMoreFiles')?.classList.add('hidden');
+    // Keep existing media nodes when returning to the library. Replacing them
+    // with a one-frame skeleton discards the reconciler's cached cards and
+    // forces Chromium to recreate their image/video resources on every visit.
+    if (grid && !grid.children.length) {
+      grid.innerHTML = fileLibraryLoadingSkeleton();
+      $('#loadMoreFiles')?.classList.add('hidden');
+    }
     return;
   }
   if (['image', 'video'].includes(route)) {
@@ -3901,8 +3906,8 @@ const fallbackVideoModels = Object.freeze([
   ] },
   // Front-end fallback: Minimax H3 is available through the AutoDL workflow.
   { id:'minimax-h3-15s', label:'Minimax H3', description:'支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成', modes:[
-    { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.5, unit:'second' }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:0, maxImages:0 },
-    { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.5, unit:'second' }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:1, maxImages:9 },
+    { generationType:'TEXT', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.6, unit:'second' }, pricingByQuality:{ '480p':{ currency:'credit', amount:0.5, unit:'second' }, '768p':{ currency:'credit', amount:0.6, unit:'second' } }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:0, maxImages:0 },
+    { generationType:'REFERENCE', aspectRatios:['16:9','9:16'], durations:[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], qualityOptions:['768p','480p'], pricing:{ currency:'credit', amount:0.6, unit:'second' }, pricingByQuality:{ '480p':{ currency:'credit', amount:0.5, unit:'second' }, '768p':{ currency:'credit', amount:0.6, unit:'second' } }, referenceLimits:{image:9,video:0,audio:3,total:12}, minImages:1, maxImages:9 },
   ] },
   // Front-end fallback: Veo 3.1 Fast is coming soon and cannot be selected.
   { id:'veo', label:'Veo 3.1 Fast', description:'支持首尾帧模式，固定8秒，速度快', availability:'coming-soon', modes:[
@@ -3921,7 +3926,7 @@ function videoModelOptions() {
   const hasServerCatalog = Array.isArray(state.config?.videoCapabilities?.models);
   const models = hasServerCatalog ? state.config.videoCapabilities.models : fallbackVideoModels;
   return models
-    .filter(model => !hiddenVideoModelIds.has(model.id) && (model.enabled !== false || model.availability === 'coming-soon'))
+    .filter(model => !hiddenVideoModelIds.has(model.id) && model.enabled !== false && model.availability !== 'coming-soon')
     .map(model => model.id === 'grok'
       ? { ...model, modes: model.modes?.map(mode => ({ ...mode, durations: mode.durations?.filter(value => Number(value) !== 30) })) }
       : model)
@@ -3930,7 +3935,7 @@ function videoModelOptions() {
     });
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
-function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s' : ''; }
+function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s 起' : ''; }
 const fallbackImageModels = Object.freeze([
   { id:'gpt-image-2.5', label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', enabled:true },
   { id:'gpt-image-2', label:'GPT-Image-2', description:'从文字或参考图快速探索画面。', enabled:true },
@@ -3938,7 +3943,7 @@ const fallbackImageModels = Object.freeze([
 ]);
 function imageModelOptions() {
   const models = Array.isArray(state.config?.imageModels) ? state.config.imageModels : fallbackImageModels;
-  return models.filter(model => model.enabled !== false || model.id === 'gpt-image-2');
+  return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon');
 }
 function imageModelPromo() { return ''; }
 const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', 'gpt-image-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/grok.svg', 'minimax-h3-15s':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
@@ -3946,9 +3951,9 @@ function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
 function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? selectModelOptions(widget).find(item => item.id === option?.value) : null; const promo = model ? (widget.dataset.imageModel ? imageModelPromo(model.id) : videoModelPromo(model.id)) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
-function productSelectMarkup(widget, select) { return [...select.options].map(option => { const comingSoon = widget.dataset.model && option.dataset.availability === 'coming-soon'; const model = widget.dataset.model ? selectModelOptions(widget).find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label">${modelTitleMarkup(widget, option)}${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}${comingSoon ? '<small>即将上线</small>' : ''}</span><i>✓</i></button>`; }).join(''); }
+function productSelectMarkup(widget, select) { return [...select.options].map(option => { const model = widget.dataset.model ? selectModelOptions(widget).find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label">${modelTitleMarkup(widget, option)}${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}</span><i>✓</i></button>`; }).join(''); }
 function selectSubtitle(widget, option = null) { if (!widget?.dataset.model) return ''; const selected = option || $(`#${widget.dataset.for}`)?.selectedOptions[0]; const model = selected ? selectModelOptions(widget).find(item => item.id === selected.value) : null; return model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''; }
-function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); if (!option || !trigger || !menu) return; trigger.innerHTML = `${productSelectIcon(widget, option)}<span>${modelTitleMarkup(widget, option)}${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') menu.innerHTML = productSelectMarkup(widget, select); }
+function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); if (!trigger || !menu) return; if (!option) { trigger.innerHTML = `<span>${widget.dataset.model ? '暂无可用模型' : '暂无可用选项'}</span>`; trigger.disabled = true; menu.innerHTML = ''; return; } trigger.disabled = select.disabled; trigger.innerHTML = `${productSelectIcon(widget, option)}<span>${modelTitleMarkup(widget, option)}${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') menu.innerHTML = productSelectMarkup(widget, select); }
 function setProductSelectEnabled(id, enabled) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; select.disabled = !enabled; const trigger = widget.querySelector('.product-select-trigger'); if (trigger) trigger.disabled = !enabled; widget.classList.toggle('is-disabled', !enabled); if (!enabled) closeProductSelects(); }
 function setVideoSelectOptions(id, values, label, preferred, { preserveCurrent = true } = {}) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const current = select.value; const options = Array.isArray(values) ? values : []; select.innerHTML = options.map(value => `<option value="${esc(value)}">${esc(label(value))}</option>`).join(''); const supported = options.map(String); const desired = preserveCurrent && supported.includes(String(current)) ? current : supported.includes(String(preferred)) ? String(preferred) : String(options[0] || ''); select.value = desired; widget.dataset.dynamicOptions = 'true'; refreshProductSelect(id); }
 function syncImageModelOptions() {
@@ -3969,7 +3974,7 @@ function syncVideoModelOptions() {
   if (!select || !widget) return;
   const current = select.value;
   const models = videoModelOptions();
-  select.innerHTML = models.map(model => `<option value="${esc(model.id)}" ${model.availability === 'coming-soon' ? 'disabled data-availability="coming-soon"' : ''}>${esc(model.label)}</option>`).join('');
+  select.innerHTML = models.map(model => `<option value="${esc(model.id)}">${esc(model.label)}</option>`).join('');
   const selectableModels = models.filter(model => model.availability !== 'coming-soon');
   select.value = selectableModels.some(model => model.id === current) ? current : String(selectableModels[0]?.id || '');
   widget.dataset.dynamicOptions = 'true';

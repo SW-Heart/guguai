@@ -21,7 +21,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
   assert.equal(minimaxH315s?.description, '支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成');
-  assert.equal(minimaxH315s?.modes.find(mode => mode.generationType === 'TEXT')?.pricing.amount, 0.5);
+  assert.equal(minimaxH315s?.modes.find(mode => mode.generationType === 'TEXT')?.pricing.amount, 0.6);
   assert.deepEqual(minimaxH315s?.modes.find(mode => mode.generationType === 'REFERENCE')?.referenceLimits, { image: 9, video: 0, audio: 3, total: 12 });
   assert.ok(capabilities.routing.length > 0);
   assert.equal(Object.hasOwn(capabilities.routing[0], 'model'), false);
@@ -43,6 +43,26 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
     () => validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MINIMAX_H3_15S, generationType: 'TEXT', aspectRatio: '16:9', duration: 5, quality: '1080p' }),
     error => error.statusCode === 400 && /不支持所选清晰度/.test(error.message),
   );
+});
+
+test('Minimax H3 prices each resolution for text, reference and legacy requests', () => {
+  const capabilities = publicVideoCapabilities();
+  const model = capabilities.models.find(item => item.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
+  const routing = capabilities.routing.find(item => item.modelId === model.id);
+  for (const [quality, amount] of [['480p', 0.5], ['768p', 0.6]]) {
+    const price = { currency:'credit', amount, unit:'second' };
+    assert.deepEqual(routing.pricingByQuality[quality], price);
+    for (const mode of model.modes) {
+      assert.deepEqual(mode.pricingByQuality[quality], price);
+      for (const duration of [1, 5, 15]) {
+        for (const modelId of [model.id, 'grok-15']) {
+          const request = validateVideoRequest({ modelId, generationType:mode.generationType, quality, duration }, mode.generationType === 'REFERENCE' ? 1 : 0);
+          assert.deepEqual(request.pricing, price);
+        }
+      }
+    }
+  }
+  assert.equal(validateVideoRequest({ modelId:model.id }).pricing.amount, 0.6);
 });
 
 test('first and last frame mode selects continuity profile and enforces eight seconds', () => {

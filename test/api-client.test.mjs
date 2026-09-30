@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import { createApiClient } from '../public/api-client.js';
 
@@ -81,4 +82,47 @@ test('API client applies endpoint response shape defaults without hiding overrid
   assert.deepEqual(await client.request('/list'), ['ok']);
   await assert.rejects(client.request('/object', { responseShape:'array' }), error => error.code === 'INVALID_RESPONSE_SCHEMA');
   assert.equal(calls.length, 2);
+});
+
+test('response-body timeouts and cancellations cannot become a successful empty object', async () => {
+  for (const method of ['request', 'page']) {
+    const client = createApiClient({ timeoutMs:10, fetchImpl:async (_url, { signal }) => ({
+      ok:true, status:200,
+      json:() => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once:true })),
+    }) });
+    await assert.rejects(client[method]('/api/slow-body', { responseShape:'object' }), error => error.code === 'API_TIMEOUT');
+    const caller = new AbortController();
+    const pending = client[method]('/api/cancel-body', { signal:caller.signal, timeoutMs:0, responseShape:'object' });
+    await new Promise(resolve => setImmediate(resolve));
+    caller.abort();
+    await assert.rejects(pending, error => error.code === 'API_ABORTED');
+  }
+});
+
+test('invalid or interrupted successful JSON is rejected; non-JSON HTTP errors retain their status', async () => {
+  for (const method of ['request', 'page']) {
+    for (const cause of [new SyntaxError('truncated JSON'), new TypeError('stream interrupted')]) {
+      const client = createApiClient({ fetchImpl:async () => ({ ok:true, status:200, json:async () => { throw cause; } }) });
+      await assert.rejects(client[method]('/api/local-ready', { responseShape:'object' }), error => error.code === 'INVALID_RESPONSE_JSON' && error.cause === cause);
+    }
+    const client = createApiClient({ fetchImpl:async () => ({ ok:false, status:502, json:async () => { throw new SyntaxError('proxy error HTML'); } }) });
+    await assert.rejects(client[method]('/api/files'), error => error.status === 502 && error.message === '请求失败');
+  }
+});
+
+test('all versioned API-client entries use the new module and HTML cache keys', async () => {
+  for (const [file, expected] of [
+    ['app.js', './api-client.js?v=4'],
+    ['guguadmin.js', './api-client.js?v=4'],
+    ['marketing.js', './api-client.js?v=4'],
+    ['index.html', '/app.js?v=463'],
+    ['guguadmin.html', '/guguadmin.js?v=28'],
+    ['home.html', '/marketing.js?v=16'],
+    ['features.html', '/marketing.js?v=16'],
+    ['pricing.html', '/marketing.js?v=16'],
+  ]) {
+    const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
+    assert.ok(source.includes(expected), `${file} must reference ${expected}`);
+    assert.doesNotMatch(source, /(?:api-client\.js\?v=3|app\.js\?v=459|guguadmin\.js\?v=27|marketing\.js\?v=15)(?:['"\s]|$)/);
+  }
 });

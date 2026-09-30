@@ -2,6 +2,10 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeDatabase, openDatabase } from '../lib/db.mjs';
 import { ensureDefaultModelRoutes } from '../lib/model-routes.mjs';
+import { publicVideoCapabilities, validateVideoRequest } from '../lib/video-capabilities.mjs';
+import { modelPriceFields, pricingSnapshot } from '../lib/pricing.mjs';
+import { creditsToMicro } from '../lib/billing.mjs';
+import vm from 'node:vm';
 
 process.env.DIW_KEY = 'test-diw-key';
 process.env.WJ_TJWD_KEY = 'test-wj-key';
@@ -13,6 +17,51 @@ ensureDefaultModelRoutes();
 after(() => closeDatabase({ checkpoint:false }));
 
 const app = await (await import('node:fs/promises')).readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+
+test('Minimax H3 catalog, admin defaults and billing snapshots use resolution prices', () => {
+  const pricing = { imagePerRequest:1, videoPerSecond:1, version:1 };
+  const catalog = __test.publicPlatformPrices(pricing, publicVideoCapabilities());
+  const fields = modelPriceFields(pricing);
+  for (const [quality, credits, yuan] of [['480p', 0.5, 0.05], ['768p', 0.6, 0.06]]) {
+    const item = catalog.find(item => item.modelId === 'minimax-h3-15s' && item.quality === quality);
+    assert.equal(item.credits, credits);
+    assert.ok(Math.abs(item.yuan - yuan) < 1e-9);
+    assert.equal(item.unit, 'second');
+    assert.equal(fields.find(item => item.key === `minimax-h3-15s:${quality}`).amount, credits);
+    const request = validateVideoRequest({ modelId:'minimax-h3-15s', quality, duration:5 });
+    const snapshot = pricingSnapshot({ ...pricing, videoPerSecondMicro:creditsToMicro(request.pricing.amount) }, 'video', request.duration);
+    assert.equal(snapshot.totalMicro, quality === '480p' ? 2_500_000 : 3_000_000);
+  }
+});
+
+test('Minimax H3 fallback estimates follow the selected resolution', () => {
+  const context = vm.createContext({ state:{ config:{} } });
+  vm.runInContext(app.slice(app.indexOf('const fallbackVideoModels ='), app.indexOf('const modelIconUrls =')), context);
+  vm.runInContext(app.slice(app.indexOf('function videoPricingFor('), app.indexOf('let videoQuoteTimer =')), context);
+  for (const generationType of ['TEXT', 'REFERENCE']) {
+    const parameters = context.videoModelParameters('minimax-h3-15s', generationType);
+    for (const [quality, credits] of [['480p', 0.5], ['768p', 0.6]]) {
+      assert.equal(context.videoPricingFor('minimax-h3-15s', parameters, quality).amount * 5, credits * 5);
+    }
+  }
+  assert.equal(context.videoModelPromo('minimax-h3-15s'), '限时特惠 ¥0.05/s 起');
+  const parameters = context.videoModelParameters('minimax-h3-15s', 'TEXT');
+  context.state.config.modelPrices = [{ modelId:'minimax-h3-15s', quality:'768p', credits:0.8, unit:'second' }];
+  assert.equal(context.videoPricingFor('minimax-h3-15s', parameters, '768p').amount * 5, 4);
+  context.state.config.modelPrices[0].credits = 0.6;
+  assert.equal(context.videoPricingFor('minimax-h3-15s', parameters, '768p').amount * 5, 3);
+});
+
+test('Minimax price changes refresh both versioned frontend entries', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const drama = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
+  assert.match(html, /src="\/app\.js\?v=463"/);
+  assert.match(app, /import\('\.\/drama-studio\.js\?v=206'\)/);
+  assert.doesNotMatch(html, /app\.js\?v=462\b/);
+  assert.doesNotMatch(app, /drama-studio\.js\?v=205\b/);
+  assert.match(drama, /限时特惠 ¥0\.05\/s 起/);
+});
 
 test('video price catalog formats per-second credits to one decimal place', () => {
   const start = app.indexOf('function priceCreditsText(');

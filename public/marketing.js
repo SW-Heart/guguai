@@ -1,4 +1,4 @@
-import { createApiClient } from './api-client.js?v=3';
+import { createApiClient } from './api-client.js?v=4';
 
 (() => {
   const { request: api } = createApiClient({ responseShapeFor: () => 'object' });

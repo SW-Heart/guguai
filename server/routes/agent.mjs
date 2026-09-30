@@ -2,6 +2,7 @@ import { generationFrames } from '../../public/features/agent/frames.js';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import mammoth from 'mammoth';
 import { bodyBuffer } from '../http-protocol.mjs';
+import { normalizeModelPreferences, validateModelPreferences } from '../../lib/agent/model-preferences.mjs';
 
 const DOCUMENT_UPLOAD_MAX_BYTES=15*1024*1024;
 const DOCUMENT_TEXT_MAX_CHARS=300_000;
@@ -43,7 +44,7 @@ async function extractDocument(req,name){
   return text;
 }
 
-export function createAgentRouteHandler({ repository: repo, runtime, gateway, skills, bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, loadProject, publicProject, findGeneration, publicGeneration, findAsset, publicAsset, walletOf }) {
+export function createAgentRouteHandler({ repository: repo, runtime, gateway, skills, mediaCatalog = async () => [], bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, loadProject, publicProject, findGeneration, publicGeneration, findAsset, publicAsset, walletOf }) {
   function attachmentParts(text) {
     // Only interpret the attachment suffix produced by the composer; keep user prose intact.
     let visibleText = String(text || '');
@@ -129,7 +130,8 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
     };
   }
   async function settings(input, previous = {}) {
-    const result = { model: gateway.config.model, autoGenerate: previous.autoGenerate || false, generationBudgetMicro: previous.generationBudgetMicro || 0, skill:previous.skill||'' };
+    const result = { model: gateway.config.model, autoGenerate: previous.autoGenerate || false, generationBudgetMicro: previous.generationBudgetMicro || 0, skill:previous.skill||'', modelPreferences:normalizeModelPreferences(previous.modelPreferences) };
+    if (input.modelPreferences !== undefined) result.modelPreferences = validateModelPreferences(input.modelPreferences, await mediaCatalog());
     if (input.autoGenerate !== undefined) { if (typeof input.autoGenerate !== 'boolean') throw Object.assign(new Error('生成设置无效'), { statusCode: 400 }); result.autoGenerate = input.autoGenerate; }
     if (input.skill !== undefined) {
       if(typeof input.skill!=='string'||input.skill.length>64)throw Object.assign(new Error('所选创作方式无效'),{statusCode:400});
@@ -182,6 +184,18 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
     }
     if (url.pathname === '/api/agent/skills' && req.method === 'GET') {
       sendJson(res, 200, { skills: await skills.search() }); return true;
+    }
+    if (url.pathname === '/api/agent/media-models' && req.method === 'GET') {
+      const models = (await mediaCatalog()).map(({id, label, kind, description, iconKey}) => ({id, label, kind, description, iconKey}));
+      sendJson(res, 200, { models, modelPreferences:repo.userModelPreferences(user.id) }); return true;
+    }
+    if (url.pathname === '/api/agent/model-preferences' && req.method === 'GET') {
+      sendJson(res, 200, {modelPreferences:repo.userModelPreferences(user.id)}); return true;
+    }
+    if (url.pathname === '/api/agent/model-preferences' && req.method === 'PUT') {
+      const input = await bodyJson(req);
+      const preferences = validateModelPreferences(input.modelPreferences, await mediaCatalog());
+      sendJson(res, 200, {modelPreferences:repo.saveUserModelPreferences(user.id, preferences)}); return true;
     }
     if (url.pathname === '/api/agent/projects' && req.method === 'GET') {sendJson(res,200,{projects:repo.listProjects(user.id,scope)});return true;}
     if (url.pathname === '/api/agent/projects' && req.method === 'POST') {
@@ -255,8 +269,13 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       if(input.documents!==undefined&&(!Array.isArray(input.documents)||input.documents.length>10||input.documents.some(item=>!item||typeof item.title!=='string'||item.title.length>160||typeof item.text!=='string'||item.text.length>300_000)||input.documents.reduce((total,item)=>total+(typeof item?.text==='string'?item.text.length:0),0)>1_000_000)){sendJson(res,400,{error:'附带文件内容无效或过多'});return true;}
       const selection = Array.isArray(input.selection) ? [...new Set(input.selection.filter(v => typeof v === 'string' && v.length <= 200))] : [];
       if (selection.length > 50) { sendJson(res, 400, { error: '一次最多选择 50 个素材或画布内容' }); return true; }
-      repo.enqueue(session, { text, clientId: input.clientId, selection, documents:input.documents||[] });
-    } else if (match[2] === 'settings') repo.settings(session, await settings(input, session.settings));
+      const modelPreferences = input.modelPreferences === undefined ? undefined : validateModelPreferences(input.modelPreferences, await mediaCatalog(), {allowUnavailable:true});
+      repo.enqueue(session, { text, clientId: input.clientId, selection, documents:input.documents||[], modelPreferences });
+    } else if (match[2] === 'settings') {
+      const next = await settings(input, session.settings);
+      if (input.modelPreferences === undefined && repo.userModelPreferences) next.modelPreferences = repo.userModelPreferences(user.id);
+      repo.settings(session, next);
+    }
     else if (match[2] === 'interrupt') { repo.control(session, 'interrupt'); runtime.interrupt(session.id); }
     else if (match[2] === 'resume') repo.control(session, 'resume');
     else if (match[2] === 'approval') {

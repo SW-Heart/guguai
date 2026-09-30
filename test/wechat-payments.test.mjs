@@ -172,7 +172,7 @@ test('all modified versioned entries have current cache keys', () => {
   assert.ok(Number(read('public/index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
   assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=5'));
   for (const page of ['index', 'pricing']) assert.ok(read(`public/${page}.html`).includes('/payment.css?v=3'));
-  for (const page of ['pricing', 'home', 'features']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=15'));
+  for (const page of ['pricing', 'home', 'features']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=16'));
 });
 
 test('insufficient balance rejects refund before calling the provider', async t => {

@@ -48,7 +48,7 @@ description: 用户要求撰写产品介绍、推广文案时使用。
 
 `image-design` 覆盖品牌、海报、包装、产品图、角色场景、信息图和界面视觉；详细方法放在 `references/visual-foundations.md`、`references/deliverable-playbook.md` 和 `references/critique-and-refinement.md`，按问题读取。视频美术和作品检查可复用这些资料。此增强不新增网页浏览、代码执行、矢量导出或印前制作能力，也不改变费用确认。调研来源、取舍与真实模型评估题见 [设计能力调研](../docs/agent-design-capability.md)。
 
-## 五个内置技能的交付方法
+## 内置技能的交付方法
 
 2026-09-28 补充了各阶段的交付要求、实例、失败归因与完成条件。正文负责入口判断，专题按任务读取，不通过增加默认上下文来加载全部资料。
 
@@ -59,6 +59,7 @@ description: 用户要求撰写产品介绍、推广文案时使用。
 | 视频制作 | [制作计划](video-production/references/production-planning.md)、[剪辑与交付](video-production/references/editing-delivery.md)：素材依赖、真实入出点和成片时间 |
 | 视频复刻 | [交付与变更](video-replication/references/adaptation-delivery.md)：原片证据到目标作品的对应；保留已有 Hypit 原文 |
 | 作品检查 | [证据与结论](creative-review/references/evidence-and-verdict.md)、[局部修订](creative-review/references/repair-playbook.md) |
+| Seedance 2.0/2.5 创作圣经 | [技能入口](seedance-creation-bible/SKILL.md)：版本差异、素材绑定、分镜与时间轴、参考/编辑/延长模板、声画问题排查 |
 
 来源复核与后续行为评估题见 [创作技能调研](creative-agent-assessment.md#2026-09-28-五个技能的深化)。本次只改技能与维护文档，技能仍热读取；无需修改前端缓存键或重新打桌面安装包。方法与例子不是新工具能力，实际制作仍取决于会话提供的工具、当前模型与授权。
 

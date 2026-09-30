@@ -1,4 +1,6 @@
-export function createCreativeAgentClient({ api, projectId, agentProjectId = '', initialSessionId = '', initialSkill = '', onState, onError, onHistory = () => {} }) {
+import { normalizeModelPreferences } from './model-preferences.js?v=1';
+
+export function createCreativeAgentClient({ api, projectId, agentProjectId = '', initialSessionId = '', initialSkill = '', initialModelPreferences, onState, onError, onHistory = () => {} }) {
   let sessionId = '', stopped = false, timer, state, pendingSend, config, epoch = 0, sequence = 0, accepted = 0;
   const current = token => !stopped && token === epoch;
   function accept(value, token, request) {
@@ -28,7 +30,7 @@ export function createCreativeAgentClient({ api, projectId, agentProjectId = '',
     let session;
     try {
       [session] = await Promise.all([
-        api(id ? `/api/agent/sessions/${id}` : '/api/agent/sessions', id ? undefined : { method:'POST', body:JSON.stringify({projectId,...(agentProjectId?{agentProjectId}:{}), fresh, ...(!fresh&&initialSkill?{skill:initialSkill}:{}), ...(fresh&&agentProjectId&&sessionId?{previousSessionId:sessionId}:{})}) }),
+        api(id ? `/api/agent/sessions/${id}` : '/api/agent/sessions', id ? undefined : { method:'POST', body:JSON.stringify({projectId,...(agentProjectId?{agentProjectId}:{}), fresh, ...(!fresh&&initialSkill?{skill:initialSkill}:{}), ...(!fresh&&initialModelPreferences?{modelPreferences:normalizeModelPreferences(initialModelPreferences)}:{}), ...(fresh&&agentProjectId&&sessionId?{previousSessionId:sessionId}:{})}) }),
         ready,
       ]);
     } catch (error) {
@@ -62,9 +64,9 @@ export function createCreativeAgentClient({ api, projectId, agentProjectId = '',
   }
   return {
     start, history, open: id => open(id), newConversation: () => open('', true),
-    async send(text, selection = [], documents = []) {
-      const next={text,selection,documents};
-      if (!pendingSend || JSON.stringify({text:pendingSend.text,selection:pendingSend.selection,documents:pendingSend.documents||[]}) !== JSON.stringify(next)) pendingSend = { clientId:crypto.randomUUID(), ...next };
+    async send(text, selection = [], documents = [], modelPreferences = state?.settings?.modelPreferences) {
+      const next={text,selection,documents,modelPreferences:normalizeModelPreferences(modelPreferences)};
+      if (!pendingSend || JSON.stringify({text:pendingSend.text,selection:pendingSend.selection,documents:pendingSend.documents||[],modelPreferences:pendingSend.modelPreferences}) !== JSON.stringify(next)) pendingSend = { clientId:crypto.randomUUID(), ...next };
       const result = await action('messages', pendingSend); pendingSend = null;
       void history().catch(() => {}); return result;
     },

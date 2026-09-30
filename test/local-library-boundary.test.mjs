@@ -64,22 +64,22 @@ test('each login activates its account workspace before the legacy claim', () =>
 test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(app.includes('./features/credits/presentation.js?v=5'));
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(admin.includes('/guguadmin.js?v=27'));
+  assert.ok(admin.includes('/guguadmin.js?v=28'));
   assert.ok(admin.includes('/guguadmin.css?v=19'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=7'));
-  assert.match(index, /\/app\.js\?v=456\b/);
+  assert.match(index, /\/app\.js\?v=463\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=342/);
+  assert.match(index, /\/styles\.css\?v=347/);
   assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
   assert.match(index, /\/styles\/base\.css\?v=3/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=15/);
-  assert.match(app, /\.\/drama-studio\.js\?v=202/);
+  assert.match(app, /\.\/drama-studio\.js\?v=206/);
   assert.match(app, /\.\/features\/generation\/polling\.js\?v=4/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
   assert.match(app, /\.\/features\/media\/controller\.js\?v=12/);
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=3/);
-  assert.match(dramaStudio, /director-workspace\.js\?v=110\b/);
-  assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=12\b/);
+  assert.match(dramaStudio, /director-workspace\.js\?v=113\b/);
+  assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=13\b/);
   assert.match(app, /\.\/state\/account-state\.js\?v=1/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
 });
@@ -99,7 +99,7 @@ test('account-scoped loaders ignore responses from an older session', () => {
   assert.match(marketing, /const paymentOrderStorageKey = user =>/);
   assert.doesNotMatch(marketing, /sessionStorage\.(?:getItem|setItem|removeItem)\('gugu_alipay_order'/);
   assert.match(marketing, /sessionStorage\.setItem\(paymentOrderStorageKey\(purchaseUser\)/);
-  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=15/));
+  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=16/));
   assert.match(app, /const requestAccount = accountScope\.snapshot\(\);\n  const button = \$\('#alipayTopupButton'\)/);
   const refreshPaymentSource = app.slice(app.indexOf('async function refreshAlipayPayment'), app.indexOf('async function startAlipayTopup'));
   assert.ok(refreshPaymentSource.includes('orderPaymentProvider(state.alipayOrderNo)'));

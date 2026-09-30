@@ -93,7 +93,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=27/);
+  assert.match(adminHtml, /guguadmin\.js\?v=28/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -142,7 +142,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(editedRoute.data.route.salePriceYuan, 2.2);
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
-  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2 }, expectedVersion: 1 } });
+  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'minimax-h3-15s:768p':0.8, 'minimax-h3-15s:480p':0.5 }, expectedVersion: 1 } });
   assert.equal(pricing.response.status, 201);
   assert.equal(pricing.data.pricing.videoPerSecond, 0.8);
   const priceFields = await admin.call('/api/admin/pricing');
@@ -160,6 +160,38 @@ test('admin HTTP permissions and core workflows', async t => {
   const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote.response.status, 200);
   assert.equal(quote.data.credits, 27.5);
+  await t.test('saved MiniMax prices override defaults until a new version updates config, catalog and quotes', async () => {
+    const modelId = 'minimax-h3-15s';
+    const oldConfig = await userClient.call('/api/config');
+    assert.equal(oldConfig.data.modelPrices.find(item => item.modelId === modelId && item.quality === '768p').credits, 0.8);
+    const oldQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'768p', duration:5 } });
+    assert.equal(oldQuote.response.status, 200);
+    assert.equal(oldQuote.data.credits, 4);
+    const updated = await admin.call('/api/admin/pricing', {
+      method:'POST', headers:{ Origin:base, 'X-CSRF-Token':csrf },
+      body:{ imagePerRequest:pricing.data.pricing.imagePerRequest, videoPerSecond:pricing.data.pricing.videoPerSecond,
+        expectedVersion:pricing.data.pricing.version, modelPrices:{ [`${modelId}:480p`]:0.5, [`${modelId}:768p`]:0.6 } },
+    });
+    assert.equal(updated.response.status, 201);
+    assert.equal(updated.data.pricing.modelPrices['grok:720p'], 2.75);
+    assert.equal(updated.data.pricing.imagePerRequest, 1.5);
+    assert.equal(updated.data.pricing.videoPerSecond, 0.8);
+    const config = await userClient.call('/api/config');
+    const catalog = await userClient.call('/api/public/model-prices');
+    assert.equal(config.data.pricing.version, updated.data.pricing.version);
+    assert.equal(catalog.data.pricingVersion, updated.data.pricing.version);
+    for (const [quality, amount] of [['480p', 0.5], ['768p', 0.6]]) {
+      assert.equal(config.data.modelPrices.find(item => item.modelId === modelId && item.quality === quality).credits, amount);
+      assert.equal(catalog.data.items.find(item => item.modelId === modelId && item.quality === quality).credits, amount);
+      const model = config.data.videoCapabilities.models.find(item => item.id === modelId);
+      for (const mode of model.modes) {
+        assert.equal(mode.pricingByQuality[quality].amount, amount);
+        const result = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:mode.generationType, quality, duration:5 } });
+        assert.equal(result.response.status, 200);
+        assert.equal(result.data.credits, amount * 5);
+      }
+    }
+  });
   const activeRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,7,30], adminEnabled:true } });
   assert.equal(activeRoute.response.status, 200);
   for (const duration of [5,7,30]) {

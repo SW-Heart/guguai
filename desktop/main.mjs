@@ -2,11 +2,10 @@ import { createStartupUpdateGate } from './startup-update.mjs';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream, readFileSync } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { Transform, Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { downloadMediaToFile, validateDownloadedMedia } from './media-download.mjs';
 import { inspectLocalMedia } from './local-media-state.mjs';
@@ -33,6 +32,9 @@ import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDe
 import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
 import { normalizeControlledUrl } from './remote-settings.mjs';
 import { installResponseHeaderGuard } from './response-headers.mjs';
+import { fetchWithTimeout } from './network.mjs';
+import { downloadUpdateToFile } from './update-download.mjs';
+import { runDesktopAction, sendToWindow } from './window-events.mjs';
 import { openWindowsUpdateInstaller } from './windows-update.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -580,7 +582,7 @@ async function cloudScopedHeaders(url) {
 async function cloudRequest(pathname, options = {}) {
   if (!trustedOrigin) throw new Error('云端服务尚未连接');
   const url = new URL(pathname, `${trustedOrigin}/`).toString();
-  return net.fetch(url, { ...options, headers: {
+  return fetchWithTimeout((...args) => net.fetch(...args), url, { ...options, headers: {
     ...(await cloudScopedHeaders(url)),
     'X-GuGu-Desktop': '1',
     ...(options.headers || {}),
@@ -593,13 +595,19 @@ async function completeCloudUpload(uploadId) {
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
   });
-  if (!response.ok) throw new Error(`上传校验失败（${response.status}）`);
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`上传校验失败（${response.status}）`);
+  }
   let result = await response.json();
   if (response.status !== 202 && result.status !== 'verifying') return result;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, Math.min(1500, 300 * (attempt + 1))));
     response = await cloudRequest(`/api/files/uploads/${encodeURIComponent(uploadId)}`);
-    if (!response.ok) throw new Error(`上传状态查询失败（${response.status}）`);
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`上传状态查询失败（${response.status}）`);
+    }
     result = await response.json();
     if (result.status === 'completed' && result.asset) return result.asset;
     if (result.status === 'failed') throw new Error('文件验证失败，请重新选择文件');
@@ -641,6 +649,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
       upsertLocalAsset(asset);
       return { ...asset, cloudAsset, url: localMediaUrl(asset.id), reused: true };
     }
+    await verifyResponse.body?.cancel().catch(() => {});
     if (verifyResponse.status !== 404) throw new Error(`云端素材校验失败（${verifyResponse.status}）`);
     assertActiveWorkspace(targetWorkspace, targetEpoch);
     asset.cloudAssetId = '';
@@ -667,11 +676,14 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     throw new Error('上传协议无效，仅支持 PUT');
   }
   assertActiveWorkspace(targetWorkspace, targetEpoch);
-  const storageResponse = await net.fetch(intent.uploadUrl, {
+  const storageResponse = await fetchWithTimeout((...args) => net.fetch(...args), intent.uploadUrl, {
+    timeoutMs: 300_000,
+    credentials: 'omit',
     method: 'PUT',
     headers: intent.headers || {},
     body: new Blob([bytes], { type: asset.mimeType }),
   });
+  await storageResponse.body?.cancel().catch(() => {});
   if (!storageResponse.ok) throw new Error(`云端上传失败（${storageResponse.status}）`);
   const cloudAsset = await completeCloudUpload(intent.uploadId);
   if (!cloudAsset?.id) throw new Error('云端素材记录创建失败');
@@ -986,7 +998,7 @@ function sendUpdateStatus(status, extra = {}) {
     ...extra,
     snoozed: updateReminderSnoozed,
   };
-  mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
+  sendToWindow(mainWindow, 'desktop:update-status', currentUpdateStatus);
 }
 
 function snoozeUpdateReminder() {
@@ -994,7 +1006,7 @@ function snoozeUpdateReminder() {
   startupUpdateGate?.finish();
   updateReminderSnoozed = true;
   currentUpdateStatus = { ...currentUpdateStatus, snoozed: true };
-  mainWindow?.webContents.send('desktop:update-status', currentUpdateStatus);
+  sendToWindow(mainWindow, 'desktop:update-status', currentUpdateStatus);
   return currentUpdateStatus;
 }
 
@@ -1044,25 +1056,9 @@ async function downloadMacUpdate(updateInfo) {
   try {
     const cached = await macUpdateDigest(target).catch(() => null);
     if (cached?.size === Number(file.size) && cached.sha512 === file.sha512) return macUpdateReady(target, updateInfo.version);
-    const response = await net.fetch(file.downloadUrl, { redirect: 'follow' });
-    if (!response.ok || !response.body) throw new Error(`更新安装包下载失败（${response.status}）`);
-    const hash = createHash('sha512');
-    const total = Number(file.size);
-    let transferred = 0;
-    let lastPercent = -1;
-    const digestTransform = new Transform({ transform(chunk, _encoding, callback) {
-      transferred += chunk.length;
-      hash.update(chunk);
-      const percent = Math.min(100, Math.floor((transferred / total) * 100));
-      if (percent !== lastPercent) {
-        lastPercent = percent;
-        sendUpdateStatus('downloading', { percent, transferred, total });
-      }
-      callback(null, chunk);
-    } });
-    await pipeline(Readable.fromWeb(response.body), digestTransform, createWriteStream(temporary, { mode: 0o600 }));
-    const sha512 = hash.digest('base64');
-    if (transferred !== total || sha512 !== file.sha512) throw new Error('更新安装包完整性校验失败');
+    await downloadUpdateToFile((...args) => net.fetch(...args), file, temporary, {
+      onProgress: progress => sendUpdateStatus('downloading', progress),
+    });
     await fs.rm(target, { force: true });
     await fs.rename(temporary, target);
     return macUpdateReady(target, updateInfo.version);
@@ -1279,7 +1275,7 @@ function rendererLogAllowed(timestamp = Date.now()) {
 
 function sendWindowState() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
-  mainWindow.webContents.send('desktop:window-state', {
+  sendToWindow(mainWindow, 'desktop:window-state', {
     maximized: mainWindow.isMaximized(),
     fullscreen: mainWindow.isFullScreen(),
     transitioning: windowFullscreenTransition,
@@ -1334,7 +1330,7 @@ function createTrayIcon() {
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    void createWindow();
+    void runDesktopAction('打开客户端窗口', () => createWindow());
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1353,7 +1349,7 @@ function updateBackgroundTaskPolling() {
       backgroundTaskPollTimer = null;
       return;
     }
-    mainWindow.webContents.send('desktop:background-task-tick');
+    sendToWindow(mainWindow, 'desktop:background-task-tick');
   }, 6000);
 }
 
@@ -1449,7 +1445,7 @@ async function openAlipayPaymentWindow(paymentHtml) {
     restoreMainWindowAfterPayment();
   });
   currentPaymentView.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(url)) shell.openExternal(url);
+    if (/^https:\/\//i.test(url)) void runDesktopAction('打开外部链接', () => shell.openExternal(url));
     return { action: 'deny' };
   });
   currentPaymentView.webContents.on('before-input-event', (event, input) => {
@@ -1467,7 +1463,7 @@ async function openAlipayPaymentWindow(paymentHtml) {
     await currentPaymentView.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   } catch (error) {
     if (!/ERR_ABORTED|-3/.test(String(error?.message || '')) && !currentPaymentWindow.isDestroyed()) {
-      currentPaymentWindow.webContents.send('payment:load-error', error.message || '支付宝收银台加载失败');
+      sendToWindow(currentPaymentWindow, 'payment:load-error', error.message || '支付宝收银台加载失败');
     }
   }
   return true;
@@ -1763,7 +1759,7 @@ async function createWindow({ loadStudioAfter = true } = {}) {
   });
   mainWindow.on('unresponsive', () => console.warn('[desktop] 主窗口无响应'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void runDesktopAction('打开外部链接', () => shell.openExternal(url));
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', event => {
@@ -1847,7 +1843,7 @@ async function bootstrap() {
 
 app.whenReady().then(bootstrap).catch(async error => {
   console.error('[desktop] 启动失败', error);
-  if (mainWindow) await openOfflinePage(`客户端启动失败：${error.message}`);
+  await runDesktopAction('显示启动提示', () => openOfflinePage(`客户端启动失败：${error.message}`));
 });
 
 app.on('before-quit', () => { isQuitting = true; });
@@ -1865,6 +1861,5 @@ app.on('window-all-closed', () => {
   if (isQuitting) app.quit();
 });
 app.on('activate', () => {
-  if (!mainWindow) void createWindow();
-  else showMainWindow();
+  showMainWindow();
 });

@@ -1,3 +1,4 @@
+import {normalizeModelPreferences} from '../public/features/agent/model-preferences.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -7,7 +8,7 @@ const source=readFileSync(new URL('../public/features/drama/director-workspace.j
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function setup(){
   const input={value:'',style:{},scrollTop:0,get scrollHeight(){return 84+Math.ceil(this.value.length/30)*20;}},form={},sent=[],toasts=[];
-  const context={epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
+  const context={normalizeModelPreferences,preferenceUpdating:false,epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
     host:{querySelector:selector=>selector==='#directorMessage'?input:selector==='.dw-composer'?form:{hidePopover(){}}},
     bridge:{toast:message=>toasts.push(message)},drawPanels(){},save:async()=>{},
     agentClient:{send:async text=>sent.push(text),open:async()=>{},newConversation:async()=>{}},
@@ -57,6 +58,18 @@ test('follow-up prompts queue while the first prompt is being submitted',async()
   first.resolve();await Promise.all([firstRequest,secondRequest]);
   assert.deepEqual(sent,['first message','second message']);
 });
+
+test('a queued message keeps the model preferences present when send was clicked',async()=>{
+  const {context}=setup(),saving=deferred();
+  const first={image:{mode:'manual',modelIds:['image-a']},video:{mode:'auto',modelIds:[]}};
+  context.agentState.settings={modelPreferences:first};context.save=()=>saving.promise;
+  let sentPreferences;
+  context.agentClient.send=async(text,selection,documents,preferences)=>{sentPreferences=preferences;};
+  const pending=context.submit('生成图片');
+  context.agentState.settings.modelPreferences={image:{mode:'manual',modelIds:['image-b']},video:{mode:'auto',modelIds:[]}};
+  saving.resolve();await pending;
+  assert.deepEqual(sentPreferences,first);
+});
 test('conversation navigation preserves text typed while the request is pending',async()=>{
   const {context,input}=setup(),opening=deferred();context.agentClient.open=()=>opening.promise;
   input.value='previous draft';const request=context.switchConversation('next');
@@ -84,7 +97,7 @@ test('changing sessions preserves the activity controls nested inside old histor
   assert.equal(activity.parent,'messages');assert.equal(activity.removed,undefined);assert.equal(context.streamSession,'new');
 });
 test('generation state keeps the composer available for follow-up requirements',()=>{
-  assert.match(source,/button\.disabled=.*uploading\|\|switchingConversation\|\|skillUpdating\|\|!agentState/);
+  assert.match(source,/button\.disabled=.*uploading\|\|switchingConversation\|\|skillUpdating\|\|preferenceUpdating\|\|!agentState/);
   assert.match(source,/busy\?'补充要求'/);
 });
 test('opening a ready conversation keeps saved canvas visible without failing',()=>{

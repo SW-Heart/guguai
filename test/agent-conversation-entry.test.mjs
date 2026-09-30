@@ -9,7 +9,7 @@ function setup(){
   const elements=[],entries=[],submissions=[];let disposed=0;
   const element=()=>({style:{},dataset:{},classList:{toggle(){}},setAttribute(){},replaceChildren(){},append(child){elements.push(child);},remove(){this.removed=true;}});
   const root=element();
-  const context={canvas:{},projectLoadingMarkup,emptyEntry:null,emptyEntrySession:'',disposeEmptyEntry:null,agentReady:false,agentState:null,agentConfig:{configured:true,skills:[]},connectionError:'',chatMode:'full',epoch:1,sending:false,switchingConversation:false,skillUpdating:false,
+  const context={preferenceUpdating:false,canvas:{},projectLoadingMarkup,emptyEntry:null,emptyEntrySession:'',disposeEmptyEntry:null,agentReady:false,agentState:null,agentConfig:{configured:true,skills:[]},connectionError:'',chatMode:'full',epoch:1,sending:false,switchingConversation:false,skillUpdating:false,
     host:{querySelector:()=>elements.find(node=>!node.removed&&'conversationLoading' in node.dataset),append:node=>elements.push(node)},document:{createElement:element},
     bridge:{agentMode:true,renderEmptyConversation:(node,options)=>{entries.push({node,options});return ()=>disposed++;}},
     agentClient:{settings:async()=>{},start:async()=>{}},submit:async(...args)=>submissions.push(args),drawPanels(){},

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCreativeAgentClient} from '../public/features/agent/client.js';
+import {normalizeModelPreferences} from '../public/features/agent/model-preferences.js';
 
 test('startup loads session and configuration concurrently without publishing partial state',async()=>{
   const requests=[],states=[];let resolveConfig,resolveSession;
@@ -20,6 +21,30 @@ test('startup loads session and configuration concurrently without publishing pa
     resolveConfig({configured:true});await pending;
     assert.equal(states.length,1);assert.equal(states[0].state.id,'saved');assert.equal(states[0].config.configured,true);
   }finally{client.dispose();}
+});
+
+test('home preferences initialize the first conversation and fresh conversations use the saved account defaults',async()=>{
+  const bodies=[],preferences={image:{mode:'manual',modelIds:['image-a']},video:{mode:'auto',modelIds:[]}};
+  const client=createCreativeAgentClient({projectId:'p',initialModelPreferences:preferences,onState(){},onError(){},api:async(url,options)=>{
+    if(url==='/api/agent/config')return {configured:true};
+    if(url.includes('?'))return {sessions:[]};
+    const body=JSON.parse(options.body);bodies.push(body);return {id:`chat-${bodies.length}`,settings:{modelPreferences:preferences},state:'idle'};
+  }});
+  try{await client.start();await client.newConversation();assert.deepEqual(bodies[0].modelPreferences,preferences);assert.equal(bodies[1].modelPreferences,undefined);}
+  finally{client.dispose();}
+});
+
+test('message retries keep their model preference snapshot and request identity',async()=>{
+  const bodies=[],preferences={image:{mode:'manual',modelIds:['image-a']},video:{mode:'auto',modelIds:[]}};
+  let attempts=0;
+  const client=createCreativeAgentClient({projectId:'p',onState(){},onError(){},api:async(url,options)=>{
+    if(url==='/api/agent/config')return {configured:true};
+    if(url.includes('?'))return {sessions:[]};
+    if(url.endsWith('/messages')){bodies.push(JSON.parse(options.body));if(!attempts++)throw new Error('connection lost');return {id:'chat',settings:{modelPreferences:normalizeModelPreferences()},state:'queued'};}
+    return {id:'chat',settings:{modelPreferences:preferences},state:'idle'};
+  }});
+  try{await client.start();await assert.rejects(client.send('生成图片',[],[],preferences),/connection lost/);await client.send('生成图片',[],[],structuredClone(preferences));assert.deepEqual(bodies[0],bodies[1]);assert.deepEqual(bodies[0].modelPreferences,preferences);}
+  finally{client.dispose();}
 });
 
 test('leaving a project during startup ignores the delayed response',async()=>{

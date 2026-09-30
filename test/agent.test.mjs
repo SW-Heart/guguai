@@ -13,6 +13,9 @@ import { AGENT_SCHEMA_SQL, createAgentSessionRepository } from '../repositories/
 import { defaultTitleFromMessage } from '../public/features/agent/default-title.js';
 import { createAgentRouteHandler } from '../server/routes/agent.mjs';
 import { llmRatesFromEnv } from '../lib/billing.mjs';
+import { normalizeModelPreferences } from '../lib/agent/model-preferences.mjs';
+
+const imagePreference = ids => ({image:{mode:'manual',modelIds:ids},video:{mode:'auto',modelIds:[]}});
 
 const scope = { deviceId:'device-a', workspaceId:'workspace-a', desktop:true, platform:'darwin' };
 test('skill list loads without waiting for the model catalog', async () => {
@@ -681,6 +684,16 @@ test('Chinese skill searches rank relevant methods without activating them',asyn
   assert.deepEqual(await skills.search('你好'),[]);
 });
 
+test('Seedance versions and common aliases discover the dedicated prompting skill', async () => {
+  const skills = createAgentSkills();
+  for (const query of ['Seedance 2.0', 'Seedance 2.5', 'Seedance2.0', 'Seedance2.5', 'see dance 提示词', 'see dance2.5', 'sd25-pe', '豆包视频模型', '创作圣经']) {
+    assert.equal((await skills.search(query))[0]?.name, 'seedance-creation-bible', query);
+  }
+  for (const query of ['做个短视频', '做海报', '你好', '设计数据库索引']) {
+    assert.ok(!(await skills.search(query)).some(skill => skill.name === 'seedance-creation-bible'), query);
+  }
+});
+
 test('tool schemas reject unknown privileged fields and malformed arguments',()=>{
   const schema={type:'object',properties:{name:{type:'string'}},required:['name']};
   assert.throws(()=>validateToolInput({name:'ok',userId:'victim'},schema),/不支持/);
@@ -1099,5 +1112,103 @@ test('a conversation from another project cannot enable workspace reuse or inher
     assert.equal(res.data.settings.model,'default');
     assert.equal(res.data.workspaceUnchanged,undefined);
     assert.equal(lookups,0);
+  }finally{f.db.close();}
+});
+
+test('message enqueue atomically persists preferences with the turn and rejects changed retries', () => {
+  const f=fixture(),first=imagePreference(['image-a']),next=imagePreference(['image-b']);
+  try{
+    f.repo.saveUserModelPreferences('user-a',first);
+    f.repo.enqueue(f.session,{clientId:'model-pref-first',text:'生成图片',modelPreferences:first});
+    assert.deepEqual(f.get().settings.modelPreferences,first);
+    f.repo.settings(f.get(),{...f.get().settings,modelPreferences:next});
+    assert.deepEqual(JSON.parse(f.repo.inputs(f.get())[0].model_preferences_json),first);
+    f.repo.enqueue(f.get(),{clientId:'model-pref-first',text:'生成图片',modelPreferences:first});
+    assert.equal(f.repo.inputs(f.get()).length,1);
+    assert.deepEqual(f.get().settings.modelPreferences,next);
+    assert.throws(()=>f.repo.enqueue(f.get(),{clientId:'model-pref-first',text:'生成图片',modelPreferences:next}),/不同模型偏好重试/);
+    f.repo.enqueue(f.get(),{clientId:'model-pref-next',text:'再生成一张'});
+    assert.deepEqual(JSON.parse(f.repo.inputs(f.get())[1].model_preferences_json),next);
+    const fresh=f.repo.create('user-a',scope,'',{model:'test-model'});
+    assert.deepEqual(fresh.settings.modelPreferences,next);
+  }finally{f.db.close();}
+});
+
+test('model preference API saves account choices without changing skill or budget and discovers media independently of chat models',async()=>{
+  const f=fixture(),catalog=[{id:'image-a',label:'图片 A',kind:'image'},{id:'video-a',label:'视频 A',kind:'video'}];
+  let input={},modelRequests=0;
+  const route=createAgentRouteHandler({repository:f.repo,runtime:{kick(){}},gateway:{config:{model:'test-model'},listModels:async()=>{modelRequests++;throw new Error('offline');}},skills:{search:async()=>[]},mediaCatalog:async()=>catalog,bodyJson:async()=>input,sendJson:(res,status,data)=>Object.assign(res,{status,data}),requireUser:async()=>({id:'user-a'}),requireDesktopWorkspaceScope:()=>scope,walletOf:()=>({balance:100}),publicGeneration:value=>value});
+  try{
+    const catalogResponse={};await route({method:'GET'},catalogResponse,new URL('http://localhost/api/agent/media-models'));
+    assert.deepEqual(JSON.parse(JSON.stringify(catalogResponse.data.models)),catalog);assert.equal(modelRequests,0);
+    f.repo.settings(f.session,{...f.session.settings,skill:'existing-skill',autoGenerate:true,generationBudgetMicro:9000000});
+    input={modelPreferences:imagePreference(['image-a'])};const response={};
+    await route({method:'POST'},response,new URL(`http://localhost/api/agent/sessions/${f.session.id}/settings`));
+    assert.deepEqual(response.data.settings.modelPreferences,input.modelPreferences);
+    assert.equal(response.data.settings.skill,'existing-skill');assert.equal(response.data.settings.autoGenerate,true);assert.equal(response.data.settings.generationBudgetMicro,9000000);
+    input={clientId:'preferred-message',text:'生成一张图片',modelPreferences:imagePreference(['image-a'])};
+    await route({method:'POST'},{},new URL(`http://localhost/api/agent/sessions/${f.session.id}/messages`));
+    assert.deepEqual(JSON.parse(f.repo.inputs(f.get())[0].model_preferences_json),input.modelPreferences);
+    input={modelPreferences:imagePreference(['video-a'])};
+    await assert.rejects(route({method:'POST'},{},new URL(`http://localhost/api/agent/sessions/${f.session.id}/settings`)),/暂不可用/);
+  }finally{f.db.close();}
+});
+
+test('runtime keeps the sent preference while settings change and blocks a model outside the allowed list',async()=>{
+  const f=fixture(),generated=[];
+  f.repo.settings(f.session,{...f.session.settings,autoGenerate:true,generationBudgetMicro:10000000,modelPreferences:imagePreference(['image-a'])});
+  f.repo.enqueue(f.get(),{clientId:'model-pref-runtime',text:'生成一张图片',modelPreferences:imagePreference(['image-a'])});
+  const tools=createAgentTools({catalog:async()=>[],generate:async args=>{generated.push(args);return {status:200,data:args.previewOnly?{costMicro:1000000,credits:1,quantity:1}:{id:'generated-a',status:'queued'}};}});
+  let requests=0;
+  const {runtime}=runtimeFixture(f,async request=>{
+    assert.ok(request.messages[0].content.includes('image-a'));assert.ok(!request.messages[0].content.includes('image-b'));
+    if(!requests++){
+      f.repo.settings(f.get(),{...f.get().settings,modelPreferences:imagePreference(['image-b'])});
+      return answer('我会生成一张图片。',[call('media_prepare',{type:'image',modelId:'image-b',prompt:'一只猫'},'outside')]);
+    }
+    if(requests===2){assert.match(request.messages.at(-1).content,/不在本次选择中/);return answer('我会使用所选模型生成一只猫。',[call('media_prepare',{type:'image',modelId:'image-a',prompt:'一只猫'},'allowed')]);}
+    if(requests===3){const prepared=JSON.parse(request.messages.at(-1).content);return answer('使用所选图片模型，生成一只猫供你查看。',[call('media_submit',{preparedRequestId:prepared.preparedRequestId},'submit')]);}
+    return answer('图片已开始生成。');
+  },tools);
+  try{
+    await runtime.kick(f.session.id);
+    assert.equal(f.get().state,'completed');assert.equal(generated.length,2);
+    assert.ok(generated.every(args=>args.input.modelId==='image-a'));
+    assert.deepEqual(f.get().settings.modelPreferences,imagePreference(['image-b']));
+    assert.deepEqual(f.get().doc.runModelPreferences,imagePreference(['image-a']));
+  }finally{await runtime.stop();f.db.close();}
+});
+
+test('an earlier prepared request cannot bypass a new manual selection or create a charge confirmation',async()=>{
+  const f=fixture();
+  f.session.doc.prepared={old:{input:{type:'image',modelId:'image-b',prompt:'猫'},quote:{credits:1,costMicro:1000000,quantity:1}}};
+  f.db.prepare('UPDATE agent_sessions SET doc_json=? WHERE id=?').run(JSON.stringify(f.session.doc),f.session.id);
+  f.repo.enqueue(f.get(),{clientId:'model-pref-stale',text:'生成一张图片',modelPreferences:imagePreference(['image-a'])});
+  let requests=0,submissions=0;
+  const tools=createAgentTools({catalog:async()=>[],generate:async()=>{submissions++;return {status:200,data:{}};}});
+  const {runtime}=runtimeFixture(f,async request=>{
+    if(!requests++)return answer('我会生成一张猫的图片。',[call('media_submit',{preparedRequestId:'old'},'old-submit')]);
+    assert.match(request.messages.at(-1).content,/不在本次选择中/);return answer('请使用当前选择的模型重新准备图片。');
+  },tools);
+  try{await runtime.kick(f.session.id);assert.equal(f.get().state,'completed');assert.equal(submissions,0);assert.equal(f.get().doc.approval,undefined);}
+  finally{await runtime.stop();f.db.close();}
+});
+
+test('account preference API works before creating a conversation and new project snapshots use the saved choice',async()=>{
+  const f=fixture(),preferences=imagePreference(['image-a']);let input={},userId='user-b';
+  const route=createAgentRouteHandler({repository:f.repo,runtime:{kick(){}},gateway:{config:{model:'chat'}},skills:{search:async()=>[]},mediaCatalog:async()=>[{id:'image-a',label:'图片 A',kind:'image'}],bodyJson:async()=>input,sendJson:(res,status,data)=>Object.assign(res,{status,data}),requireUser:async()=>({id:userId}),requireDesktopWorkspaceScope:()=>scope,walletOf:()=>({balance:100}),publicGeneration:v=>v});
+  const url=path=>new URL(`http://localhost/api/agent/${path}`);
+  try{
+    input={modelPreferences:preferences};const saved={};await route({method:'PUT'},saved,url('model-preferences'));
+    assert.deepEqual(saved.data.modelPreferences,preferences);
+    assert.equal(f.repo.list('user-b',scope,'').length,0);
+    const p=f.repo.createProject('user-b',scope,'新项目');
+    input={agentProjectId:p.id};const first={};await route({method:'POST'},first,url('sessions'));
+    assert.deepEqual(first.data.settings.modelPreferences,preferences);
+    input={agentProjectId:p.id,fresh:true,previousSessionId:first.data.id};const fresh={};await route({method:'POST'},fresh,url('sessions'));
+    assert.deepEqual(fresh.data.settings.modelPreferences,preferences);assert.equal(fresh.data.workspaceUnchanged,true);
+    userId='user-a';const other={};await route({method:'GET'},other,url('model-preferences'));
+    assert.deepEqual(other.data.modelPreferences,normalizeModelPreferences());
+    assert.deepEqual(f.repo.userModelPreferences('user-b'),preferences);
   }finally{f.db.close();}
 });
