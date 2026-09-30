@@ -1,0 +1,57 @@
+{
+  "generatedAt": "2026-09-30",
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "name": "prompt-optimization",
+      "prompt": "Use case: stylized-concept. Asset type: final 16:9 landscape skill cover for GuGu AI creative workspace, exact wide landscape composition suitable for 1536x864. Primary request: visualize improving a creative prompt from vague draft to a precise beautiful image. Reference image 1 is STYLE ONLY: borrow its luminous pale lavender, indigo-blue translucent glass, white daylight studio and premium realistic materials, NOT its lettering or film-strip objects. Scene: a refined white stone creative desk in a softly sunlit studio. Subject: two elegant translucent glass sheets stand side by side at a slight angle: left sheet carries a few understated abstract grey lines like an unfinished description; right sheet contains a striking miniature lavender perfume-bottle still life with a curved satin backdrop, carefully framed and lit. A single beautiful frosted glass pen rests diagonally in foreground, physically realistic. The contrast is visually legible at small thumbnail size, one focal idea. Style: premium photorealistic editorial 3D art, understated, polished surfaces with subtle texture, soft shadows, cinematic daylight, calm sophistication. Palette: pale lavender and ivory with restrained indigo details. Composition: uncluttered, generous margins, sheets and pen completely visible and concentrated within central 75 percent, wide 16:9 landscape. Constraints: NO readable text, NO titles, NO letters, NO numbers, NO arrows, NO watermark, NO logos, NO floating UI controls, NO diagram labels, NO busy sparkles. Cover is an authored concept, not a screenshot.",
+      "cover": "public/images/skills/prompt-optimization-v1.jpg",
+      "thumbnail": "public/images/skills/prompt-optimization-thumb-v1.jpg",
+      "dimensions": {
+        "cover": [
+          1536,
+          864
+        ],
+        "thumbnail": [
+          640,
+          360
+        ]
+      },
+      "styleReference": "public/images/skills/seedance-creation-bible-v1.jpg"
+    },
+    {
+      "name": "script-writing",
+      "prompt": "Use case: photorealistic-natural. Asset type: final 16:9 landscape skill cover for GuGu AI creative workspace, wide composition suitable for 1536x864. Primary request: evoke script creation with a cinematic night writing desk and an imagined scene. Reference image 1 is STYLE ONLY: borrow the cinematic blue-hour and amber-lamplight contrast, tactile vintage wood, natural photographic realism, NOT the original woman or the three-panel composition. Scene: a writer's worn walnut desk beside a rain-streaked window at blue hour. Subject: several cream screenplay pages slightly overlapping, a simple dark fountain pen laid across the top page, a small open notebook with sparse abstract line markings. A warm desk lamp lights the paper. In the rainy window reflection, a softly blurred old bookshop entrance hints at a story taking shape. No people are necessary. Wide three-quarter tabletop perspective with the pages large and clear as primary visual, window occupies upper background. Style: thoughtful cinematic editorial photography, tactile paper fibres and wood grain, restrained depth of field, beautiful warm amber key light, blue evening outside. The subject reads clearly as writing for film, not a computer or generic office. Constraints: NO legible words, NO lettering, NO titles, NO logos, NO arrows, NO watermark, NO identifiable books or copyrighted story. Do not reproduce the original image. Single continuous landscape image, no panels, generous safe margins around objects. Skill labels will be separate UI text.",
+      "cover": "public/images/skills/script-writing-v1.jpg",
+      "thumbnail": "public/images/skills/script-writing-thumb-v1.jpg",
+      "dimensions": {
+        "cover": [
+          1536,
+          864
+        ],
+        "thumbnail": [
+          640,
+          360
+        ]
+      },
+      "styleReference": "public/images/skills/short-drama-v1.jpg"
+    },
+    {
+      "name": "character-design",
+      "prompt": "Use case: illustration-story. Asset type: final 16:9 landscape skill cover for GuGu AI creative workspace suitable for 1536x864. Primary request: beautiful original character design sheet with three consistent views of the same fictional adult female sky courier. Reference image 1 is STYLE ONLY: borrow the light ivory background, soft lavender studio illumination and refined spacious composition, NOT the glass objects or lettering. Character: an original adult East Asian woman age about 26 with short dark indigo bob hair, a small lavender hair clip, practical cream cropped flight jacket with violet panel seams over a high-neck dark-indigo top, modest tailored charcoal cargo trousers, compact messenger satchel and sturdy boots. Distinctive but believable, fully clothed, no weapon, no logos. Show exactly three views in one harmonious design sheet: left front full-body standing, middle side full-body standing, right larger three-quarter portrait cropped at upper chest. ALL views unmistakably same face, same hairstyle, costume, accessories and colours; front and side poses relaxed and anatomically plausible. Style: high-quality hand-painted animation production concept art, subtle brush texture, elegant restrained linework, warm natural facial expression, original character not any franchise; clean studio illustration rather than flat icon. Colour palette ivory, soft lavender, charcoal, muted indigo. Composition: wide 16:9 sheet, figures separated by generous whitespace, full boots visible for full-body views; no dividing lines and no frames. Constraints: NO text, NO labels, NO numbers, NO arrows, NO watermark, NO anatomy exaggeration, NO extra people, NO floating objects, NO UI. Character clarity must survive a small thumbnail.",
+      "cover": "public/images/skills/character-design-v1.jpg",
+      "thumbnail": "public/images/skills/character-design-thumb-v1.jpg",
+      "dimensions": {
+        "cover": [
+          1536,
+          864
+        ],
+        "thumbnail": [
+          640,
+          360
+        ]
+      },
+      "styleReference": "public/images/skills/seedance-creation-bible-v1.jpg"
+    }
+  ]
+}

@@ -3,7 +3,7 @@ name: seedance-creation-bible
 description: Seedance 2.0/2.5 创作圣经：用户指定 Seedance、see dance 或豆包视频模型时，编写、调优视频提示词，设计素材绑定、分镜、动作、运镜、对白，处理参考、编辑、延长、首尾帧和声画问题。通用视频策划另用 video-production。
 ---
 
-# Seedance 2.0/2.5 创作圣经
+# Seedance 创作圣经
 
 将用户的故事、分镜或原提示词改写为目标版本能理解的拍摄指令，保留题材、人物、逐字台词和创作意图。依据用户提供的两份指南整理；文档能力与 GuGu 当前可执行能力分开判断。
 
@@ -22,6 +22,9 @@ description: Seedance 2.0/2.5 创作圣经：用户指定 Seedance、see dance �
 - 换脸、重复人物、风格、文字、衔接、画质或输入报错：[画面与素材排查](references/visual-troubleshooting.md)。
 - 字幕、台词、音色、背景音乐、翻译或杂音：[声音与字幕排查](references/audio-troubleshooting.md)。
 - 准备实际生成或需要来源边界：[GuGu 能力与文档来源](references/platform-and-sources.md)。
+- 描述或生成结果被拒、需要合规表达：[生成被拒与表达调整](references/rejection-and-clarification.md)。
+
+导演处理、人物表演、动作、运镜、光线、声音、特效和连续制作等视频技巧统一用 `skills_read` 读取 `video-production`，按问题读取其 `references/directing-and-performance.md`、`references/continuation-and-state.md` 或现有运镜与声音专题。本技能保留 Seedance 版本写法、素材绑定和模式排查；不要把 2.0 的制作策略变成 2.5 的参数限制。
 
 ## 提示词调优方法
 

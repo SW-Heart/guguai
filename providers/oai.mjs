@@ -12,6 +12,7 @@ export function createOaiProvider({
   legacyVideoModelIds,
   pollIntervalMs = 4_000,
   requestTimeoutMs = 300_000,
+  submitTimeoutMs = 10 * 60_000,
   maxPollDurationMs = 60 * 60_000,
   maxPolls = Math.ceil(maxPollDurationMs / pollIntervalMs),
   errorMessage,
@@ -146,7 +147,7 @@ export function createOaiProvider({
     const apiKey = keyForTask(task);
     let providerTaskId = '';
     try {
-      const created = await fetchJson(`${baseUrl}/videos`, { method: 'POST', ...request(task, refs, apiKey), signal: AbortSignal.timeout(requestTimeoutMs) });
+      const created = await fetchJson(`${baseUrl}/videos`, { method: 'POST', ...request(task, refs, apiKey), signal: AbortSignal.timeout(submitTimeoutMs) });
       providerTaskId = taskId(created);
       if (providerTaskId) await hooks.onSubmitted?.({ provider: 'oai', taskId: providerTaskId });
       const submittedUrl = videoUrl(created);

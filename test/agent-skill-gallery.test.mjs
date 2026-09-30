@@ -7,10 +7,10 @@ import {galleryItems, skillCardMarkup, skillDetailMarkup, mountSkillGallery} fro
 test('gallery covers built-in skills, with local full-size and thumbnail JPEGs', async () => {
   const skills = await createAgentSkills({roots: [new URL('../agent-skills/', import.meta.url).pathname]}).search();
   const items = galleryItems(skills);
-  assert.equal(items.length, 6);
+  assert.equal(items.length, 9);
   for (const item of items) {
     if (item.name === 'seedance-creation-bible') {
-      assert.equal(item.title, 'Seedance 2.0/2.5 创作圣经');
+      assert.equal(item.title, 'Seedance 创作圣经');
       assert.ok(skillCardMarkup(item).includes('data-skill-quick-use="seedance-creation-bible"'));
     }
     assert.ok(item.prompt && item.input && item.output && item.alt, item.name);
@@ -89,9 +89,9 @@ test('preview, use, retry and disposal keep skill selection inside the current e
 
 test('skill gallery cache versions are connected through HTML and the app entry', () => {
   for (const [path, refs] of [
-    ['index.html', ['/app.js?v=463', '/styles.css?v=347']],
-    ['app.js', ['./features/agent/workspace.js?v=75']],
-    ['features/agent/workspace.js', ['./skill-gallery.js?v=4']],
+    ['index.html', ['/app.js?v=464', '/styles.css?v=347']],
+    ['app.js', ['./features/agent/workspace.js?v=76']],
+    ['features/agent/workspace.js', ['./skill-gallery.js?v=5']],
   ]) {
     const source = readFileSync(new URL(`../public/${path}`, import.meta.url), 'utf8');
     for (const ref of refs) assert.ok(source.includes(ref), `${path}: ${ref}`);

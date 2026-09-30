@@ -12,6 +12,7 @@ export function createDuomiProvider({
   videoPollStartedAt,
   imageMaxPollDurationMs,
   videoMaxPollDurationMs,
+  submitTimeoutMs = 10 * 60_000,
   buildVideoPayload,
   errorMessage,
   upstreamRequestErrorDetail,
@@ -223,7 +224,7 @@ export function createDuomiProvider({
         method: 'POST',
         headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(buildVideoPayload(task, refs)),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(submitTimeoutMs),
       }));
       taskId = created.id || created.task_id;
       if (!taskId) throw Object.assign(new Error('多米视频任务没有返回任务 ID'), { provider: 'duomi', fallbackEligible: false });

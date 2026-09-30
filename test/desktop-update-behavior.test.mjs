@@ -67,6 +67,16 @@ test('startup checks updates alongside workspace initialization', () => {
   assert.ok(bootstrap.indexOf('void checkForUpdates({ promptOnStartup: true })') < bootstrap.indexOf('ensureWorkspaceRoot(workspaceRoot)'));
 });
 
+test('packaged clients schedule silent checks and clean up resume handling on quit', () => {
+  assert.match(desktopMain, /check: \(\) => checkForUpdates\(\)/);
+  assert.match(desktopMain, /canCheck: \(\) => app\.isPackaged && updateConfigured && !isQuitting && !updateCheckInFlight/);
+  assert.match(desktopMain, /if \(updateCheckInFlight\) return currentUpdateStatus/);
+  assert.match(desktopMain, /updateCheckScheduler\.recordCheck\(\);\s+const result = await autoUpdater\.checkForUpdates\(\)/);
+  assert.match(desktopMain, /finally \{\s+updateCheckInFlight = false/);
+  assert.match(desktopMain, /await loadStudio\(\);\s+startupTrace\('studio-loaded'\);\s+if \(app\.isPackaged\) \{\s+updateCheckScheduler\.start\(\);\s+powerMonitor\.on\('resume', checkUpdatesAfterResume\)/);
+  assert.match(desktopMain, /app\.on\('will-quit', \(\) => \{\s+updateCheckScheduler\.stop\(\);\s+powerMonitor\.removeListener\('resume', checkUpdatesAfterResume\)/);
+});
+
 test('rail update entry sits above the account dock with Lucide state icons', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');

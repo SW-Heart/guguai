@@ -1,5 +1,6 @@
 import { createStartupUpdateGate } from './startup-update.mjs';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell, Tray, WebContentsView } from 'electron';
+import { createUpdateCheckScheduler } from './update-check-scheduler.mjs';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, readFileSync } from 'node:fs';
@@ -99,6 +100,7 @@ let workspaceEpoch = 0;
 let trustedOrigin;
 let packageMetadata = {};
 let updateConfigured = false;
+let updateCheckInFlight = false;
 let macUpdateDownloadPromise;
 let downloadedMacUpdatePath = '';
 let downloadedMacUpdateVersion = '';
@@ -118,6 +120,15 @@ let updateReminderSnoozed = false;
 // control so active work is never interrupted.
 let updatePromptOnStartup = false;
 let startupUpdateGate;
+const updateCheckScheduler = createUpdateCheckScheduler({
+  check: () => checkForUpdates(),
+  getStatus: () => currentUpdateStatus.status,
+  canCheck: () => app.isPackaged && updateConfigured && !isQuitting && !updateCheckInFlight
+    && !macUpdateDownloadPromise && !downloadedMacUpdatePath && !downloadedUpdatePath
+    && !macUpdateInstallStarted && !updateInstallStarted,
+  onError: error => console.warn('[desktop] 后台检查更新失败', error),
+});
+const checkUpdatesAfterResume = () => { void updateCheckScheduler.checkIfDue(); };
 let windowFullscreenTransition = false;
 const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
@@ -1187,12 +1198,22 @@ async function checkForUpdates({ promptOnStartup = false } = {}) {
     sendUpdateStatus('unconfigured');
     return { status: 'unconfigured' };
   }
-  updatePromptOnStartup = Boolean(promptOnStartup) && !startupUpdateGate?.finished;
-  if (updatePromptOnStartup) sendUpdateStatus('checking');
-  await configureAutoUpdater();
-  if (!updateConfigured) return { status: 'unconfigured' };
-  try { const result = await autoUpdater.checkForUpdates(); return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' }; }
-  catch (error) { sendUpdateStatus('error', { message: error.message }); return { status: 'error', message: error.message }; }
+  if (updateCheckInFlight) return currentUpdateStatus;
+  updateCheckInFlight = true;
+  try {
+    updatePromptOnStartup = Boolean(promptOnStartup) && !startupUpdateGate?.finished;
+    if (updatePromptOnStartup) sendUpdateStatus('checking');
+    await configureAutoUpdater();
+    if (!updateConfigured) return { status: 'unconfigured' };
+    updateCheckScheduler.recordCheck();
+    const result = await autoUpdater.checkForUpdates();
+    return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' };
+  } catch (error) {
+    sendUpdateStatus('error', { message: error.message });
+    return { status: 'error', message: error.message };
+  } finally {
+    updateCheckInFlight = false;
+  }
 }
 
 async function loadStudio() {
@@ -1839,6 +1860,10 @@ async function bootstrap() {
   currentUpdateStatus = { ...currentUpdateStatus, promptOnStartup: false, promptOnOpen: false };
   await loadStudio();
   startupTrace('studio-loaded');
+  if (app.isPackaged) {
+    updateCheckScheduler.start();
+    powerMonitor.on('resume', checkUpdatesAfterResume);
+  }
 }
 
 app.whenReady().then(bootstrap).catch(async error => {
@@ -1848,6 +1873,8 @@ app.whenReady().then(bootstrap).catch(async error => {
 
 app.on('before-quit', () => { isQuitting = true; });
 app.on('will-quit', () => {
+  updateCheckScheduler.stop();
+  powerMonitor.removeListener('resume', checkUpdatesAfterResume);
   clearInterval(backgroundTaskPollTimer);
   backgroundTaskPollTimer = null;
   closeLocalLibrary();

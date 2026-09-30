@@ -13,6 +13,7 @@ export function createAutodlProvider({
   providerName = 'autodl',
   pollIntervalMs = 10_000,
   requestTimeoutMs = 60_000,
+  submitTimeoutMs = 10 * 60_000,
   maxPollDurationMs = 120 * 60_000,
   maxPolls = Math.ceil(maxPollDurationMs / pollIntervalMs),
 } = {}) {
@@ -123,7 +124,7 @@ export function createAutodlProvider({
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload(task, refs)),
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        signal: AbortSignal.timeout(submitTimeoutMs),
       });
       providerTaskId = taskId(created);
       if (!providerTaskId) throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });

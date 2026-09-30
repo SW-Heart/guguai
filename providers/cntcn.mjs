@@ -10,6 +10,7 @@ export function createCntcnProvider({
   videoMaxPollDurationMs,
   pollIntervalMs = 5_000,
   requestTimeoutMs = 60_000,
+  submitTimeoutMs = 10 * 60_000,
   notifyVideoProgress,
   upstreamRequestErrorDetail,
   isDefinitiveSubmitRejection,
@@ -75,7 +76,7 @@ export function createCntcnProvider({
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(buildVideoPayload(task, refs)),
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        signal: AbortSignal.timeout(submitTimeoutMs),
       });
       providerTaskId = taskId(created);
       if (!providerTaskId) throw new Error('CNTCN 已接受请求，但没有返回任务 ID，提交结果待核对');

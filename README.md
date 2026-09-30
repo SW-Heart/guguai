@@ -116,10 +116,10 @@ WJ_TJWD_KEY=your_wj_tjwd_key
 WJ_SD_PY_900_KEY=your_wj_seedance_900_key
 MODEL_ROUTE_CREDENTIAL_SECRET=replace_with_a_long_random_secret
 MODEL_ROUTE_CHECK_INTERVAL_MS=600000
-# 动态视频线路创建任务的提交请求超时时间（默认 180 秒）
-VIDEO_ROUTE_SUBMIT_TIMEOUT_MS=180000
-# 异步视频提交后，超过此时间仍未取得上游 taskId 则失败并退款（默认 7 分钟）
-VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS=420000
+# 动态视频线路创建任务的提交请求超时时间（默认 10 分钟）
+VIDEO_ROUTE_SUBMIT_TIMEOUT_MS=600000
+# 异步视频提交后，超过此时间仍未取得上游 taskId 则失败并退款（默认 10 分钟）
+VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS=600000
 # 已持久化任务的恢复扫描间隔（默认 60 秒）
 GENERATION_RECOVERY_SWEEP_MS=60000
 # 任务执行器并发、租约和轮询参数

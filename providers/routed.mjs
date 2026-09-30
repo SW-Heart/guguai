@@ -7,7 +7,7 @@ export function createRoutedProvider({
   videoPollTimeoutError,
   videoPollStartedAt,
   videoMaxPollDurationMs,
-  submitTimeoutMs = 180_000,
+  submitTimeoutMs = 10 * 60_000,
   notifyVideoProgress,
   upstreamRequestErrorDetail,
   isDefinitiveSubmitRejection,

@@ -11,6 +11,7 @@ export function createTtapiProvider({
   pollIntervalMs = 8_000,
   maxBackoffMs = 60_000,
   requestTimeoutMs = 60_000,
+  submitTimeoutMs = 10 * 60_000,
   notifyVideoProgress,
   upstreamRequestErrorDetail,
   isDefinitiveSubmitRejection,
@@ -70,7 +71,7 @@ export function createTtapiProvider({
         method: 'POST',
         headers: { 'TT-API-KEY': apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        signal: AbortSignal.timeout(submitTimeoutMs),
       });
     } catch (error) {
       if (isDefinitiveSubmitRejection(error)) throw Object.assign(error, { provider: 'ttapi', upstreamTerminal: true });

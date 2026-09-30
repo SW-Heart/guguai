@@ -2,7 +2,7 @@ import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js
 import { createDirectorWorkspace } from '../drama/director-workspace.js?v=113';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=10';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
-import { mountSkillGallery } from './skill-gallery.js?v=4';
+import { mountSkillGallery } from './skill-gallery.js?v=5';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
 import { mountModelPreferencePicker } from './model-preference-picker.js?v=3';

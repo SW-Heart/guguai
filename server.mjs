@@ -126,8 +126,8 @@ const ttapiMaxPollBackoffMs = 60_000;
 const ttapiRequestTimeoutMs = 60_000;
 const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
-const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROUTE_SUBMIT_TIMEOUT_MS || 180_000));
-const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 7 * 60_000));
+const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROUTE_SUBMIT_TIMEOUT_MS || 10 * 60_000));
+const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 10 * 60_000));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
 const autodlMaxPollDurationMs = Math.max(autodlPollIntervalMs, Number(process.env.AUTODL_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
@@ -685,6 +685,7 @@ function videoProgress(value) {
 }
 const providerTransport = createProviderTransport({ fetchImpl: (...args) => globalThis.fetch(...args), errorMessage, videoProgress, sleep, pendingProviderSubmissions });
 const duomiProvider = createDuomiProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: duomiBase,
   apiKey: process.env.DUOMI_API_KEY,
   ...providerTransport,
@@ -711,6 +712,7 @@ const tuziProvider = createTuziProvider({
   errorMessage,
 });
 const ttapiProvider = createTtapiProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: ttapiBase,
   apiKey: process.env.TTAPI_API_KEY,
   ...providerTransport,
@@ -726,6 +728,7 @@ const ttapiProvider = createTtapiProvider({
   errorMessage,
 });
 const cntcnProvider = createCntcnProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: cntcnBase,
   apiKey: process.env.CNTCN_KEY,
   ...providerTransport,
@@ -753,6 +756,7 @@ const routedProvider = createRoutedProvider({
   errorMessage,
 });
 const autodlProvider = createAutodlProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: autodlBase,
   workflowId: autodlWorkflowId,
   apiKey: process.env.AUTODL_COMFYUI_KEY,
@@ -782,6 +786,7 @@ function buildAutodlMotionPayload(_task, refs) {
   };
 }
 const autodlMotionProvider = createAutodlProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: autodlBase,
   workflowId: autodlMotionWorkflowId,
   apiKey: process.env.AUTODL_COMFYUI_KEY,
@@ -800,6 +805,7 @@ const autodlMotionProvider = createAutodlProvider({
   maxPolls: autodlMaxPolls,
 });
 const oaiProvider = createOaiProvider({
+  submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: oaiBase,
   keys: {
     gemini: process.env.OAIAPI_GEMINI_KEY,
@@ -2022,7 +2028,7 @@ async function failMissingProviderTaskId(userId, task) {
   generationLifecycle.markSubmissionTimedOut(task);
   // The channel accepted the connection but never produced a task ID, which
   // counts as a channel failure for route health tracking.
-  await failGeneration(userId, task, Object.assign(new Error('模型无响应：超过7分钟未获得上游任务 ID'), { routeAttempt:true }));
+  await failGeneration(userId, task, Object.assign(new Error(`模型无响应：等待${Math.round(providerTaskIdTimeoutMs / 60_000)}分钟仍未收到响应`), { routeAttempt:true }));
   task.finishedAt = now();
   await saveGenerationWithRetry(userId, task, 'provider-task-id-timeout');
 }

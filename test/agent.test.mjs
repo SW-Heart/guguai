@@ -356,12 +356,12 @@ test('the agent reads a skill on demand and its full text is not carried into a 
   const {runtime}=runtimeFixture(f,async request=>{requests.push(request.messages);return round++===0?answer('',[call('skills_read',{name:'image-design'})]):answer('已完成。');},toolset,skills);
   await runtime.kick(f.session.id);
   assert.equal(requests[0][1].role,'user');
-  assert.doesNotMatch(JSON.stringify(requests[0]),/# 图像设计/);
-  assert.match(requests[1].find(message=>message.role==='tool').content,/# 图像设计/);
+  assert.doesNotMatch(JSON.stringify(requests[0]),/# 图像创作/);
+  assert.match(requests[1].find(message=>message.role==='tool').content,/# 图像创作/);
   f.repo.enqueue(f.get(),{clientId:'hello',text:'你好'});
   await runtime.kick(f.session.id);
   const later=requests[2];
-  assert.doesNotMatch(JSON.stringify(later),/# 图像设计/);
+  assert.doesNotMatch(JSON.stringify(later),/# 图像创作/);
   assert.match(later.find(message=>message.role==='tool').content,/previous_turn_skill_read/);
   await runtime.stop();f.db.close();
 });

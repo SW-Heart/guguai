@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const { __test } = await import('../server.mjs');
 
-test('uncertain async submission times out seven minutes after task creation', () => {
+test('uncertain async submission times out ten minutes after task creation', () => {
   const createdAt = '2026-08-24T06:44:07.975Z';
   const task = {
     id: 'generation-1', provider: 'cntcn', status: 'running', providerTaskId: '',
@@ -12,14 +12,14 @@ test('uncertain async submission times out seven minutes after task creation', (
   const created = Date.parse(createdAt);
 
   assert.equal(__test.awaitingProviderTaskId(task), true);
-  assert.equal(__test.providerTaskIdDeadline(task), created + 7 * 60_000);
+  assert.equal(__test.providerTaskIdDeadline(task), created + 10 * 60_000);
   assert.equal(__test.providerTaskIdTimedOut(task, created + 5 * 60_000), false);
-  assert.equal(__test.providerTaskIdTimedOut(task, created + 7 * 60_000 - 1), false);
-  assert.equal(__test.providerTaskIdTimedOut(task, created + 7 * 60_000), true);
+  assert.equal(__test.providerTaskIdTimedOut(task, created + 10 * 60_000 - 1), false);
+  assert.equal(__test.providerTaskIdTimedOut(task, created + 10 * 60_000), true);
 });
 
 test('routed video submission timeout leaves margin for slow channel responses', () => {
-  assert.equal(__test.routedVideoSubmitTimeoutMs, 180_000);
+  assert.equal(__test.routedVideoSubmitTimeoutMs, 600_000);
 });
 
 test('task with an upstream task ID is never treated as a submission timeout', () => {
@@ -40,8 +40,8 @@ test('startup recovery grace also covers non-durable providers without a task ID
   };
 
   assert.equal(__test.awaitingProviderTaskId(task), true);
-  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:51:07.974Z')), false);
-  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:51:07.975Z')), true);
+  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:54:07.974Z')), false);
+  assert.equal(__test.providerTaskIdTimedOut(task, Date.parse('2026-08-24T06:54:07.975Z')), true);
 });
 
 test('a generation result awaiting archive is not treated as a missing-task-ID timeout', () => {
