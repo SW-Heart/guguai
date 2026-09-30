@@ -30,3 +30,11 @@ test('DIW receives every repeated reference position', () => {
   const payload = __test.routedVideoPayload({ ...task, routeAdapter:'diw-video', referenceLimits:{ image:9, video:0, audio:0 } }, { images:repeated, videos:[], audios:[] });
   assert.deepEqual(payload.images, repeated);
 });
+
+test('1080p routes preserve supplier resolution and the configured upstream model', () => {
+  for (const routeAdapter of ['diw-video', 'wj-video', 'cntcn-video']) {
+    const payload = __test.routedVideoPayload({ ...task, videoModelId:'seedance-2.0', model:'configured-seedance-1080p', quality:'1080p', routeAdapter }, refs);
+    assert.equal(payload.model, 'configured-seedance-1080p');
+    if (routeAdapter !== 'wj-video') assert.equal(payload.resolution, '1080p');
+  }
+});

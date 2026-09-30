@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
-const render=source.slice(source.indexOf('    const approval=agentReady?agentState?.approval:null;'),source.indexOf("    const sendButton=root.querySelector"));
+const render=source.slice(source.indexOf('    const approval=agentReady?agentState?.approval:null;'),source.indexOf("    updateSendAvailability();",source.indexOf("    const approval=agentReady?agentState?.approval:null;")));
 function setup(approval){
   let details={open:true},html='previous approval';
   const plan={dataset:{approvalSignature:'previous'},get innerHTML(){return html;},set innerHTML(value){html=value;details=value?{open:false,setAttribute(){this.open=true;}}:null;},querySelector(selector){return selector==='details'?details:null;}};

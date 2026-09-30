@@ -15,6 +15,7 @@ import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, f
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=3';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
+import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
@@ -141,7 +142,7 @@ function updateConversationDraft(container,draft) {
 function createConversationWelcome() {
   const welcome=document.createElement('div');
   welcome.className='dw-welcome';
-  welcome.innerHTML='<span class="dw-welcome-mark">✦</span><h2>从一个想法开始</h2><p>一起构思、写作，或把想象变成画面。</p><div class="dw-suggestions"><button data-example="和我一起构思一个故事，先聊聊方向">一起构思故事<span>↗</span></button><button data-example="帮我完善一个创作想法">完善我的想法<span>↗</span></button><button data-example="我想设计一张图片，先帮我确定画面方向">设计一张图片<span>↗</span></button></div></div>';
+  welcome.innerHTML=agentWelcomeHeroMarkup()+creativePresetsMarkup();
   return welcome;
 }
 
@@ -821,10 +822,10 @@ export function createDirectorWorkspace(host, bridge) {
     if(!targetDraft){cancelAnimationFrame(streamFrame);streamFrame=0;lastStreamTime=0;}
     const responseState=connectionError?'error':busy||Boolean(targetDraft)?'streaming':'complete';
     const responseJustFinished=previousResponseState==='streaming'&&responseState!=='streaming';
-    renderConversationMessages(messages,settlingMessageId?items.slice(0,-1):items,visibleDraft,responseState,responseJustFinished,agentState?.state==='completed',!bridge.agentMode);
+    const showWelcome=!bridge.agentMode||(!items.length&&!targetDraft&&!busy&&!sending&&!bridge.hasInitialContent?.()&&chatMode!=='full');
+    renderConversationMessages(messages,settlingMessageId?items.slice(0,-1):items,visibleDraft,responseState,responseJustFinished,agentState?.state==='completed',showWelcome);
     messageScroller?.refresh({reset:sessionChanged});
     if(targetDraft&&!streamFrame)streamFrame=requestAnimationFrame(animateDraft);
-    root.querySelectorAll('[data-example]').forEach(button=>button.onclick=()=>{const input=root.querySelector('#directorMessage');if(input){input.value=button.dataset.example;resizeAgentComposer(input);input.focus();}});
     const approval=agentReady?agentState?.approval:null;
     const plan=root.querySelector('.dw-plan');
     if(!plan)return;
@@ -1319,7 +1320,7 @@ export function createDirectorWorkspace(host, bridge) {
       button.setAttribute('aria-label',label);
       button.removeAttribute('title');
     });
-    host.querySelector('.dw-board').insertAdjacentHTML('beforeend',`<div class="dw-generation-composer" hidden></div><div class="dw-generation-dock"><div class="dw-generation-launcher" role="group" aria-label="在画布上生成内容"><button type="button" data-create-generation="image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span>图像生成</span></button><span class="dw-generation-launcher-divider" aria-hidden="true"></span><button type="button" data-create-generation="video"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span>视频生成</span></button></div><button type="button" class="dw-agent-reopen" data-show-agent aria-label="打开对话" title="打开对话" hidden><span class="gugu-lucide gugu-lucide-message-circle" aria-hidden="true"></span></button></div>`);
+    host.querySelector('.dw-board').insertAdjacentHTML('beforeend',`<div class="dw-generation-composer" hidden></div><div class="dw-generation-dock"><div class="dw-generation-launcher" role="group" aria-label="在画布上生成内容"><button type="button" data-create-generation="image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span>图像生成</span></button><span class="dw-generation-launcher-divider" aria-hidden="true"></span><button type="button" data-create-generation="video"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span>视频生成</span></button></div><button type="button" class="dw-agent-reopen" data-show-agent aria-label="打开对话" title="打开对话" hidden>${agentLogoMarkup}</button></div>`);
     host.querySelectorAll('[data-create-generation]').forEach(button=>button.onclick=()=>createGenerationArea(button.dataset.createGeneration));
     const generationPanel=host.querySelector('.dw-generation-composer');
     generationPanel.addEventListener('input',event=>{
@@ -1609,6 +1610,7 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('[data-agent-new]').addEventListener('click',closeMentions);
     host.querySelector('[data-agent-history]').addEventListener('click',closeMentions);
     composerInput.addEventListener('input',()=>{resizeAgentComposer(composerInput);updateSendAvailability();});
+    bindCreativePresets(host.querySelector('.dw-agent'),composerInput,{signal:popoverEvents.signal,isDisabled:()=>sending||uploading||switchingConversation||skillUpdating});
     composerInput.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!uploading&&!switchingConversation)host.querySelector('.dw-composer').requestSubmit();}};
     composerInput.addEventListener('focus',()=>host.querySelector('.dw-composer').classList.add('is-focused'));
     composerInput.addEventListener('blur',()=>host.querySelector('.dw-composer').classList.remove('is-focused'));

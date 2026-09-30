@@ -134,7 +134,7 @@ test('Seedance 2.0 exposes the dynamic route capabilities', () => {
   assert.deepEqual(model.modes.map(mode => mode.generationType), ['TEXT', 'REFERENCE']);
   assert.deepEqual(model.modes[0].aspectRatios, ['16:9', '9:16', '1:1']);
   assert.deepEqual(model.modes[0].durations, [15]);
-  assert.deepEqual(model.modes[0].qualityOptions, ['480p', '720p']);
+  assert.deepEqual(model.modes[0].qualityOptions, ['480p', '720p', '1080p']);
   assert.equal(model.modes[0].pricing, null);
   assert.deepEqual(model.modes[1].referenceLimits, { image: 9, video: 3, audio: 3, total: 15 });
 
@@ -148,4 +148,13 @@ test('Seedance 2.0 exposes the dynamic route capabilities', () => {
     model: request.model, prompt: '混合参考', aspect_ratio: '16:9', seconds: 15, resolution: '720p',
     reference_image_urls: ['image-url'], reference_videos: ['video-url'], reference_audios: ['audio-url'],
   });
+});
+
+test('Seedance 2.0 validates 1080p for text and reference generation', () => {
+  for (const generationType of ['TEXT', 'REFERENCE']) {
+    const request = validateVideoRequest({ modelId:VIDEO_MODEL_IDS.SEEDANCE_2, generationType, quality:'1080p', duration:15, aspectRatio:'9:16' }, generationType === 'TEXT' ? 0 : 1);
+    assert.equal(request.quality, '1080p');
+    assert.equal(request.provider, 'route');
+    assert.equal(buildVideoPayload({ videoModelId:VIDEO_MODEL_IDS.SEEDANCE_2, ...request, prompt:'镜头推进' }, { images:[], videos:[], audios:[] }).resolution, '1080p');
+  }
 });

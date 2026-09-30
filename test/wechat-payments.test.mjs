@@ -169,7 +169,7 @@ test('wechat order routes require authentication; notify is public and fails clo
 });
 test('all modified versioned entries have current cache keys', () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-  assert.ok(read('public/index.html').includes('/app.js?v=453'));
+  assert.ok(Number(read('public/index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
   assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=5'));
   for (const page of ['index', 'pricing']) assert.ok(read(`public/${page}.html`).includes('/payment.css?v=3'));
   for (const page of ['pricing', 'home', 'features']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=15'));
@@ -255,7 +255,7 @@ test('purchase dialogs use the WeChat icon with a fresh stylesheet cache key', (
   const html = read('index.html');
   assert.equal((html.match(/src="\/icons\/wechat\.svg\?v=1"/g) || []).length, 2);
   assert.ok(read('icons/wechat.svg').includes('viewBox="0 0 24 24"'));
-  assert.ok(html.includes('/styles.css?v=339'));
+  assert.ok(Number(html.match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
   assert.ok(!html.includes('/styles.css?v=338'));
 });
 

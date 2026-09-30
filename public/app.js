@@ -17,7 +17,7 @@ import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=12';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
-import { createConversationRail } from './features/agent/conversation-rail.js?v=4';
+import { createConversationRail } from './features/agent/conversation-rail.js?v=5';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -76,7 +76,7 @@ const conversationRail = createConversationRail({
   accountSnapshot: accountScope.snapshot,
   isAccountCurrent: accountScope.isCurrent,
   onOpen: id => openAgentProject(id),
-  onCreate: () => navigate('agent'),
+  onVisibilityChange: () => syncAgentHistoryVisibility(state.route),
   onRename: item => openRenameAgentProjectDialog(item),
   onDelete: item => void deleteAgentProject(item),
 });
@@ -1638,18 +1638,39 @@ async function initDesktopBridge() {
     if (updateButton && bridge.updates && info.updateUrl) {
       const updateLabel = updateButton.querySelector('.rail-update-label') || updateButton.querySelector('span') || updateButton;
       const setUpdateLabel = text => { updateLabel.textContent = text; };
-      const setUpdateTitle = text => { updateButton.title = text; };
+      // The rail tooltip reads data-rail-tip; aria-label carries the same text for screen readers.
+      const setUpdateTitle = text => {
+        updateButton.dataset.railTip = text;
+        updateButton.setAttribute('aria-label', text);
+        updateButton.removeAttribute('title');
+      };
       const setUpdateState = state => { if (state) updateButton.dataset.updateState = state; else delete updateButton.dataset.updateState; };
+      const setUpdateProgress = percent => {
+        const value = Number(percent);
+        if (percent !== undefined && percent !== null && Number.isFinite(value) && value >= 0) {
+          updateButton.style.setProperty('--update-progress', `${Math.min(100, Math.round(value))}%`);
+          updateButton.dataset.progress = 'known';
+        } else {
+          updateButton.style.removeProperty('--update-progress');
+          delete updateButton.dataset.progress;
+        }
+      };
+      // Clicking the rail entry is an explicit request, so it reopens the
+      // dialog even after the automatic prompt was closed earlier.
+      const openUpdateFromRail = () => {
+        desktopUpdateDialogDismissed = false;
+        openDesktopUpdateDialog();
+      };
       const hideUpdateButton = () => {
         updateButton.classList.add('hidden');
         updateButton.classList.remove('has-update');
         updateButton.disabled = false;
         desktopVersion?.classList.toggle('hidden', !version);
       };
+      // The update entry sits above the account dock, so the version stays visible.
       const showUpdateButton = () => {
         updateButton.classList.remove('hidden');
         updateButton.classList.add('has-update');
-        desktopVersion?.classList.add('hidden');
       };
       hideUpdateButton();
       const applyUpdateStatus = payload => {
@@ -1663,6 +1684,7 @@ async function initDesktopBridge() {
         if (isWindows071() && legacyWindowsUpdateStatuses.has(status)) {
           showUpdateButton();
           setUpdateState('available');
+          setUpdateProgress(null);
           setUpdateLabel('更新');
           setUpdateTitle('前往官网下载新版客户端');
           updateButton.disabled = false;
@@ -1697,11 +1719,12 @@ async function initDesktopBridge() {
           showUpdateButton();
         }
         renderDesktopUpdateDialog(payload, { open: shouldPrompt });
-        if (status === 'available') { setUpdateState('available'); setUpdateLabel('更新'); setUpdateTitle(`下载 GuGu AI ${payload.version || '新版本'}`); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'downloading') { setUpdateState('downloading'); setUpdateLabel('更新'); setUpdateTitle('正在下载更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'downloaded') { setUpdateState('downloaded'); setUpdateLabel('更新'); setUpdateTitle('重启客户端并安装更新'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'installing') { setUpdateState('installing'); setUpdateLabel('更新'); setUpdateTitle('继续安装更新'); updateButton.disabled = desktopUpdateExit.pending || !desktopUpdateExit.isLegacyWindows(); updateButton.onclick = openDesktopUpdateDialog; }
-        else if (status === 'error') { setUpdateState('error'); setUpdateLabel('更新'); setUpdateTitle('更新暂不可用'); updateButton.disabled = false; updateButton.onclick = openDesktopUpdateDialog; }
+        const nextVersion = desktopUpdateState.version ? `GuGu AI ${desktopUpdateState.version}` : '新版本';
+        if (status === 'available') { setUpdateState('available'); setUpdateProgress(null); setUpdateLabel('更新'); setUpdateTitle(`${nextVersion} 可更新`); updateButton.disabled = false; updateButton.onclick = openUpdateFromRail; }
+        else if (status === 'downloading') { setUpdateState('downloading'); setUpdateProgress(payload?.percent); setUpdateLabel('下载中'); setUpdateTitle(`正在下载 ${nextVersion}`); updateButton.disabled = false; updateButton.onclick = openUpdateFromRail; }
+        else if (status === 'downloaded') { setUpdateState('downloaded'); setUpdateProgress(null); setUpdateLabel('更新'); setUpdateTitle(`${nextVersion} 已就绪，重启即可更新`); updateButton.disabled = false; updateButton.onclick = openUpdateFromRail; }
+        else if (status === 'installing') { setUpdateState('installing'); setUpdateProgress(null); setUpdateLabel('安装中'); setUpdateTitle('正在安装更新'); updateButton.disabled = desktopUpdateExit.pending || !desktopUpdateExit.isLegacyWindows(); updateButton.onclick = openUpdateFromRail; }
+        else if (status === 'error') { setUpdateState('error'); setUpdateProgress(null); setUpdateLabel('重试'); setUpdateTitle('更新暂不可用，点击查看'); updateButton.disabled = false; updateButton.onclick = openUpdateFromRail; }
       };
       desktopUpdateUnsubscribe?.();
       desktopUpdateUnsubscribe = bridge.updates.onStatus(applyUpdateStatus);
@@ -2057,7 +2080,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=70').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=71').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2068,7 +2091,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=201').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=202').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     });
@@ -2131,7 +2154,7 @@ function scheduleRouteContentRender(route, routeChanged) {
         void ensureAgentController().then(controller=>{
           if(epoch!==routeRenderEpoch||state.route!=='agent')return;
           return controller.load();
-        }).catch(error=>toast(`智能创作加载失败：${error.message}`));
+        }).catch(error=>toast(`Agent 加载失败：${error.message}`));
         return;
       }
       if (route === 'project') {
@@ -2157,12 +2180,16 @@ function scheduleRouteContentRender(route, routeChanged) {
 }
 // The main sidebar stays an icon column. The 对话与项目 list is part of the
 // agent page and sits on its left, so it is only shown for agent routes.
-function syncAgentHistory(route) {
-  const visible = ['agent', 'project'].includes(route);
+function syncAgentHistoryVisibility(route) {
+  const visible = ['agent', 'project'].includes(route) && conversationRail.isVisible();
   toggleClass($('#agentHistory'), 'hidden', !visible);
+  toggleClass($('#appView'), 'agent-history-visible', visible);
+}
+function syncAgentHistory(route) {
+  syncAgentHistoryVisibility(route);
   const projectId = route === 'project' ? decodeURIComponent(window.location.pathname.split('/').filter(Boolean).at(-1) || '') : '';
   conversationRail.setActive(projectId);
-  if (visible) void conversationRail.refresh();
+  if (['agent', 'project'].includes(route)) void conversationRail.refresh();
 }
 function openAgentProject(id) {
   if (!id) return;
@@ -2183,7 +2210,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
     window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', targetPath);
   }
   state.route = nextRoute;
-  const routeTitles = { agent:'智能创作', project:'智能创作', image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' };
+  const routeTitles = { agent:'Agent', project:'Agent', image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' };
   $('#routeTitle').textContent = routeTitles[nextRoute];
   document.title = `${routeTitles[nextRoute]} · GuGu AI`;
   $$('.rail-button[data-route]').forEach(button => {

@@ -93,7 +93,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=26/);
+  assert.match(adminHtml, /guguadmin\.js\?v=27/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -177,6 +177,19 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(durationsOf(afterChange.data), [5,10,15]);
   const invalidDuration = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'720p', duration:6, aspectRatio:'16:9' } });
   assert.equal(invalidDuration.response.status, 503);
+  const qualities1080 = data => data.videoCapabilities.models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === 'TEXT').qualityOptions.includes('1080p');
+  assert.equal(qualities1080(afterChange.data), false);
+  const route1080 = await admin.call('/api/admin/model-routes', { method:'POST', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ logicalModelId:'seedance-2.0-text', quality:'1080p', credentialId:'diw-main', upstreamModelId:'http-test-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 } });
+  assert.equal(route1080.response.status, 201);
+  assert.equal(qualities1080((await userClient.call('/api/config')).data), true);
+  const quote1080 = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'1080p', duration:10, aspectRatio:'16:9' } });
+  assert.equal(quote1080.response.status, 200);
+  assert.equal(quote1080.data.credits, 200);
+  const disable1080 = await admin.call('/api/admin/model-routes/' + route1080.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ adminEnabled:false, expectedVersion:route1080.data.route.version } });
+  assert.equal(disable1080.response.status, 200);
+  assert.equal(qualities1080((await userClient.call('/api/config')).data), false);
+  const unavailable1080 = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'1080p', duration:10, aspectRatio:'16:9' } });
+  assert.equal(unavailable1080.response.status, 503);
   const forbidden = await userClient.call('/api/admin/overview');
   assert.equal(forbidden.response.status, 401);
   const userLoginAsAdmin = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_user', password: 'user-password-123' } });

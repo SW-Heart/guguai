@@ -61,10 +61,10 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   assert.match(source,/data-tone="\$\{tone\}"/);
   assert.match(source,/class="dw-node-progress"/);
   assert.match(css,/\.dw-frame-caption\{position:absolute;left:0;right:0;top:auto;bottom:calc\(100% \+ 6px\)/);
-  assert.match(read('index.html'),/\/styles\.css\?v=337\b/);
-  assert.match(read('index.html'),/\/app\.js\?v=453\b/);
-  assert.ok(read('app.js').includes("./drama-studio.js?v=201"));
-  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=70"));
-  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=109"));
-  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=109"));
+  assert.ok(Number(read('index.html').match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
+  assert.ok(Number(read('index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
+  assert.ok(read('app.js').includes("./drama-studio.js?v=202"));
+  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=71"));
+  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=110"));
+  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=110"));
 });

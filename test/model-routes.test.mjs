@@ -18,9 +18,12 @@ import {
   SEEDANCE_ROUTE_MODEL_IDS,
   selectModelRoute,
   updateModelRoute,
+  updateModelRouteCredential,
   updateRoutePolicy,
 } from '../lib/model-routes.mjs';
 import { publicVideoCapabilitiesWithControls } from '../lib/model-controls.mjs';
+import { canvasGenerationOptions, canvasGenerationPayload, reconcileCanvasGenerationDraft } from '../public/features/drama/canvas-generation.js';
+import { normalizeShotVideoParameters } from '../public/features/drama/pure.js';
 
 const originalKeys = {};
 for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
@@ -91,7 +94,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
     updateModelRoute(route.id, { adminEnabled:false }, { expectedVersion:route.version });
     assert.ok(qualities('seedance-2.5').every(options => !options.includes('1080p')));
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').available, false);
-    assert.throws(() => createModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', credentialId:'diw-main', upstreamModelId:'invalid-1080p', priority:1, costYuan:1, salePriceYuan:2 }), { statusCode:400 });
+    assert.throws(() => createModelRoute({ logicalModelId:'seedance-2.0-fast', quality:'1080p', credentialId:'diw-main', upstreamModelId:'invalid-1080p', priority:1, costYuan:1, salePriceYuan:2 }), { statusCode:400 });
   });
 
   await t.test('Seedance 2.0 hides a resolution when its routes are unavailable', () => {
@@ -102,6 +105,72 @@ test('Seedance route selection, pricing and catalog health', async t => {
     const model = publicVideoCapabilitiesWithControls().models.find(item => item.id === 'seedance-2.0');
     assert.ok(model.modes.every(mode => !mode.qualityOptions.includes('480p')));
     assert.ok(model.modes.every(mode => mode.qualityOptions.includes('720p')));
+  });
+
+  await t.test('Seedance 2.0 1080p follows each input pool and its enabled channels', () => {
+    const mode = type => publicVideoCapabilitiesWithControls().models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === type);
+    const price = () => publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '1080p');
+    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
+    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+    assert.equal(price().available, false);
+
+    const text = createModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-text-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
+    assert.equal(text.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.TEXT);
+    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
+    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+    assert.deepEqual(mode('TEXT').durationsByQuality['1080p']['16:9'], [5,10,15]);
+    assert.equal(price().yuan, 2);
+    assert.equal(modelRouteCharge(text, 10).total, 200);
+    updateRoutePolicy(SEEDANCE_ROUTE_MODEL_IDS.TEXT, '1080p', text.id);
+
+    const image = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.IMAGE, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'sd20-img-1080p', priority:1, costYuan:1, salePriceYuan:3 });
+    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
+    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', duration:15, aspectRatio:'16:9', referenceCounts:{image:1} }).id, image.id);
+    updateRoutePolicy(SEEDANCE_ROUTE_MODEL_IDS.IMAGE, '1080p', image.id);
+    assert.throws(() => updateModelRoute(image.id, { logicalModelId:'seedance-2.0-fast' }), { statusCode:400 });
+
+    updateModelRouteCredential('diw-main', { enabled:false });
+    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
+    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
+    assert.equal(price().available, false);
+    updateModelRouteCredential('diw-main', { enabled:true });
+    delete process.env.DIW_KEY;
+    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
+    process.env.DIW_KEY = 'diw-test';
+    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
+
+    const fallback = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'sd20-text-fallback-1080p', priority:2, costYuan:1, salePriceYuan:4 });
+    updateModelRoute(text.id, { adminEnabled:false });
+    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
+    assert.equal(price().yuan, 4);
+    updateModelRoute(fallback.id, { adminEnabled:false });
+    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
+    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
+    updateModelRoute(image.id, { adminEnabled:false });
+    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+    const restored = updateModelRoute(image.id, { adminEnabled:true });
+    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
+    deleteModelRoute(image.id, { expectedVersion:restored.version });
+    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+  });
+
+  await t.test('Seedance 2.0 frontend choices follow live 1080p availability', () => {
+    const config = () => ({ videoCapabilities:publicVideoCapabilitiesWithControls() });
+    const draft = { type:'video', modelId:'seedance-2.0', mode:'TEXT', prompt:'镜头推进', aspect:'16:9', quality:'1080p', duration:10, attachments:[] };
+    assert.ok(!canvasGenerationOptions(draft, config()).qualities.includes('1080p'));
+    const route = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
+    assert.ok(canvasGenerationOptions(draft, config()).qualities.includes('1080p'));
+    assert.equal(canvasGenerationPayload(draft, config()).quality, '1080p');
+    const shot = { aspectRatio:'16:9', duration:10, generation:{ quality:'1080p' } };
+    const mode = () => config().videoCapabilities.models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === 'TEXT');
+    normalizeShotVideoParameters(shot, mode());
+    assert.equal(shot.generation.quality, '1080p');
+    updateModelRoute(route.id, { adminEnabled:false });
+    assert.ok(!canvasGenerationOptions(draft, config()).qualities.includes('1080p'));
+    reconcileCanvasGenerationDraft(draft, config());
+    normalizeShotVideoParameters(shot, mode());
+    assert.notEqual(draft.quality, '1080p');
+    assert.notEqual(shot.generation.quality, '1080p');
   });
 
   await t.test('Fast route is included in the public dynamic price catalog', () => {

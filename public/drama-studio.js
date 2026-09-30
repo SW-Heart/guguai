@@ -1,5 +1,5 @@
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=109';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=110';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
 import { buildShotVideoPrompt } from './video-prompt.js?v=5';

@@ -46,15 +46,39 @@ test('sidebar conversation list ignores results that arrive after an account swi
   assert.equal(list.innerHTML, '');
 });
 
-test('sidebar shows a friendly empty state and a retry on failure', async () => {
+test('sidebar hides empty history and keeps a retry visible on failure', async () => {
   const account = { epoch:1, userId:'u1' };
   const empty = fakeRail();
-  await createConversationRail({ root:empty.root, api:async () => ({ projects:[] }), accountSnapshot:() => account, isAccountCurrent:() => true }).refresh();
-  assert.match(empty.list.innerHTML, /还没有对话/);
+  const emptyVisibility = [];
+  const emptyRail = createConversationRail({ root:empty.root, api:async () => ({ projects:[] }), accountSnapshot:() => account, isAccountCurrent:() => true, onVisibilityChange:visible => emptyVisibility.push(visible) });
+  await emptyRail.refresh();
+  assert.equal(empty.list.innerHTML, '');
+  assert.equal(emptyRail.isVisible(), false);
+  assert.ok(emptyVisibility.every(visible => visible === false));
   const failed = fakeRail();
-  await createConversationRail({ root:failed.root, api:async () => { throw new Error('network'); }, accountSnapshot:() => account, isAccountCurrent:() => true }).refresh();
+  const failedRail = createConversationRail({ root:failed.root, api:async () => { throw new Error('network'); }, accountSnapshot:() => account, isAccountCurrent:() => true });
+  await failedRail.refresh();
   assert.match(failed.list.innerHTML, /data-rail-retry/);
   assert.doesNotMatch(failed.list.innerHTML, /network/);
+  assert.equal(failedRail.isVisible(), true);
+});
+
+test('sidebar visibility follows the first conversation, last deletion and account reset', async () => {
+  const { root } = fakeRail();
+  const visibility = [];
+  let projects = [];
+  const rail = createConversationRail({ root, api:async () => ({ projects }), accountSnapshot:() => ({ epoch:1, userId:'u1' }), isAccountCurrent:() => true, onVisibilityChange:visible => visibility.push(visible) });
+  await rail.refresh();
+  assert.equal(visibility.at(-1), false);
+  projects = [{ id:'p1', title:'短片' }];
+  await rail.refresh();
+  assert.equal(visibility.at(-1), true);
+  rail.remove('p1');
+  assert.equal(visibility.at(-1), false);
+  await rail.refresh();
+  assert.equal(visibility.at(-1), true);
+  rail.reset();
+  assert.equal(visibility.at(-1), false);
 });
 
 test('sidebar replaces the project page and the agent is the default route', () => {
@@ -69,6 +93,13 @@ test('sidebar replaces the project page and the agent is the default route', () 
   assert.match(html, /<aside id="agentHistory" class="agent-history hidden"[\s\S]*?<h3 id="agentHistoryListTitle" class="agent-history-label">对话与项目<\/h3>[\s\S]*?data-rail-projects/);
   assert.match(app, /root: document\.querySelector\('#agentHistory'\)/);
   assert.match(app, /toggleClass\(\$\('#agentHistory'\), 'hidden', !visible\)/);
+  assert.match(app, /\['agent', 'project'\]\.includes\(route\) && conversationRail\.isVisible\(\)/);
+  assert.match(app, /toggleClass\(\$\('#appView'\), 'agent-history-visible', visible\)/);
+  assert.doesNotMatch(html, /GuGu Agent|data-rail-new|agent-history-new/);
+  assert.match(html, /data-route="agent" data-rail-tip="Agent"/);
+  assert.match(app, /agent:'Agent', project:'Agent'/);
+  const css = read('styles.css');
+  assert.match(css, /#appView\.agent-route:not\(\.agent-history-visible\):not\(\.agent-project-open\):not\(\.drama-director-open\) \{ grid-template-columns: var\(--rail-width\) minmax\(0, 1fr\);/);
   assert.doesNotMatch(app, /setRailExpanded|railToggle/);
   assert.doesNotMatch(html, /data-route="projects"/);
   assert.match(app, /routePaths\[route\]\|\|validProjectPath\)\?route:'agent'/);
@@ -78,8 +109,8 @@ test('sidebar replaces the project page and the agent is the default route', () 
 
 test('sidebar cache chain is connected through the HTML entry', () => {
   for (const [path, urls] of [
-    ['index.html', ['/app.js?v=451', '/styles.css?v=336']],
-    ['app.js', ['./features/agent/conversation-rail.js?v=4', './features/agent/workspace.js?v=68']],
+    ['index.html', ['/app.js?v=456', '/styles.css?v=342']],
+    ['app.js', ['./features/agent/conversation-rail.js?v=5', './features/agent/workspace.js?v=71']],
     ['features/agent/workspace.js', ['./default-title.js?v=1']],
   ]) for (const url of urls) assert.ok(read(path).includes(url), `${path}: ${url}`);
 });

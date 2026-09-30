@@ -4,6 +4,35 @@
 .brand-gem::before { width: 12px; height: 4px; left: 5px; top: 7px; transform: rotate(-38deg); }
 .brand-gem::after { width: 12px; height: 4px; right: 5px; bottom: 7px; transform: rotate(-38deg); }
 
+/* The creation companion starts as the product mark, then opens its eyes. */
+.brand-gem.gugu-agent-logo{flex:none;width:64px;height:64px;border-radius:18px;background:var(--ink);box-shadow:0 12px 28px #252a4218,inset 0 1px 0 #ffffff1a}
+.brand-gem.gugu-agent-logo::before,.brand-gem.gugu-agent-logo::after{width:14%;height:14%;border-radius:50%;background:#fff;transform:none;animation:gugu-agent-blink 6s 1.45s ease-in-out infinite}
+.brand-gem.gugu-agent-logo::before{left:30%;top:43%;animation:gugu-agent-line-left 1.45s cubic-bezier(.4,0,.2,1) backwards,gugu-agent-blink 6s 1.45s ease-in-out infinite}
+.brand-gem.gugu-agent-logo::after{right:30%;bottom:43%;animation:gugu-agent-line-right 1.45s cubic-bezier(.4,0,.2,1) backwards,gugu-agent-blink 6s 1.45s ease-in-out infinite}
+@keyframes gugu-agent-line-left{
+  0%,12%{left:17.857%;top:25%;width:42.857%;height:14.286%;border-radius:7%;transform:rotate(-38deg)}
+  68%{left:17.857%;top:25%;width:42.857%;height:14.286%;border-radius:7%;transform:rotate(322deg)}
+  100%{left:30%;top:43%;width:14%;height:14%;border-radius:50%;transform:rotate(322deg)}
+}
+@keyframes gugu-agent-line-right{
+  0%,12%{right:17.857%;bottom:25%;width:42.857%;height:14.286%;border-radius:7%;transform:rotate(-38deg)}
+  68%{right:17.857%;bottom:25%;width:42.857%;height:14.286%;border-radius:7%;transform:rotate(322deg)}
+  100%{right:30%;bottom:43%;width:14%;height:14%;border-radius:50%;transform:rotate(322deg)}
+}
+@keyframes gugu-agent-blink{0%,42%,48%,100%{transform:scaleY(1)}45%{transform:scaleY(.12)}}
+.agent-welcome-hero{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px}
+.agent-welcome-hero h2{margin:0;color:#35334d;font:500 21px/1.5 var(--sans);letter-spacing:-.4px}
+.agent-creative-presets{display:grid;gap:6px;text-align:left}
+.agent-creative-presets button{display:flex;align-items:center;gap:13px;box-sizing:border-box;width:100%;min-height:62px;padding:10px 12px;border:1px solid transparent;border-radius:13px;background:transparent;color:#555970;text-align:left;font-family:var(--sans);cursor:pointer;transition:background .16s,border-color .16s}
+.agent-creative-presets button:hover{border-color:#e3dff4;background:#ffffffb8}
+.agent-creative-presets button:focus-visible,.director-workspace .dw-agent-reopen:focus-visible{outline:2px solid #8176ce;outline-offset:3px}
+.agent-preset-icon{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:10px;background:#eeecf8;color:#7970b0}
+.agent-preset-icon svg{width:18px;height:18px}
+.agent-preset-copy{display:grid;gap:3px;min-width:0}
+.agent-preset-copy strong{font-size:13px;line-height:1.5;font-weight:550;color:#4a4b65}
+.agent-preset-copy small{font-size:11px;line-height:1.5;font-weight:400;color:#7c8095}
+@media(prefers-reduced-motion:reduce){.brand-gem.gugu-agent-logo::before,.brand-gem.gugu-agent-logo::after{animation:none}.agent-creative-presets button{transition:none}}
+
 /* Application boot */
 .app-boot { position: fixed; z-index: 50; inset: 0; width: 100%; min-height: 100dvh; display: grid; place-items: center; overflow: hidden; padding: 24px; background: radial-gradient(circle at 50% 34%, rgba(129,140,248,.12), transparent 30%), radial-gradient(circle at 4% 100%, rgba(196,181,253,.16), transparent 32%), var(--canvas); }
 .app-boot::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(99,102,241,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,.025) 1px, transparent 1px); background-size: 48px 48px; pointer-events: none; }
@@ -252,14 +281,6 @@
 .rail-button.active { color: #4f46e5; background: #f0f1ff; font-weight: 550; }
 .rail-button.active::before { content: ""; position: absolute; left: -8px; top: 17px; bottom: 17px; width: 2px; border-radius: 0 2px 2px 0; background: var(--brand); }
 .rail-button svg { width: 18px; }
-.rail-update-button { min-height: 52px; margin-top: 4px; border: 1px solid transparent; color: #4f46e5; background: #eef0ff; }
-.rail-update-button:hover { color: #3730a3; border-color: var(--brand-line); background: #e0e7ff; }
-.rail-update-button:disabled { cursor: wait; opacity: .68; }
-.rail-update-button.has-update { color: #fff; background: linear-gradient(135deg, var(--brand), #756cf3); box-shadow: 0 8px 18px rgba(99,102,241,.22); }
-.rail-update-button.has-update:hover { color: #fff; border-color: transparent; background: linear-gradient(135deg, var(--brand-hover), #695fe8); box-shadow: 0 10px 22px rgba(99,102,241,.28); }
-.rail-update-button.has-update:disabled { color: rgba(255,255,255,.82); background: linear-gradient(135deg, var(--brand), #756cf3); opacity: .82; }
-.rail-update-button svg { width: 17px; }
-.rail-update-button span { white-space: nowrap; font-size: 9px; }
 .rail-beta { position: absolute; top: 4px; right: -5px; padding: 2px 4px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; color: #fff; background: linear-gradient(135deg, #7773e8, #aa68c9); box-shadow: 0 2px 6px rgba(101,88,190,.22); font: 700 8px/1 var(--sans); font-style: normal; letter-spacing: .02em; white-space: nowrap; }
 .rail-button:hover .rail-beta { box-shadow: 0 3px 8px rgba(101,88,190,.32); }
 .rail-button.active .rail-beta { background: linear-gradient(135deg, #605bd5, #a657c2); }
@@ -1048,71 +1069,8 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .desktop-update-versions span { min-width: 82px; }
 }
 
-/* Update surfaces: one light liquid-glass system for the rail, progress
-   dialog, and restart confirmation. The SVGs use Lucide's mature line-icon
-   geometry so the controls stay familiar and optically balanced. */
-.rail-update-button {
-  min-width: 0;
-  min-height: 78px;
-  padding: 8px 5px 7px;
-  gap: 6px;
-  border-color: rgba(255,255,255,.74);
-  background: linear-gradient(145deg, rgba(255,255,255,.72), rgba(236,238,255,.54));
-  box-shadow: 0 12px 26px rgba(91,92,232,.1), inset 0 1px rgba(255,255,255,.9);
-  backdrop-filter: blur(14px) saturate(1.15);
-  -webkit-backdrop-filter: blur(14px) saturate(1.15);
-}
-.rail-update-button .rail-update-icon {
-  position: relative;
-  display: grid;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,.74);
-  border-radius: 10px;
-  color: #555be0;
-  background: rgba(255,255,255,.5);
-  box-shadow: inset 0 1px rgba(255,255,255,.9);
-}
-.rail-update-button .rail-update-icon svg {
-  display: none;
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-.rail-update-button:not([data-update-state]),
-.rail-update-button[data-update-state="available"] .rail-update-icon [data-update-icon="download"],
-.rail-update-button[data-update-state="downloading"] .rail-update-icon [data-update-icon="download"],
-.rail-update-button[data-update-state="downloaded"] .rail-update-icon [data-update-icon="refresh"],
-.rail-update-button[data-update-state="installing"] .rail-update-icon [data-update-icon="refresh"],
-.rail-update-button[data-update-state="error"] .rail-update-icon [data-update-icon="alert"] { display: grid; }
-.rail-update-button .rail-update-label {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  overflow: visible;
-  color: #51556c;
-  font-size: 9px;
-  line-height: 1.25;
-  text-align: center;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.rail-update-button.has-update {
-  border-color: rgba(255,255,255,.62);
-  color: #fff;
-  background: linear-gradient(145deg, rgba(101,99,232,.92), rgba(133,105,232,.82));
-  box-shadow: 0 14px 28px rgba(91,92,232,.22), inset 0 1px rgba(255,255,255,.36);
-}
-.rail-update-button.has-update .rail-update-icon { color: #fff; background: rgba(255,255,255,.16); }
-.rail-update-button.has-update .rail-update-label { color: #fff; }
-.rail-update-button.has-update::after { top: 7px; right: 7px; width: 6px; height: 6px; border: 2px solid rgba(104,101,224,.82); background: #ffd36f; box-shadow: 0 0 0 2px rgba(255,211,111,.18); }
-
+/* Update surfaces: the progress dialog and restart confirmation share the
+   light liquid-glass system. Icons follow Lucide line-icon geometry. */
 .desktop-update-dialog,
 .desktop-restart-dialog {
   width: min(466px, calc(100% - 32px));
@@ -1636,7 +1594,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
   .account-button svg { display: none; }
   .rail { position: fixed; z-index: 30; left: 0; right: 0; bottom: 0; height: 66px; padding: 5px 14px calc(5px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); border-right: 0; flex-direction: row; justify-content: space-around; background: rgba(247,247,248,.97); backdrop-filter: blur(12px); }
   .rail-button { min-width: 56px; min-height: 54px; }
-  .rail-update-button { margin-top: 0; }
   .rail-beta { top: 1px; right: -4px; }
   .rail-button.active::before { left: 18px; right: 18px; top: -6px; bottom: auto; width: auto; height: 2px; }
   .rail-spacer, .rail-button.quiet, .desktop-version { display: none !important; }
@@ -2896,10 +2853,6 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .rail-button { border: 1px solid transparent; border-radius: 9px; transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease), transform var(--ease); }
 .rail-button:hover:not(:disabled) { color: var(--brand); border-color: rgba(99,102,241,.13); background: var(--glass-soft); box-shadow: var(--glass-shadow); transform: translateY(-1px); }
 .rail-button.active { border-color: rgba(99,102,241,.18); color: #4c4eb1; background: var(--glass-soft-hover); box-shadow: 0 5px 14px rgba(91,92,232,.08), inset 0 1px rgba(255,255,255,.88); }
-.rail-update-button { border-color: rgba(99,102,241,.16); background: var(--glass-soft); box-shadow: var(--glass-shadow); }
-.rail-update-button.has-update { border-color: rgba(255,255,255,.34); color: #fff; background: var(--glass-primary); box-shadow: 0 8px 20px rgba(91,92,232,.18), inset 0 1px rgba(255,255,255,.28); }
-.rail-update-button.has-update::after { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border: 2px solid var(--glass-primary); border-radius: 50%; background: #ffcf68; box-shadow: 0 0 0 2px rgba(255,207,104,.2); content: ""; }
-.rail-update-button.has-update:hover { color: #fff; border-color: rgba(255,255,255,.48); background: var(--glass-primary-hover); box-shadow: 0 11px 24px rgba(91,92,232,.23), inset 0 1px rgba(255,255,255,.34); }
 .account-button { border: 1px solid transparent; transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease), transform var(--ease); }
 .account-button:hover { border-color: rgba(99,102,241,.14); background: var(--glass-soft); box-shadow: var(--glass-shadow); }
 .price-catalog-button:hover { background: var(--glass-soft); box-shadow: var(--glass-shadow); }
@@ -5058,48 +5011,6 @@ body.desktop-runtime.desktop-darwin.desktop-fullscreen .desktop-titlebar-logo { 
   .loading-skeleton .skeleton-frame::after { animation: none; }
 }
 
-/* A single raised glass button for the desktop update entry. */
-.rail .rail-update-button,
-.rail .rail-update-button.has-update,
-.rail .rail-update-button.has-update:disabled {
-  width: 48px;
-  min-width: 48px;
-  min-height: 36px;
-  margin-top: 4px;
-  padding: 0;
-  align-self: center;
-  border: 1px solid rgba(255,255,255,.92);
-  border-radius: 11px;
-  color: #514ab7;
-  background: linear-gradient(155deg, rgba(255,255,255,.94) 0%, rgba(231,228,255,.88) 45%, rgba(202,196,249,.82) 100%);
-  box-shadow: inset 0 2px 2px rgba(255,255,255,.98), inset 0 -2px 5px rgba(102,85,198,.12), 0 3px 0 rgba(117,105,205,.18), 0 6px 12px rgba(71,56,164,.14);
-  backdrop-filter: blur(16px) saturate(1.25);
-  -webkit-backdrop-filter: blur(16px) saturate(1.25);
-  text-align: center;
-}
-.rail .rail-update-button.has-update:hover:not(:disabled) {
-  color: #40399e;
-  border-color: rgba(255,255,255,.96);
-  background: linear-gradient(155deg, #fff, rgba(224,218,255,.96) 52%, rgba(189,180,246,.9));
-  box-shadow: inset 0 2px 2px #fff, inset 0 -2px 5px rgba(102,85,198,.14), 0 4px 0 rgba(117,105,205,.17), 0 8px 14px rgba(71,56,164,.17);
-  transform: translateY(-1px);
-}
-.rail .rail-update-button.has-update:active:not(:disabled) {
-  box-shadow: inset 0 2px 5px rgba(91,77,178,.2), inset 0 1px rgba(255,255,255,.7), 0 2px 0 rgba(117,105,205,.2);
-  transform: translateY(2px);
-}
-.rail .rail-update-button.has-update::after { content: none; }
-.rail .rail-update-button .rail-update-label,
-.rail .rail-update-button.has-update .rail-update-label {
-  width: auto;
-  overflow: visible;
-  color: inherit;
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
 .desktop-update-card,
 .desktop-restart-card {
   padding: 28px 30px 24px;
@@ -5908,6 +5819,18 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-entry{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;gap:44px;height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;overscroll-behavior:contain;padding:clamp(48px,10vh,104px) 32px 48px;background:radial-gradient(ellipse 68% 58% at 50% 30%,#f1f0ff 0,#f8f8fc 62%,#f7f8fb 100%)}
 #agentView .agent-entry::before{position:absolute;z-index:-1;inset:0;content:"";background-image:radial-gradient(#6c63c51c .7px,transparent .9px);background-size:13px 13px;mask-image:radial-gradient(ellipse 63% 44% at 50% 42%,#000 0%,transparent 100%);pointer-events:none}
 #agentView .agent-entry-main{display:grid;gap:30px;width:min(900px,100%);text-align:center}
+#agentView .agent-entry-main .agent-creative-presets{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;width:min(720px,100%);justify-self:center}
+#agentView .agent-entry-main .agent-creative-presets button{min-height:66px;background:#ffffff70;border-color:#e7e4f180}
+#agentView .agent-entry-main .agent-creative-presets button:hover{background:#fff;border-color:#ccc6e7}
+.dw-message-history:has(>.dw-welcome){height:100%}
+.dw-messages .dw-welcome{box-sizing:border-box;display:flex;flex-direction:column;gap:24px;min-height:100%;padding:0 2px 8px;text-align:center}
+.dw-welcome .agent-welcome-hero{flex:1;min-height:170px;padding:24px 0 32px}
+.dw-welcome .agent-creative-presets{flex:none}
+.dw-welcome .agent-creative-presets button{border-color:transparent;background:transparent}
+.dw-welcome .agent-creative-presets button:hover{border-color:#e3dff4;background:#f6f4fb}
+.dw-welcome .agent-welcome-hero h2{font:500 21px/1.5 var(--sans);margin:0}
+.director-workspace .dw-agent-reopen .gugu-agent-logo{width:36px;height:36px;border-radius:11px;box-shadow:0 3px 8px #252a4218}
+@media(max-width:580px){#agentView .agent-entry-main .agent-creative-presets{grid-template-columns:minmax(0,1fr);gap:4px}.dw-welcome .agent-welcome-hero{min-height:140px;gap:18px;padding:16px 0 20px}.dw-welcome .agent-welcome-hero h2{font-size:19px}.director-workspace .dw-agent-reopen .gugu-agent-logo{width:32px;height:32px;border-radius:10px}}
 #agentView .agent-entry-mark,#agentView .agent-project-icon{display:grid;place-items:center;color:#5750c8;background:#ebe9ff;border:1px solid #dcd9f8}
 #agentView .agent-entry h1{margin:0;color:#35334d;font-family:"Songti SC","STSong","Noto Serif CJK SC","SimSun",serif;font-size:30px;font-weight:400;line-height:1.5;letter-spacing:.5px}
 #agentView .agent-entry p,#agentView .agent-projects header p{margin:10px 0 24px;color:#777b94;font-size:14px}
@@ -6292,11 +6215,6 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
   body .app-shell.agent-project-open .agent-history { z-index: 92; }
   .agent-history-head { display: flex; flex: none; align-items: center; height: 56px; margin-bottom: 4px; padding: 0 10px; }
   .agent-history-head h2 { margin: 0; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 600; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
-  .agent-history-new { display: flex; flex: none; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px; border: 1px solid transparent; border-radius: 10px; color: #52566b; background: transparent; font-size: 13px; font-weight: 500; text-align: left; transition: color var(--ease), background var(--ease), border-color var(--ease); }
-  .agent-history-new:hover { color: var(--ink); background: rgba(99,102,241,.06); }
-  .agent-history-new:active { transform: scale(.99); }
-  .agent-history-new:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
-  .agent-history-new svg { flex: none; width: 16px; height: 16px; }
   .agent-history-label { flex: none; margin: 16px 0 0; padding: 0 10px; overflow: hidden; color: #8a8ca0; font-size: 12px; font-weight: 500; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
 
   .rail-project-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-height: 0; margin: 6px 0 0; padding: 0 0 4px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; list-style: none; scrollbar-width: thin; scrollbar-color: #d9d8e6 transparent; }
@@ -6393,7 +6311,7 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
   body .app-shell.agent-project-open .rail { display: none !important; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-history-new, .rail-project, .rail.is-collapsed [data-rail-tip]::after { transition: none; }
+  .rail-project, .rail.is-collapsed [data-rail-tip]::after { transition: none; }
   .rail-project-skeleton i, .rail-project-skeleton span { animation: none; }
 }
 
@@ -6403,6 +6321,42 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
 .rail-dock::before { content: ""; width: 22px; height: 1px; border-radius: 1px; background: var(--line-strong); }
 .rail-service { display: grid; justify-items: center; gap: 4px; width: 100%; padding: 6px 2px; border: 1px solid rgba(178,77,85,.18); border-radius: 10px; color: var(--danger); background: var(--danger-soft); font: 600 10px/1.2 var(--sans); text-align: center; white-space: nowrap; }
 .rail-service i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(178,77,85,.14); }
+
+/* Client update entry: a compact glass tile above the account dock. The
+   Lucide icon and short label change with the update state; downloads show a
+   thin bar, so the label never has to carry progress. */
+.rail-update-button { position: relative; display: flex; flex: none; flex-direction: column; align-items: center; justify-content: center; gap: 4px; width: 48px; min-height: 50px; margin: 0 0 2px; padding: 7px 2px 9px; border: 1px solid rgba(255,255,255,.34); border-radius: 13px; color: #fff; background: var(--glass-primary); box-shadow: 0 8px 18px rgba(91,92,232,.2), inset 0 1px rgba(255,255,255,.3); font: 600 11px/1.2 var(--sans); letter-spacing: .02em; text-align: center; transition: background var(--ease), box-shadow var(--ease), transform var(--ease), color var(--ease); }
+.rail-update-button:hover:not(:disabled) { background: var(--glass-primary-hover); box-shadow: 0 11px 22px rgba(91,92,232,.26), inset 0 1px rgba(255,255,255,.36); transform: translateY(-1px); }
+.rail-update-button:active:not(:disabled) { transform: scale(.96); }
+.rail-update-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.rail-update-button:disabled { cursor: default; opacity: .72; }
+.rail-update-icon { display: grid; place-items: center; width: 18px; height: 18px; }
+.rail-update-icon svg { display: none; width: 17px; height: 17px; stroke-width: 1.9; }
+.rail-update-button:not([data-update-state]) [data-update-icon="download"],
+.rail-update-button[data-update-state="available"] [data-update-icon="download"],
+.rail-update-button[data-update-state="downloading"] [data-update-icon="download"],
+.rail-update-button[data-update-state="downloaded"] [data-update-icon="refresh"],
+.rail-update-button[data-update-state="installing"] [data-update-icon="refresh"],
+.rail-update-button[data-update-state="error"] [data-update-icon="alert"] { display: block; }
+.rail-update-label { color: inherit; white-space: nowrap; }
+/* New-version dot for states that are waiting on the user. */
+.rail-update-button:is(:not([data-update-state]), [data-update-state="available"], [data-update-state="downloaded"])::before { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border: 1.5px solid #6d60ec; border-radius: 50%; background: #ffcf68; box-shadow: 0 0 0 2px rgba(255,207,104,.22); }
+/* In-progress and error states calm down to the soft glass surface. */
+.rail-update-button:is([data-update-state="downloading"], [data-update-state="installing"], [data-update-state="error"]) { border-color: var(--glass-line); color: #4c4eb1; background: var(--glass-soft); box-shadow: var(--glass-shadow); }
+.rail-update-button:is([data-update-state="downloading"], [data-update-state="installing"], [data-update-state="error"]):hover:not(:disabled) { color: var(--brand); background: var(--glass-soft-hover); box-shadow: 0 7px 16px rgba(91,92,232,.12), inset 0 1px rgba(255,255,255,.9); }
+.rail-update-button[data-update-state="error"] .rail-update-icon { color: var(--danger); }
+.rail-update-progress { display: none; position: absolute; left: 9px; right: 9px; bottom: 5px; height: 3px; overflow: hidden; border-radius: 2px; background: rgba(99,102,241,.14); }
+.rail-update-progress i { display: block; width: var(--update-progress, 0%); height: 100%; border-radius: inherit; background: var(--glass-primary); transition: width 240ms ease; }
+.rail-update-button:is([data-update-state="downloading"], [data-update-state="installing"]) .rail-update-progress { display: block; }
+.rail-update-button[data-update-state="downloading"]:not([data-progress]) .rail-update-progress i,
+.rail-update-button[data-update-state="installing"] .rail-update-progress i { width: 40%; animation: rail-update-indeterminate 1.3s ease-in-out infinite; }
+@keyframes rail-update-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (max-width: 780px) { .rail-update-button { width: 56px; min-height: 54px; margin: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rail-update-button, .rail-update-progress i { transition: none; }
+  .rail-update-button[data-update-state="downloading"]:not([data-progress]) .rail-update-progress i,
+  .rail-update-button[data-update-state="installing"] .rail-update-progress i { width: 100%; animation: none; opacity: .6; }
+}
 
 .rail-dock-button { position: relative; display: grid; place-items: center; width: 44px; height: 40px; padding: 0; border: 1px solid transparent; border-radius: 11px; color: var(--muted); background: transparent; transition: background var(--ease), border-color var(--ease), transform var(--ease); }
 .rail-dock-button:hover { border-color: rgba(99,102,241,.12); background: rgba(99,102,241,.07); }
@@ -6528,7 +6482,8 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
 @media (min-width: 781px) {
   .agent-history-head { height: 10px; margin: 0; }
   #appView.agent-route:not(.agent-project-open):not(.drama-director-open) > .agent-history { margin-block: 0; padding-top: 4px; border: 1px solid var(--shell-frame-line); border-right-color: var(--line); border-radius: var(--shell-radius) 0 0 var(--shell-radius); background: #fbfbfc; box-shadow: var(--shell-frame-shadow); }
-  #appView.agent-route:not(.agent-project-open):not(.drama-director-open) > .content-panel { border-left: 0; border-radius: 0 var(--shell-radius) var(--shell-radius) 0; }
+  #appView.agent-route.agent-history-visible:not(.agent-project-open):not(.drama-director-open) > .content-panel { border-left: 0; border-radius: 0 var(--shell-radius) var(--shell-radius) 0; }
+  #appView.agent-route:not(.agent-history-visible):not(.agent-project-open):not(.drama-director-open) { grid-template-columns: var(--rail-width) minmax(0, 1fr); grid-template-areas: "rail top" "rail content"; }
 
   #appView.agent-route.agent-project-open:not(.drama-director-open) { padding: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "content"; }
   #appView.agent-route.agent-project-open:not(.drama-director-open) > :is(.rail, .agent-history) { display: none !important; }

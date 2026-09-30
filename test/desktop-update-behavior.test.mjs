@@ -15,7 +15,9 @@ test('desktop updates check before studio entry and do not prompt on window rest
   assert.match(bridgeSource, /const shouldPrompt = mandatory \|\| payload\?\.promptOnStartup === true \|\| payload\?\.promptOnOpen === true/);
   assert.match(bridgeSource, /if \(status === 'available' \|\| status === 'downloading'\) \{\s+if \(shouldPrompt\) showUpdateButton\(\);\s+else hideUpdateButton\(\);/);
   assert.match(bridgeSource, /renderDesktopUpdateDialog\(payload, \{ open: shouldPrompt \}\)/);
-  assert.match(bridgeSource, /if \(status === 'downloaded'\) \{[^}]*updateButton\.onclick = openDesktopUpdateDialog;/s);
+  assert.match(bridgeSource, /if \(status === 'downloaded'\) \{[^\n]*updateButton\.onclick = openUpdateFromRail; \}/);
+  // A rail click is explicit intent, so it must reopen a previously closed prompt.
+  assert.match(bridgeSource, /const openUpdateFromRail = \(\) => \{\s+desktopUpdateDialogDismissed = false;\s+openDesktopUpdateDialog\(\);\s+\};/);
   const statusSubscription = bridgeSource.indexOf('desktopUpdateUnsubscribe = bridge.updates.onStatus(applyUpdateStatus);');
   const initialStatusRead = bridgeSource.indexOf('bridge.updates.getStatus?.()', statusSubscription);
   assert.ok(statusSubscription >= 0 && initialStatusRead > statusSubscription);
@@ -63,4 +65,22 @@ test('Windows update opens the installer before allowing the tray app to quit', 
 test('startup checks updates alongside workspace initialization', () => {
   const bootstrap = desktopMain.slice(desktopMain.indexOf('async function bootstrap()'));
   assert.ok(bootstrap.indexOf('void checkForUpdates({ promptOnStartup: true })') < bootstrap.indexOf('ensureWorkspaceRoot(workspaceRoot)'));
+});
+
+test('rail update entry sits above the account dock with Lucide state icons', async () => {
+  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const footer = html.slice(html.indexOf('<div class="rail-footer">'), html.indexOf('<span id="desktopVersion"'));
+  const button = footer.indexOf('id="desktopUpdateButton"');
+  assert.ok(button >= 0 && button < footer.indexOf('id="railDock"'), 'update entry comes before the account dock');
+  for (const icon of ['download', 'refresh', 'alert']) assert.match(footer, new RegExp(`data-update-icon="${icon}"`));
+  assert.match(footer, /class="rail-update-progress"/);
+  assert.doesNotMatch(footer, /id="desktopUpdateButton"[^>]*\btitle=/);
+  assert.equal((css.match(/^\.rail-update-button \{/gm) || []).length, 1, 'one source of truth for the rail entry');
+
+  const bridgeSource = app.slice(app.indexOf('async function initDesktopBridge('));
+  assert.doesNotMatch(bridgeSource.slice(bridgeSource.indexOf('const showUpdateButton'), bridgeSource.indexOf('hideUpdateButton();', bridgeSource.indexOf('const showUpdateButton'))), /desktopVersion/);
+  assert.match(bridgeSource, /status === 'downloading'\) \{ setUpdateState\('downloading'\); setUpdateProgress\(payload\?\.percent\); setUpdateLabel\('下载中'\)/);
+  assert.match(bridgeSource, /status === 'error'\) \{ setUpdateState\('error'\); setUpdateProgress\(null\); setUpdateLabel\('重试'\)/);
+  assert.match(bridgeSource, /updateButton\.dataset\.railTip = text;/);
 });
