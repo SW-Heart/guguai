@@ -441,16 +441,21 @@ import { createApiClient } from './api-client.js?v=4';
     const rect = select._ui.trigger.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > innerHeight) { closeSelectPopup(); return; }
     const gap = 6;
-    const width = Math.max(rect.width, 200);
+    const viewport = window.visualViewport;
+    const left = (viewport?.offsetLeft || 0) + 8;
+    const top = (viewport?.offsetTop || 0) + 8;
+    const right = left + (viewport?.width || innerWidth) - 16;
+    const bottom = top + (viewport?.height || innerHeight) - 16;
+    const width = Math.min(Math.max(rect.width, 200), right - left);
     popup.style.minWidth = `${width}px`;
-    popup.style.maxWidth = `${Math.max(width, Math.min(420, innerWidth - 16))}px`;
-    const below = innerHeight - rect.bottom - gap - 8;
-    const above = rect.top - gap - 8;
+    popup.style.maxWidth = `${Math.min(right - left, Math.max(width, 420))}px`;
+    const below = bottom - rect.bottom - gap;
+    const above = rect.top - gap - top;
     const openUp = below < 240 && above > below;
-    popup.style.maxHeight = `${Math.max(140, Math.min(340, openUp ? above : below))}px`;
+    popup.style.maxHeight = `${Math.max(0, Math.min(340, bottom - top, Math.max(140, openUp ? above : below)))}px`;
     popup.classList.toggle('is-up', openUp);
-    popup.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - popup.offsetWidth - 8))}px`;
-    popup.style.top = `${openUp ? Math.max(8, rect.top - gap - popup.offsetHeight) : rect.bottom + gap}px`;
+    popup.style.left = `${Math.max(left, Math.min(rect.left, right - popup.offsetWidth))}px`;
+    popup.style.top = `${Math.max(top, Math.min(openUp ? rect.top - gap - popup.offsetHeight : rect.bottom + gap, bottom - popup.offsetHeight))}px`;
   }
 
   function openSelectPopup(select) {
@@ -472,7 +477,8 @@ import { createApiClient } from './api-client.js?v=4';
     positionSelectPopup();
     ui.trigger.setAttribute('aria-expanded', 'true');
     ui.trigger.classList.add('is-open');
-    (openSelect.search || openSelect.list).focus({ preventScroll: true });
+    // 触屏先浏览选项，点击搜索框后再弹出键盘。
+    (openSelect.search && !window.matchMedia('(pointer: coarse)').matches ? openSelect.search : openSelect.list).focus({ preventScroll: true });
     if (openSelect.active >= 0) $(`#${ui.id}-opt-${openSelect.active}`, openSelect.list)?.scrollIntoView({ block: 'nearest' });
 
     popup.addEventListener('mousedown', event => { if (event.target !== openSelect?.search) event.preventDefault(); });
@@ -530,6 +536,8 @@ import { createApiClient } from './api-client.js?v=4';
   }, true);
   document.addEventListener('scroll', event => { if (openSelect && !openSelect.popup.contains(event.target)) positionSelectPopup(); }, true);
   window.addEventListener('resize', () => positionSelectPopup());
+  window.visualViewport?.addEventListener('resize', positionSelectPopup);
+  window.visualViewport?.addEventListener('scroll', positionSelectPopup);
   window.addEventListener('blur', () => closeSelectPopup());
   enhanceSelects();
 
@@ -1428,7 +1436,7 @@ import { createApiClient } from './api-client.js?v=4';
       <form id="pricingForm" novalidate>
         <div class="panel-body">
           <section class="price-section"><h4>通用价格</h4><p>未单独设置价格的图片、视频任务按此计费，单位为积分。</p><div class="price-grid">${priceInput('imagePerRequest', '图片', current.imagePerRequest, '积分 / 次')}${priceInput('videoPerSecond', '视频', current.videoPerSecond, '积分 / 秒')}</div></section>
-          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5><div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
+          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid is-models">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5><div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
         </div>
         <div class="sticky-bar"><span class="muted" data-price-dirty>价格未修改</span><div class="actions"><button class="btn" type="button" data-price-reset disabled>还原</button><button class="btn btn-primary" type="submit" disabled>发布新价格</button></div></div>
       </form>

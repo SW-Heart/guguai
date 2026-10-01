@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-30",
+  "generatedAt": "2026-10-01",
   "mode": "built-in image_gen",
   "assets": [
     {
@@ -41,6 +41,23 @@
       "prompt": "Use case: illustration-story. Asset type: final 16:9 landscape skill cover for GuGu AI creative workspace suitable for 1536x864. Primary request: beautiful original character design sheet with three consistent views of the same fictional adult female sky courier. Reference image 1 is STYLE ONLY: borrow the light ivory background, soft lavender studio illumination and refined spacious composition, NOT the glass objects or lettering. Character: an original adult East Asian woman age about 26 with short dark indigo bob hair, a small lavender hair clip, practical cream cropped flight jacket with violet panel seams over a high-neck dark-indigo top, modest tailored charcoal cargo trousers, compact messenger satchel and sturdy boots. Distinctive but believable, fully clothed, no weapon, no logos. Show exactly three views in one harmonious design sheet: left front full-body standing, middle side full-body standing, right larger three-quarter portrait cropped at upper chest. ALL views unmistakably same face, same hairstyle, costume, accessories and colours; front and side poses relaxed and anatomically plausible. Style: high-quality hand-painted animation production concept art, subtle brush texture, elegant restrained linework, warm natural facial expression, original character not any franchise; clean studio illustration rather than flat icon. Colour palette ivory, soft lavender, charcoal, muted indigo. Composition: wide 16:9 sheet, figures separated by generous whitespace, full boots visible for full-body views; no dividing lines and no frames. Constraints: NO text, NO labels, NO numbers, NO arrows, NO watermark, NO anatomy exaggeration, NO extra people, NO floating objects, NO UI. Character clarity must survive a small thumbnail.",
       "cover": "public/images/skills/character-design-v1.jpg",
       "thumbnail": "public/images/skills/character-design-thumb-v1.jpg",
+      "dimensions": {
+        "cover": [
+          1536,
+          864
+        ],
+        "thumbnail": [
+          640,
+          360
+        ]
+      },
+      "styleReference": "public/images/skills/seedance-creation-bible-v1.jpg"
+    },
+    {
+      "name": "minimax-creation-bible",
+      "prompt": "Use case: stylized-concept. Asset type: final 16:9 landscape skill cover for the GuGu AI creative workspace, designed for 1536x864 with matching 640x360 thumbnail. Primary request: create a premium editorial cover for MiniMax H3 audiovisual video creation, visually part of the same collection as the supplied reference. Input image 1 is STYLE REFERENCE ONLY: borrow its luminous ivory studio, pale lavender and indigo glass, generous space, soft daylight, physical refraction and polished translucent cinematic materials; do not copy its Seedance lettering or its exact arrangement. Scene/backdrop: an airy ivory and very pale lavender daylight studio with a lightly reflective floor. Subject: one broad transparent glass film frame with gently rounded corners, centered and tilted only slightly, fully within the composition. Inside it, crisp large dark-indigo typography reads exactly \"MiniMax\" on the first line and \"H3\" below it. Text should be very legible at thumbnail size, with a refined geometric sans-serif; no other words. A sculptural translucent film ribbon in warm coral-peach and subtle indigo threads curves gracefully behind and around the glass frame; its visible perforations convey moving pictures. Beside the ribbon, one restrained curved glass audio waveform suggests sound integrated with video, sculptural rather than a chart or UI. Composition: one clear central focal point, frame and typography occupy the middle 70 percent of the wide image, all important text and objects comfortably within safe margins, airy negative space. Style/medium: premium photorealistic editorial 3D render, tactile glass, subtle iridescent edges, realistic soft shadows, elegant quiet cinematic design. Palette: ivory, pale lavender, dark indigo type, restrained coral-peach accent, avoid saturation. Constraints: generate a NEW cover, no Seedance lettering, no invented brand logo, no screenshot, no buttons, no arrows, no labels, no extra words, no tiny text, no watermark, no people. Landscape 16:9.",
+      "cover": "public/images/skills/minimax-creation-bible-v1.jpg",
+      "thumbnail": "public/images/skills/minimax-creation-bible-thumb-v1.jpg",
       "dimensions": {
         "cover": [
           1536,

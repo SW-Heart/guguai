@@ -22,6 +22,6 @@ test('admin offers empty 1080p groups for Seedance 2.0 text and image routes', (
 
 test('admin HTML loads the updated model configuration script cache key', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=30\b/);
+  assert.match(html, /\/guguadmin\.js\?v=31\b/);
   assert.doesNotMatch(html, /\/guguadmin\.js\?v=26\b/);
 });

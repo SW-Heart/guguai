@@ -50,11 +50,11 @@ description: 用户要求撰写产品介绍、推广文案时使用。
 
 ## 内置技能的交付方法
 
-当前展示九个创作入口，顺序为：提示词优化、图像创作、视频创作、短剧创作、剧本创作、视频复刻、作品检查、Seedance 创作圣经、角色设计。现有 `image-design`、`video-production` 等 ID 保持，已选技能的会话可继续使用。技能名与简介用于按需发现，用户选择某技能不强制改变当前请求范围。
+当前展示十个创作入口，顺序为：提示词优化、图像创作、视频创作、短剧创作、剧本创作、视频复刻、作品检查、Seedance 创作圣经、MiniMax 创作圣经、角色设计。现有 `image-design`、`video-production` 等 ID 保持，已选技能的会话可继续使用。技能名与简介用于按需发现，用户选择某技能不强制改变当前请求范围。
 
 新增 `prompt-optimization` 负责保留意图的描述优化与合规澄清，`script-writing` 负责通用剧本、场景和对白，`character-design` 负责人物设定、外貌与多视图。短剧仍处理分集、改编与观看节奏；图像创作负责画面与出图。导演、运镜、表演、光线、美术、声音和连续制作技巧统一由 `video-production` 提供，Seedance 专题只保留版本适配、素材绑定与模式排查。
 
-新技能各有本地 1536×864 JPEG 封面和 640×360 缩略图。内置图片工具的封面描述、风格参考与输出路径记录在 [封面记录](cover-prompts-v1.json)。上游方法的固定版本与 MIT 许可记录在 [制作方法来源](video-production/references/seedance-source.md)。技能资料热读取；技能入口和封面展示的前端缓存链路为 `app.js?v=464`、`workspace.js?v=76`、`skill-gallery.js?v=5`。
+新技能各有本地 1536×864 JPEG 封面和 640×360 缩略图。内置图片工具的封面描述、风格参考与输出路径记录在 [封面记录](cover-prompts-v1.json)。上游方法的固定版本与 MIT 许可记录在 [制作方法来源](video-production/references/seedance-source.md)。技能资料热读取；技能入口和封面展示的前端缓存链路为 `app.js?v=471`、`workspace.js?v=82`、`skill-gallery.js?v=6`。
 
 2026-09-28 补充了各阶段的交付要求、实例、失败归因与完成条件。正文负责入口判断，专题按任务读取，不通过增加默认上下文来加载全部资料。
 
@@ -66,6 +66,9 @@ description: 用户要求撰写产品介绍、推广文案时使用。
 | 视频复刻 | [交付与变更](video-replication/references/adaptation-delivery.md)：原片证据到目标作品的对应；保留已有 Hypit 原文 |
 | 作品检查 | [证据与结论](creative-review/references/evidence-and-verdict.md)、[局部修订](creative-review/references/repair-playbook.md) |
 | Seedance 2.0/2.5 创作圣经 | [技能入口](seedance-creation-bible/SKILL.md)：版本差异、素材绑定、分镜与时间轴、参考/编辑/延长模板、声画问题排查 |
+| MiniMax H3 创作圣经 | [技能入口](minimax-creation-bible/SKILL.md)：五种模式、三/六字段声画语法、素材职责、原创模板、八类视频制作与问题排查；[固定上游版本与当前线路](minimax-creation-bible/references/platform-and-sources.md) |
+
+2026-10-01 新增 MiniMax 创作圣经，接入中文目录和 H3/海螺视频搜索；补齐列表简介、详情、使用示例与图片工具生成的封面、缩略图，生成描述记录在封面记录中。官方 Hub 制作技能的方法独立改写，执行沿用 GuGu 现有工具；模板尚未用真实 H3 生成验证。
 
 来源复核与后续行为评估题见 [创作技能调研](creative-agent-assessment.md#2026-09-28-五个技能的深化)。本次只改技能与维护文档，技能仍热读取；无需修改前端缓存键或重新打桌面安装包。方法与例子不是新工具能力，实际制作仍取决于会话提供的工具、当前模型与授权。
 

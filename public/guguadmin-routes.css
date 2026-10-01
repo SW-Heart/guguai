@@ -1,7 +1,7 @@
 /* 模型线路分组 */
 .route-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; padding: 12px 18px; border-bottom: 1px solid var(--line-soft); }
-.route-groups { display: grid; gap: 12px; padding: 16px 18px 18px; }
-.route-group { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.route-groups { display: grid; min-width: 0; gap: 12px; padding: 16px 18px 18px; }
+.route-group { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
 .route-group > header { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); background: var(--surface-muted); }
 .route-group-title { display: grid; gap: 3px; min-width: 0; }
 .route-group h4 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; font-size: 14px; font-weight: 650; }
@@ -25,6 +25,17 @@
 @media (max-width: 760px) {
   .route-group > header { align-items: stretch; flex-direction: column; }
   .route-header-actions { flex-direction: column; align-items: stretch; }
-  .route-policy { justify-content: space-between; }
+  .route-policy { min-width: 0; justify-content: space-between; }
+  .route-policy > span { flex: none; }
   .route-policy select { flex: 1; width: auto; }
+  .route-empty { align-items: stretch; flex-direction: column; }
+}
+@media (max-width: 640px) {
+  .route-toolbar { padding: 12px; }
+  .route-groups { padding: 12px; }
+  .route-group > header { padding: 12px; }
+  .route-group h4 { overflow-wrap: anywhere; }
+  .route-policy { align-items: stretch; flex-direction: column; gap: 6px; white-space: normal; }
+  .route-policy .select-trigger { flex: none; width: 100%; }
+  .route-toolbar .chip { max-width: 100%; padding: 8px 11px; white-space: normal; text-align: left; }
 }

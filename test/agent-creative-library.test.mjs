@@ -4,7 +4,7 @@ import {createAgentSkills} from '../lib/agent/skills.mjs';
 
 const skills = createAgentSkills({roots: [new URL('../agent-skills/', import.meta.url).pathname]});
 
-test('creative library lists the nine agreed skills in display order', async () => {
+test('creative library lists the ten built-in skills in display order', async () => {
   assert.deepEqual((await skills.search()).map(({name, title}) => [name, title]), [
     ['prompt-optimization', '提示词优化'],
     ['image-design', '图像创作'],
@@ -14,6 +14,7 @@ test('creative library lists the nine agreed skills in display order', async () 
     ['video-replication', '视频复刻'],
     ['creative-review', '作品检查'],
     ['seedance-creation-bible', 'Seedance 创作圣经'],
+    ['minimax-creation-bible', 'MiniMax 创作圣经'],
     ['character-design', '角色设计'],
   ]);
 });
@@ -29,6 +30,12 @@ test('prompt, script and character requests find their specialized creative meth
     ['原创角色设定', 'character-design'],
     ['写短剧分集方案', 'short-drama'],
     ['Seedance 2.5 提示词优化', 'seedance-creation-bible'],
+    ['MiniMax H3', 'minimax-creation-bible'],
+    ['minimax-h3-15s 视频提示词', 'minimax-creation-bible'],
+    ['MiniMax 创作圣经', 'minimax-creation-bible'],
+    ['海螺 H3 声画描述', 'minimax-creation-bible'],
+    ['Hailuo H3 video', 'minimax-creation-bible'],
+    ['H3 视频运镜', 'minimax-creation-bible'],
   ]) {
     assert.equal((await skills.search(query))[0]?.name, expected, query);
   }
