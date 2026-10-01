@@ -50,6 +50,14 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     markRead(item.id);
   }
 
+  function openLatestUnread() {
+    const item = state.notifications.find(notification => !notification.isRead);
+    const dialog = query('#notificationDialog');
+    if (!item || !dialog || dialog.open || !query('#notificationDialogTitle') || !query('#notificationDialogTime') || !query('#notificationDialogBody')) return false;
+    openNotification(item);
+    return true;
+  }
+
   function render() {
     if (renderOverride) {
       renderOverride();
@@ -73,7 +81,7 @@ export function createNotificationController({ state, api, esc, toast, accountSn
       list.innerHTML = '<div class="notification-empty"><span aria-hidden="true">—</span><b>暂无消息</b><small>新的公告会出现在这里。</small></div>';
       return;
     }
-    list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}" aria-label="查看消息：${esc(item.title)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(dateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(previewText(item))}</span><span class="notification-item-more">查看全文 <span aria-hidden="true">↗</span></span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
+    list.innerHTML = state.notifications.map(item => `<article class="notification-item ${item.isRead ? '' : 'is-unread'}"><button type="button" data-notification-id="${esc(item.id)}" aria-label="查看消息：${esc(item.title)}"><span class="notification-item-top"><strong>${esc(item.title)}</strong><time datetime="${esc(item.publishedAt || '')}">${esc(dateText(item.publishedAt))}</time></span><span class="notification-item-content">${esc(previewText(item))}</span><span class="notification-item-more">查看全文</span>${item.isRead ? '' : '<i class="notification-unread-dot" aria-label="未读"></i>'}</button></article>`).join('');
   }
 
   function setPanelOpen(open) {
@@ -168,5 +176,5 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     notificationDialogRestoreFocus = null;
   });
 
-  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead, openNotification, closeNotificationDialog };
+  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead, openNotification, openLatestUnread, closeNotificationDialog };
 }

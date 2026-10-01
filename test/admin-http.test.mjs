@@ -9,7 +9,8 @@ import { randomUUID } from 'node:crypto';
 
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { hashPassword } from '../lib/auth.mjs';
-import { adjustCredits, chargeGenerationMicro, refundGenerationMicro } from '../lib/ledger.mjs';
+import { adjustCredits, chargeGenerationMicro, refundGenerationMicro, configureLedger, reserveLlmCredits, settleLlmCredits } from '../lib/ledger.mjs';
+import { llmRatesFromEnv } from '../lib/billing.mjs';
 import { appendSystemEvent } from '../lib/audit.mjs';
 import { insertUser } from '../lib/store.mjs';
 
@@ -74,6 +75,12 @@ test('admin HTTP permissions and core workflows', async t => {
     .run({ id: taskId, userId: refundedUserId, createdAt, docJson: JSON.stringify({ id: taskId, status: 'failed' }) });
   await chargeGenerationMicro(refundedUserId, taskId, 1_000_000);
   await refundGenerationMicro(refundedUserId, taskId, 1_000_000);
+  configureLedger({ llmRates:llmRatesFromEnv({ LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'0.3', LLM_CACHE_CREATION_PRICE_YUAN_PER_MILLION:'3.75' }), llmProtocol:'openai-compatible', llmModel:'cache-test' });
+  await adjustCredits(phoneUserId, 1_000_000, { actorUserId:adminId, idempotencyKey:'seed-cache-user-balance', reasonCode:'promotion' });
+  await reserveLlmCredits(phoneUserId, 'http-cached-usage', 1_000_000);
+  await settleLlmCredits(phoneUserId, 'http-cached-usage', { model:'cache-test', usage:{ inputTokens:1000, outputTokens:20, cacheReadTokens:600, cacheCreationTokens:300 } });
+  sql(`INSERT INTO llm_usage(id, user_id, status, model, input_tokens, output_tokens, charged_micro, created_at, doc_json)
+       VALUES('http-legacy-usage', :userId, 'settled', 'cache-test', 100, 20, 4200, :createdAt, '{}')`).run({userId:phoneUserId, createdAt});
   appendSystemEvent({ level: 'error', category: 'generation', userId: refundedUserId, generationId: taskId, message: '任务失败测试日志' });
   const paymentDoc = JSON.stringify({ source: 'admin-http-test' });
   sql(`INSERT INTO alipay_payment_orders(out_trade_no, user_id, status, subject, total_amount_fen, credits_micro, refunded_amount_fen, alipay_trade_no, paid_at, created_at, updated_at, doc_json)
@@ -93,7 +100,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=28/);
+  assert.match(adminHtml, /guguadmin\.js\?v=30/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -114,7 +121,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.ok(!(await admin.call('/api/admin/model-routes')).data.items.some(item => item.id === deletingRoute.id));
 
   const overviewAfterRefund = await admin.call('/api/admin/overview');
-  assert.equal(overviewAfterRefund.data.credits.spent, 0);
+  assert.equal(overviewAfterRefund.data.credits.spent, 0.01725);
   const paidOrders = await admin.call('/api/admin/payment-orders');
   assert.equal(paidOrders.response.status, 200);
   assert.deepEqual(paidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1', 'ORDER-PAID-1']);
@@ -142,11 +149,27 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(editedRoute.data.route.salePriceYuan, 2.2);
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
-  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'minimax-h3-15s:768p':0.8, 'minimax-h3-15s:480p':0.5 }, expectedVersion: 1 } });
+  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'llm:cache-read':0, 'llm:cache-creation':2.5, 'minimax-h3-15s:768p':0.8, 'minimax-h3-15s:480p':0.5 }, expectedVersion: 1 } });
   assert.equal(pricing.response.status, 201);
   assert.equal(pricing.data.pricing.videoPerSecond, 0.8);
   const priceFields = await admin.call('/api/admin/pricing');
   assert.equal(priceFields.data.fields.find(item => item.key === 'gpt-image-2.5:2k').amount, 0.125);
+  assert.equal(priceFields.data.fields.find(item => item.key === 'llm:cache-read').amount, 0);
+  assert.equal(priceFields.data.fields.find(item => item.key === 'llm:cache-creation').amount, 2.5);
+  const usageLogs = await admin.call(`/api/admin/logs/llm?userId=${phoneUserId}&modelId=cache-test`);
+  assert.equal(usageLogs.response.status, 200);
+  const cacheUsage = usageLogs.data.items.find(item => item.id === 'http-cached-usage');
+  assert.equal(cacheUsage.inputTokens, 1000);
+  assert.equal(cacheUsage.uncachedInputTokens, 100);
+  assert.equal(cacheUsage.cacheReadTokens, 600);
+  assert.equal(cacheUsage.cacheCreationTokens, 300);
+  assert.equal(cacheUsage.cacheReadRateYuanPerMillion, 0.3);
+  assert.equal(cacheUsage.cacheCreationRateYuanPerMillion, 3.75);
+  assert.equal(cacheUsage.charged, 0.01725);
+  const legacyUsage = usageLogs.data.items.find(item => item.id === 'http-legacy-usage');
+  assert.equal(legacyUsage.cacheReadTokens, null);
+  assert.equal(legacyUsage.cacheCreationTokens, null);
+  assert.equal(legacyUsage.uncachedInputTokens, 100);
 
   const invite = await admin.call('/api/admin/invite-codes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { code: 'HTTP-TEST-01', maxUses: 1, signupBonus: '4.5' } });
   assert.equal(invite.response.status, 201);

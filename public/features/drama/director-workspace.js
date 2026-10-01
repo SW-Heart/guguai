@@ -1,7 +1,9 @@
+import { modelLogoMarkup } from '../../components/model-logo.js?v=1';
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
 import { bindDirectorMentions } from './director-mentions.js?v=1';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
-import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=2';
+import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=3';
+import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=1';
 import { createStreamPacer } from '../agent/stream-pacer.js?v=1';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
 import { createMessageScroller } from '../agent/message-scroller.js?v=2';
@@ -12,11 +14,11 @@ import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=32';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=10';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=4';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=6';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=3';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=5';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -117,6 +119,7 @@ function patchStreamingContent(content,text) {
     template.innerHTML=html;
     const next=template.content.firstElementChild;
     if(!next)return;
+    if(patchCodeBlock(current,next)){current._html=html;return;}
     next._html=html;
     if(current)current.replaceWith(next);else content.append(next);
   });
@@ -917,6 +920,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(uploading||switchingConversation)return;
     const items=nodes().filter(n=>ids.includes(n.id)&&(n.kind==='asset'||n.taskId));
     if(!items.length){bridge.toast('请选择已有文件的素材');return;}
+    if(attachments.length+documentAttachments.length>=30){bridge.toast('一次最多添加 30 个文件');return;}
     const token=epoch,conversationId=agentState?.id;
     uploading=true;
     host.querySelector('.director-workspace').classList.remove('agent-collapsed');
@@ -924,6 +928,7 @@ export function createDirectorWorkspace(host, bridge) {
     drawPanels();
     try{
       for(const item of items){
+        if(attachments.length+documentAttachments.length>=30){bridge.toast('一次最多添加 30 个文件');break;}
         const file=await bridge.prepareChatAsset({assetId:item.kind==='asset'?item.id:undefined,taskId:item.taskId});
         if(token!==epoch||conversationId!==agentState?.id)return;
         if(!attachments.some(existing=>existing.id===file.id))attachments.push(file);
@@ -943,7 +948,7 @@ export function createDirectorWorkspace(host, bridge) {
       const srt=transcript?(n.item.cues||[]).map((cue,index)=>`${index+1}\n${stamp(cue.startSeconds)} --> ${stamp(cue.endSeconds)}\n${cue.text}`).join('\n\n'):'';
       const content=transcript?(n.item.cues||[]).map(cue=>`${Math.round(cue.startSeconds*100)/100}–${Math.round(cue.endSeconds*100)/100} 秒  ${cue.text}`).join('\n')||n.text:n.text;
       el.classList.remove('compact');
-      el.innerHTML=`<h3>${escape(n.title)}</h3><textarea readonly aria-label="${transcript?'台词时间线':'作品正文'}" class="dw-document-content">${escape(content)}</textarea><button data-doc-download ${transcript&&!n.item.cues?.length?'disabled':''}>${transcript?'下载字幕':'下载文稿'}</button><button data-doc-ask>${transcript?'按台词继续创作':'继续修改'}</button>`;
+      el.innerHTML=`<h3>${escape(n.title)}</h3><textarea readonly aria-label="${transcript?'台词时间线':'作品正文'}" class="dw-document-content">${escape(content)}</textarea>${copyButtonMarkup('data-doc-copy','复制正文')}<button data-doc-download ${transcript&&!n.item.cues?.length?'disabled':''}>${transcript?'下载字幕':'下载文稿'}</button><button data-doc-ask>${transcript?'按台词继续创作':'继续修改'}</button>`;
       el.querySelector('[data-doc-download]').onclick=()=>{const url=URL.createObjectURL(new Blob([transcript?srt:n.text],{type:transcript?'text/plain;charset=utf-8':'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${n.title.replace(/[\\/:*?"<>|]/g,'_')}.${transcript?'srt':'md'}`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
       el.querySelector('[data-doc-ask]').onclick=async()=>{if(n.item.conversationId&&n.item.conversationId!==agentState?.id)await switchConversation(n.item.conversationId);const input=host.querySelector('#directorMessage');input.value=`${transcript?'根据':'修改'}「${n.title}」：`;resizeAgentComposer(input);input.focus();};return;
     }
@@ -1006,7 +1011,7 @@ export function createDirectorWorkspace(host, bridge) {
   const genModelIcon=model=>{
     const src=canvasGenerationModelIcon(model?.id,model?.iconKey);
     const initial=Array.from(String(model?.label||model?.id||'').trim())[0]||'';
-    return `<span class="dw-gen-model-icon" aria-hidden="true"><span>${escape(initial.toUpperCase())}</span>${src?`<img src="${escape(src)}" alt="" decoding="async" data-gen-model-icon>`:''}</span>`;
+    return `<span class="dw-gen-model-icon" aria-hidden="true"><span>${escape(initial.toUpperCase())}</span>${src?modelLogoMarkup(src,{generation:true}):''}</span>`;
   };
   const bindGenModelIcons=root=>root?.querySelectorAll('img[data-gen-model-icon]').forEach(img=>{
     // Keep the letter badge when the brand icon cannot load (for example offline).
@@ -1153,8 +1158,9 @@ export function createDirectorWorkspace(host, bridge) {
     if(draft.attachments.length<before)bridge.toast(draft.attachments.length?'已移除当前方式不支持的参考素材':'文生视频不使用参考素材，已移除');
   }
   function applyGenerationField(draft,field,value){
+    const resetDuration=field==='modelId'&&draft.modelId!==value;
     draft[field]=value;
-    reconcileCanvasGenerationDraft(draft,generationConfig());
+    reconcileCanvasGenerationDraft(draft,generationConfig(),{resetDuration});
     if(['modelId','mode'].includes(field)){fitGenerationAttachments(draft,field,value);reconcileCanvasGenerationDraft(draft,generationConfig());}
     if(['aspect','modelId','mode'].includes(field))resizeGenerationArea(draft);
     scheduleCanvasSave();renderGenerationComposer();
@@ -1275,24 +1281,9 @@ export function createDirectorWorkspace(host, bridge) {
     messageScroller=createMessageScroller(messagePanel,host.querySelector('.dw-message-rail'),host.querySelector('.dw-agent'));
     reasoning=createReasoningText();
     messagePanel.querySelector('.dw-turn-activity').prepend(reasoning.element);
-    messagePanel.addEventListener('click',async event=>{
-      const button=event.target.closest('[data-response-action],[data-response-feedback]');
+    messagePanel.addEventListener('click',event=>{
+      const button=event.target.closest('[data-response-feedback]');
       if(!button||!messagePanel.contains(button))return;
-      if(button.dataset.responseAction==='copy'){
-        try{
-          await navigator.clipboard.writeText(button.closest('.dw-message-actions')?.dataset.copyText||'');
-          if(!button.isConnected)return;
-          button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
-          button.setAttribute('aria-label','已复制');button.title='已复制';button.classList.add('is-copied');
-          clearTimeout(button._responseCopyTimer);
-          button._responseCopyTimer=window.setTimeout(()=>{
-            if(!button.isConnected)return;
-            button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-            button.setAttribute('aria-label','复制回复');button.title='复制回复';button.classList.remove('is-copied');
-          },1600);
-        }catch{if(button.isConnected)bridge.toast('复制失败，请重试');}
-        return;
-      }
       const selected=button.getAttribute('aria-pressed')==='true';
       button.parentElement.querySelectorAll('[data-response-feedback]').forEach(feedback=>{
         feedback.setAttribute('aria-pressed',String(feedback===button&&!selected));
@@ -1562,6 +1553,7 @@ export function createDirectorWorkspace(host, bridge) {
       if(historyPicker.matches(':popover-open'))positionPopover(historyPicker,host.querySelector('[data-agent-history]'),false);
     };
     popoverEvents=new AbortController();
+    mountContentCopy(host,{signal:popoverEvents.signal,onError:message=>bridge.toast(message)});
     modelPreferencePicker=mountModelPreferencePicker(host.querySelector('[data-agent-upload]'),{
       signal:popoverEvents.signal,
       loadCatalog:()=>bridge.agentApi('/api/agent/media-models',{signal:popoverEvents.signal}),
@@ -1618,8 +1610,18 @@ export function createDirectorWorkspace(host, bridge) {
     }});
     host.querySelector('[data-agent-upload]').onclick=async()=>{
       if(uploading||switchingConversation)return;
-      const token=epoch;uploading=true;drawPanels();
-      try{const file=await bridge.uploadChatFile();if(token===epoch&&file&&!attachments.some(f=>f.id===file.id))attachments.push(file);}
+      const maxFiles=30-attachments.length-documentAttachments.length;
+      if(maxFiles<=0){bridge.toast('一次最多添加 30 个文件');return;}
+      const token=epoch,conversationId=agentState?.id;uploading=true;drawPanels();
+      try{
+        const selected=await bridge.uploadChatFile({maxFiles});
+        if(token!==epoch||conversationId!==agentState?.id)return;
+        for(const file of Array.isArray(selected)?selected:[selected]){
+          if(!file||attachments.some(f=>f.id===file.id))continue;
+          if(attachments.length+documentAttachments.length>=30){bridge.toast('一次最多添加 30 个文件');break;}
+          attachments.push(file);
+        }
+      }
       catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
       finally{if(token===epoch){uploading=false;drawPanels();}}
     };

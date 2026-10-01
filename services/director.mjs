@@ -73,6 +73,8 @@ export function createDirectorService({
     return publicLlmUsage({
       inputTokens: settlements.reduce((sum, item) => sum + item.inputTokens, 0),
       outputTokens: settlements.reduce((sum, item) => sum + item.outputTokens, 0),
+      cacheReadTokens: settlements.reduce((sum, item) => sum + (item.cacheReadTokens ?? 0), 0),
+      cacheCreationTokens: settlements.reduce((sum, item) => sum + (item.cacheCreationTokens ?? 0), 0),
       chargedCredits: settlements.reduce((sum, item) => sum + item.chargedCredits, 0),
       attemptCount: state.attemptCount,
       maxAttemptCount: state.maxDirectorAttempts,
@@ -90,6 +92,8 @@ export function createDirectorService({
         type: item.attemptType,
         inputTokens: item.inputTokens,
         outputTokens: item.outputTokens,
+        cacheReadTokens: item.cacheReadTokens ?? 0,
+        cacheCreationTokens: item.cacheCreationTokens ?? 0,
         chargedCredits: item.chargedCredits,
       })),
     });
@@ -473,7 +477,7 @@ export function createDirectorService({
         storyboard: null,
         status: 'analysis_complete',
         analysisRequestId: requestId,
-        analysisUsage: { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits },
+        analysisUsage: { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, cacheReadTokens: settled.cacheReadTokens ?? 0, cacheCreationTokens: settled.cacheCreationTokens ?? 0, chargedCredits: settled.chargedCredits },
         createdAt: now(),
         updatedAt: now(),
       };
@@ -511,7 +515,7 @@ export function createDirectorService({
       project.storyboard = storyboard;
       project.status = 'storyboard_ready';
       project.storyboardRequestId = requestId;
-      project.storyboardUsage = { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, chargedCredits: settled.chargedCredits };
+      project.storyboardUsage = { inputTokens: settled.inputTokens, outputTokens: settled.outputTokens, cacheReadTokens: settled.cacheReadTokens ?? 0, cacheCreationTokens: settled.cacheCreationTokens ?? 0, chargedCredits: settled.chargedCredits };
       await saveProject(userId, project, { expectedRevision: baseRevision });
       return {
         project: publicDramaProject(project),

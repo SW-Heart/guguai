@@ -1,5 +1,8 @@
 // HTML is always escaped; links accept only explicit web/mail protocols.
+import { renderCodeBlock } from './code-block.js?v=1';
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const openingFence=line=>line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+const closesFence=(line,fence)=>new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`).test(line);
 function inline(text) {
   const tokens=[];
   const hold=html=>`\u0000${tokens.push(html)-1}\u0000`;
@@ -17,8 +20,9 @@ export function renderMarkdown(source) {
 export function closeStreamingMarkdown(source) {
   const text=String(source??'').replace(/\r\n?/g,'\n');
   const lines=text.split('\n');
-  const fences=lines.filter(line=>/^\s*(`{3,}|~{3,})/.test(line)).length;
-  if(fences%2)return text;
+  let fence='';
+  for(const line of lines){if(fence){if(closesFence(line,fence))fence='';}else fence=openingFence(line)?.[1]||'';}
+  if(fence)return text;
   let last=lines.pop();
   if(/^\s*(`{1,2}|~{1,2})\s*$/.test(last))last='';
   const close=(value,marker,counted)=>{
@@ -36,21 +40,21 @@ export function closeStreamingMarkdown(source) {
   return [...lines,last].join('\n');
 }
 export function renderStreamingMarkdownBlocks(source) {
-  return renderMarkdownBlocks(closeStreamingMarkdown(source));
+  return renderMarkdownBlocks(closeStreamingMarkdown(source),{streaming:true});
 }
 // Each top-level block renders as exactly one element, so streamed replies can
 // keep finished blocks mounted and only replace the block still being written.
-export function renderMarkdownBlocks(source) {
+export function renderMarkdownBlocks(source,{streaming=false}={}) {
   const lines=String(source??'').replace(/\r\n?/g,'\n').split('\n'), out=[];
   for(let i=0;i<lines.length;) {
     const line=lines[i];
     if(!line.trim()){i++;continue;}
-    const fence=line.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    if(fence){const code=[];i++;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))code.push(lines[i++]);i++;out.push(`<pre><code>${escape(code.join('\n'))}</code></pre>`);continue;}
+    const fence=openingFence(line);
+    if(fence){const code=[];i++;while(i<lines.length&&!closesFence(lines[i],fence[1]))code.push(lines[i++]);const closed=i<lines.length;if(closed)i++;out.push(renderCodeBlock(code.join('\n'),fence[2],streaming&&!closed));continue;}
     const heading=line.match(/^(#{1,6})\s+(.+)$/);
     if(heading){out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);i++;continue;}
     if(/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)){out.push('<hr>');i++;continue;}
-    if(/^>\s?/.test(line)){const quote=[];while(i<lines.length&&/^>\s?/.test(lines[i]))quote.push(lines[i++].replace(/^>\s?/,''));out.push(`<blockquote>${renderMarkdown(quote.join('\n'))}</blockquote>`);continue;}
+    if(/^>\s?/.test(line)){const quote=[];while(i<lines.length&&/^>\s?/.test(lines[i]))quote.push(lines[i++].replace(/^>\s?/,''));out.push(`<blockquote>${renderMarkdownBlocks(quote.join('\n'),{streaming}).join('')}</blockquote>`);continue;}
     const list=line.match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);
     if(list){const tag=list[2]?'ol':'ul';const rows=[];while(i<lines.length){const item=lines[i].match(/^\s*(?:([-+*])|(\d+)\.)\s+(.+)$/);if(!item||Boolean(item[2])!==Boolean(list[2]))break;rows.push(`<li>${inline(item[3])}</li>`);i++;}out.push(`<${tag}${list[2]?` start="${Number(list[2])}"`:''}>${rows.join('')}</${tag}>`);continue;}
     if(line.includes('|')&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1]||'')) {const cells=row=>row.trim().replace(/^\||\|$/g,'').split('|').map(x=>inline(x.trim()));const head=cells(line);i+=2;const rows=[];while(i<lines.length&&lines[i].includes('|'))rows.push(`<tr>${cells(lines[i++]).map(x=>`<td>${x}</td>`).join('')}</tr>`);out.push(`<div class="dw-table-scroll"><table><thead><tr>${head.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`);continue;}

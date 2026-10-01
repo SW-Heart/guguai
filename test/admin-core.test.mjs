@@ -81,6 +81,28 @@ test('admin core controls', async t => {
     }
   });
 
+  await t.test('cache prices are configurable and zero prices survive later versions', () => {
+    const admin = makeUser('cache_prices', 'admin');
+    const args = { imagePerRequest:1, videoPerSecond:1, actorUserId:admin.id };
+    const rates = liveLlmRates({ yuanPerCredit:0.1, inputYuanPerMillion:3, outputYuanPerMillion:6, inputMicroPerToken:30, outputMicroPerToken:60 });
+    assert.equal(rates.cacheReadMicroPerToken, 30);
+    const saved = createPricingVersion({ ...args, modelPrices:{ 'llm:cache-read':0, 'llm:cache-creation':3.75 } });
+    assert.equal(rates.cacheReadMicroPerToken, 0);
+    assert.equal(rates.cacheCreationMicroPerToken, 37.5);
+    const snapshot = { ...rates };
+    assert.equal(snapshot.cacheReadYuanPerMillion, 0);
+    const fields = modelPriceFields(saved);
+    assert.equal(fields.find(item => item.key === 'llm:cache-read').amount, 0);
+    assert.equal(fields.find(item => item.key === 'llm:cache-creation').amount, 3.75);
+    const next = createPricingVersion({ ...args, modelPrices:{ 'llm:cache-read':0.2 } });
+    assert.equal(next.modelPrices['llm:cache-creation'], 3.75);
+    assert.equal(rates.cacheReadMicroPerToken, 2);
+    assert.equal(snapshot.cacheReadMicroPerToken, 0);
+    for (const price of [-1, '1.1234567', 'invalid']) {
+      assert.throws(() => createPricingVersion({ ...args, modelPrices:{'llm:cache-read':price} }), error => error.statusCode === 400);
+    }
+  });
+
   await t.test('model controls affect public catalog and enforce disabled state', () => {
     assert.equal(isModelEnabled('grok'), true);
     const admin = makeUser('admin_model', 'admin');

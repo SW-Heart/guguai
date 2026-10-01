@@ -1,5 +1,6 @@
+import { modelLogoMarkup } from '../../components/model-logo.js?v=1';
 import { normalizeModelPreferences, modelPreferenceError } from './model-preferences.js?v=1';
-import { canvasGenerationModelIcon } from '../drama/canvas-generation.js?v=4';
+import { canvasGenerationModelIcon } from '../drama/canvas-generation.js?v=6';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const icon = '<span class="gugu-lucide gugu-lucide-layers-2" aria-hidden="true"></span>';
@@ -51,7 +52,7 @@ export function mountModelPreferencePicker(anchor, { value, loadCatalog, onSave,
     const rows = [...models, ...missing.map(modelId => ({id:modelId, label:'所选模型暂不可用', unavailable:true}))];
     popup.querySelector('[data-preference-list]').innerHTML = loading && !catalog.length ? '<p class="model-preference-empty" role="status">正在加载模型…</p>' : loadError ? `<p class="model-preference-empty" role="status">${escape(loadError)}</p><button type="button" data-preference-retry>重新加载</button>` : rows.length ? rows.map(model => {
       const url = canvasGenerationModelIcon(model.id, model.iconKey), selected = entry.modelIds.includes(model.id);
-      return `<label class="model-preference-row${selected && !automatic ? ' is-selected' : ''}${automatic ? ' is-automatic' : ''}"><span class="model-preference-logo" aria-hidden="true">${icon}${url ? `<img src="${escape(url)}" alt="" loading="lazy">` : ''}</span><span class="model-preference-copy"><strong>${escape(model.label)}</strong>${model.description ? `<small>${escape(model.description)}</small>` : ''}${model.unavailable ? '<small>取消选择或开启自动选择</small>' : ''}</span><input type="checkbox" data-preference-model="${escape(model.id)}" aria-label="${escape(model.label)}" ${selected && !automatic ? 'checked' : ''} ${automatic || saving ? 'disabled' : ''}></label>`;
+      return `<label class="model-preference-row${selected && !automatic ? ' is-selected' : ''}${automatic ? ' is-automatic' : ''}"><span class="model-preference-logo" aria-hidden="true">${icon}${url ? modelLogoMarkup(url, {lazy:true}) : ''}</span><span class="model-preference-copy"><strong>${escape(model.label)}</strong>${model.description ? `<small>${escape(model.description)}</small>` : ''}${model.unavailable ? '<small>取消选择或开启自动选择</small>' : ''}</span><input type="checkbox" data-preference-model="${escape(model.id)}" aria-label="${escape(model.label)}" ${selected && !automatic ? 'checked' : ''} ${automatic || saving ? 'disabled' : ''}></label>`;
     }).join('') : '<p class="model-preference-empty">暂时没有可用模型</p>';
     popup.querySelectorAll('.model-preference-logo img').forEach(image => image.addEventListener('error', () => image.remove(), {once:true}));
     popup.querySelector('[data-preference-list]').scrollTop = scrollTop;

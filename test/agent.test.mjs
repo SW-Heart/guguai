@@ -150,7 +150,19 @@ test('SSE handles split UTF-8 and multiple fragmented tool calls with trailing u
   const result=await gateway.complete({model:'m',messages:[],tools:[]});
   assert.equal(result.message.content,'先查看');
   assert.deepEqual(result.message.tool_calls.map(c=>JSON.parse(c.function.arguments)),[{}, {query:'海报'}]);
-  assert.deepEqual(result.usage,{inputTokens:12,outputTokens:8});
+  assert.deepEqual(result.usage,{inputTokens:12,outputTokens:8,cacheReadTokens:0,cacheCreationTokens:0});
+});
+
+test('gateway preserves streamed cache counts and rejects inconsistent cache totals', async () => {
+  const config = {...agentConfig({AGENT_MODEL:'m',AGENT_MODELS:'m'}),configured:true};
+  const chunks = [
+    {choices:[{delta:{content:'ok'},finish_reason:'stop'}]},
+    {choices:[],usage:{prompt_tokens:100,completion_tokens:20,prompt_tokens_details:{cached_tokens:60},cache_creation_input_tokens:30}},
+  ];
+  const gateway = createAgentGateway({config,fetchImpl:async () => new Response(chunks.map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n', {headers:{'content-type':'text/event-stream'}})});
+  assert.deepEqual((await gateway.complete({model:'m',messages:[],tools:[]})).usage, {inputTokens:100,outputTokens:20,cacheReadTokens:60,cacheCreationTokens:30});
+  chunks[1].usage.cache_creation_input_tokens = 50;
+  await assert.rejects(gateway.complete({model:'m',messages:[],tools:[]}), error => error.billingReconcileRequired === true);
 });
 
 test('missing usage fails closed for reconciliation without retrying generation',async()=>{

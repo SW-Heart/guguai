@@ -33,7 +33,7 @@ test('generation paints its pending preview before the save resolves and never r
 test('startup task refresh preserves numeric credits while updating the action label',()=>{
   const credits={textContent:'37.5'};
   const action={textContent:'生成'};
-  const card={classList:{toggle(){}},querySelector:selector=>{
+  const card={dataset:{wbShot:'s'},classList:{toggle(){}},querySelector:selector=>{
     // The nested credit value is also a last child and is encountered first.
     if(selector==='[data-wb-generate] span:last-child')return credits;
     if(selector==='[data-wb-generate-label]')return action;
@@ -41,8 +41,8 @@ test('startup task refresh preserves numeric credits while updating the action l
   }};
   let status='completed';
   const context={project:{shots:[{id:'s',selectedVideoTaskId:'t'}]},state:{route:'drama',tasks:[],files:[]},
-    patchProfessionalAssetSurfaces(){},taskDisplayStatus:()=>status,taskLocallyReady:()=>status==='completed',
-    root:{querySelector:selector=>selector.startsWith('[data-wb-shot=')?card:null},CSS:{escape:String},
+    refreshWorkbenchReferenceRow(){},refreshWorkbenchShotStatus(){},patchProfessionalAssetSurfaces(){},taskDisplayStatus:()=>status,taskLocallyReady:()=>status==='completed',
+    setWorkbenchText:(node,value)=>{if(node)node.textContent=value;},root:{querySelectorAll:()=>[card],querySelector:selector=>selector.startsWith('[data-wb-shot=')?card:null},CSS:{escape:String},
     professionalPreviewTaskIds:new Map(),shotPreviewContentSignatureFromMaps:()=> 'same',localDeliverySignature:()=>'',task:()=>null,
     assetSyncing(){},shotPreviewSignatures:new Map([['s','same']]),patchWorkbenchPreviewProgress(){}};
   assert.match(source,/<span data-wb-generate-label>/);

@@ -96,6 +96,25 @@ test('ledger', async t => {
     assertInvariants(userId, 'after refund');
   });
 
+  await t.test('cache settlement preserves the reserved prices and writes cache usage to history', async () => {
+    const userId = makeUser(10);
+    const cachedRates = llmRatesFromEnv({ LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'0.3', LLM_CACHE_CREATION_PRICE_YUAN_PER_MILLION:'3.75' });
+    configureLedger({llmRates:cachedRates, llmProtocol:'test', llmModel:'test-model'});
+    await reserveLlmCredits(userId, 'cached-request', 1_000_000);
+    configureLedger({llmRates:{...cachedRates, cacheReadMicroPerToken:300, cacheCreationMicroPerToken:300}, llmProtocol:'test', llmModel:'test-model'});
+    const result = {...llmResult(10_000, 1000), usage:{inputTokens:10_000, outputTokens:1000, cacheReadTokens:6000, cacheCreationTokens:2000}};
+    const settled = await settleLlmCredits(userId, 'cached-request', result);
+    assert.equal(settled.chargedMicro, 213_000);
+    assert.equal(settled.cacheReadRateYuanPerMillion, 0.3);
+    assert.equal(settled.cacheCreationRateYuanPerMillion, 3.75);
+    const record = JSON.parse(sql('SELECT doc_json FROM llm_usage WHERE user_id = :userId AND id = :id').get({userId, id:'cached-request'}).doc_json);
+    assert.equal(record.cacheReadTokens, 6000);
+    assert.equal(record.cacheCreationTokens, 2000);
+    assert.equal(record.uncachedInputTokens, 2000);
+    assert.equal((await settleLlmCredits(userId, 'cached-request', result)).chargedMicro, 213_000);
+    assertInvariants(userId, 'cache settlement');
+  });
+
   await t.test('insufficient balance returns 402 and writes nothing', async () => {
     const userId = makeUser(5);
     const result = await chargeGeneration(userId, 'gen-x', 10);

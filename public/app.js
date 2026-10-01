@@ -1,3 +1,5 @@
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=1';
+import { defaultVideoDuration } from './features/generation/video-defaults.js?v=1';
 import { createConfigSync } from './state/config-sync.js?v=1';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
@@ -11,7 +13,7 @@ import { createGenerationPresentation } from './features/generation/presentation
 import { createCreditPresentation } from './features/credits/presentation.js?v=5';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
-import { createNotificationController } from './features/notifications/controller.js?v=6';
+import { createNotificationController } from './features/notifications/controller.js?v=7';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=12';
@@ -1558,6 +1560,7 @@ function clearDesktopAccountState() {
   });
   dramaController?.resetForAccount?.();
   conversationRail.reset();
+  notificationController.closeNotificationDialog();
   resetAccountState(state);
   desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
   desktopWorkspacePath = '';
@@ -1821,6 +1824,27 @@ function finishInitialWorkspaceSync() {
   state.initialSyncReady = true;
   scheduleRouteContentRender(state.route, false);
 }
+function scheduleStartupDialogs(isStartupCurrent) {
+  let notificationChecked = false;
+  const scheduleNext = () => window.setTimeout(showNext, 300);
+  function showNext() {
+    if (!isStartupCurrent()) return;
+    const activeDialog = document.querySelector('dialog[open]');
+    if (activeDialog) {
+      activeDialog.addEventListener('close', scheduleNext, { once:true });
+      return;
+    }
+    if (!notificationChecked) {
+      notificationChecked = true;
+      if (notificationController.openLatestUnread()) {
+        $('#notificationDialog').addEventListener('close', scheduleNext, { once:true });
+        return;
+      }
+    }
+    void openModelPriceDialog({ auto:true });
+  }
+  scheduleNext();
+}
 async function enterApp(user) {
   const returnDestination = loginReturnDestination();
   if (returnDestination) {
@@ -1850,7 +1874,6 @@ async function enterApp(user) {
   }
   if (!isStartupCurrent()) return;
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
-  const schedulePriceDialog = () => window.setTimeout(() => { if (isStartupCurrent()) void openModelPriceDialog({ auto:true }); }, 300);
   const initialLoadSteps = [
     { label:'读取创作配置', run:loadConfig },
     { label:'读取积分信息', run:loadCredits },
@@ -1876,7 +1899,7 @@ async function enterApp(user) {
   setBootProgress(100, '工作区已准备好');
   showApp();
   void syncDesktopDeliveries().catch(error => console.warn('[desktop] 启动时同步本地投递确认失败', error.message));
-  schedulePriceDialog();
+  scheduleStartupDialogs(isStartupCurrent);
   // The price catalog is non-essential for the first interaction. It is
   // deferred until the initial background sync settles so it cannot compete
   // with the first page render or duplicate the config request.
@@ -2080,7 +2103,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=76').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=80').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2091,7 +2114,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=206').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=211').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     });
@@ -3418,7 +3441,7 @@ async function verifyImportedImagePreview(url) {
   try { await preview.decode(); }
   catch { throw new Error('图片无法读取或解码，请确认原图能正常打开后重新导入'); }
 }
-async function desktopImportToContext(context, { multiple = true } = {}) {
+async function desktopImportToContext(context, { multiple = true, maxFiles = Infinity } = {}) {
   const bridge = window.guguDesktop;
   if (!bridge?.media?.chooseAndImport) throw new Error('上传功能暂时未准备好，请重启客户端后再试');
   const imported = await bridge.media.chooseAndImport({ multiple });
@@ -3435,6 +3458,7 @@ async function desktopImportToContext(context, { multiple = true } = {}) {
   let selected = 0;
   const processedFiles = [];
   for (const item of imported) {
+    if (processedFiles.length >= maxFiles) { toast(`一次最多添加 ${maxFiles} 个文件`); break; }
     if (item.error) { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(()=>{}); toast(`${item.filePath || '文件'} 导入失败：${item.error}`); continue; }
     const kind = desktopMediaKind(item);
     const discardImported = () => { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(error => console.warn('[desktop] 清理非法导入失败', error)); };
@@ -3514,11 +3538,11 @@ async function pickAndUploadDramaAsset({ context='professional-project' } = {}) 
   const files = await desktopImportToContext(context, { multiple:false });
   return files[0] || null;
 }
-function pickAndImportDramaCanvasAsset({ chat = false, generation = false } = {}) {
+function pickAndImportDramaCanvasAsset({ chat = false, generation = false, multiple = false, maxFiles = 30 } = {}) {
   return new Promise(resolve => {
     if (!$('#referenceDialog')) { resolve(null); return; }
     if (canvasAssetRequest) canvasAssetRequest.resolve(null);
-    canvasAssetRequest = { resolve, chat:chat||generation, generation };
+    canvasAssetRequest = { resolve, chat:chat||generation, generation, multiple:chat&&!generation&&multiple, limit:chat&&!generation&&multiple?Math.max(1,Math.min(30,maxFiles)):1 };
     openReferenceDialog('canvas');
   });
 }
@@ -3677,12 +3701,12 @@ $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDia
 $('#referenceDialog').addEventListener('close', () => { const request = canvasAssetRequest; if (!referenceDialogCommitted) { restoreReferenceDialogOriginal(); cleanupUncommittedReferenceJobs(); renderReferences(); } referenceDialogCommitted=false; referenceDialogOriginal=null; imagePromptMentionRequest = null; videoPromptMentionRequest = null; if (request) { canvasAssetRequest=null; request.resolve(null); } });
 $('#confirmReference').onclick = () => {
   if (state.referenceTarget === 'canvas') {
-    const file = referenceFileById(state.dialogSelection[0]);
     const request = canvasAssetRequest;
+    const files = state.dialogSelection.map(referenceFileById).filter(file => file && (request?.chat ? ['image', 'video', 'audio'] : ['image', 'video']).includes(file.kind)).slice(0,request?.limit||1);
     canvasAssetRequest = null;
     referenceDialogCommitted = true;
     $('#referenceDialog').close();
-    request?.resolve(file && (request.chat ? ['image', 'video', 'audio'] : ['image', 'video']).includes(file.kind) ? file : null);
+    request?.resolve(request.multiple ? files : files[0] || null);
     return;
   }
   const pendingCount = state.dialogSelection.filter(id => pendingReferenceJob(id)?.deferUpload).length;
@@ -3706,12 +3730,16 @@ $('#confirmReference').onclick = () => {
 };
 async function uploadCanvasDialogAsset() {
   try {
-    const chat=Boolean(canvasAssetRequest?.chat);
-    const files = await desktopImportToContext(chat?'director-chat':'director-canvas', { multiple:false });
-    const file = files.find(item => item && (chat?['image','video','audio']:['image','video']).includes(item.kind));
-    if (!file) return;
-    state.files = [file, ...state.files.filter(item => item.id !== file.id)];
-    state.dialogSelection = [file.id];
+    const request=canvasAssetRequest,chat=Boolean(request?.chat);
+    const remaining=request?.multiple?request.limit-state.dialogSelection.length:1;
+    if(remaining<=0){toast(`一次最多添加 ${request?.limit||1} 个文件`);return;}
+    const files = await desktopImportToContext(chat?'director-chat':'director-canvas', { multiple:Boolean(request?.multiple), maxFiles:remaining });
+    if(canvasAssetRequest!==request)return;
+    const valid=files.filter(item => item && (chat?['image','video','audio']:['image','video']).includes(item.kind));
+    if (!valid.length) return;
+    const ids=new Set(valid.map(file=>file.id));
+    state.files = [...valid, ...state.files.filter(item => !ids.has(item.id))];
+    state.dialogSelection = [...new Set([...(request?.multiple?state.dialogSelection:[]),...ids])].slice(0,request?.limit||1);
     renderReferenceDialog();
   } catch (error) {
     toast(`导入素材失败：${error.message}`);
@@ -3738,7 +3766,8 @@ function renderReferenceDialog() {
   const isFrame = state.referenceTarget === 'video-frame';
   const isVideo = state.referenceTarget === 'video';
   const promptMentionMode = ['image', 'video'].includes(state.referenceTarget) && Boolean(isVideo ? videoPromptMentionRequest : imagePromptMentionRequest);
-  const limits = isCanvas ? { image: 1, video: 1, audio: isChat?1:0, total: 1 } : isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
+  const canvasLimit=canvasAssetRequest?.limit||1;
+  const limits = isCanvas ? { image: canvasLimit, video: canvasLimit, audio: isChat?canvasLimit:0, total: canvasLimit } : isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideo ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
   const allowedKinds = isCanvas ? new Set(isChat?['image','video','audio']:['image','video']) : isFrame ? new Set(['image']) : isVideo ? referenceFileKinds() : new Set(['image']);
   if (state.referenceKind !== 'all' && !allowedKinds.has(state.referenceKind)) state.referenceKind = 'all';
   const visibleKind = state.referenceKind;
@@ -3748,20 +3777,20 @@ function renderReferenceDialog() {
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
   const totalSelected = limitSelectionIds.length;
   $('#referenceDialog h2').textContent = isCanvas ? (canvasAssetRequest?.generation?'添加参考素材':isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?'选择要发送的图片、视频或音频，也可以直接上传文件。':'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；图片不超过 20 MB，视频或音频不超过 25 MB。`;
+  $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；图片不超过 20 MB，视频或音频不超过 25 MB。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
-  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / 1` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
+  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / ${canvasLimit}` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
   const confirmLabel = isCanvas ? (canvasAssetRequest?.generation?'使用此素材':isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
-  const uploadContext = isCanvas ? 'director-canvas' : 'reference';
+  const uploadContext = isCanvas ? (isChat?'director-chat':'director-canvas') : 'reference';
   // A local copy already uploaded for reference is listed once; keep it visible only while it is still selected.
   const listedFileIds = new Set(withoutSupersededLocalFiles(state.files).map(file => file.id));
   const pickerFiles = state.files.filter(file => listedFileIds.has(file.id) || state.dialogSelection.includes(file.id));
   const kindCounts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, pickerFiles.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && file.kind === kind).length + state.uploadJobs.filter(job => job.context === uploadContext && !job.deferUpload && allowedKinds.has(job.kind) && job.kind === kind).length]));
   $('#referenceKindFilter').innerHTML = [['all', '全部'], ...['image', 'video', 'audio'].filter(kind => allowedKinds.has(kind)).map(kind => [kind, kindLabels[kind]])].map(([kind, label]) => `<button type="button" role="tab" class="${visibleKind === kind ? 'active' : ''}" data-reference-kind="${kind}" aria-selected="${visibleKind === kind}"><span>${label}</span><small>${kind === 'all' ? kindCounts.image + kindCounts.video + kindCounts.audio : kindCounts[kind]}</small></button>`).join('');
   $$('#referenceKindFilter [data-reference-kind]').forEach(button => button.onclick = () => { state.referenceKind = button.dataset.referenceKind; renderReferenceDialog(); });
-  const uploadJobs = state.uploadJobs.filter(job => job.context === (isCanvas ? 'director-canvas' : 'reference'));
+  const uploadJobs = state.uploadJobs.filter(job => job.context === uploadContext);
   const pendingJobs = uploadJobs.filter(job => job.deferUpload && allowedKinds.has(job.kind) && (visibleKind === 'all' || job.kind === visibleKind));
   const uploadingAssetIds = new Set(uploadJobs.map(job => job.assetId).filter(Boolean));
   const pendingMarkup = pendingJobs.map(job => {
@@ -3946,8 +3975,8 @@ function imageModelOptions() {
   return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon');
 }
 function imageModelPromo() { return ''; }
-const modelIconUrls = Object.freeze({ 'gpt-image-2':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', 'gpt-image-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/openai.svg', midjourney:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/midjourney.svg', grok:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/grok.svg', 'minimax-h3-15s':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', veo:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', oai:'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'veo-31':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/gemini-color.svg', 'minimax-h3':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/minimax-color.svg', 'seedance-2.0':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.5':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg', 'seedance-2.0-fast':'https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/bytedance-color.svg' });
-function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? `<img class="select-model-icon" src="${src}" alt="" aria-hidden="true">` : clockIcon(); }
+const modelIconUrls = modelLogoUrls;
+function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? modelLogoMarkup(src, { className: 'select-model-icon' }) : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
 function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? selectModelOptions(widget).find(item => item.id === option?.value) : null; const promo = model ? (widget.dataset.imageModel ? imageModelPromo(model.id) : videoModelPromo(model.id)) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
@@ -4025,7 +4054,7 @@ function syncVideoModelParameters({ reset = false } = {}) {
   setVideoSelectOptions('videoAspect', parameters.aspectRatios, value => value, '16:9', { preserveCurrent });
   setVideoSelectOptions('videoResolution', qualities, value => value, modelId === 'minimax-h3-15s' || modelId === 'minimax-h3' ? '768p' : '720p', { preserveCurrent });
   durations = parameters.durationsByQuality?.[$('#videoResolution').value]?.[$('#videoAspect').value] || durations;
-  setVideoSelectOptions('videoDuration', durations, value => `${value} 秒`, modelId === 'grok' ? 10 : modelId === 'minimax-h3-15s' ? 5 : modelId === 'veo' || modelId === 'veo-31' ? 8 : 10, { preserveCurrent });
+  setVideoSelectOptions('videoDuration', durations, value => `${value} 秒`, defaultVideoDuration(modelId, durations, modelId === 'veo' || modelId === 'veo-31' ? 8 : 10), { preserveCurrent });
   setProductSelectEnabled('videoAspect', true); setProductSelectEnabled('videoDuration', true); setProductSelectEnabled('videoResolution', qualities.length > 0);
   syncVideoPromptState(); updateVideoCost();
 }

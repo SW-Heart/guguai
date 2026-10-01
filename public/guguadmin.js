@@ -250,7 +250,7 @@ import { createApiClient } from './api-client.js?v=4';
     setAdminDialogBusy(false);
     if (dialog.open) dialog.close();
     resolver?.(result);
-    requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); });
+    requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus({ preventScroll: true }); });
   }
 
   function showAdminDialog({ kicker = '', title, description = '', fields = [], html = '', submit = '保存', busyLabel = '保存中…', cancel = '取消', hideCancel = false, danger = false, tone = '', size = '', validate = null, onSubmit = null, onRender = null }) {
@@ -1357,38 +1357,59 @@ import { createApiClient } from './api-client.js?v=4';
     [['routes', '#routePanel'], ['models', '#modelPanel'], ['pricing', '#pricingPanel']].forEach(([key, selector]) => { const panel = $(selector); if (panel) panel.hidden = key !== state.modelsTab; });
   }
 
-  async function loadModels() {
+  function updateModelsContent(render) {
     const root = $('#view-models');
-    root.innerHTML = pageHead('modelsTitle', '模型与价格', '管理调用线路、用户端模型展示和平台价格', refreshButton('models')) + `
+    const scroller = document.scrollingElement || document.documentElement;
+    const position = { top: scroller.scrollTop, left: scroller.scrollLeft };
+    const tableKey = (wrap, index) => $('table', wrap)?.getAttribute('aria-label') || `table-${index}`;
+    const tablePositions = new Map($$('.table-wrap', root).map((wrap, index) => [tableKey(wrap, index), { top: wrap.scrollTop, left: wrap.scrollLeft }]));
+    render();
+    $$('.table-wrap', root).forEach((wrap, index) => {
+      const saved = tablePositions.get(tableKey(wrap, index));
+      if (saved) { wrap.scrollTop = saved.top; wrap.scrollLeft = saved.left; }
+    });
+    scroller.scrollTop = position.top;
+    scroller.scrollLeft = position.left;
+  }
+
+  async function loadModels({ refreshPricing = true } = {}) {
+    const root = $('#view-models');
+    const initialLoad = !$('#routePanel', root);
+    if (initialLoad) {
+      root.innerHTML = pageHead('modelsTitle', '模型与价格', '管理调用线路、用户端模型展示和平台价格', refreshButton('models')) + `
       <div class="tabs" role="tablist" aria-label="模型与价格">${modelTabs.map(([key, label]) => `<button class="tab" role="tab" type="button" id="modelsTab-${key}" data-tab="${key}" aria-controls="${key === 'routes' ? 'routePanel' : key === 'models' ? 'modelPanel' : 'pricingPanel'}">${label}</button>`).join('')}</div>
       <div id="routePanel" class="panel" role="tabpanel" aria-labelledby="modelsTab-routes">${skeletonMarkup(8)}</div>
       <div id="modelPanel" class="panel" role="tabpanel" aria-labelledby="modelsTab-models">${skeletonMarkup(8)}</div>
       <div id="pricingPanel" class="panel" role="tabpanel" aria-labelledby="modelsTab-pricing">${skeletonMarkup(6)}</div>`;
-    const tabs = $$('[role="tab"]', root);
-    tabs.forEach((button, index) => {
-      button.onclick = () => selectModelsTab(button.dataset.tab);
-      button.onkeydown = event => {
-        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-        const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
-        selectModelsTab(next.dataset.tab); next.focus();
-      };
-    });
-    selectModelsTab(state.modelsTab);
+      const tabs = $$('[role="tab"]', root);
+      tabs.forEach((button, index) => {
+        button.onclick = () => selectModelsTab(button.dataset.tab);
+        button.onkeydown = event => {
+          if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+          const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+          selectModelsTab(next.dataset.tab); next.focus();
+        };
+      });
+      selectModelsTab(state.modelsTab);
+    }
     const refresh = $('[data-refresh="models"]', root);
     refresh.onclick = loadModels;
     setButtonBusy(refresh, true, '刷新中…');
     const token = nextRequest('models');
     try {
-      const [models, pricing, routes] = await Promise.all([api('/api/admin/models'), api('/api/admin/pricing'), api('/api/admin/model-routes')]);
+      const [models, pricing, routes] = await Promise.all([api('/api/admin/models'), initialLoad || refreshPricing ? api('/api/admin/pricing') : null, api('/api/admin/model-routes')]);
       if (isStale('models', token)) return;
       state.modelItems = models.items || [];
       state.routeData = routes;
-      renderRoutePanel(routes);
-      renderModelPanel(state.modelItems, routes);
-      renderPricingPanel(pricing);
-      selectModelsTab(state.modelsTab);
+      updateModelsContent(() => {
+        renderRoutePanel(routes);
+        renderModelPanel(state.modelItems, routes);
+        if (pricing) renderPricingPanel(pricing);
+        selectModelsTab(state.modelsTab);
+      });
     } catch (error) {
       if (isStale('models', token)) return;
+      if (!initialLoad && state.routeData) { toastError(error); return; }
       ['#routePanel', '#modelPanel', '#pricingPanel'].forEach(selector => { const panel = $(selector); if (panel) { panel.innerHTML = errorMarkup(error.message, 'models'); bindRetry(panel, 'models', loadModels); } });
     } finally {
       if (!isStale('models', token)) setButtonBusy(refresh, false);
@@ -1401,12 +1422,13 @@ import { createApiClient } from './api-client.js?v=4';
     const history = (pricing.history || []).slice(0, 6);
     const fields = pricing.fields || [];
     const groups = [...fields.reduce((map, field) => map.set(field.label, [...(map.get(field.label) || []), field]), new Map())];
+    const priceLabel = field => field.modelId === 'llm' ? ({ input: '普通输入', output: '输出', 'cache-read': '缓存读取', 'cache-creation': '缓存创建' }[field.quality] || field.quality) : field.quality;
     const priceInput = (name, label, value, unit = '') => `<label class="field price-field" data-price-field><span class="field-label">${esc(label)}${unit ? `<small>${esc(unit)}</small>` : ''}</span><input name="${esc(name)}" value="${esc(value)}" data-original="${esc(value)}" inputmode="decimal" required autocomplete="off"></label>`;
     root.innerHTML = `<div class="panel-head"><div><h3>价格设置</h3><p>当前版本 v${esc(current.version)} · 新价格仅对之后提交的任务生效，历史版本保留只读。</p></div></div>
       <form id="pricingForm" novalidate>
         <div class="panel-body">
           <section class="price-section"><h4>通用价格</h4><p>未单独设置价格的图片、视频任务按此计费，单位为积分。</p><div class="price-grid">${priceInput('imagePerRequest', '图片', current.imagePerRequest, '积分 / 次')}${priceInput('videoPerSecond', '视频', current.videoPerSecond, '积分 / 秒')}</div></section>
-          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5><div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, field.quality, field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
+          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5><div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
         </div>
         <div class="sticky-bar"><span class="muted" data-price-dirty>价格未修改</span><div class="actions"><button class="btn" type="button" data-price-reset disabled>还原</button><button class="btn btn-primary" type="submit" disabled>发布新价格</button></div></div>
       </form>
@@ -1415,11 +1437,12 @@ import { createApiClient } from './api-client.js?v=4';
     const submit = $('button[type="submit"]', form);
     const reset = $('[data-price-reset]', form);
     const labelFor = input => {
-      const [kind, key] = input.name.split(':');
+      const [kind] = input.name.split(':');
+      const key = input.name.slice(kind.length + 1);
       if (kind === 'imagePerRequest') return '图片 · 积分 / 次';
       if (kind === 'videoPerSecond') return '视频 · 积分 / 秒';
       const field = fields.find(item => item.key === key);
-      return field ? `${field.label} · ${field.quality} / ${field.unit}` : input.name;
+      return field ? `${field.label} · ${priceLabel(field)} / ${field.unit}` : input.name;
     };
     const changedInputs = () => $$('input', form).filter(input => input.value.trim() !== input.dataset.original);
     const updateDirty = () => {
@@ -1465,7 +1488,7 @@ import { createApiClient } from './api-client.js?v=4';
       onSubmit: async () => {
         await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'DELETE', body: JSON.stringify({ expectedVersion: route.version }) });
         toast('线路已删除');
-        await loadModels();
+        await loadModels({ refreshPricing: false });
       },
     });
   }
@@ -1494,7 +1517,7 @@ import { createApiClient } from './api-client.js?v=4';
       onSubmit: async () => {
         await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'PATCH', body: JSON.stringify({ adminEnabled: true, expectedVersion: route.version }) });
         toast('线路已恢复启用');
-        await loadModels();
+        await loadModels({ refreshPricing: false });
       },
     });
   }
@@ -1620,11 +1643,11 @@ import { createApiClient } from './api-client.js?v=4';
   async function addModelRoute(logicalModelId, quality, data) {
     const routes = (data.items || []).filter(item => item.logicalModelId === logicalModelId && item.quality === quality);
     const nextPriority = Math.min(1000, Math.max(0, ...routes.map(item => Number(item.priority) || 0)) + 1);
-    await showAdminDialog({ kicker: '调用线路', title: `新增线路 · ${routeModelLabels[logicalModelId] || logicalModelId} ${quality}`, description: '选择已有渠道，填写该渠道可调用的上游模型 ID 和价格。新线路会先标记为待检查。', submit: '新增线路', busyLabel: '保存中…', fields: routeDialogFields({ channels: data.channels, nextPriority, logicalModelId }), validate: validateRouteDialog, onSubmit: async values => { const result = await api('/api/admin/model-routes', { method: 'POST', body: JSON.stringify({ logicalModelId: values.logicalModelId || logicalModelId, quality, credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), adminEnabled: values.adminEnabled }) }); toast(`线路已新增：${result.route.displayName}`); await loadModels(); } });
+    await showAdminDialog({ kicker: '调用线路', title: `新增线路 · ${routeModelLabels[logicalModelId] || logicalModelId} ${quality}`, description: '选择已有渠道，填写该渠道可调用的上游模型 ID 和价格。新线路会先标记为待检查。', submit: '新增线路', busyLabel: '保存中…', fields: routeDialogFields({ channels: data.channels, nextPriority, logicalModelId }), validate: validateRouteDialog, onSubmit: async values => { const result = await api('/api/admin/model-routes', { method: 'POST', body: JSON.stringify({ logicalModelId: values.logicalModelId || logicalModelId, quality, credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), adminEnabled: values.adminEnabled }) }); toast(`线路已新增：${result.route.displayName}`); await loadModels({ refreshPricing: false }); } });
   }
   async function editRoute(route, channels = []) {
     if (!route) return;
-    await showAdminDialog({ kicker: '调用线路', title: `编辑线路 · ${route.displayName}`, description: '修改创作类型、渠道或上游模型 ID 后，需要重新检查线路状态。', submit: '保存', fields: routeDialogFields({ route, channels }), validate: validateRouteDialog, onSubmit: async values => { await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'PATCH', body: JSON.stringify({ ...(values.logicalModelId ? { logicalModelId: values.logicalModelId } : {}), credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), adminEnabled: values.adminEnabled, priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), expectedVersion: route.version }) }); toast('线路已更新'); await loadModels(); } });
+    await showAdminDialog({ kicker: '调用线路', title: `编辑线路 · ${route.displayName}`, description: '修改创作类型、渠道或上游模型 ID 后，需要重新检查线路状态。', submit: '保存', fields: routeDialogFields({ route, channels }), validate: validateRouteDialog, onSubmit: async values => { await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'PATCH', body: JSON.stringify({ ...(values.logicalModelId ? { logicalModelId: values.logicalModelId } : {}), credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), adminEnabled: values.adminEnabled, priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), expectedVersion: route.version }) }); toast('线路已更新'); await loadModels({ refreshPricing: false }); } });
   }
   async function editModel(model) {
     if (!model) return;
@@ -1636,7 +1659,7 @@ import { createApiClient } from './api-client.js?v=4';
         { name: 'sortOrder', label: '排序值', type: 'number', value: String(model.sortOrder), min: 0, max: 100000, step: 1, inputmode: 'numeric', required: true, help: '0～100000 的整数，越小越靠前；与同类模型相同时，原模型依次后移。' },
       ],
       validate: values => { const order = Number(values.sortOrder); return Number.isSafeInteger(order) && order >= 0 && order <= 100000 ? null : '排序值必须是 0～100000 的整数。'; },
-      onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels(); },
+      onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels({ refreshPricing: false }); },
     });
   }
 
@@ -1645,7 +1668,7 @@ import { createApiClient } from './api-client.js?v=4';
     const common = { id: item.id, createdAt: item.createdAt };
     if (category === 'generations') return { ...common, userId: item.userId, userNickname: item.userNickname, type: item.type, status: item.status, creditCost: item.creditCost, creditStatus: item.creditStatus, pricingVersion: item.pricingVersion, modelId: item.modelId, provider: item.provider, assetId: item.assetId, updatedAt: item.updatedAt, details: item.details };
     if (category === 'credits') return { ...common, userId: item.userId, userNickname: item.userNickname, actorUserId: item.actorUserId, type: item.type, reasonCode: item.reasonCode, note: item.note, amount: item.amount, balanceAfter: item.balanceAfter, generationId: item.generationId, requestId: item.requestId, details: item.details };
-    if (category === 'llm') return { ...common, userId: item.userId, userNickname: item.userNickname, status: item.status, modelId: item.modelId, inputTokens: item.inputTokens, outputTokens: item.outputTokens, charged: item.charged, details: item.details };
+    if (category === 'llm') return { ...common, userId: item.userId, userNickname: item.userNickname, status: item.status, modelId: item.modelId, inputTokens: item.inputTokens, outputTokens: item.outputTokens, uncachedInputTokens: item.uncachedInputTokens, cacheReadTokens: item.cacheReadTokens, cacheCreationTokens: item.cacheCreationTokens, inputRateYuanPerMillion: item.inputRateYuanPerMillion, outputRateYuanPerMillion: item.outputRateYuanPerMillion, cacheReadRateYuanPerMillion: item.cacheReadRateYuanPerMillion, cacheCreationRateYuanPerMillion: item.cacheCreationRateYuanPerMillion, charged: item.charged, details: item.details };
     if (category === 'audit') return { ...common, actorUserId: item.actorUserId, actorNickname: item.actorNickname, action: item.action, targetType: item.targetType, targetId: item.targetId, requestId: item.requestId, status: item.status, before: item.before, after: item.after, metadata: item.metadata };
     if (category === 'client') return { ...common, userId: item.userId, userNickname: item.userNickname, username: item.username, reference: item.reference, note: item.note, message: item.message, size: item.size, appVersion: item.appVersion, platform: item.platform, deviceId: item.deviceId, details: item.details };
     return { ...common, level: item.level, category: item.category, requestId: item.requestId, userId: item.userId, userNickname: item.userNickname, modelId: item.modelId, generationId: item.generationId, message: item.message, details: item.details };
@@ -1671,9 +1694,10 @@ import { createApiClient } from './api-client.js?v=4';
   const signedAmount = value => `<b class="${Number(value) < 0 ? 'danger-text' : 'success-text'}">${Number(value) >= 0 ? '+' : ''}${money(value)}</b>`;
   function renderLogRows(category, items) {
     const table = (label, heads, rows) => `<table aria-label="${esc(label)}" style="min-width:${heads.length * 140}px"><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}<th>详情</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const tokenCell = (tokens, rate) => `<td class="is-num"><div class="cell-stack"><span>${tokens === null || tokens === undefined ? '—' : money(tokens)}</span>${rate === null || rate === undefined ? '' : `<small class="muted">${money(rate)} 元 / 百万 Token</small>`}</div></td>`;
     if (category === 'generations') return table('生成任务日志', ['时间', '任务 ID', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '任务 ID', true)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 7)).join(''));
     if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', '关联任务', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td>${idText(item.generationId, '任务 ID')}</td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 8)).join(''));
-    if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['Tokens', 'is-num'], ['计费', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td class="is-num" title="输入 ${money(item.inputTokens)} · 输出 ${money(item.outputTokens)}">${money((item.inputTokens || 0) + (item.outputTokens || 0))}</td><td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 8)).join(''));
+    if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 11)).join(''));
     if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 6)).join(''));
     // 客户端日志包存在对象存储里，这一列给的是后端签名跳转，点开即下载 .log.gz。
     if (category === 'client') return table('客户端诊断日志', ['时间', '编号', '用户', '版本 / 平台', '问题描述', '日志包'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.reference)}</code></td><td>${userCell(item.userId, item.userNickname, item.username)}</td><td><div class="cell-stack"><span>${plain(item.appVersion)}</span><span class="detail">${esc(item.platform || '—')}</span></div></td><td><div class="cell-stack"><span class="cell-clip" title="${esc(item.note || '')}">${plain(item.note)}</span><span class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</span></div></td><td>${item.downloadable ? `<a class="btn btn-sm" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">${icon('download')}下载</a>` : '<span class="muted">—</span>'}</td>`, 7)).join(''));

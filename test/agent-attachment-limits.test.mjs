@@ -37,6 +37,46 @@ test('library selection prepares all 30 images and rejects additional picks', as
   assert.match(f.notices.at(-1), /30/);
 });
 
+test('one library selection adds 30 images in order and caps repeated batches', async () => {
+  const f = fixture(), options = [];
+  const files = Array.from({length:30}, (_,i) => ({id:`batch-${i}`,kind:'image',name:`图片 ${i}`}));
+  f.context.importCanvasAsset = async value => { options.push(value); return files; };
+  await f.context.addLibraryAsset();
+  assert.deepEqual(Array.from(f.context.attachments, item => item.asset.id), files.map(file => file.id));
+  assert.equal(options[0].multiple, true);
+  assert.equal(options[0].maxFiles, 30);
+  await f.context.addLibraryAsset();
+  assert.equal(options.length, 1);
+  assert.match(f.notices.at(-1), /30/);
+});
+
+test('library batches skip duplicates and receive only the remaining allowance', async () => {
+  const f = fixture();
+  await f.context.addLibraryAsset();
+  let options;
+  f.context.importCanvasAsset = async value => {
+    options = value;
+    return [{id:'library-1',kind:'image'}, ...Array.from({length:31}, (_,i) => ({id:`batch-${i}`,kind:'image'}))];
+  };
+  await f.context.addLibraryAsset();
+  assert.equal(options.maxFiles, 29);
+  assert.equal(f.context.attachments.length, 30);
+  assert.equal(new Set(Array.from(f.context.attachments, item => item.asset.id)).size, 30);
+});
+
+test('leaving the entry while preparing a library batch stops remaining files', async () => {
+  const f = fixture();let complete,markStarted;
+  const started = new Promise(resolve => { markStarted = resolve; });
+  f.context.importCanvasAsset = async () => [{id:'one',kind:'image'},{id:'two',kind:'image'}];
+  f.context.cloudFile = () => new Promise(resolve => { complete = resolve;markStarted(); });
+  const pending = f.context.addLibraryAsset();
+  await started;
+  f.context.menuEvents.abort();complete({id:'one',kind:'image'});
+  await pending;
+  assert.equal(f.context.attachments.length, 1);
+  assert.equal(f.context.busy, 0);
+});
+
 test('raising the image allowance retains the separate document limit', async () => {
   const f = fixture();
   await f.context.addSelectedFiles(Array.from({length:11}, (_,i) => ({name:`document-${i}.txt`,type:'text/plain',size:10,text:async () => '内容'})));

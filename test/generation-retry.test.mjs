@@ -29,19 +29,35 @@ test('pending, ambiguous submissions, local errors, timeouts and delivered resul
   assert.equal(prepareGenerationRetry({ type:'image', sourceUrl:'https://result' }, { upstreamTerminal:true }), false);
 });
 
-test('content safety rejections are not submitted again', () => {
+for (const type of ['image', 'video']) test(`${type}: content review failures receive up to three retries without another charge`, () => {
   for (const error of [
     Object.assign(new Error('request rejected'), { upstreamStatus:451 }),
+    Object.assign(new Error('content_policy_violation'), { upstreamStatus:400 }),
     Object.assign(new Error('The generated images appear to be unsafe'), { upstreamTerminal:true }),
+    Object.assign(new Error('视频内容审核未通过，涉及敏感内容'), { upstreamTerminal:true }),
+    Object.assign(new Error('content review failed: moderation / nsfw'), { upstreamTerminal:true }),
   ]) {
-    assert.equal(prepareGenerationRetry({ type:'image', status:'running' }, error), false);
+    const task = { type, status:'running', creditStatus:'charged', creditCostMicro:1230000 };
+    for (let retry = 1; retry <= 3; retry++) {
+      task.providerTaskId = `review-failed-${retry}`;
+      assert.equal(prepareGenerationRetry(task, error), true);
+      assert.equal(task.generationRetryCount, retry);
+      assert.equal(task.status, 'queued');
+      assert.equal(task.providerTaskId, '');
+      assert.equal(task.error, '');
+      assert.equal(task.creditStatus, 'charged');
+      assert.equal(task.creditCostMicro, 1230000);
+    }
+    assert.equal(prepareGenerationRetry(task, error), false);
+    assert.equal(task.generationAttempts.length, 3);
+    assert.ok(task.generationAttempts.every(attempt => attempt.error === error.message));
   }
 });
 
 test('recovery keeps a terminal provider failure pending when a retry is scheduled', async () => {
   const task = { id:'g', type:'video', providerTaskId:'old' };
   const service = createGenerationRecoveryService({ activeGenerations:new Map(), now:() => 'now', saveGeneration:async () => {}, saveGenerationWithRetry:async () => {}, completeGenerationResult:async () => assert.fail(), failGeneration:async (_, task, error) => prepareGenerationRetry(task, error) });
-  await service.resume('u', task, { poll:async () => { throw Object.assign(new Error('provider failed'), { upstreamTerminal:true }); } });
+  await service.resume('u', task, { poll:async () => { throw Object.assign(new Error('视频内容审核未通过'), { upstreamTerminal:true }); } });
   assert.equal(task.status, 'queued');
   assert.equal(task.finishedAt, null);
 });

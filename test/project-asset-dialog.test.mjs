@@ -12,7 +12,7 @@ test('project asset dialog leaves the page layout after close', () => {
 
 test('project asset dialog uses one guarded lifecycle instance', () => {
   assert.match(studio, /querySelectorAll\('dialog#projectAssetDialog'\)/);
-  assert.match(studio, /dialogs\.filter\(item=>item!==dialog\)\.forEach\(item=>item\.remove\(\)\)/);
+  assert.match(studio, /dialogs\.filter\(item=>item!==dialog\)\.forEach\(item=>\{releaseWorkbenchVideos\(item\);item\.remove\(\);\}\)/);
   assert.match(studio, /dialog\.dataset\.projectAssetLifecycleBound!=='true'/);
   assert.match(studio, /button\.onclick=closeProjectAssetDialog/);
 });

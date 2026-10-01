@@ -18,6 +18,38 @@ test('LLM pricing converts actual tokens to exact integer micro credits', () => 
   assert.equal(llmReservationMicro(12_000, 4_096, rates), 605_760);
 });
 
+test('cache pricing counts each input token once and reserves the highest input rate', () => {
+  const cachedRates = llmRatesFromEnv({ YUAN_PER_CREDIT:'0.1', LLM_INPUT_PRICE_YUAN_PER_MILLION:'3', LLM_OUTPUT_PRICE_YUAN_PER_MILLION:'6', LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'0.3', LLM_CACHE_CREATION_PRICE_YUAN_PER_MILLION:'3.75' });
+  const usage = { cacheReadTokens:6000, cacheCreationTokens:2000 };
+  assert.equal(llmCostMicro(10_000, 1000, cachedRates, usage), 213_000);
+  assert.equal(llmReservationMicro(10_000, 1000, cachedRates), 435_000);
+  assert.equal(llmCostMicro(10_000, 1000, rates, usage), llmCostMicro(10_000, 1000, rates));
+  const freeRead = llmRatesFromEnv({ LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'0' });
+  assert.equal(llmCostMicro(100, 0, freeRead, {cacheReadTokens:100}), 0);
+  const tinyRead = llmRatesFromEnv({ LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'0.001' });
+  assert.equal(llmCostMicro(1000, 0, tinyRead, {cacheReadTokens:1000}), 10);
+  for (const invalid of [{cacheReadTokens:-1}, {cacheCreationTokens:0.5}, {cacheReadTokens:9, cacheCreationTokens:2}]) {
+    assert.throws(() => llmCostMicro(10, 0, rates, invalid));
+  }
+  assert.throws(() => llmRatesFromEnv({ LLM_CACHE_READ_PRICE_YUAN_PER_MILLION:'-1' }));
+});
+
+test('Anthropic cache categories are added to input while compatible APIs include them already', () => {
+  const anthropic = normalizeLlmResponse('anthropic', { usage:{input_tokens:100, output_tokens:20, cache_read_input_tokens:600, cache_creation_input_tokens:300} });
+  assert.deepEqual(anthropic.usage, {inputTokens:1000, outputTokens:20, cacheReadTokens:600, cacheCreationTokens:300});
+  const compatible = normalizeLlmResponse('openai-compatible', { usage:{prompt_tokens:1000, completion_tokens:20, prompt_tokens_details:{cached_tokens:600}, cache_creation_input_tokens:300} });
+  assert.deepEqual(compatible.usage, anthropic.usage);
+  const deepseek = normalizeLlmResponse('openai-compatible', { usage:{prompt_tokens:1000, completion_tokens:20, prompt_cache_hit_tokens:600, prompt_cache_miss_tokens:400} });
+  assert.deepEqual(deepseek.usage, {inputTokens:1000, outputTokens:20, cacheReadTokens:600, cacheCreationTokens:0});
+});
+
+test('invalid cache usage is rejected before settlement', async () => {
+  const config = llmConfigFromEnv({ LLM_API_BASE:'https://supplier.example', LLM_API_KEY:'test-key' });
+  for (const cache of [-1, 101, 1.5, 'invalid']) {
+    await assert.rejects(callLlm({system:'s', prompt:'p', config, fetchImpl:async () => new Response(JSON.stringify({ choices:[{message:{content:'ok'}}], usage:{prompt_tokens:100, completion_tokens:20, prompt_tokens_details:{cached_tokens:cache}} })) }), error => error.billingReconcileRequired === true);
+  }
+});
+
 test('legacy integer credit balances migrate without losing value', () => {
   const user = { credits: 50 };
   const wallet = normalizeWallet(user);
@@ -32,9 +64,9 @@ test('input reservation fallback is conservative for Chinese UTF-8 text', () => 
 
 test('LLM protocols normalize usage fields', () => {
   const anthropic = normalizeLlmResponse('anthropic', { id: 'msg_1', model: 'deepseek-v4-flash', content: [{ type: 'text', text: '{}' }], usage: { input_tokens: 12, output_tokens: 4 } });
-  assert.deepEqual(anthropic.usage, { inputTokens: 12, outputTokens: 4 });
+  assert.deepEqual(anthropic.usage, { inputTokens: 12, outputTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0 });
   const openai = normalizeLlmResponse('openai-compatible', { id: 'chat_1', model: 'deepseek-v4-flash', choices: [{ message: { content: '{}' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } });
-  assert.deepEqual(openai.usage, { inputTokens: 10, outputTokens: 3 });
+  assert.deepEqual(openai.usage, { inputTokens: 10, outputTokens: 3, cacheReadTokens: 0, cacheCreationTokens: 0 });
 });
 
 test('Anthropic client uses configured supplier and returns normalized response', async () => {
@@ -50,7 +82,7 @@ test('Anthropic client uses configured supplier and returns normalized response'
   assert.equal(request.url, 'https://supplier.example/v1/messages');
   assert.equal(request.options.headers['x-api-key'], 'test-key');
   assert.equal(request.body.model, 'deepseek-v4-flash');
-  assert.deepEqual(result.usage, { inputTokens: 20, outputTokens: 5 });
+  assert.deepEqual(result.usage, { inputTokens: 20, outputTokens: 5, cacheReadTokens: 0, cacheCreationTokens: 0 });
 });
 
 test('multimodal source analysis maps image data for both gateway protocols', async () => {

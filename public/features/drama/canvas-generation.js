@@ -1,3 +1,5 @@
+import { modelLogoUrl } from '../../components/model-logo.js?v=1';
+import { defaultVideoDuration } from '../generation/video-defaults.js?v=1';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
 const tuziDimensions={
   '1:1':['1024x1024','2048x2048','2880x2880'],'2:3':['816x1232','1360x2048','2352x3520'],
@@ -12,13 +14,9 @@ const videoOrder=['minimax-h3-15s','seedance-2.0','seedance-2.5','oai','veo-31',
 export const canvasGenerationModeLabels={TEXT:'文生视频',REFERENCE:'参考素材','FIRST&LAST':'首尾帧'};
 export const canvasGenerationModeDescriptions={TEXT:'只用文字描述生成视频',REFERENCE:'用图片、视频或音频作为参考','FIRST&LAST':'指定开始和结束的画面'};
 export const canvasGenerationRatios=imageRatios;
-const modelIconBase='https://unpkg.com/@lobehub/icons-static-svg@1.94.0/icons/';
-const modelIconFiles=Object.freeze({'gpt-image-2':'openai','gpt-image-2.5':'openai',midjourney:'midjourney',grok:'grok','minimax-h3-15s':'minimax-color','minimax-h3':'minimax-color',veo:'gemini-color',oai:'gemini-color','veo-31':'gemini-color','seedance-2.0':'bytedance-color','seedance-2.5':'bytedance-color','seedance-2.0-fast':'bytedance-color'});
-const iconKeyFiles=Object.freeze({openai:'openai',midjourney:'midjourney',grok:'grok',minimax:'minimax-color',google:'gemini-color',gemini:'gemini-color',bytedance:'bytedance-color'});
-// Same brand icon set used by the workbench model pickers.
+// Same local, theme-aware brand icon set used by the workbench model pickers.
 export function canvasGenerationModelIcon(modelId,iconKey=''){
-  const file=modelIconFiles[modelId]||iconKeyFiles[String(iconKey||'').toLowerCase()];
-  return file?`${modelIconBase}${file}.svg`:'';
+  return modelLogoUrl(modelId,iconKey);
 }
 export function canvasGenerationQualityLabel(draft,value){
   if(draft?.type==='image'&&draft.modelId==='midjourney')return `质量 ${value}`;
@@ -38,7 +36,8 @@ export function canvasGenerationModels(type,config={}){
 export function createCanvasGenerationDraft(type,config={}){
   const model=canvasGenerationModels(type,config).find(item=>item.availability!=='coming-soon');
   const mode=type==='video'?(model?.modes?.find(item=>item.generationType==='TEXT')||model?.modes?.[0]):null;
-  return {id:`canvas-gen-${crypto.randomUUID()}`,type,prompt:'',modelId:model?.id||'',aspect:type==='image'?'1:1':mode?.aspectRatios?.includes('16:9')?'16:9':mode?.aspectRatios?.[0]||'',quality:type==='image'?'1k':mode?.qualityOptions?.[0]||'',mode:mode?.generationType||'',duration:mode?.durations?.[0]||0,quantity:1,attachments:[],midjourney:{version:'8.2',stylize:100,chaos:0,weird:0,seed:'',negativePrompt:'',imageWeight:1,raw:false,tile:false,draft:false},taskId:'',status:''};
+  const draft={id:`canvas-gen-${crypto.randomUUID()}`,type,prompt:'',modelId:model?.id||'',aspect:type==='image'?'1:1':mode?.aspectRatios?.includes('16:9')?'16:9':mode?.aspectRatios?.[0]||'',quality:type==='image'?'1k':mode?.qualityOptions?.[0]||'',mode:mode?.generationType||'',duration:0,quantity:1,attachments:[],midjourney:{version:'8.2',stylize:100,chaos:0,weird:0,seed:'',negativePrompt:'',imageWeight:1,raw:false,tile:false,draft:false},taskId:'',status:''};
+  return type==='video'?reconcileCanvasGenerationDraft(draft,config,{resetDuration:true}):draft;
 }
 
 export function canvasGenerationOptions(draft,config={}){
@@ -52,7 +51,8 @@ export function canvasGenerationOptions(draft,config={}){
   return {model,modes,parameters,aspects:parameters?.aspectRatios||[],qualities:parameters?.qualityOptions||[]};
 }
 
-export function reconcileCanvasGenerationDraft(draft,config={}){
+export function reconcileCanvasGenerationDraft(draft,config={}, {resetDuration=false}={}){
+  const previousModelId=draft.modelId;
   const models=canvasGenerationModels(draft.type,config);
   if(!models.some(item=>item.id===draft.modelId&&item.availability!=='coming-soon'))draft.modelId=models.find(item=>item.availability!=='coming-soon')?.id||'';
   const options=canvasGenerationOptions(draft,config);
@@ -65,7 +65,7 @@ export function reconcileCanvasGenerationDraft(draft,config={}){
     if(!options.modes.some(item=>item.generationType===draft.mode))draft.mode=options.modes.find(item=>item.generationType==='TEXT')?.generationType||options.modes[0]?.generationType||'';
     const mode=canvasGenerationOptions(draft,config).parameters;
     if(!mode?.aspectRatios?.includes(draft.aspect))draft.aspect=mode?.aspectRatios?.includes('16:9')?'16:9':mode?.aspectRatios?.[0]||'';
-    if(!mode?.durations?.includes(Number(draft.duration)))draft.duration=mode?.durations?.[0]||0;
+    if(resetDuration||draft.modelId!==previousModelId||!mode?.durations?.includes(Number(draft.duration)))draft.duration=defaultVideoDuration(draft.modelId,mode?.durations);
     if(!mode?.qualityOptions?.includes(draft.quality))draft.quality=mode?.qualityOptions?.[0]||'';
   }
   return draft;

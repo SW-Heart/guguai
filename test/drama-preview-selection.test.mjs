@@ -28,7 +28,7 @@ test('assembly clicks switch the preview independently of shot order and preserv
 });
 
 test('shot preview only inserts submission placeholders while a request is pending',()=>{
-  const context={professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),task:()=>({status:'completed'}),taskLocallyReady:()=>true,taskSyncing:()=>false,taskAsset:()=>({id:'file'}),videoPreviewVersionState:()=> 'ready',workbenchVideoMarkup:()=>'<video></video>',workbenchPreviewThumbMarkup:()=>'<button>Finished version</button>',esc:String,ratioCss:String};
+  const context={localDeliverySignature:()=>'',professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),task:()=>({status:'completed'}),taskLocallyReady:()=>true,taskSyncing:()=>false,taskAsset:()=>({id:'file'}),videoPreviewVersionState:()=> 'ready',workbenchVideoMarkup:()=>'<video></video>',workbenchPreviewThumbMarkup:()=>'<button>Finished version</button>',esc:String,ratioCss:String};
   vm.createContext(context);
   vm.runInContext(extract('  function workbenchShotPreview(shot){','  function workbenchTitleWidth('),context);
   const shot={id:'s1',title:'Shot',selectedVideoTaskId:'t1',videoVersions:['t1'],generation:{count:2}};

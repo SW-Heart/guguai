@@ -1,11 +1,11 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=113';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=117';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=10';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=5';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
-import { mountModelPreferencePicker } from './model-preference-picker.js?v=3';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=5';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
@@ -131,18 +131,23 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     };
     const addLibraryAsset=async()=>{
       if(attachments.length>=30){toast('一次最多添加 30 个文件');return;}
-      const file=await importCanvasAsset({chat:true});
-      if(!file||!current()||menuEvents.signal.aborted)return;
-      if(attachments.some(item=>item.asset?.id===file.id&&item.status!=='error')){toast('这个文件已添加');return;}
-      const item={key:crypto.randomUUID(),name:file.name,size:file.size,status:'loading',kind:file.kind,asset:null,text:'',previewUrl:previewUrl(file)};
-      attachments.push(item);busy++;drawAttachments();
-      try{
-        state.files=[file,...state.files.filter(entry=>entry.id!==file.id)];
-        const readyAsset=await cloudFile(file);
-        if(!readyAsset||!current())throw new Error('素材暂时无法使用，请重试');
-        item.asset={...readyAsset,previewUrl:previewUrl(readyAsset)};item.status='ready';
-      }catch(error){item.status='error';if(!menuEvents.signal.aborted)toast(`${file.name}：${error.message}`);}
-      finally{busy=Math.max(0,busy-1);drawAttachments();}
+      const selected=await importCanvasAsset({chat:true,multiple:true,maxFiles:30-attachments.length});
+      if(!selected||!current()||menuEvents.signal.aborted)return;
+      for(const file of Array.isArray(selected)?selected:[selected]){
+        if(menuEvents.signal.aborted||!current())return;
+        if(!file||attachments.some(item=>item.asset?.id===file.id&&item.status!=='error'))continue;
+        if(attachments.length>=30){toast('一次最多添加 30 个文件');break;}
+        const item={key:crypto.randomUUID(),name:file.name,size:file.size,status:'loading',kind:file.kind,asset:null,text:'',previewUrl:previewUrl(file)};
+        attachments.push(item);busy++;drawAttachments();
+        try{
+          state.files=[file,...state.files.filter(entry=>entry.id!==file.id)];
+          const readyAsset=await cloudFile(file);
+          if(menuEvents.signal.aborted)return;
+          if(!readyAsset||!current())throw new Error('素材暂时无法使用，请重试');
+          item.asset={...readyAsset,previewUrl:previewUrl(readyAsset)};item.status='ready';
+        }catch(error){item.status='error';if(!menuEvents.signal.aborted)toast(`${file.name}：${error.message}`);}
+        finally{busy=Math.max(0,busy-1);drawAttachments();}
+      }
     };
     addButton.onclick=()=>setMenu('files',addMenu.hidden);
     addMenu.onclick=event=>{
@@ -272,13 +277,23 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         return ready;
       },
       prepareChatAsset:async({assetId,taskId})=>cloudFile(assetId?asset(assetId):taskAsset(taskId)),
-      uploadChatFile:async()=>{
-        const file=await importCanvasAsset({chat:true});
-        if(!current()||!file)return null;
-        state.files=[file,...state.files.filter(item=>item.id!==file.id)];
-        const ready=await cloudFile(file);
-        if(ready){project.assetIds=[...new Set([...project.assetIds,ready.id])];await saveCanvas({assetIds:project.assetIds});}
-        return ready;
+      uploadChatFile:async({maxFiles=30}={})=>{
+        const token=navigationEpoch,active=()=>token===navigationEpoch&&current();
+        const selected=await importCanvasAsset({chat:true,multiple:true,maxFiles});
+        if(!active()||!selected)return [];
+        const files=Array.isArray(selected)?selected:[selected],prepared=[];
+        for(const file of files){
+          if(!active())return [];
+          if(!file)continue;
+          try{
+            state.files=[file,...state.files.filter(item=>item.id!==file.id)];
+            const ready=await cloudFile(file);
+            if(!active())return [];
+            if(ready)prepared.push(ready);
+          }catch(error){if(!active())return [];toast(`${file.name}：${error.message}`);}
+        }
+        if(prepared.length){project.assetIds=[...new Set([...project.assetIds,...prepared.map(file=>file.id)])];await saveCanvas({assetIds:project.assetIds});}
+        return prepared;
       },
       uploadGenerationFile:async()=>{
         const file=await importCanvasAsset({generation:true});

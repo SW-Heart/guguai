@@ -14,7 +14,8 @@ test('empty storyboard state binds its create-shot action', () => {
   const end = source.indexOf('\n  function applyProjectAssetToShot', start);
   const binding = source.slice(start, end);
   assert.match(binding, /querySelector\('\.wb-empty-shot-action'\)/);
-  assert.match(binding, /void addProfessionalShot\(\)/);
+  assert.match(binding, /bindWorkbenchEmptyAction\(/);
+  assert.match(source.slice(source.indexOf('  function bindWorkbenchEmptyAction('),start), /void addProfessionalShot\(\)/);
 });
 
 function conflictHarness({ choose = async () => ({ title:'local' }) } = {}) {

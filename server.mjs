@@ -547,7 +547,7 @@ function publicCreditEntry(entry) {
   return value;
 }
 const publicLlmUsageFields = Object.freeze([
-  'inputTokens', 'outputTokens', 'chargedCredits', 'attemptCount', 'maxAttemptCount',
+  'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'chargedCredits', 'attemptCount', 'maxAttemptCount',
   'recoveryAttempts', 'maxRecoveryRounds', 'initialReturnedCount', 'recoveredShotCount',
   'completionCount', 'recoveryMode', 'correctedProblemCount', 'autoCompleted',
   'autoRegenerated', 'autoCorrected',
@@ -558,7 +558,7 @@ function publicLlmUsage(usage) {
     .map(field => [field, usage[field]]));
   if (Array.isArray(usage?.attempts)) {
     value.attempts = usage.attempts.map(attempt => Object.fromEntries(
-      ['type', 'inputTokens', 'outputTokens', 'chargedCredits']
+      ['type', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens', 'chargedCredits']
         .filter(field => Object.hasOwn(attempt || {}, field))
         .map(field => [field, attempt[field]]),
     ));
