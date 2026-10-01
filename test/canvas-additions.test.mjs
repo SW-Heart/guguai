@@ -19,7 +19,7 @@ function fixture(){
     seenCanvasNodeIds:new Set(),pendingCanvasFocus:new Set(),automaticImageSizing:new Set(),canvasFocusFrame:0,saveTimer:0,
     placeCanvasNodes,focusCanvasViewport,workspace:()=>saved,liveCanvasNodes:()=>nodes,canvasItems:()=>items,position:node=>saved.positions[node.id]||{},
     canvasItemSize:node=>({width:node.width||280,height:node.height||228}),nodeContent:node=>node.text||'',edgeLinks:()=>[],renderEdges(){},alignCard(){},alignCards(){},paintAssetImage(){},drawPanels(){},positionGenerationComposer(){},
-    requestAnimationFrame:fn=>{frames.push(fn);return frames.length;},clearTimeout(){},setTimeout:()=>1,
+    queueWorkspaceFrame:fn=>{frames.push(fn);return frames.length;},clearTimeout(){},setTimeout:()=>1,
     save:async()=>{saves++;},scheduleCanvasSave:()=>saves++,persistLiveCanvasState(){},
   });
   const helpers=source.slice(source.indexOf('  function canvasView('),source.indexOf('  function canvasItemSize('));

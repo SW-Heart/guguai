@@ -2103,7 +2103,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=80').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=81').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2114,7 +2114,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=211').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=212').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     });
@@ -2231,7 +2231,9 @@ function navigate(route, { historyMode = 'push' } = {}) {
   const nextRoute=(routePaths[route]||validProjectPath)?route:'agent';
   const routeChanged = state.route !== nextRoute;
   const creativeRoutes=['agent','project'];
+  // Dispose the old canvas before changing its grid or allowing a route-shell paint.
   if (creativeRoutes.includes(state.route) && !creativeRoutes.includes(nextRoute)) agentController?.suspend?.();
+  else if (state.route === 'project' && nextRoute === 'agent') agentController?.showHome?.();
   if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
   const targetPath=nextRoute==='project'?window.location.pathname:routePaths[nextRoute];
   if (historyMode !== 'none' && (window.location.pathname !== targetPath || (nextRoute === 'agent' && window.location.search))) {

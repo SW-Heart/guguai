@@ -136,7 +136,7 @@ test('outside click closes the menu while menu and trigger clicks keep it open',
 test('workspace disposal removes the independent menu layer', () => {
   let removed=false;
   const cleanup=source.slice(source.indexOf('function dispose(){')+'function dispose(){'.length,source.indexOf('clearEmptyEntry();',source.indexOf('function dispose(){')));
-  const context=vm.createContext({canvasFocusFrame:0,seenCanvasNodeIds:new Set(),pendingCanvasFocus:new Set(),automaticImageSizing:new Set(),generationMenuLayer:{remove(){removed=true;}},generationMenuElement:{}});
+  const context=vm.createContext({epoch:1,workspaceActive:true,workspaceFrames:new Set(),mountedWorkspace:null,releaseWorkspaceMedia(){},canvasFocusFrame:0,seenCanvasNodeIds:new Set(),pendingCanvasFocus:new Set(),automaticImageSizing:new Set(),generationMenuLayer:{remove(){removed=true;}},generationMenuElement:{}});
   vm.runInContext(cleanup,context);
   assert.equal(removed,true);
   assert.equal(context.generationMenuLayer,null);

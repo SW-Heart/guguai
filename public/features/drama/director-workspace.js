@@ -210,7 +210,27 @@ export function createDirectorWorkspace(host, bridge) {
   let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
   const autoOpenedGenerations=new Set();
   const seenCanvasNodeIds=new Set(),pendingCanvasFocus=new Set(),automaticImageSizing=new Set();
-  let canvasContentReady=false,canvasFocusFrame=0;
+  let canvasContentReady=false,canvasFocusFrame=0,mountedWorkspace=null,workspaceActive=false;
+  const workspaceFrames=new Set();
+  function queueWorkspaceFrame(callback){
+    if(!workspaceActive)return 0;
+    const token=epoch;
+    const frame=requestAnimationFrame(time=>{
+      workspaceFrames.delete(frame);
+      if(token===epoch&&workspaceActive)callback(time);
+    });
+    workspaceFrames.add(frame);
+    return frame;
+  }
+  function releaseWorkspaceMedia(scope){
+    scope?.querySelectorAll('video,audio').forEach(media=>{
+      media.pause();
+      media.removeAttribute('src');
+      media.removeAttribute('data-canvas-src');
+      media.querySelectorAll('source').forEach(source=>source.removeAttribute('src'));
+      media.load();
+    });
+  }
 
   const assetSizes=new Map(), assetSizeLoads=new Map(), assetImages=new Map();
   const get=()=>bridge.project();
@@ -439,12 +459,12 @@ export function createDirectorWorkspace(host, bridge) {
   }
   function scheduleEdgeRender() {
     if(edgeRenderFrame)return;
-    edgeRenderFrame=requestAnimationFrame(()=>{edgeRenderFrame=0;renderEdges(liveCanvasNodes());});
+    edgeRenderFrame=queueWorkspaceFrame(()=>{edgeRenderFrame=0;renderEdges(liveCanvasNodes());});
   }
   function alignCard(id,html,geometryOnly=false) {
     const node=canvas.getCanvasNodeById(id),element=node?.htmlElement,shape=node?.getElement?.();
     if(!element||!shape)return;
-    if(html!==undefined&&element.dataset.content!==html){element.innerHTML=html;element.dataset.content=html;}
+    if(html!==undefined&&element.dataset.content!==html){releaseWorkspaceMedia(element);element.innerHTML=html;element.dataset.content=html;}
     if(!geometryOnly)element.querySelectorAll('[data-canvas-src]').forEach(media=>{
       if(mediaLoadObserver)mediaLoadObserver.observe(media);
       else {media.src=media.dataset.canvasSrc;delete media.dataset.canvasSrc;if(media.tagName==='VIDEO')media.preload='metadata';}
@@ -550,7 +570,7 @@ export function createDirectorWorkspace(host, bridge) {
     const surface=canvas.getContainer();
     const list=canvas.getState().nodes.filter(n=>!String(n.id).startsWith('edge-')&&(!ids||ids.includes(n.id)));
     const viewport=fitDirectorViewport(list,surface.clientWidth,surface.clientHeight);
-    if(viewport){canvas.updateViewport(viewport);requestAnimationFrame(alignCards);}
+    if(viewport){canvas.updateViewport(viewport);queueWorkspaceFrame(alignCards);}
   }
   function canvasView(){
     const surface=canvas.getContainer();
@@ -560,7 +580,7 @@ export function createDirectorWorkspace(host, bridge) {
     ids.forEach(id=>pendingCanvasFocus.add(id));
     if(canvasFocusFrame)return;
     const token=epoch;
-    canvasFocusFrame=requestAnimationFrame(()=>{
+    canvasFocusFrame=queueWorkspaceFrame(()=>{
       canvasFocusFrame=0;
       const ids=new Set(pendingCanvasFocus);pendingCanvasFocus.clear();
       if(token!==epoch||!canvas||!ids.size)return;
@@ -837,7 +857,7 @@ export function createDirectorWorkspace(host, bridge) {
     const showWelcome=!bridge.agentMode||(!items.length&&!targetDraft&&!busy&&!sending&&!bridge.hasInitialContent?.()&&chatMode!=='full');
     renderConversationMessages(messages,settlingMessageId?items.slice(0,-1):items,visibleDraft,responseState,responseJustFinished,agentState?.state==='completed',showWelcome);
     messageScroller?.refresh({reset:sessionChanged});
-    if(targetDraft&&!streamFrame)streamFrame=requestAnimationFrame(animateDraft);
+    if(targetDraft&&!streamFrame)streamFrame=queueWorkspaceFrame(animateDraft);
     const approval=agentReady?agentState?.approval:null;
     const plan=root.querySelector('.dw-plan');
     if(!plan)return;
@@ -863,7 +883,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!messages||!targetDraft)return;
     const elapsed=Math.min(64,Math.max(0,lastStreamTime?time-lastStreamTime:16));lastStreamTime=time;
     if(streamPacer.advance(elapsed)){visibleDraft=streamPacer.text;updateConversationDraft(messages,visibleDraft);messageScroller?.refresh();}
-    if(!streamPacer.caughtUp){streamFrame=requestAnimationFrame(animateDraft);return;}
+    if(!streamPacer.caughtUp){streamFrame=queueWorkspaceFrame(animateDraft);return;}
     lastStreamTime=0;
     if(settlingMessageId){
       // The finished reply is fully shown; hand it over to the saved message.
@@ -1243,7 +1263,7 @@ export function createDirectorWorkspace(host, bridge) {
     activeGenerationId=draft.id;
     syncCanvas();canvas.selectNodes([draft.id]);
     renderGenerationComposer();
-    requestAnimationFrame(()=>{positionGenerationComposer();host.querySelector('[data-gen-prompt]')?.focus();});
+    queueWorkspaceFrame(()=>{positionGenerationComposer();host.querySelector('[data-gen-prompt]')?.focus();});
     scheduleCanvasSave(true);
   }
   async function submitGenerationArea(){
@@ -1276,7 +1296,9 @@ export function createDirectorWorkspace(host, bridge) {
   function mount() {
     if(projectId===get().id&&host.querySelector('.dw-canvas')){drawPanels();return;}
     dispose();projectId=get().id;
+    const mountEpoch=epoch;workspaceActive=true;
     host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas reference-canvas-host" aria-label="无限分镜画布"></div><section class="dw-inspector" hidden></section></section><aside class="dw-agent"><div class="dw-agent-resizer" role="separator" aria-label="调整对话区域宽度" aria-orientation="vertical" tabindex="0"></div><header><b>GuGu</b><nav aria-label="对话操作"><button type="button" data-agent-new title="新建对话">＋ 新对话</button><button type="button" data-agent-history aria-expanded="false" aria-haspopup="dialog" popovertarget="directorHistoryPicker">历史</button><button type="button" data-hide-agent aria-label="收起对话" title="收起对话"><span class="gugu-lucide gugu-lucide-minus" aria-hidden="true"></span></button></nav></header><section id="directorHistoryPicker" class="dw-conversations dw-history-picker" aria-label="历史对话" popover role="dialog"></section><details class="dw-agent-options"><summary>生成设置</summary><label><input type="checkbox" data-agent-auto> 预算内自动生成</label><label>本次对话生成预算（积分）<input type="number" data-agent-budget min="0" max="10000" step="1" value="0"></label><button type="button" data-agent-save-settings>保存设置</button></details><div class="dw-message-scroller"><div class="dw-messages" role="log" aria-label="对话内容" aria-live="polite" tabindex="0"><div class="dw-turn-activity"><p class="dw-mode-help"></p><button type="button" class="dw-agent-retry" data-agent-retry hidden>重新连接</button></div></div><nav class="dw-message-rail" aria-label="消息导航" hidden></nav></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉 GuGu 你的想法</label><div data-agent-attachments class="dw-attachments attachment-strip" aria-label="已添加的文件"></div><textarea id="directorMessage" placeholder="想聊什么，或希望我帮你创作什么？" rows="3"></textarea><div class="dw-composer-actions"><button type="button" data-agent-upload class="dw-icon-button" aria-label="上传文件" title="上传文件"><span class="gugu-lucide gugu-lucide-paperclip" aria-hidden="true"></span></button><button data-director-delegate type="button" title="继续当前创作">继续</button><button data-director-stop type="button" hidden>暂停</button><button type="button" data-agent-model-toggle class="dw-icon-button" aria-label="切换对话模型" aria-haspopup="dialog" aria-expanded="false" popovertarget="directorModelPicker"><span class="gugu-lucide gugu-lucide-layers-2" aria-hidden="true"></span></button><button data-director-send class="dw-primary" type="submit" aria-label="发送消息">发送</button></div></form><div id="directorModelPicker" class="dw-model-picker" popover role="dialog" aria-label="选择对话模型"><strong>选择对话模型</strong><div data-agent-model-list></div></div></aside></section>`;
+    mountedWorkspace=host.querySelector('.director-workspace');
     const messagePanel=host.querySelector('.dw-messages');
     messageScroller=createMessageScroller(messagePanel,host.querySelector('.dw-message-rail'),host.querySelector('.dw-agent'));
     reasoning=createReasoningText();
@@ -1407,8 +1429,9 @@ export function createDirectorWorkspace(host, bridge) {
       activeGenerationId='';canvas?.selectNodes([]);renderGenerationComposer();
     });
     if(typeof IntersectionObserver==='function')mediaLoadObserver=new IntersectionObserver(entries=>{
+      if(mountEpoch!==epoch)return;
       for(const entry of entries){
-        if(!entry.isIntersecting)continue;
+        if(!entry.isIntersecting||!entry.target.isConnected)continue;
         const media=entry.target,url=media.dataset.canvasSrc;
         mediaLoadObserver?.unobserve(media);
         if(!url)continue;
@@ -1417,13 +1440,14 @@ export function createDirectorWorkspace(host, bridge) {
       }
     },{root:host.querySelector('.dw-canvas'),rootMargin:'400px'});
     const bindCanvas=api=>{
+      if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
       canvas.on('nodes:created',handleCreatedCanvasNodes);
       mainLayer=canvas.getMainLayer?.();
       nativeTransformer=canvas.getTransformer?.();
       brandSelectionTransformer(nativeTransformer);
       if(workspace().viewport)canvas.updateViewport(workspace().viewport);
-      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;activeGenerationId=generationDraft(next)?.taskId?'':generationDraft(next)?.id||'';renderGenerationComposer();if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else window.setTimeout(()=>{if(canvas&&!syncing&&!selected)syncCanvas();},0);});
+      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;activeGenerationId=generationDraft(next)?.taskId?'':generationDraft(next)?.id||'';renderGenerationComposer();if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else window.setTimeout(()=>{if(mountEpoch===epoch&&canvas&&!syncing&&!selected)syncCanvas();},0);});
       canvas.on('nodes:deleted',deletedNodes=>{
         if(syncing||!Array.isArray(deletedNodes)||deletedNodes.length===0)return;
         const deletedIds=markCanvasItemsHidden(deletedNodes.map(node=>node?.id).filter(Boolean));
@@ -1433,12 +1457,12 @@ export function createDirectorWorkspace(host, bridge) {
       });
       let edgeFrame=0;
       let latestSnapshot=null;
-      const queueEdgeSync=snapshot=>{latestSnapshot=snapshot;if(edgeFrame)return;edgeFrame=requestAnimationFrame(()=>{edgeFrame=0;const next=latestSnapshot;latestSnapshot=null;if(next)renderEdges(next.nodes);});};
+      const queueEdgeSync=snapshot=>{latestSnapshot=snapshot;if(edgeFrame)return;edgeFrame=queueWorkspaceFrame(()=>{edgeFrame=0;const next=latestSnapshot;latestSnapshot=null;if(next)renderEdges(next.nodes);});};
       const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
-      canvas.on('state:change',snapshot=>{if(syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
-      canvas.on('viewport:change',v=>{if(syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();requestAnimationFrame(()=>{alignCards();positionGenerationComposer();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
+      canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
+      canvas.on('viewport:change',v=>{if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();queueWorkspaceFrame(()=>{alignCards();positionGenerationComposer();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
       // Konva owns live geometry during both drag and resize. The public
       // state event arrives only after the gesture, so align HTML cards and
       // arrows from the native shape on every move.
@@ -1477,7 +1501,7 @@ export function createDirectorWorkspace(host, bridge) {
       canvas.createNodes((workspace().canvasNodes||[]).filter(node=>!hidden.has(node.id)),false);
       syncing=false;
       syncCanvas();
-      requestAnimationFrame(()=>{if(canvas){syncCanvas();alignCards();}});
+      queueWorkspaceFrame(()=>{if(canvas){syncCanvas();alignCards();}});
       drawPanels();
     };
     canvasMount=mountReferenceCanvas(host.querySelector('.dw-canvas'),{sessionKey:projectId,toolbarHost:host.querySelector('.dw-project-tools'),adapter:{
@@ -1521,12 +1545,12 @@ export function createDirectorWorkspace(host, bridge) {
       if(event?.pointerId!==undefined&&handle.hasPointerCapture(event.pointerId))handle.releasePointerCapture(event.pointerId);
       restoreCanvasAfterResize();
       if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);
-      resizeFinishFrame=requestAnimationFrame(()=>{resizeFinishFrame=0;resizingChat=false;workspaceElement.classList.remove('is-resizing-chat');});
+      resizeFinishFrame=queueWorkspaceFrame(()=>{resizeFinishFrame=0;resizingChat=false;workspaceElement.classList.remove('is-resizing-chat');});
     };
     const resizeLayoutOnly=(width,persist=true)=>{
       if(!resizingChat){resizeCanvasSnapshot=captureCanvasForResize();resizingChat=true;workspaceElement.classList.add('is-resizing-chat');}
       setWidth(width,persist);
-      requestAnimationFrame(()=>endResize());
+      queueWorkspaceFrame(()=>endResize());
     };
     handle.onpointerdown=event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();if(resizeFinishFrame){cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;}resizeCanvasSnapshot=captureCanvasForResize();resizingChat=true;handle.setPointerCapture(event.pointerId);workspaceElement.classList.add('is-resizing-chat');};
     handle.onpointermove=event=>{if(!handle.hasPointerCapture(event.pointerId))return;event.preventDefault();event.stopPropagation();setWidth(workspaceElement.getBoundingClientRect().right-event.clientX,true);};
@@ -1643,7 +1667,7 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('.director-workspace').addEventListener('keydown',handleCanvasDeleteKeydown,true);
     host.querySelector('.director-workspace').addEventListener('keydown',event=>{if(event.key==='Escape'){inspectorOpen=false;selected='';canvas.selectNodes([]);drawInspector();}});
 
-    const toggleAgent=collapsed=>{if(bridge.agentMode){chatMode=collapsed?'minimized':'side';drawPanels();}else{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed;} if(!collapsed)requestAnimationFrame(()=>composerInput.focus());};
+    const toggleAgent=collapsed=>{if(bridge.agentMode){chatMode=collapsed?'minimized':'side';drawPanels();}else{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed;} if(!collapsed)queueWorkspaceFrame(()=>composerInput.focus());};
     host.querySelector('[data-hide-agent]').onclick=()=>toggleAgent(chatMode!=='minimized');
     host.querySelector('[data-show-agent]').onclick=()=>toggleAgent(false);
     host.querySelector('[data-director-delegate]').onclick=()=>void agentAction(()=>agentClient.resume());
@@ -1750,6 +1774,16 @@ export function createDirectorWorkspace(host, bridge) {
     void drainSubmissions();
     return promise;
   }
-  function dispose(){if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;epoch++;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
+  function dispose(){
+    // Invalidate callbacks before disconnecting clients or unmounting React.
+    epoch++;workspaceActive=false;
+    workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
+    const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
+    releaseWorkspaceMedia(mountedWorkspace);
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    // Clear backing stores after the canvas engine has saved its history and disposed.
+    surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
+    mountedWorkspace?.remove();mountedWorkspace=null;
+    projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
   return {mount,refresh:drawPanels,dispose};
 }

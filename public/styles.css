@@ -172,7 +172,7 @@
 .app-shell.library-mode { grid-template-columns: var(--rail-width) minmax(0, 1fr); grid-template-areas: "top top" "rail content"; }
 .app-shell.wide-mode { grid-template-columns: var(--rail-width) minmax(0, 1fr); grid-template-areas: "top top" "rail content"; }
 .app-shell.agent-route .content-panel{overflow:hidden}
-#agentView{height:100%;min-height:0}
+#agentView{height:100%;min-width:0;min-height:0;overflow:clip;contain:paint}
 #agentView.hidden{display:none}
 #agentView .director-workspace{height:100%;width:100%}
 #agentView .director-workspace.agent-home{display:grid;grid-template-columns:minmax(0,1fr);position:relative}
@@ -5277,7 +5277,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .director-workspace{grid-template-columns:minmax(0,1fr) 310px;height:100%;min-height:0}
 .director-workspace.agent-collapsed{grid-template-columns:minmax(0,1fr)}
 .director-workspace.agent-collapsed .dw-agent{display:none}
-.dw-board{height:100%;min-height:0}.dw-canvas{height:100%;flex:1}
+.dw-board{height:100%;min-height:0}.dw-canvas{height:100%;flex:1;contain:paint}
 .dw-canvas-actions{position:absolute;top:56px;left:16px;display:flex;gap:8px;z-index:3}.dw-canvas-actions button{min-height:32px;padding:6px 10px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.94118);box-shadow:0 4px 16px #31365712;border-color:var(--theme-line, #e4e6ef);font-size:12px}
 .dw-agent>header{height:48px;padding:8px 12px;gap:8px}.dw-agent>header>b{font-size:14px;flex:1}.dw-agent>header select{font-size:12px;min-height:30px;padding:4px 8px;border:0;background:var(--theme-panel, #f4f4f9);margin:0}.dw-agent>header button{min-height:30px;width:30px;padding:4px;border:0;background:transparent;font-size:18px}
 .dw-welcome{padding:12px 0}.dw-welcome h2{font-size:20px}.dw-welcome p{font-size:13px}.dw-welcome button{text-align:left;font-size:12px}.dw-messages{padding:16px;min-height:0}.dw-composer{margin:10px;padding:10px 12px;box-shadow:none}.dw-composer textarea{min-height:76px}.dw-composer>div{justify-content:flex-end;gap:6px}.dw-composer>div [data-director-delegate]{margin-right:auto;border:0;background:var(--theme-panel, #f4f4fa);color:var(--theme-muted, #656581);font-size:12px}.dw-plan{padding:0 12px}.dw-plan>b{display:none}.dw-tools{bottom:16px;border-radius:12px;padding:4px}.dw-tools button{min-height:34px;padding:6px 10px}.dw-tools [data-tool]{min-width:42px}.dw-tools [data-tool="arrow"]{min-width:44px}.dw-tool-divider{height:18px;width:1px;background:var(--theme-brand-soft, #e2e4ee);margin:0 4px}
@@ -5285,7 +5285,8 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .dw-inspector[hidden]{display:none}.dw-inspector.compact{top:16px;left:160px;width:auto;max-width:calc(100% - 176px);max-height:none;display:flex;align-items:center;gap:5px;padding:5px 8px;border-radius:12px;overflow:hidden}.dw-inspector.compact>b{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px}.dw-inspector.compact button{min-height:32px;white-space:nowrap;padding:5px 9px;border:0;margin:0}.dw-close-edit{float:right;border:0!important;font-size:18px!important}.dw-inspector h3{padding-top:8px}.dw-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
 /* Interaction polish: keep transitions spatial and reserve motion for state changes. */
-.director-workspace{transition:grid-template-columns 220ms cubic-bezier(.2,.8,.2,1)}
+/* Canvas column animation resizes every backing store on each animation frame. */
+.director-workspace{transition:none}
 .dw-agent{min-width:0;opacity:1;transform:translateX(0);transition:opacity 160ms ease,transform 220ms cubic-bezier(.2,.8,.2,1)}
 .director-workspace.agent-collapsed{grid-template-columns:minmax(0,1fr) 0}
 .director-workspace.agent-collapsed .dw-agent{display:flex;opacity:0;transform:translateX(18px);pointer-events:none}
@@ -5910,7 +5911,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-entry-mark,#agentView .agent-project-icon{display:grid;place-items:center;color:var(--theme-brand, #5750c8);background:var(--theme-brand-soft, #ebe9ff);border:1px solid var(--theme-line, #dcd9f8)}
 #agentView .agent-entry h1{margin:0;color:var(--theme-ink, #35334d);font-family:"Songti SC","STSong","Noto Serif CJK SC","SimSun",serif;font-size:30px;font-weight:400;line-height:1.5;letter-spacing:.5px}
 #agentView .agent-entry p,#agentView .agent-projects header p{margin:10px 0 24px;color:var(--theme-muted, #777b94);font-size:14px}
-#agentView .agent-entry-form{position:relative;z-index:1;display:grid;gap:9px;padding:15px 18px 11px;border:1px solid var(--theme-line, #dedff0);border-radius:22px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96078);box-shadow:0 20px 58px #35335d13,0 3px 12px #35335d08,inset 0 1px var(--theme-highlight, #fff);backdrop-filter:blur(18px) saturate(125%);transition:border-color .18s ease,box-shadow .18s ease}
+#agentView .agent-entry-form{position:relative;z-index:1;display:grid;gap:9px;padding:15px 18px 11px;border:1px solid var(--theme-line, #dedff0);border-radius:22px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96078);box-shadow:0 20px 58px #35335d13,0 3px 12px #35335d08,inset 0 1px var(--theme-highlight, #fff);transition:border-color .18s ease,box-shadow .18s ease}
 #agentView .agent-entry-form:focus-within{border-color:var(--theme-brand-line, #aaa5e9);box-shadow:0 0 0 3px var(--theme-highlight, #eeecff),0 24px 72px #514e9618,inset 0 1px var(--theme-highlight, #fff)}
 #agentView .agent-entry-form textarea{box-sizing:border-box;width:100%;height:72px;min-height:72px;max-height:192px;overflow-y:auto;resize:none;padding:0;border:0;outline:0;background:transparent;color:var(--theme-ink, #292d47);font:15px/1.6 var(--sans)}
 #agentView .agent-entry-form textarea::placeholder{color:var(--theme-muted, #777b94);opacity:1}

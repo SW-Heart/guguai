@@ -77,10 +77,10 @@ test('generator hover and selection override local light tokens and remain disti
 
 test('logo and parameter fixes reach all current versioned frontend entries', () => {
   const entries = [
-    ['index.html', ['/app.js?v=469', '/styles/theme.css?v=3']],
-    ['app.js', ['./components/model-logo.js?v=1', './drama-studio.js?v=211', './features/agent/workspace.js?v=80']],
-    ['drama-studio.js', ['./components/model-logo.js?v=1', './features/drama/director-workspace.js?v=117']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=117', './model-preference-picker.js?v=5']],
+    ['index.html', ['/app.js?v=470', '/styles/theme.css?v=3']],
+    ['app.js', ['./components/model-logo.js?v=1', './drama-studio.js?v=212', './features/agent/workspace.js?v=81']],
+    ['drama-studio.js', ['./components/model-logo.js?v=1', './features/drama/director-workspace.js?v=118']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=118', './model-preference-picker.js?v=5']],
     ['features/drama/director-workspace.js', ['./canvas-generation.js?v=6', '../agent/model-preference-picker.js?v=5', '../../components/model-logo.js?v=1']],
     ['features/drama/canvas-generation.js', ['../../components/model-logo.js?v=1']],
     ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=6', '../../components/model-logo.js?v=1']],

@@ -22,7 +22,7 @@ test('initialization cannot save a provisional canvas and session navigation pre
 test('initial viewport events do not overwrite saved positions or schedule a save',()=>{
   const handlers={},saved={viewport:{x:90,y:50,scale:.8}};let writes=0;
   const context={canvas:{on:(name,handler)=>handlers[name]=handler,getState:()=>({nodes:[]})},bridge:{agentMode:true},agentReady:false,switchingConversation:false,syncing:false,resizingChat:false,
-    workspace:()=>saved,requestAnimationFrame(){},persistLiveCanvasState(){},liveCanvasSnapshot:s=>s,scheduleCanvasSave:()=>writes++};
+    mountEpoch:1,epoch:1,workspace:()=>saved,queueWorkspaceFrame(){},persistLiveCanvasState(){},liveCanvasSnapshot:s=>s,scheduleCanvasSave:()=>writes++};
   vm.createContext(context);
   const start=source.indexOf("      canvas.on('viewport:change'");
   vm.runInContext(source.slice(start,source.indexOf('\n',start)),context);

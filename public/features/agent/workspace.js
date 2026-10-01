@@ -1,5 +1,5 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=117';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=118';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=10';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=5';
@@ -18,8 +18,9 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/agent';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
   function dispatchRoute(){window.dispatchEvent(new PopStateEvent('popstate'));}
-  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;}
+  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;}
   function showHome(){
+    if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.agent-entry'))return;
     resetView();account=accountSnapshot();screen='home';
     renderEntry(host);
   }
@@ -359,5 +360,5 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const heading=host?.querySelector('.dw-agent-project-title');
     if(heading){heading.textContent=title;heading.title=title;}
   }
-  return {load,loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
+  return {load,showHome,loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
 }
