@@ -1,4 +1,5 @@
 import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
+import { videoPromptMaxLength } from '../public/video-prompt.js';
 
 import { randomUUID } from 'node:crypto';
 
@@ -119,7 +120,7 @@ export function createProjectService({
         selectedVideoTaskId: shot.videoTaskId || '', tailFrameAssetId: '',
       }));
     }
-    const dramaPromptOverrides = project.shots.map(shot => String(shot?.promptOverride || '').slice(0, 4000));
+    const dramaPromptOverrides = project.shots.map(shot => Array.from(String(shot?.promptOverride || '')).slice(0, videoPromptMaxLength(shot?.generation?.modelId)).join(''));
     project.shots = project.shots.map((shot, index) => {
       const professionalAssets = {
         characters: [...new Set(Array.isArray(shot.professionalAssets?.characters) ? shot.professionalAssets.characters.map(String) : [])],

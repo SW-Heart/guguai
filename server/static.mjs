@@ -4,6 +4,8 @@ import path from 'node:path';
 
 const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
 const marketingRouteFiles = new Map([
+  ['/help', 'help.html'],
+  ['/help/', 'help.html'],
   ['/features', 'features.html'],
   ['/features/', 'features.html'],
   ['/pricing', 'pricing.html'],

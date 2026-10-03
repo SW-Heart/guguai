@@ -1,6 +1,18 @@
 const clean = value => String(value || '').trim();
 const clip = (value, limit) => Array.from(clean(value)).slice(0, limit).join('');
 
+export function videoPromptMaxLength(modelId) {
+  return ['minimax-h3-15s','grok-15'].includes(String(modelId || '').trim().toLowerCase()) ? 10000 : 4096;
+}
+
+export function orderedShotReferenceMentions(shot, references = []) {
+  return references.flatMap(file => {
+    const aliases = (shot.assetMentions || []).filter(item => item.id === file.id);
+    return aliases.length ? aliases.map(item => ({...item,kind:file.kind}))
+      : [{id:file.id,label:file.name || `素材 ${file.id}`,kind:file.kind}];
+  });
+}
+
 const typeName = type => ({ character:'角色', location:'场景', prop:'物品' }[type] || '素材');
 
 function normalizeVisualDetail(value, aspectRatio) {
@@ -133,7 +145,7 @@ function compileShotText(shot) {
 
 export function buildShotVideoPrompt({ project, shot, scene, resources = [] }) {
   const manualOverride = clean(shot?.promptOverride);
-  if (manualOverride) return clip(replaceAssetMentions(manualOverride, shot?.assetMentions), 4000);
+  if (manualOverride) return clip(replaceAssetMentions(manualOverride, shot?.assetMentions), videoPromptMaxLength(shot?.generation?.modelId));
   const compiledShot = compileShotText(shot);
   const hasAssetReferences = Array.isArray(shot?.assetMentions) && shot.assetMentions.some(item => item?.id);
   const mode = compiledShot?.generation?.type === 'TEXT' && hasAssetReferences ? 'REFERENCE' : (compiledShot?.generation?.type || 'TEXT');

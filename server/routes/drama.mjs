@@ -1,3 +1,6 @@
+import { buildPromptOptimizationReferences, promptOptimizationReferenceIds } from '../../lib/prompt-optimization.mjs';
+import { videoPromptMaxLength } from '../../public/video-prompt.js';
+
 export function createDramaRouteHandler({
   bodyJson,
   sendJson,
@@ -29,8 +32,53 @@ export function createDramaRouteHandler({
   charLength,
   analyzeScript,
   createStoryboard,
+  optimizeShotPrompt,
+  getVideoModels = () => [],
+  findAsset,
 } = {}) {
   return async function handleDramaRoute(req, res, url) {
+    const optimizeMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/optimize-prompt$/);
+    if (optimizeMatch && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return true;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+      const project = await loadDramaProject(user.id, optimizeMatch[1], scope);
+      const shot = project?.shots?.find(item => item.id === optimizeMatch[2]);
+      if (!shot) { sendJson(res, 404, { error:'分镜不存在' }); return true; }
+      if (project.finalAssetId) { sendJson(res, 409, { error:'请先恢复编辑，再优化分镜内容' }); return true; }
+      if (!isLlmConfigured(llmConfig)) { sendJson(res, 503, { error:'AI 优化暂时不可用，请稍后再试' }); return true; }
+      const input = await bodyJson(req);
+      const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+      const originalPrompt = typeof input.originalPrompt === 'string' ? input.originalPrompt.trim() : prompt;
+      const direction = typeof input.direction === 'string' ? input.direction.trim() : '';
+      const canonicalModel = value => value === 'grok-15' ? 'minimax-h3-15s' : value;
+      const modelId = canonicalModel(String(shot.generation?.modelId || ''));
+      if (input.modelId && canonicalModel(String(input.modelId)) !== modelId) { sendJson(res, 409, {error:'模型设置已有变化，请重新打开优化'}); return true; }
+      const model = (await getVideoModels()).find(item => item.id === modelId);
+      if (!model || model.enabled === false || model.availability === 'coming-soon' || !model.modes?.some(mode => mode.generationType === shot.generation?.type)) { sendJson(res, 400, {error:'当前模型或生成方式不可用，请重新选择'}); return true; }
+      const maxLength = videoPromptMaxLength(modelId);
+      if (!prompt || !originalPrompt) { sendJson(res, 400, { error:'请先填写分镜内容' }); return true; }
+      if (charLength(prompt) > maxLength || charLength(originalPrompt) > maxLength || charLength(direction) > 1000) { sendJson(res, 400, { error:`分镜内容最多 ${maxLength} 字，改进方向最多 1000 字` }); return true; }
+      let optimizationShot = {...shot,generation:{...shot.generation,modelId}};
+      if (Array.isArray(input.assetMentions)) {
+        const allowedIds = new Set([...(project.projectAssetIds || []),...promptOptimizationReferenceIds(shot),...(shot.assetMentions || []).map(item => item.id)]);
+        if (input.assetMentions.length > 40 || input.assetMentions.some(item => !item || !allowedIds.has(item.id) || typeof item.label !== 'string' || !item.label.trim() || item.label.length > 120 || /[@\r\n]/.test(item.label) || !['image','video','audio'].includes(item.kind))) { sendJson(res, 400, {error:'引用素材不可用，请重新选择'}); return true; }
+        const assetMentions = input.assetMentions.filter(item => prompt.includes(`@${item.label}`)).map(item => ({id:item.id,label:item.label,kind:item.kind}));
+        if (shot.generation.type === 'FIRST&LAST' && assetMentions.some(item => !promptOptimizationReferenceIds(shot).includes(item.id))) { sendJson(res, 400, {error:'请在首尾帧模式中引用已选的首帧或尾帧图片'}); return true; }
+        const previousIds = new Set((shot.assetMentions || []).map(item => item.id));
+        const type = assetMentions.length && shot.generation.type === 'TEXT' ? 'REFERENCE' : shot.generation.type;
+        if (!model.modes.some(item => item.generationType === type)) { sendJson(res, 400, {error:'当前模型不支持这些参考素材，请调整生成方式'}); return true; }
+        optimizationShot = {...optimizationShot,assetMentions,referenceAssetIds:[...(shot.referenceAssetIds || []).filter(id => !previousIds.has(id)),...assetMentions.map(item => item.id)],generation:{...optimizationShot.generation,type,referenceAssetIds:(shot.generation.referenceAssetIds || []).filter(id => !previousIds.has(id))}};
+      }
+      const mode = model.modes.find(item => item.generationType === optimizationShot.generation.type);
+      const durations = mode.durationsByQuality?.[shot.generation.quality]?.[shot.aspectRatio] || mode.durations;
+      if ((Array.isArray(durations) && !durations.includes(Number(shot.duration))) || (Array.isArray(mode.aspectRatios) && !mode.aspectRatios.includes(shot.aspectRatio)) || (Array.isArray(mode.qualityOptions) && !mode.qualityOptions.includes(shot.generation.quality))) { sendJson(res, 400, {error:'当前模型不支持已选时长、比例或清晰度，请调整后再优化'}); return true; }
+      const mentionLabels = [...new Set([...(shot.assetMentions || []).map(item => item.label), ...(Array.isArray(input.mentionLabels) ? input.mentionLabels : [])])].filter(label => typeof label === 'string' && label.length <= 500).slice(0, 80);
+      const metadata = new Map((Array.isArray(input.referenceFiles) ? input.referenceFiles : []).slice(0,80).filter(item => item && typeof item.id === 'string' && typeof item.name === 'string' && ['image','video','audio'].includes(item.kind)).map(item => [item.id,{id:item.id,name:item.name.slice(0,120),kind:item.kind}]));
+      const referenceFiles = promptOptimizationReferenceIds(optimizationShot).map(id => findAsset?.(user.id,id,scope) || metadata.get(id)).filter(Boolean);
+      const references = buildPromptOptimizationReferences(optimizationShot,referenceFiles);
+      sendJson(res, 200, await optimizeShotPrompt({ userId:user.id, project, shot:optimizationShot, originalPrompt, prompt, direction, mentionLabels, references, model, maxLength }));
+      return true;
+    }
     if (url.pathname === '/api/drama/projects' && req.method === 'GET') {
       const user = requireUser(req, res);
       if (!user) return true;

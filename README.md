@@ -648,7 +648,17 @@ http://127.0.0.1:4317/guguadmin
 
 Seedance 2.0/2.5/Fast 使用 DIW、WJ、CNTCN 的动态完整调用线路。服务每 10 分钟按“渠道地址 + API Key”请求 `/v1/models`：目录缺失会自动停用，重新出现会自动恢复。后台可修改线路启停、优先级和成本，也可指定一条手动优先线路；指定线路不可用时仍按其余优先级降级。WJ 按 `seconds` 提交，DIW 按 `duration` 提交，CNTCN 使用 `reference_image_urls` 等参考字段；任务 ID、线路快照和价格快照都会持久化，重启后只轮询原线路，不会重复提交。
 
+已扣费的动态线路任务在首次选中渠道上最多重试 3 次，仍失败才在下一优先级的可用且兼容渠道尝试 1 次，最多共 5 次生成尝试。当前任务的原渠道重试不受后续自动停用或优先级调整影响；新任务仍遵循实时可用状态。换线后仍按首次报价计费，差额由平台承担，全部失败只退回首次扣费。失败尝试保存线路和报价记录，重启后继续原有次数与已选渠道；提交结果不确定或轮询超时仍走原任务核对，不重复提交。
+
 其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。视频任务最长等待 120 分钟，可用 `VIDEO_MAX_POLL_DURATION_MS` 调整；OAI 可用 `OAI_MAX_POLL_DURATION_MS` 单独调整。
+
+## 官网与帮助文档
+
+官网首页为 `/`，功能介绍为 `/features`，价格与积分为 `/pricing`，帮助中心为 `/help`。这些页面共用 `public/marketing.css` 和 `public/marketing.js`，官网交互位于 `public/site-interactions.js`。
+
+帮助文章统一维护在 `public/help-content.js`。修改内容后运行 `npm run help:build`，重新生成 `public/help.html` 中的目录与全文。页面保留完整静态文章；`public/help.js` 提供搜索、直达链接、上下篇和手机目录切换。
+
+修改 JS 或 CSS 时，更新所有相关入口的 `?v=` 缓存键，包括帮助脚本对内容和搜索模块的引用。运行 `node --test test/marketing-help.test.mjs` 可检查文档内容、入口链接、缓存版本与交互逻辑。
 
 ## 常用命令
 

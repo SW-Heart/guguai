@@ -81,7 +81,7 @@ export function validateDirectorPlan(value, project) {
 export function applyDirectorEdit(project, action, id = () => globalThis.crypto.randomUUID()) {
   if(project.directorWorkspace?.lockedIds?.includes(action.targetId))throw new Error('此节点已锁定');
   const data=action.data||{};
-  const fields=action.type.includes('resource')?['name','type','description','prompt','bible']:['title','script','prompt','promptOverride','duration','resourceIds','referenceAssetIds','generation','continuityNotes','narrativeFunction','startState','endState','sourceBeatIds','motionPlan','sceneId','shotSize','cameraMovement','sound'];
+  const fields=action.type.includes('resource')?['name','type','description','prompt','bible']:['title','script','prompt','promptOverride','duration','resourceIds','referenceAssetIds','assetMentions','generation','continuityNotes','narrativeFunction','startState','endState','sourceBeatIds','motionPlan','sceneId','shotSize','cameraMovement','sound'];
   const patch=Object.fromEntries(fields.filter(k=>Object.hasOwn(data,k)).map(k=>[k,data[k]]));
   const key=action.type.includes('resource')?'resources':'shots';
   if(action.type.startsWith('add_'))project[key].push({id:id(),...patch});

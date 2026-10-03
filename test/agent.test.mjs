@@ -793,7 +793,7 @@ test('long sessions compact earlier turns while preserving full transcript and c
   f.repo.save(claimed,'queued');f.repo.release(claimed);
   const requests=[];
   const billing={rates:llmRatesFromEnv(),reserve:async()=>({}),settle:async()=>({}),release:async()=>({}),reconcile:async()=>({})};
-  const gateway={config:{model:'test-model',maxTokens:1000},contextWindow:async()=>70000,complete:async request=>{requests.push(request);return answer(requests.length===1?'目标：写短剧；人物甲和第二幕已确定。':'第三幕完成。');}};
+  const gateway={config:{model:'test-model',maxTokens:1000},contextWindow:async()=>85000,complete:async request=>{requests.push(request);return answer(requests.length===1?'目标：写短剧；人物甲和第二幕已确定。':'第三幕完成。');}};
   const runtime=createAgentRuntime({repository:f.repo,gateway,tools:{definitions:()=>[],images:async()=>[],get:()=>({}),execute:async()=>({})},skills:{search:async()=>[]},billing});
   await runtime.kick(f.session.id);
   assert.equal(requests.length,2);
@@ -803,7 +803,7 @@ test('long sessions compact earlier turns while preserving full transcript and c
   assert.equal(f.get().doc.compaction.through,2);
   assert.equal(f.get().doc.messages.length,6);
   assert.equal(f.get().doc.messages[0].content.startsWith('目标：写短剧'),true);
-  assert.ok(estimateInputTokens(requests[1].messages,[])<=inputBudget(70000,1000));
+  assert.ok(estimateInputTokens(requests[1].messages,[])<=inputBudget(85000,1000));
   await runtime.stop();f.db.close();
 });
 

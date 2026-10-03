@@ -56,8 +56,8 @@ test('Minimax price changes refresh both versioned frontend entries', async () =
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const drama = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.match(html, /src="\/app\.js\?v=471"/);
-  assert.match(app, /import\('\.\/drama-studio\.js\?v=212'\)/);
+  assert.match(html, /src="\/app\.js\?v=479"/);
+  assert.match(app, /import\('\.\/drama-studio\.js\?v=220'\)/);
   assert.doesNotMatch(html, /app\.js\?v=462\b/);
   assert.doesNotMatch(app, /drama-studio\.js\?v=205\b/);
   assert.match(drama, /限时特惠 ¥0\.05\/s 起/);

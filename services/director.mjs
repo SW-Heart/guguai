@@ -1,5 +1,6 @@
 import { validateDirectorPlan } from '../public/features/drama/director-actions.js';
 import { randomUUID } from 'node:crypto';
+import { buildPromptOptimizationInput, loadPromptOptimizationGuidance, promptOptimizationSystem, validatePromptOptimization } from '../lib/prompt-optimization.mjs';
 
 import {
   analyzeDirectorPlanRecovery,
@@ -41,6 +42,7 @@ export function createDirectorService({
   publicLlmUsage,
   publicDramaProject,
   normalizeDramaProject,
+  skills,
 } = {}) {
   const requiredFunctions = {
     randomId,
@@ -551,6 +553,30 @@ export function createDirectorService({
       throw error;
     }
   }
-  return { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions };
+  async function optimizeShotPrompt({ userId, project, shot, originalPrompt, prompt, direction, mentionLabels, references = [], model, maxLength }) {
+    const input = buildPromptOptimizationInput({ originalPrompt, prompt, direction, mentionLabels, shot, project, references, model, maxLength });
+    const guidance = await loadPromptOptimizationGuidance({ skills, modelId:shot.generation?.modelId, mode:shot.generation?.type,
+      dialogue:Boolean(input.projectContext.scene?.beats.some(item => item.kind === 'dialogue') || /台词|对白|[“「]|说[：:]/.test(prompt)) });
+    const system = `${promptOptimizationSystem}\n\n以下是当前任务的创作资料。只取与本镜有关的写作方法，保持上面的输出格式、@引用和平台能力约束：\n${JSON.stringify(guidance)}`;
+    const requestId = randomId();
+    const maxOutputTokens = Math.min(16000, maxLength * 2 + 1200);
+    const metadata = { projectId:project.id, skillName:'prompt-optimization', skillVersion:'1.0.0' };
+    const reserved = await reserveLlmCredits(userId, requestId, llmReservationMicro(conservativeInputTokenUpperBound(system, JSON.stringify(input)), maxOutputTokens, llmRates), metadata);
+    if (reserved.error) throwReservationError(reserved, true);
+    let settled;
+    try {
+      const result = await callLlm({ system, prompt:JSON.stringify(input), maxOutputTokens, jsonMode:true, config:llmConfig });
+      settled = await settleLlmCredits(userId, requestId, result, metadata);
+      return { ...validatePromptOptimization(result.text, input), balance:settled.wallet.balance };
+    } catch (error) {
+      if (!settled) {
+        if (error.billingReconcileRequired) await markLlmBillingReconcile(userId, requestId, error);
+        else await releaseLlmCredits(userId, requestId, error.message);
+      }
+      if (settled) error.publicData = { balance:settled.wallet.balance };
+      throw error;
+    }
+  }
+  return { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions, optimizeShotPrompt };
 
 }

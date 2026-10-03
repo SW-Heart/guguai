@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { renderVideoGenerationLoading } from '../public/features/drama/video-generation-loading.js';
+import { videoPreviewVersionState, videoTaskProgress } from '../public/features/drama/pure.js';
 const source=readFileSync(new URL('../public/drama-studio.js',import.meta.url),'utf8');
 const extract=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end));
 
@@ -28,7 +30,7 @@ test('assembly clicks switch the preview independently of shot order and preserv
 });
 
 test('shot preview only inserts submission placeholders while a request is pending',()=>{
-  const context={localDeliverySignature:()=>'',professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),task:()=>({status:'completed'}),taskLocallyReady:()=>true,taskSyncing:()=>false,taskAsset:()=>({id:'file'}),videoPreviewVersionState:()=> 'ready',workbenchVideoMarkup:()=>'<video></video>',workbenchPreviewThumbMarkup:()=>'<button>Finished version</button>',esc:String,ratioCss:String};
+  const context={renderVideoGenerationLoading,localDeliverySignature:()=>'',professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),task:()=>({status:'completed'}),taskLocallyReady:()=>true,taskSyncing:()=>false,taskAsset:()=>({id:'file'}),videoPreviewVersionState:()=> 'ready',workbenchVideoMarkup:()=>'<video></video>',workbenchPreviewThumbMarkup:()=>'<button>Finished version</button>',esc:String,ratioCss:String};
   vm.createContext(context);
   vm.runInContext(extract('  function workbenchShotPreview(shot){','  function workbenchTitleWidth('),context);
   const shot={id:'s1',title:'Shot',selectedVideoTaskId:'t1',videoVersions:['t1'],generation:{count:2}};
@@ -37,4 +39,25 @@ test('shot preview only inserts submission placeholders while a request is pendi
   assert.equal((context.workbenchShotPreview(shot).match(/wb-preview-thumb-loader/g)||[]).length,2);
   context.professionalGenerationPending.clear();
   assert.doesNotMatch(context.workbenchShotPreview(shot),/wb-preview-thumb-loader/);
+});
+
+test('queued and running video previews keep the dither field with or without measured progress',()=>{
+  let generation={type:'video',status:'queued'};
+  const context={renderVideoGenerationLoading,videoPreviewVersionState,
+    workbenchVideoProgressMarkup:task=>renderVideoGenerationLoading({progress:videoTaskProgress(task)}),
+    localDeliverySignature:()=>'',professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),
+    task:()=>generation,taskLocallyReady:()=>false,taskSyncing:()=>false,taskAsset:()=>null,
+    workbenchPreviewThumbMarkup:()=>'',esc:String,ratioCss:String};
+  vm.createContext(context);
+  vm.runInContext(extract('  function workbenchShotPreview(shot){','  function workbenchTitleWidth('),context);
+  const shot={id:'s1',title:'分镜 1',aspectRatio:'16:9',selectedVideoTaskId:'t1',videoVersions:['t1']};
+  for(const status of ['queued','running'])for(const progress of [null,68]){
+    generation={type:'video',status,progress};
+    const html=context.workbenchShotPreview(shot);
+    assert.match(html,/data-video-generation-dither/);
+    assert.match(html,/视频生成中/);
+    assert.doesNotMatch(html,/排队|wb-preview-play|wb-preview-progress-ring/);
+    if(progress===null)assert.doesNotMatch(html,/\d+%/);
+    else assert.match(html,/68%/);
+  }
 });

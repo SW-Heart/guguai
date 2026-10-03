@@ -1,5 +1,6 @@
 import { modelLogoMarkup } from '../../components/model-logo.js?v=1';
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
+import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=1';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
 import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=3';
@@ -13,7 +14,7 @@ import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=32';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=10';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=11';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=6';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
@@ -204,7 +205,7 @@ export function createDirectorWorkspace(host, bridge) {
   // settlingMessageId: a finished reply whose remaining text is still being revealed.
   let streamPacer=createStreamPacer(), settlingMessageId='', messageScroller=null, reasoning=null;
   let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, modelPreferencePicker=null, preferenceUpdating=false, connectionError='', conversations=[], historyOpen=false;
-  let lastAgentCacheSignature='';
+  let lastAgentCacheSignature='', generationApproval=null;
   let submissionQueue=[], drainingSubmissions=false;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
   let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
@@ -858,18 +859,7 @@ export function createDirectorWorkspace(host, bridge) {
     renderConversationMessages(messages,settlingMessageId?items.slice(0,-1):items,visibleDraft,responseState,responseJustFinished,agentState?.state==='completed',showWelcome);
     messageScroller?.refresh({reset:sessionChanged});
     if(targetDraft&&!streamFrame)streamFrame=queueWorkspaceFrame(animateDraft);
-    const approval=agentReady?agentState?.approval:null;
-    const plan=root.querySelector('.dw-plan');
-    if(!plan)return;
-    const approvalSignature=approval?JSON.stringify([approval.id,approval.title,approval.modelId,approval.quantity,approval.credits,approval.prompt]):'';
-    if(plan.dataset.approvalSignature!==approvalSignature){
-      const promptExpanded=plan.querySelector('details')?.open;
-      plan.innerHTML=approval?`<div class="dw-agent-approval"><strong>${escape(approval.title)}</strong><p>${approval.quantity} 个 · ${approval.credits} 积分</p><details><summary>查看创作描述</summary><p>${escape(approval.prompt)}</p></details><p>回复“确认生成”，或点击按钮开始</p><div><button data-agent-decline>取消</button><button data-agent-approve class="dw-primary">确认生成</button></div></div>`:'';
-      plan.dataset.approvalSignature=approvalSignature;
-      if(promptExpanded)plan.querySelector('details')?.setAttribute('open','');
-      plan.querySelector('[data-agent-approve]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,true)));
-      plan.querySelector('[data-agent-decline]')?.addEventListener('click',()=>void agentAction(()=>agentClient.approve(approval.id,false)));
-    }
+    generationApproval?.update(agentReady?agentState?.approval:null);
     updateSendAvailability();
     const composer=root.querySelector('#directorMessage');
     if(composer)composer.placeholder=busy?'生成进行中也可以继续补充创作要求':bridge.agentMode?'写下你的想法，GuGu 会和你一起完成……':'想聊什么，或希望我帮你创作什么？';
@@ -1576,6 +1566,7 @@ export function createDirectorWorkspace(host, bridge) {
       if(modelPicker?.matches(':popover-open'))positionPopover(modelPicker,host.querySelector('[data-agent-model-toggle]'),true);
       if(historyPicker.matches(':popover-open'))positionPopover(historyPicker,host.querySelector('[data-agent-history]'),false);
     };
+    generationApproval=mountGenerationApproval(host.querySelector('.dw-plan'),{onDecision:(id,accepted)=>agentClient.approve(id,accepted)});
     popoverEvents=new AbortController();
     mountContentCopy(host,{signal:popoverEvents.signal,onError:message=>bridge.toast(message)});
     modelPreferencePicker=mountModelPreferencePicker(host.querySelector('[data-agent-upload]'),{
@@ -1775,6 +1766,7 @@ export function createDirectorWorkspace(host, bridge) {
     return promise;
   }
   function dispose(){
+    generationApproval?.destroy();generationApproval=null;
     // Invalidate callbacks before disconnecting clients or unmounting React.
     epoch++;workspaceActive=false;
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();

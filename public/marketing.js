@@ -1,41 +1,26 @@
 import { createApiClient } from './api-client.js?v=4';
+import { initSiteInteractions } from './site-interactions.js?v=2';
+
+initSiteInteractions();
 
 (() => {
   const { request: api } = createApiClient({ responseShapeFor: () => 'object' });
-  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
-  const isHomePage = document.body.dataset.page === 'home';
   const detectedPlatform = String(window.navigator.userAgentData?.platform || window.navigator.platform || window.navigator.userAgent || '');
-  const preferredDownloadPlatform = /mac|iphone|ipad/i.test(detectedPlatform) ? 'mac' : /win/i.test(detectedPlatform) ? 'windows' : '';
+  const preferredDownloadPlatform = /iphone|ipad|android/i.test(detectedPlatform) ? '' : /mac/i.test(detectedPlatform) ? 'mac' : /win/i.test(detectedPlatform) ? 'windows' : '';
   if (preferredDownloadPlatform) {
     document.querySelectorAll('.nav-download, .nav-cta').forEach(link => {
       const href = link.getAttribute('href') || '';
       if (href === '#download' || href === '/#download') link.setAttribute('href', `/downloads/${preferredDownloadPlatform}`);
     });
   }
-  if (!isHomePage) {
-    const header = document.querySelector('#site-header');
-    const setHeaderState = () => header?.classList.toggle('is-scrolled', window.scrollY > 16);
-    setHeaderState();
-    window.addEventListener('scroll', setHeaderState, { passive: true });
-
+  {
     const page = document.body.dataset.page;
     document.querySelectorAll('[data-page-link]').forEach(link => {
-      link.classList.toggle('is-active', link.dataset.pageLink === page);
+      const active = link.dataset.pageLink === page;
+      link.classList.toggle('is-active', active);
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
     });
-
-    const reveals = [...document.querySelectorAll('.reveal')];
-    if ('IntersectionObserver' in window && !reducedMotion) {
-      const observer = new IntersectionObserver((entries, activeObserver) => {
-        entries.forEach(entry => {
-          if (!entry.isIntersecting) return;
-          entry.target.classList.add('in-view');
-          activeObserver.unobserve(entry.target);
-        });
-      }, { threshold: .12, rootMargin: '0px 0px -30px' });
-      reveals.forEach(node => observer.observe(node));
-    } else {
-      reveals.forEach(node => node.classList.add('in-view'));
-    }
   }
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character]));
@@ -57,278 +42,13 @@ import { createApiClient } from './api-client.js?v=4';
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 7v5l3.5 2"/></svg>';
   };
 
-  const loginDestination = credits => `/login?next=${encodeURIComponent(credits ? `/pricing?purchase=${credits}` : '/pricing')}`;
   const pricePage = document.querySelector('[data-price-page]');
-  const siteAccountMenu = document.querySelector('#siteAccountMenu');
-  const siteAccountDropdown = document.querySelector('#siteAccountDropdown');
-  const siteAccountSummary = document.querySelector('#siteAccountSummary');
-  const siteLogoutButton = document.querySelector('#siteLogoutButton');
-  const siteLoginLink = document.querySelector('#siteLoginLink');
-  const siteLoginText = document.querySelector('#siteLoginText');
-  const renderSiteAccount = user => {
-    const signedIn = Boolean(user);
-    const identity = user?.nickname || user?.displayName || user?.username || '账号';
-    const identityText = signedIn ? `${identity} · ${formatNumber(user.credits, 0)} 积分` : '';
-    siteAccountMenu?.classList.toggle('is-signed-in', signedIn);
-    if (siteLoginText) siteLoginText.textContent = signedIn ? identity : '登录';
-    if (siteLoginLink) {
-      siteLoginLink.href = signedIn ? '#' : loginDestination();
-      siteLoginLink.setAttribute('aria-label', signedIn ? `当前账号：${identityText}` : '登录');
-      siteLoginLink.setAttribute('aria-expanded', 'false');
-    }
-    if (siteAccountSummary) siteAccountSummary.textContent = signedIn ? identityText : '';
-    siteAccountDropdown?.setAttribute('aria-hidden', String(!signedIn));
-  };
-  const loadSiteAccount = async () => {
-    try {
-      const payload = await api('/api/auth/me', { cache:'no-store' });
-      renderSiteAccount(payload.user);
-      return payload.user || null;
-    } catch {
-      renderSiteAccount(null);
-      return null;
-    }
-  };
-  const setAccountMenuOpen = open => siteLoginLink?.setAttribute('aria-expanded', String(Boolean(open)));
-  siteAccountMenu?.addEventListener('pointerenter', () => setAccountMenuOpen(true));
-  siteAccountMenu?.addEventListener('pointerleave', () => setAccountMenuOpen(false));
-  siteAccountMenu?.addEventListener('focusin', () => setAccountMenuOpen(true));
-  siteAccountMenu?.addEventListener('focusout', event => {
-    if (!siteAccountMenu.contains(event.relatedTarget)) setAccountMenuOpen(false);
-  });
-  siteLoginLink?.addEventListener('click', event => {
-    if (siteAccountMenu?.classList.contains('is-signed-in')) event.preventDefault();
-  });
-  let siteLogoutConfirmation = null;
-  const confirmSiteLogout = () => {
-    if (!siteLogoutConfirmation) {
-      const dialog = document.createElement('dialog');
-      dialog.id = 'siteLogoutConfirmDialog';
-      dialog.className = 'site-confirm-dialog';
-      dialog.setAttribute('aria-labelledby', 'siteLogoutConfirmTitle');
-      dialog.setAttribute('aria-describedby', 'siteLogoutConfirmMessage');
-      dialog.innerHTML = `<div class="site-confirm-card"><span class="site-confirm-kicker">账号操作</span><h2 id="siteLogoutConfirmTitle">确认退出登录</h2><p id="siteLogoutConfirmMessage">退出后需要重新登录才能继续购买积分或进入创作工作台。</p><footer><button class="secondary-button" data-site-logout-cancel type="button">取消</button><button class="primary-button" data-site-logout-confirm type="button">确认退出</button></footer></div>`;
-      document.body.append(dialog);
-      const state = { resolver:null, restoreFocus:null };
-      const settle = confirmed => {
-        const resolver = state.resolver;
-        const restoreFocus = state.restoreFocus;
-        state.resolver = null;
-        state.restoreFocus = null;
-        if (dialog.open) dialog.close();
-        resolver?.(confirmed);
-        window.requestAnimationFrame(() => { if (restoreFocus?.isConnected && !restoreFocus.disabled) restoreFocus.focus(); });
-      };
-      dialog.querySelector('[data-site-logout-cancel]').addEventListener('click', () => settle(false));
-      dialog.querySelector('[data-site-logout-confirm]').addEventListener('click', () => settle(true));
-      dialog.addEventListener('cancel', event => { event.preventDefault(); settle(false); });
-      dialog.addEventListener('click', event => { if (event.target === dialog) settle(false); });
-      siteLogoutConfirmation = () => {
-        if (state.resolver) settle(false);
-        state.restoreFocus = document.activeElement;
-        return new Promise(resolve => {
-          state.resolver = resolve;
-          dialog.showModal();
-          window.requestAnimationFrame(() => dialog.querySelector('[data-site-logout-confirm]').focus());
-        });
-      };
-    }
-    return siteLogoutConfirmation();
-  };
-  siteLogoutButton?.addEventListener('click', async () => {
-    if (!await confirmSiteLogout()) return;
-    siteLogoutButton.disabled = true;
-    try {
-      await api('/api/auth/logout', { method:'POST', body:'{}' });
-      window.location.assign('/');
-    } catch (error) {
-      if (siteAccountSummary) siteAccountSummary.textContent = error.message || '退出登录失败，请稍后重试';
-    } finally {
-      siteLogoutButton.disabled = false;
-    }
-  });
-  if (!pricePage) {
-    void loadSiteAccount();
-    return;
-  }
+  if (!pricePage) return;
   const catalog = document.querySelector('#priceCatalog');
   const status = document.querySelector('#priceStatus');
   const updated = document.querySelector('#priceUpdated');
   const refresh = document.querySelector('#priceRefresh');
-  const purchaseAccount = document.querySelector('#purchaseAccount');
-  const purchaseAccountText = document.querySelector('#purchaseAccountText');
-  const purchaseLoginLink = document.querySelector('#purchaseLoginLink');
-  const paymentTracker = document.querySelector('#paymentTracker');
-  const paymentTrackerTitle = document.querySelector('#paymentTrackerTitle');
-  const paymentTrackerMessage = document.querySelector('#paymentTrackerMessage');
-  const paymentRefresh = document.querySelector('#paymentRefresh');
-  const purchaseButtons = [...document.querySelectorAll('[data-buy-credits]')];
-  const orderFromUrl = new URLSearchParams(window.location.search).get('order') || '';
-  const paymentOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(String(user?.id || user?.username || 'anonymous'))}`;
-  let pendingOrderNo = /^[A-Za-z0-9_-]+$/.test(orderFromUrl) ? orderFromUrl : '';
-  let purchaseUser = null;
-  let purchaseSessionReady = false;
-  let paymentPollTimer = 0;
-  let paymentPollingStartedAt = 0;
-  const paymentProvider = () => pendingOrderNo.startsWith('WX') ? 'wechat' : 'alipay';
-  const wechatQr = document.querySelector('#wechatPaymentQr');
   let loading = false;
-
-  const showPurchaseAccount = user => {
-    purchaseUser = user || null;
-    if (!orderFromUrl) pendingOrderNo = user ? sessionStorage.getItem(paymentOrderStorageKey(user)) || '' : '';
-    purchaseSessionReady = true;
-    const signedIn = Boolean(user);
-    const identityText = user ? `${user.nickname || user.displayName || user.username || '已登录'} · ${formatNumber(user.credits, 0)} 积分` : '购买前需要登录';
-    purchaseAccount?.classList.toggle('is-signed-in', signedIn);
-    if (purchaseAccountText) purchaseAccountText.textContent = identityText;
-    if (purchaseLoginLink) purchaseLoginLink.textContent = signedIn ? '已登录' : '登录后购买';
-    renderSiteAccount(user);
-  };
-  const loadPurchaseAccount = async () => {
-    const user = await loadSiteAccount();
-    showPurchaseAccount(user);
-    return user;
-  };
-  const setPaymentTracker = (title, message, tone = '') => {
-    if (!paymentTracker) return;
-    paymentTracker.hidden = false;
-    paymentTracker.classList.toggle('is-paid', tone === 'paid');
-    paymentTrackerTitle.textContent = title;
-    paymentTrackerMessage.textContent = message;
-    if (paymentRefresh) paymentRefresh.hidden = tone === 'paid';
-  };
-  const stopPaymentPolling = () => { window.clearTimeout(paymentPollTimer); paymentPollTimer = 0; };
-  const submitPaymentForm = paymentHtml => {
-    const container = document.createElement('div');
-    container.hidden = true;
-    container.innerHTML = String(paymentHtml || '');
-    const form = container.querySelector('form');
-    if (!form) throw new Error('支付宝支付表单无效');
-    form.target = '_self';
-    document.body.appendChild(container);
-    form.submit();
-  };
-  const schedulePaymentPolling = () => {
-    stopPaymentPolling();
-    if (!pendingOrderNo) return;
-    paymentPollingStartedAt ||= Date.now();
-    if (Date.now() - paymentPollingStartedAt > 600000) { setPaymentTracker('自动查询已暂停', '请点击刷新支付状态确认付款结果。'); return; }
-    paymentPollTimer = window.setTimeout(() => { void refreshPayment({ polling:true }); }, 5000);
-  };
-  const refreshPayment = async ({ polling = false } = {}) => {
-    if (!pendingOrderNo) return;
-    const requestedOrderNo = pendingOrderNo;
-    paymentRefresh.disabled = true;
-    if (!polling) setPaymentTracker('正在确认支付结果', '正在查询这笔订单，请稍候。');
-    try {
-      const result = await api(`/api/payments/${paymentProvider()}/orders/${encodeURIComponent(pendingOrderNo)}/query`, { method:'POST', body:'{}' });
-      if (pendingOrderNo !== requestedOrderNo) return;
-      if (result.order?.status === 'PAID') {
-        stopPaymentPolling();
-        wechatQr.hidden = true;
-        sessionStorage.removeItem(paymentOrderStorageKey(purchaseUser));
-        pendingOrderNo = '';
-        setPaymentTracker('积分已经到账', `${formatNumber(result.order.credits, 0)} 积分已加入你的账户。`, 'paid');
-        await loadPurchaseAccount();
-      } else if (['CLOSED', 'REFUNDED', 'REFUNDING'].includes(result.order?.status)) {
-        stopPaymentPolling();
-        wechatQr.hidden = true;
-        setPaymentTracker(result.order.status === 'CLOSED' ? '订单已关闭' : result.order.status === 'REFUNDED' ? '订单已退款' : '退款处理中', '请稍后查看账户余额，或重新选择积分包。');
-      } else {
-        setPaymentTracker('等待扫码付款', `请使用${paymentProvider() === 'wechat' ? '微信' : '支付宝'}扫描二维码，支付后积分会自动到账。`);
-        schedulePaymentPolling();
-      }
-    } catch (error) {
-      if (error.status === 401) {
-        window.location.assign(`/login?next=${encodeURIComponent(`/pricing?order=${pendingOrderNo}`)}`);
-        return;
-      }
-      setPaymentTracker('暂时无法确认订单', error.message || '请稍后再试。');
-    } finally {
-      paymentRefresh.disabled = false;
-    }
-  };
-  const purchaseCredits = async (credits, button, amount = undefined) => {
-    button.disabled = true;
-    try {
-      const provider = document.querySelector('#purchasePaymentMethod').value;
-      if (provider === 'wechat' && (!/^\d{1,5}$/.test(String(amount)) || Number(amount) < 1 || Number(amount) > 10000)) throw new Error('请输入 1–10000 元的整数金额');
-      const result = await api(`/api/payments/${provider}/orders`, { method:'POST', body:JSON.stringify(provider === 'wechat' ? { amount } : { credits }) });
-      pendingOrderNo = result.order.outTradeNo;
-      sessionStorage.setItem(paymentOrderStorageKey(purchaseUser), pendingOrderNo);
-      paymentPollingStartedAt = Date.now();
-      wechatQr.hidden = true;
-      if (provider === 'wechat') {
-        if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && result.paymentUrl) {
-          window.location.assign(result.paymentUrl);
-          return;
-        }
-        if (!result.qrCodeUrl) throw new Error('暂时无法显示微信二维码，请稍后重新购买');
-        wechatQr.querySelector('img').src = result.qrCodeUrl;
-        wechatQr.hidden = false;
-        setPaymentTracker('等待微信付款', `请使用微信扫码支付 ¥${result.order.totalAmount}，二维码有效期为 5 分钟。`);
-        schedulePaymentPolling();
-        return;
-      }
-      setPaymentTracker('正在进入支付宝收银台', `将在当前页面展示 ¥${result.order.totalAmount} 的支付宝扫码入口。`);
-      submitPaymentForm(result.paymentHtml);
-    } catch (error) {
-      if (error.status === 401) {
-        window.location.assign(loginDestination(credits));
-        return;
-      }
-      setPaymentTracker('支付订单创建失败', error.message || '请稍后再试。');
-    } finally {
-      button.disabled = false;
-    }
-  };
-  purchaseButtons.forEach(button => button.addEventListener('click', () => {
-    const credits = Number(button.dataset.buyCredits);
-    if (purchaseSessionReady && !purchaseUser) {
-      window.location.assign(loginDestination(credits));
-      return;
-    }
-    void purchaseCredits(credits, button);
-  }));
-  const paymentMethodSelect = document.querySelector('#purchasePaymentMethod');
-  const renderPaymentPackages = () => {
-    const wechat = paymentMethodSelect.value === 'wechat';
-    document.querySelector('#creditPackGrid').hidden = wechat;
-    document.querySelector('#wechatWebPackages').hidden = !wechat;
-  };
-  paymentMethodSelect.addEventListener('change', renderPaymentPackages);
-  renderPaymentPackages();
-  let selectedWechatWebAmount = '1';
-  const selectedWechatWebPaymentAmount = () => document.querySelector('#wechatWebCustomAmount').value.trim() || selectedWechatWebAmount;
-  const renderWechatWebAmount = () => {
-    const amount = selectedWechatWebPaymentAmount();
-    const valid = /^\d{1,5}$/.test(amount) && Number(amount) >= 1 && Number(amount) <= 10000;
-    document.querySelector('#wechatWebCustomCredits').textContent = valid ? `${Math.round(Number(amount) * 100) / 10} 积分 · 应付 ¥${Number(amount).toFixed(2)}` : '请输入 1–10000 元的整数金额';
-    document.querySelectorAll('[data-buy-wechat-amount]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.buyWechatAmount === selectedWechatWebAmount)));
-  };
-  document.querySelector('#wechatWebCustomAmount').addEventListener('input', renderWechatWebAmount);
-  document.querySelectorAll('[data-buy-wechat-amount]').forEach(button => button.addEventListener('click', () => {
-    selectedWechatWebAmount = button.dataset.buyWechatAmount;
-    renderWechatWebAmount();
-  }));
-  document.querySelector('#wechatWebPayButton').addEventListener('click', event => {
-    void purchaseCredits(undefined, event.currentTarget, selectedWechatWebPaymentAmount());
-  });
-  paymentRefresh?.addEventListener('click', () => { void refreshPayment(); });
-
-  const requestedCredits = Number(new URLSearchParams(window.location.search).get('purchase'));
-  const requestedCard = document.querySelector(`[data-credit-package="${requestedCredits}"]`);
-  if (requestedCard) {
-    requestedCard.classList.add('is-requested');
-    requestAnimationFrame(() => requestedCard.scrollIntoView({ behavior:reducedMotion ? 'auto' : 'smooth', block:'center' }));
-  }
-  const purchaseSessionPromise = loadPurchaseAccount();
-  void purchaseSessionPromise.then(() => {
-    if (!pendingOrderNo) return;
-    setPaymentTracker('发现一笔待确认订单', '完成付款后，可以在这里刷新支付状态。');
-    if (orderFromUrl) void refreshPayment();
-  });
 
   const setStatus = (message, state = '') => {
     if (!status) return;
@@ -347,9 +67,9 @@ import { createApiClient } from './api-client.js?v=4';
       return `<div class="price-row"><div class="price-row-label"><b>${escapeHtml(item.quality || '标准')}</b><small>${durationText}${total}</small></div><div class="price-row-value"><strong>¥${formatNumber(item.yuan)}<span>/ ${unit}</span></strong><small>${formatNumber(item.credits, 2)} 积分 / ${unit}</small></div></div>`;
     }).join('');
     const modelLabel = model?.label || rows[0]?.label || rows[0]?.modelId || '未命名模型';
-    return `<article class="price-card reveal in-view"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，开始生成前会再次确认。</p></article>`;
+    return `<article class="price-card"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，开始生成前会再次确认。</p></article>`;
   };
-  const renderUnavailableCard = model => `<article class="price-card reveal in-view"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(model.id)}</span><div><h2>${escapeHtml(model.label)}</h2><p class="price-card-description">${escapeHtml(model.description || '模型能力正在准备中')}</p></div></div><span class="price-badge is-coming">${model.availability === 'coming-soon' ? '即将上线' : '暂不可用'}</span></header><div class="price-empty" style="padding:24px 14px;border:0;background:rgba(255,255,255,.36)">当前没有可展示的实时价格</div><p class="price-card-note">服务恢复后，价格会自动出现在这里。</p></article>`;
+  const renderUnavailableCard = model => `<article class="price-card"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(model.id)}</span><div><h2>${escapeHtml(model.label)}</h2><p class="price-card-description">${escapeHtml(model.description || '模型能力正在准备中')}</p></div></div><span class="price-badge is-coming">${model.availability === 'coming-soon' ? '即将上线' : '暂不可用'}</span></header><div class="price-empty">当前没有可展示的实时价格</div><p class="price-card-note">服务恢复后，价格会自动出现在这里。</p></article>`;
 
   const renderCatalog = payload => {
     const items = Array.isArray(payload?.items) ? payload.items.filter(item => item?.available !== false && Number.isFinite(Number(item?.yuan))) : [];
@@ -371,12 +91,12 @@ import { createApiClient } from './api-client.js?v=4';
       return;
     }
     catalog.innerHTML = cards.join('');
-    catalog.querySelectorAll('.reveal').forEach(node => requestAnimationFrame(() => node.classList.add('in-view')));
   };
 
   const loadPrices = async () => {
     if (loading) return;
     loading = true;
+    catalog.setAttribute('aria-busy', 'true');
     refresh?.setAttribute('aria-busy', 'true');
     if (refresh) refresh.disabled = true;
     setStatus('正在获取最新价格…');
@@ -393,6 +113,7 @@ import { createApiClient } from './api-client.js?v=4';
       if (!pricePage.dataset.loaded) catalog.innerHTML = `<div class="price-empty"><strong>价格暂时无法获取</strong>${escapeHtml(error.message || '请稍后重试，或检查网络连接。')}</div>`;
     } finally {
       loading = false;
+      catalog.setAttribute('aria-busy', 'false');
       refresh?.removeAttribute('aria-busy');
       if (refresh) refresh.disabled = false;
     }

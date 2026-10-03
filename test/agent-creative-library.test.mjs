@@ -24,6 +24,8 @@ test('prompt, script and character requests find their specialized creative meth
     ['优化视频提示词', 'prompt-optimization'],
     ['精简画面描述', 'prompt-optimization'],
     ['提示词被拒怎么改', 'prompt-optimization'],
+    ['提示词违禁，帮我改写', 'prompt-optimization'],
+    ['视频描述违规', 'prompt-optimization'],
     ['创作电影剧本', 'script-writing'],
     ['修改舞台剧对白', 'script-writing'],
     ['设计角色三视图', 'character-design'],

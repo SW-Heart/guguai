@@ -855,7 +855,9 @@ const projectService = createProjectService({
   videoAspectRatios, dramaVideoDurations, dramaStepOrder, canonicalVideoModelId, publicLlmUsage,
 });
 const { publicDramaProject, createDefaultDramaShot, normalizeDramaProject, dramaProjectGenerationIds, removeGenerationFromDramaProject } = projectService;
+const agentSkills = createAgentSkills();
 const directorService = createDirectorService({
+  skills:agentSkills,
   storyboardEngineVersion: STORYBOARD_ENGINE_VERSION,
   llmConfig,
   conservativeInputTokenUpperBound,
@@ -870,7 +872,7 @@ const directorService = createDirectorService({
   publicDramaProject,
   normalizeDramaProject,
 });
-const { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions } = directorService;
+const { runSmartDirector, analyzeScript, createStoryboard, planDirectorActions, optimizeShotPrompt } = directorService;
 async function createVideo(task, refs, hooks = {}) {
   const adapter = videoProviderAdapters.forTask(task);
   if (!adapter) throw new Error(`不支持的视频供应商：${task.provider || '未指定'}`);
@@ -1967,8 +1969,8 @@ function trackModelRouteSuccess(task) {
 }
 async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
-  // Record before the retry decision so the retry re-selects a route after a
-  // possible automatic disable of the one that just failed.
+  // Update health for new jobs; this paid job still finishes its three primary
+  // retries before trying the next channel once.
   trackModelRouteFailure(task, error);
   if (prepareGenerationRetry(task, error)) {
     clearProviderTaskIdTimeout(task.id);
@@ -2516,6 +2518,8 @@ const viralLab = createViralLabRouteHandler({ bodyJson, sendJson, requireUser, r
   llmConfig, isLlmConfigured, callLlm, llmRates, conservativeInputTokenUpperBound, llmReservationMicro, reserveLlmCredits, settleLlmCredits, releaseLlmCredits, markLlmBillingReconcile,
   ensureLocalAsset: (userId, asset) => ensureLocalAsset(userId, asset) });
 const dramaRoute = createDramaRouteHandler({
+  getVideoModels:() => publicVideoCapabilitiesWithControls().models,
+  findAsset,
   bodyJson,
   sendJson,
   requireUser,
@@ -2546,6 +2550,7 @@ const dramaRoute = createDramaRouteHandler({
   charLength,
   analyzeScript,
   createStoryboard,
+  optimizeShotPrompt,
 });
 const filesRoute = createFilesRouteHandler({
   bodyJson,
@@ -2689,7 +2694,6 @@ const generationRoute = createGenerationRouteHandler({
 
 
 const agentGateway = createAgentGateway();
-const agentSkills = createAgentSkills();
 const agentRepository = createAgentSessionRepository({ sql, tx });
 const modelExperienceRepository = createModelExperienceRepository({ sql });
 async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
@@ -2720,7 +2724,7 @@ function agentMediaCatalog() {
 const agentTools = createAgentTools({
   skills:agentSkills, catalog:agentMediaCatalog, generate:args => generationRoute.submit(args),
   loadProject:loadDramaProject, saveProject:saveDramaProject, publicProject:publicDramaProject,
-  findAsset, publicAsset, listAssets, findGeneration, listGenerations,
+  findAsset, publicAsset, listAssets, findGeneration, publicGeneration, listGenerations,
   modelExperienceStore:modelExperienceRepository,
   observationStore:{read:(session,assetId)=>agentRepository.readObservation(session,assetId),list:session=>agentRepository.listObservations(session),write:(session,record,revision,invocationId)=>agentRepository.saveObservation(session,record,revision,invocationId)},
   transcriptStore:{list:(session,assetId)=>agentRepository.listTranscripts(session,assetId),write:(session,record)=>agentRepository.saveTranscript(session,record)},

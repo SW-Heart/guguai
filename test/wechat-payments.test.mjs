@@ -171,8 +171,9 @@ test('all modified versioned entries have current cache keys', () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
   assert.ok(Number(read('public/index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
   assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=5'));
-  for (const page of ['index', 'pricing']) assert.ok(read(`public/${page}.html`).includes('/payment.css?v=3'));
-  for (const page of ['pricing', 'home', 'features']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=16'));
+  assert.ok(read('public/index.html').includes('/payment.css?v=3'));
+  assert.ok(!read('public/pricing.html').includes('/payment.css'));
+  for (const page of ['pricing', 'home', 'features', 'help']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=20'));
 });
 
 test('insufficient balance rejects refund before calling the provider', async t => {
@@ -240,14 +241,17 @@ test('RMB presets and custom amounts produce exact provider fee and server-calcu
     assert.equal(walletOf('wx-user').balanceMicro - before, fen * 100000);
   }
 });
-test('amount choices and custom inputs exist in both purchase entrypoints', () => {
+test('amount choices remain in the client while marketing pages have no purchase or login controls', () => {
   const read = name => readFileSync(new URL(`../public/${name}`, import.meta.url), 'utf8');
   for (const amount of ['1', '5', '10', '50', '100', '500']) {
     assert.ok(read('index.html').includes(`data-wechat-amount="${amount}"`));
-    assert.ok(read('pricing.html').includes(`data-buy-wechat-amount="${amount}"`));
   }
   assert.ok(read('app.js').includes("const input = provider === 'wechat' ? { amount }"));
-  assert.ok(read('marketing.js').includes("provider === 'wechat' ? { amount } : { credits }"));
+  for (const page of ['home', 'features', 'pricing', 'help']) {
+    assert.doesNotMatch(read(`${page}.html`), /siteAccountMenu|siteLoginLink|href="\/login|data-buy-credits|data-buy-wechat-amount|purchasePaymentMethod|paymentTracker|wechatWebPayButton/);
+  }
+  assert.doesNotMatch(read('marketing.js'), /\/api\/(?:auth|payments)\/|sessionStorage|loginDestination|purchaseCredits/);
+  assert.ok(read('marketing.js').includes('/api/public/model-prices'));
 });
 
 test('purchase dialogs use the WeChat icon with a fresh stylesheet cache key', () => {

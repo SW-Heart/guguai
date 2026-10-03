@@ -3,7 +3,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createConfigSync } from './state/config-sync.js?v=1';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
-import { replaceAssetMentions } from './video-prompt.js?v=5';
+import { replaceAssetMentions } from './video-prompt.js?v=6';
 import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
 import { createApiClient } from './api-client.js?v=4';
 import { createRecordIndexes } from './state/records.js?v=2';
@@ -2103,7 +2103,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=82').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=84').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2114,10 +2114,10 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=212').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=220').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
-    });
+    }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
   return dramaControllerPromise;
 }
@@ -2198,7 +2198,7 @@ function scheduleRouteContentRender(route, routeChanged) {
           if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
           controller.modelState();
           return controller.load();
-        }).catch(error => toast(`短剧模块加载失败：${error.message}`));
+        }).catch(error => { console.error('[drama] 页面加载失败', error); toast('短剧创作暂时无法打开，请刷新后重试'); });
         return;
       }
       renderTasks();

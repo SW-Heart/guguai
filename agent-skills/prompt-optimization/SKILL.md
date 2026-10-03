@@ -1,6 +1,6 @@
 ---
 name: prompt-optimization
-description: 优化、改写或精简文本、图像、视频创作提示词与画面描述，保留原有意图、逐字台词和参考素材，解决含糊、冲突或要求遗漏。用户只要优化描述时不提交生成；Seedance 专用参数和写法结合 seedance-creation-bible。
+description: 优化、改写或精简文本、图像、视频创作提示词与画面描述；分析提示词违禁、违规、敏感内容或审核拒绝，给出有依据的原因与合规改稿。保留原有意图、逐字台词和参考素材；用户只要优化描述时不提交生成，Seedance 专用写法结合 seedance-creation-bible。
 ---
 
 # 提示词优化

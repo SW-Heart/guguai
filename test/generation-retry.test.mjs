@@ -70,9 +70,9 @@ test('request logs retain full payloads and mark retries without exposing creden
   await Promise.all([1, 2].map(id => generationAttemptContext.run({ id }, async () => { await Promise.resolve(); assert.equal(generationAttemptContext.getStore().id, id); })));
 });
 
-test('a routed retry selects and applies the latest highest-priority channel without changing its charge', () => {
+test('a routed fallback selects the next channel once without changing its charge', () => {
   const task = {
-    id:'g', type:'video', generationRetryCount:2, routeId:'route-1', videoModelId:'seedance-2.5',
+    id:'g', type:'video', generationRetryCount:4, routeId:'route-1', routePriority:1, videoModelId:'seedance-2.5',
     model:'old-upstream', provider:'old-provider', quality:'720p', duration:30, aspectRatio:'9:16',
     pricingSnapshot:{ routeId:'route-1', totalMicro:1230000 }, creditCostMicro:1230000,
   };
@@ -82,7 +82,7 @@ test('a routed retry selects and applies the latest highest-priority channel wit
     selectModelRoute(value) {
       request = value;
       return {
-        id:'route-2', version:7, displayName:'当前最优渠道', provider:'new-provider', adapterType:'new-video',
+        id:'route-2', version:7, priority:2, displayName:'当前最优渠道', provider:'new-provider', adapterType:'new-video',
         baseUrl:'https://new.example.com', credentialId:'credential-2', upstreamModelId:'new-upstream',
         capabilities:{ image:3, video:1, audio:1 },
       };
@@ -92,6 +92,7 @@ test('a routed retry selects and applies the latest highest-priority channel wit
   assert.deepEqual(request, {
     logicalModelId:'seedance-2.5', quality:'720p', duration:30, aspectRatio:'9:16',
     referenceCounts:{ image:2, video:1, audio:0 },
+    excludeRouteIds:['route-1'], afterPriority:1,
   });
   assert.deepEqual({
     routeId:task.routeId, routeVersion:task.routeVersion, provider:task.provider, model:task.model,
@@ -104,10 +105,64 @@ test('a routed retry selects and applies the latest highest-priority channel wit
   });
   assert.deepEqual(task.pricingSnapshot, { routeId:'route-1', totalMicro:1230000 });
   assert.equal(task.creditCostMicro, 1230000);
+  assert.equal(task.generationFallbackRouteId, 'route-2');
+  assert.equal(task.routePriority, 2);
+  const persisted = JSON.parse(JSON.stringify(task));
+  assert.equal(refreshGenerationRetryRoute(persisted, { selectModelRoute:() => assert.fail('fallback must stay pinned after a restart') }).id, 'route-2');
+  assert.equal(prepareGenerationRetry(persisted, { upstreamTerminal:true }), false);
+});
+
+test('all three primary retries keep the original channel snapshot and charge', () => {
+  let task = {
+    id:'g', type:'video', routeId:'route-1', routeVersion:6, routePriority:1,
+    model:'bd-seedance-2.5-720p', routeBaseUrl:'https://original.example.com',
+    creditStatus:'charged', creditCost:108, creditCostMicro:108000000,
+    pricingSnapshot:{ routeId:'route-1', totalMicro:108000000 },
+  };
+  for (let retry = 1; retry <= 3; retry++) {
+    task.providerTaskId = `primary-${retry}`;
+    assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true, message:'UPSTREAM_ATTEMPTS_EXHAUSTED' }), true);
+    task = JSON.parse(JSON.stringify(task));
+    assert.equal(refreshGenerationRetryRoute(task, { selectModelRoute:() => assert.fail('primary retries must not reselect') }).id, 'route-1');
+    assert.equal(task.generationRetryCount, retry);
+    assert.equal(task.routeVersion, 6);
+    assert.equal(task.model, 'bd-seedance-2.5-720p');
+    assert.equal(task.creditCostMicro, 108000000);
+    assert.deepEqual(task.pricingSnapshot, { routeId:'route-1', totalMicro:108000000 });
+  }
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), true);
+  assert.equal(task.generationRetryCount, 4);
+  assert.throws(() => refreshGenerationRetryRoute(task, { selectModelRoute:() => null }), /暂无其他可用/);
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), false);
+  assert.equal(task.routeId, 'route-1');
 });
 
 test('initial submissions and non-routed retries do not select another channel', () => {
   const selectModelRoute = () => assert.fail('route selection should be skipped');
   assert.equal(refreshGenerationRetryRoute({ routeId:'route-1', generationRetryCount:0 }, { selectModelRoute }), null);
   assert.equal(refreshGenerationRetryRoute({ generationRetryCount:1 }, { selectModelRoute }), null);
+});
+
+test('failed routed attempts preserve the model and price before a retry changes channels', () => {
+  const task = {
+    id:'g', type:'video', routeId:'bd-route', routeVersion:6,
+    routeDisplayName:'BD 720p', provider:'diw', model:'bd-seedance-2.5-720p',
+    providerTaskId:'first-upstream', creditCostMicro:108000000,
+    pricingSnapshot:{ routeId:'bd-route', unitPrice:3.6, quantity:30, totalMicro:108000000 },
+  };
+  assert.equal(prepareGenerationRetry(task, new Error('local failure')), false);
+  assert.equal(prepareGenerationRetry(task, Object.assign(new Error('UPSTREAM_ATTEMPTS_EXHAUSTED'), { upstreamTerminal:true })), true);
+  task.routeId = 'tx-route';
+  task.model = 'TX官方-seedance-2.5-720p';
+  task.pricingSnapshot.unitPrice = 8.6;
+  const [attempt] = JSON.parse(JSON.stringify(task)).generationAttempts;
+  assert.equal(attempt.routeId, 'bd-route');
+  assert.equal(attempt.routeVersion, 6);
+  assert.equal(attempt.routeDisplayName, 'BD 720p');
+  assert.equal(attempt.provider, 'diw');
+  assert.equal(attempt.model, 'bd-seedance-2.5-720p');
+  assert.equal(attempt.providerTaskId, 'first-upstream');
+  assert.equal(attempt.creditCostMicro, 108000000);
+  assert.equal(attempt.pricingSnapshot.unitPrice, 3.6);
+  assert.equal(attempt.pricingSnapshot.totalMicro, 108000000);
 });

@@ -12,3 +12,4 @@ docs/*
 release/
 /.alipay-sandbox.json
 .env.desktop-release
+/.agents/skills/impeccable/

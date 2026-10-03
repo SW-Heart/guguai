@@ -2,9 +2,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const generationAttemptContext = new AsyncLocalStorage();
 export const maxGenerationRetries = 3;
+export const maxRoutedGenerationRetries = maxGenerationRetries + 1;
 
 export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceCounts = {} } = {}) {
   if (!task?.routeId || (Number(task.generationRetryCount) || 0) < 1) return null;
+  // Keep the accepted channel snapshot for all three primary retries. Route
+  // health changes affect new jobs, not the retry budget of this paid job.
+  if (Number(task.generationRetryCount) <= maxGenerationRetries || task.generationFallbackRouteId === task.routeId) {
+    return { id:task.routeId, version:task.routeVersion };
+  }
   if (typeof selectModelRoute !== 'function') throw new TypeError('重新选择生成渠道缺少选路器');
   const route = selectModelRoute({
     logicalModelId: task.videoModelId || task.modelId,
@@ -12,13 +18,17 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceC
     duration: task.duration,
     aspectRatio: task.aspectRatio,
     referenceCounts,
+    excludeRouteIds: [...new Set([task.routeId, ...(task.generationAttempts || []).map(attempt => attempt.routeId).filter(Boolean)])],
+    afterPriority: task.routePriority,
   });
-  if (!route) throw Object.assign(new Error('当前模型暂无可用生成渠道，请稍后重试'), { upstreamTerminal: true });
+  if (!route) throw new Error('当前模型暂无其他可用生成渠道，请稍后重试');
   Object.assign(task, {
     provider: route.provider,
     model: route.upstreamModelId,
     routeId: route.id,
     routeVersion: route.version,
+    routePriority: route.priority,
+    generationFallbackRouteId: route.id,
     routeDisplayName: route.displayName,
     routeAdapter: route.adapterType,
     routeBaseUrl: route.baseUrl,
@@ -37,13 +47,24 @@ export function prepareGenerationRetry(task, error, at = new Date().toISOString(
   if (!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
     || error.submissionUncertain || error.pollTimedOut || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
-    || (Number(task.generationRetryCount) || 0) >= maxGenerationRetries) return false;
+    || (Number(task.generationRetryCount) || 0) >= (task.routeId ? maxRoutedGenerationRetries : maxGenerationRetries)
+    || task.generationFallbackRouteId) return false;
   task.generationAttempts = [...(task.generationAttempts || []), {
     attempt: (Number(task.generationRetryCount) || 0) + 1,
     providerTaskId: task.providerTaskId || '',
     startedAt: task.attemptStartedAt || task.createdAt,
     finishedAt: at,
     error: error.message,
+    ...(task.routeId ? {
+      routeId: task.routeId,
+      routeVersion: task.routeVersion,
+      routePriority: task.routePriority,
+      routeDisplayName: task.routeDisplayName,
+      provider: task.provider,
+      model: task.model,
+      pricingSnapshot: task.pricingSnapshot ? structuredClone(task.pricingSnapshot) : null,
+      creditCostMicro: task.creditCostMicro,
+    } : {}),
   }];
   task.generationRetryCount = (Number(task.generationRetryCount) || 0) + 1;
   Object.assign(task, {
