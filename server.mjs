@@ -63,7 +63,7 @@ import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
-import { isModelEnabled, listModelControls, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
+import { isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
@@ -581,8 +581,8 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     group.push(item);
     dynamicByModel.set(item.modelId, group);
   }
-  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_2_FAST, VIDEO_MODEL_IDS.SEEDANCE_25];
-  const modelOrder = { [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50 };
+  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_2_FAST, VIDEO_MODEL_IDS.SEEDANCE_25, VIDEO_MODEL_IDS.SEEDANCE_2_VALUE, VIDEO_MODEL_IDS.SEEDANCE_25_VALUE];
+  const modelOrder = { [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50, [VIDEO_MODEL_IDS.SEEDANCE_2_VALUE]: 31, [VIDEO_MODEL_IDS.SEEDANCE_25_VALUE]: 41 };
   const models = [...(videoCapabilities.models || [])].sort((a, b) => (modelOrder[a.id] ?? 100) - (modelOrder[b.id] ?? 100));
   const items = [];
   for (const model of models) {
@@ -606,7 +606,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     }
   }
   for (const imageModel of imageModelCatalog) {
-    if (!isModelEnabled(imageModel.id)) continue;
+    if (!isImageModelAvailable(imageModel.id)) continue;
     const qualities = imageModel.id === imageModelIds.gptImage25 ? ['1K', '2K', '4K'] : ['标准'];
     for (const quality of qualities) {
       const credits = modelPrice(pricing, imageModel.id, quality, imageModel.id === imageModelIds.gptImage25
@@ -623,7 +623,7 @@ function configState() {
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY || process.env.TUZI_DEFAULT_API_KEY),
-    imageModels: imageModelCatalog.map(model => ({ ...model, availability:'available', enabled:isModelEnabled(model.id) && (model.id !== imageModelIds.gptImage25 || Boolean(process.env.TUZI_DEFAULT_API_KEY)) })),
+    imageModels: imageModelCatalog.filter(model => isImageModelAvailable(model.id)).map(model => ({ ...model, availability:'available', enabled:true })),
     smsLogin: smsConfig.configured,
     mediaStorageReady: r2Configured,
     directUpload: r2Configured && directUploadEnabled,
@@ -664,7 +664,7 @@ function publicModelPriceState() {
     pricingVersion: pricing.version,
     yuanPerCredit: 0.1,
     items,
-    models,
+    models: models.filter(model => pricedModelIds.has(model.id)),
   };
 }
 
@@ -2710,7 +2710,7 @@ async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
 }
 function agentMediaCatalog() {
   const controls = new Map(listModelControls().map(item => [item.modelId, item]));
-  const images = imageModelCatalog.filter(m => isModelEnabled(m.id) && controls.get(m.id)?.userVisible !== false && (m.id !== imageModelIds.gptImage25 || Boolean(process.env.TUZI_DEFAULT_API_KEY)))
+  const images = imageModelCatalog.filter(m => isImageModelAvailable(m.id))
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],

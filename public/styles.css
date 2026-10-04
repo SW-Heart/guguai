@@ -5902,10 +5902,11 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 @media(max-width:580px){.director-workspace .dw-generation-dock{bottom:14px;gap:8px}.director-workspace .dw-generation-launcher button{min-height:42px;padding:8px 9px;gap:6px;font-size:12px}.director-workspace .dw-agent-reopen{width:46px;height:46px;min-height:46px}.director-workspace .dw-generation-composer{padding:9px}.director-workspace .dw-gen-chip{height:38px;min-height:38px}.director-workspace .dw-gen-attach{width:38px;height:38px;min-height:38px}}
 @media(prefers-reduced-motion:reduce){.director-workspace .dw-generation-composer,.director-workspace .dw-gen-menu,.director-workspace .dw-gen-submit,.director-workspace .dw-gen-chip,.director-workspace .dw-gen-chip-caret,.director-workspace .dw-gen-choice{animation:none;transition:none}.director-workspace .dw-generation-composer svg{animation:none!important}.director-workspace .dw-generation-launcher button{transition:none}}
 
-/* Smart creation entry and saved projects. */
+/* Smart creation entry and saved projects. The masked texture stays bounded
+   on large/high-DPI windows to limit compositor backing-store memory. */
 #agentView .agent-entry,#agentView .agent-projects{box-sizing:border-box;min-height:100%;background:radial-gradient(circle at 50% 20%,var(--theme-brand-soft, #efedff) 0,var(--theme-panel, #f8f8fc) 44%,var(--theme-panel, #f6f7fb) 100%);color:var(--theme-ink, #292d47)}
 #agentView .agent-entry{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;gap:44px;height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;overscroll-behavior:contain;padding:clamp(48px,10vh,104px) 32px 48px;background:radial-gradient(ellipse 68% 58% at 50% 30%,var(--theme-brand-soft, #f1f0ff) 0,var(--theme-panel, #f8f8fc) 62%,var(--theme-panel, #f7f8fb) 100%)}
-#agentView .agent-entry::before{position:absolute;z-index:-1;inset:0;content:"";background-image:radial-gradient(#6c63c51c .7px,transparent .9px);background-size:13px 13px;mask-image:radial-gradient(ellipse 63% 44% at 50% 42%,#000 0%,transparent 100%);pointer-events:none}
+#agentView .agent-entry::before{position:absolute;z-index:-1;top:0;left:50%;width:min(100%,1320px);height:min(100%,900px);transform:translateX(-50%);content:"";background-image:radial-gradient(#6c63c51c .7px,transparent .9px);background-size:13px 13px;mask-image:radial-gradient(ellipse 63% 44% at 50% 42%,#000 0%,transparent 100%);pointer-events:none}
 #agentView .agent-entry-main{display:grid;gap:30px;width:min(900px,100%);text-align:center}
 #agentView .agent-entry-main .agent-creative-presets{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;width:min(720px,100%);justify-self:center}
 #agentView .agent-entry-main .agent-creative-presets button{min-height:66px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.43922);border-color:rgb(var(--theme-line-rgb, 231 228 241) / 0.50196)}
@@ -6043,7 +6044,9 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-space .dw-agent .dw-composer .dw-composer-actions [data-director-send]:disabled{background:var(--theme-surface, #e5e5eb);color:var(--theme-faint, #a7a8b2);box-shadow:none}
 #agentView .agent-space .dw-agent .dw-composer [data-director-send] .gugu-lucide{width:20px;height:20px}
 
-/* Skill gallery and examples share the creation entry, including new conversations. */
+/* Skill gallery and examples share the creation entry, including new conversations.
+   Only visible quick-use controls sample the backdrop; opacity alone does not
+   remove a backdrop filter's compositing cost. */
 #agentView .agent-entry-main{flex:none}
 #agentView .agent-skill-gallery{flex:none;width:min(1320px,100%);text-align:left;color:var(--theme-ink, #292d47)}
 #agentView .agent-skill-gallery>header{display:flex;align-items:baseline;gap:16px;margin-bottom:18px}
@@ -6060,10 +6063,10 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-skill-copy>strong{font-size:15px;font-weight:550;line-height:1.45}
 #agentView .agent-skill-summary{font-size:13px;font-weight:400;line-height:1.65;color:var(--theme-muted, #777b90)}
 #agentView .agent-skill-meta{margin-top:auto;padding-top:5px;font-size:11px;font-weight:400;color:var(--theme-muted, #858399)}
-#agentView .agent-skill-quick-use{position:absolute;top:20px;right:20px;min-height:36px;padding:8px 16px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.74118);border-radius:10px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.94118);color:var(--theme-brand, #5345ae);box-shadow:0 4px 16px #211c3f18;backdrop-filter:blur(12px);opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .16s,transform .16s,background .16s}
-#agentView .agent-skill-card:hover .agent-skill-quick-use,#agentView .agent-skill-card:focus-within .agent-skill-quick-use{opacity:1;pointer-events:auto;transform:none}
+#agentView .agent-skill-quick-use{position:absolute;top:20px;right:20px;min-height:36px;padding:8px 16px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.74118);border-radius:10px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.94118);color:var(--theme-brand, #5345ae);box-shadow:0 4px 16px #211c3f18;backdrop-filter:none;-webkit-backdrop-filter:none;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .16s,transform .16s,background .16s}
+#agentView .agent-skill-card:hover .agent-skill-quick-use,#agentView .agent-skill-card:focus-within .agent-skill-quick-use{opacity:1;pointer-events:auto;transform:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 #agentView .agent-skill-quick-use:hover{background:var(--theme-panel, #fff);color:var(--theme-ink-soft, #433495)}
-@media(hover:none),(pointer:coarse){#agentView .agent-skill-quick-use{opacity:1;pointer-events:auto;transform:none}}
+@media(hover:none),(pointer:coarse){#agentView .agent-skill-quick-use{opacity:1;pointer-events:auto;transform:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}}
 #agentView .agent-skill-status{grid-column:1/-1;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:14px;min-height:146px;padding:20px;color:var(--theme-muted, #777b90);font-size:13px;border:1px dashed var(--theme-line, #dfddea);border-radius:18px}
 #agentView .agent-skill-status button{padding:7px 14px;border:1px solid var(--theme-line, #dcd8ef);border-radius:9px;background:var(--theme-panel, #fff);color:var(--theme-brand, #5b50bb);font:inherit}
 #agentView .agent-skill-dialog{position:fixed;inset:0;box-sizing:border-box;width:min(960px,calc(100vw - 64px));max-width:none;max-height:calc(100dvh - 64px);margin:auto;padding:0;overflow:hidden;overscroll-behavior:contain;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.78824);border-radius:24px;background:var(--theme-panel, #fff);color:var(--theme-ink, #292d47);box-shadow:0 28px 100px #16112f38;font-family:var(--sans);text-align:left}

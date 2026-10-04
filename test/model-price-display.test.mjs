@@ -1,12 +1,14 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeDatabase, openDatabase } from '../lib/db.mjs';
+import { closeDatabase, openDatabase, sql } from '../lib/db.mjs';
 import { ensureDefaultModelRoutes } from '../lib/model-routes.mjs';
 import { publicVideoCapabilities, validateVideoRequest } from '../lib/video-capabilities.mjs';
 import { modelPriceFields, pricingSnapshot } from '../lib/pricing.mjs';
 import { creditsToMicro } from '../lib/billing.mjs';
 import vm from 'node:vm';
 
+process.env.DUOMI_API_KEY = 'test-duomi';
+process.env.TUZI_DEFAULT_API_KEY = 'test-tuzi';
 process.env.DIW_KEY = 'test-diw-key';
 process.env.WJ_TJWD_KEY = 'test-wj-key';
 process.env.WJ_SD_PY_900_KEY = 'test-wj-py-key';
@@ -14,6 +16,7 @@ process.env.CNTCN_KEY = 'test-cntcn-key';
 const { __test } = await import('../server.mjs');
 openDatabase({ file: ':memory:' });
 ensureDefaultModelRoutes();
+sql("UPDATE model_routes SET catalog_status='available'").run();
 after(() => closeDatabase({ checkpoint:false }));
 
 const app = await (await import('node:fs/promises')).readFile(new URL('../public/app.js', import.meta.url), 'utf8');
@@ -35,7 +38,7 @@ test('Minimax H3 catalog, admin defaults and billing snapshots use resolution pr
 });
 
 test('Minimax H3 fallback estimates follow the selected resolution', () => {
-  const context = vm.createContext({ state:{ config:{} } });
+  const context = vm.createContext({ state:{ config:{videoCapabilities:publicVideoCapabilities()} } });
   vm.runInContext(app.slice(app.indexOf('const fallbackVideoModels ='), app.indexOf('const modelIconUrls =')), context);
   vm.runInContext(app.slice(app.indexOf('function videoPricingFor('), app.indexOf('let videoQuoteTimer =')), context);
   for (const generationType of ['TEXT', 'REFERENCE']) {
@@ -56,8 +59,8 @@ test('Minimax price changes refresh both versioned frontend entries', async () =
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const drama = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.match(html, /src="\/app\.js\?v=479"/);
-  assert.match(app, /import\('\.\/drama-studio\.js\?v=220'\)/);
+  assert.match(html, /src="\/app\.js\?v=483"/);
+  assert.match(app, /import\('\.\/drama-studio\.js\?v=224'\)/);
   assert.doesNotMatch(html, /app\.js\?v=462\b/);
   assert.doesNotMatch(app, /drama-studio\.js\?v=205\b/);
   assert.match(drama, /限时特惠 ¥0\.05\/s 起/);

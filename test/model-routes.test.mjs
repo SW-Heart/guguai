@@ -5,6 +5,7 @@ import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import {
   __test as routeTest,
   checkModelRoutes,
+  consolidateSeedanceModelRoutes,
   createModelRoute,
   deleteModelRoute,
   createModelRouteCredential,
@@ -37,6 +38,7 @@ function freshDb() {
   process.env.CNTCN_KEY = 'cntcn-test';
   process.env.MODEL_ROUTE_CREDENTIAL_SECRET = 'model-route-test-secret';
   ensureDefaultModelRoutes();
+  sql("UPDATE model_routes SET catalog_status='available'").run();
 }
 
 function cleanupDb() {
@@ -45,6 +47,12 @@ function cleanupDb() {
   for (const [name, value] of Object.entries(originalKeys)) {
     if (value === undefined) delete process.env[name]; else process.env[name] = value;
   }
+}
+
+function createAvailableRoute(input) {
+  const route = createModelRoute(input);
+  sql("UPDATE model_routes SET catalog_status='available' WHERE id=:id").run({id:route.id});
+  return route;
 }
 
 test('Seedance route selection, pricing and catalog health', async t => {
@@ -86,7 +94,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
     const qualities = modelId => publicVideoCapabilitiesWithControls().models.find(model => model.id === modelId).modes.map(mode => mode.qualityOptions);
     assert.ok(qualities('seedance-2.5').every(options => !options.includes('1080p')));
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').available, false);
-    const route = createModelRoute({ logicalModelId:'seedance-2.5', quality:'1080p', credentialId:'diw-main', upstreamModelId:'seedance-2.5-1080p-test', priority:1, costYuan:10, salePriceYuan:12 });
+    const route = createAvailableRoute({ logicalModelId:'seedance-2.5', quality:'1080p', credentialId:'diw-main', upstreamModelId:'seedance-2.5-1080p-test', priority:1, costYuan:10, salePriceYuan:12 });
     assert.ok(qualities('seedance-2.5').every(options => options.includes('1080p')));
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '1080p').yuan, 12);
     assert.equal(selectModelRoute({ logicalModelId:'seedance-2.5', quality:'1080p', duration:30, aspectRatio:'16:9' }).id, route.id);
@@ -107,58 +115,42 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.ok(model.modes.every(mode => mode.qualityOptions.includes('720p')));
   });
 
-  await t.test('Seedance 2.0 1080p follows each input pool and its enabled channels', () => {
-    const mode = type => publicVideoCapabilitiesWithControls().models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === type);
+  await t.test('Seedance 2.0 shares 1080p routes across text and reference requests', () => {
+    const mode = type => publicVideoCapabilitiesWithControls().models.find(model => model.id === 'seedance-2.0')?.modes.find(mode => mode.generationType === type) || {qualityOptions:[]};
     const price = () => publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '1080p');
     assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
     assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
-    assert.equal(price().available, false);
-
-    const text = createModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-text-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
-    assert.equal(text.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.TEXT);
-    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
-    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+    const route = createAvailableRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
+    assert.equal(route.logicalModelId, 'seedance-2.0');
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(mode(type).qualityOptions.includes('1080p'));
     assert.deepEqual(mode('TEXT').durationsByQuality['1080p']['16:9'], [5,10,15]);
     assert.equal(price().yuan, 2);
-    assert.equal(modelRouteCharge(text, 10).total, 200);
-    updateRoutePolicy(SEEDANCE_ROUTE_MODEL_IDS.TEXT, '1080p', text.id);
-
-    const image = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.IMAGE, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'sd20-img-1080p', priority:1, costYuan:1, salePriceYuan:3 });
-    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
-    assert.equal(selectModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', duration:15, aspectRatio:'16:9', referenceCounts:{image:1} }).id, image.id);
-    updateRoutePolicy(SEEDANCE_ROUTE_MODEL_IDS.IMAGE, '1080p', image.id);
-    assert.throws(() => updateModelRoute(image.id, { logicalModelId:'seedance-2.0-fast' }), { statusCode:400 });
-
+    assert.equal(modelRouteCharge(route, 10).total, 200);
+    updateRoutePolicy(SEEDANCE_ROUTE_MODEL_IDS.IMAGE, '1080p', route.id);
+    const fallback = createAvailableRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.IMAGE, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'sd20-fallback-1080p', priority:2, costYuan:1, salePriceYuan:3 });
+    for (const image of [0, 1]) assert.equal(selectModelRoute({ logicalModelId:'seedance-2.0', quality:'1080p', duration:15, aspectRatio:'16:9', referenceCounts:{image} }).id, route.id);
+    assert.throws(() => updateModelRoute(route.id, { logicalModelId:'seedance-2.0-fast' }), { statusCode:400 });
     updateModelRouteCredential('diw-main', { enabled:false });
-    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
-    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(mode(type).qualityOptions.includes('1080p'));
+    assert.equal(price().yuan, 3);
+    updateModelRoute(fallback.id, { adminEnabled:false });
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(!mode(type).qualityOptions.includes('1080p'));
     assert.equal(price().available, false);
     updateModelRouteCredential('diw-main', { enabled:true });
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(mode(type).qualityOptions.includes('1080p'));
     delete process.env.DIW_KEY;
-    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(!mode(type).qualityOptions.includes('1080p'));
     process.env.DIW_KEY = 'diw-test';
-    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
-
-    const fallback = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'sd20-text-fallback-1080p', priority:2, costYuan:1, salePriceYuan:4 });
-    updateModelRoute(text.id, { adminEnabled:false });
-    assert.ok(mode('TEXT').qualityOptions.includes('1080p'));
-    assert.equal(price().yuan, 4);
-    updateModelRoute(fallback.id, { adminEnabled:false });
-    assert.ok(!mode('TEXT').qualityOptions.includes('1080p'));
-    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
-    updateModelRoute(image.id, { adminEnabled:false });
-    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
-    const restored = updateModelRoute(image.id, { adminEnabled:true });
-    assert.ok(mode('REFERENCE').qualityOptions.includes('1080p'));
-    deleteModelRoute(image.id, { expectedVersion:restored.version });
-    assert.ok(!mode('REFERENCE').qualityOptions.includes('1080p'));
+    const restored = listModelRoutes().find(item => item.id === route.id);
+    deleteModelRoute(route.id, { expectedVersion:restored.version });
+    for (const type of ['TEXT', 'REFERENCE']) assert.ok(!mode(type).qualityOptions.includes('1080p'));
   });
 
   await t.test('Seedance 2.0 frontend choices follow live 1080p availability', () => {
     const config = () => ({ videoCapabilities:publicVideoCapabilitiesWithControls() });
     const draft = { type:'video', modelId:'seedance-2.0', mode:'TEXT', prompt:'镜头推进', aspect:'16:9', quality:'1080p', duration:10, attachments:[] };
     assert.ok(!canvasGenerationOptions(draft, config()).qualities.includes('1080p'));
-    const route = createModelRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
+    const route = createAvailableRoute({ logicalModelId:SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality:'1080p', credentialId:'diw-main', upstreamModelId:'sd20-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 });
     assert.ok(canvasGenerationOptions(draft, config()).qualities.includes('1080p'));
     assert.equal(canvasGenerationPayload(draft, config()).quality, '1080p');
     const shot = { aspectRatio:'16:9', duration:10, generation:{ quality:'1080p' } };
@@ -188,24 +180,34 @@ test('Seedance route selection, pricing and catalog health', async t => {
     });
   });
 
-  await t.test('Seedance 2.0 selects independent text and image pools while displaying text pricing', () => {
-    const text = createModelRoute({
-      logicalModelId: SEEDANCE_ROUTE_MODEL_IDS.TEXT, quality: '720p', credentialId: 'diw-main', upstreamModelId: 'seedance-text-test',
-      priority: 1, costYuan: 1, salePriceYuan: 2,
-    });
-    const image = createModelRoute({
-      logicalModelId: 'seedance2.0_img', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'seedance-image-test',
-      priority: 1, costYuan: 1.5, salePriceYuan: 3,
-    });
-    assert.equal(text.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.TEXT);
-    assert.equal(image.logicalModelId, SEEDANCE_ROUTE_MODEL_IDS.IMAGE);
-    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 0 } }).id, text.id);
-    assert.equal(selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 1 } }).id, image.id);
-    assert.notEqual(selectModelRoute({ logicalModelId: SEEDANCE_ROUTE_MODEL_IDS.IMAGE, quality: '720p', duration: 15, aspectRatio: '16:9', referenceCounts: { image: 0 } })?.id, image.id);
-    const publicPrice = publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '720p');
-    assert.equal(publicPrice.selectedRouteId, text.id);
-    assert.equal(publicPrice.yuan, 2);
-    assert.equal(publicPrice.credits, 20);
+  await t.test('historical Seedance aliases share selection, pricing and duplicate checks', () => {
+    const route = createAvailableRoute({ logicalModelId:'seedance2.0_img', quality:'720p', credentialId:'diw-main', upstreamModelId:'seedance-shared-test', priority:1, costYuan:1, salePriceYuan:2 });
+    assert.equal(route.logicalModelId, 'seedance-2.0');
+    for (const logicalModelId of ['seedance-2.0', SEEDANCE_ROUTE_MODEL_IDS.TEXT, SEEDANCE_ROUTE_MODEL_IDS.IMAGE]) {
+      for (const image of [0, 1]) assert.equal(selectModelRoute({ logicalModelId, quality:'720p', duration:15, aspectRatio:'16:9', referenceCounts:{image} }).id, route.id);
+      assert.throws(() => createModelRoute({ logicalModelId, quality:'720p', credentialId:'diw-main', upstreamModelId:'seedance-shared-test', priority:2, costYuan:1, salePriceYuan:2 }), { statusCode:409 });
+    }
+    assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '720p').selectedRouteId, route.id);
+  });
+
+  await t.test('consolidation merges historical routes without startup and survives reseeding', () => {
+    const id = 'sd20-480-diw-nd';
+    sql(`INSERT INTO model_routes(id, logical_model_id, display_name, provider, adapter_type, base_url, credential_id, upstream_model_id, quality, duration_seconds, priority, cost_fen, sale_price_fen, admin_enabled, catalog_status, catalog_message, catalog_details_json, catalog_checked_at, consecutive_failures, version, updated_by, updated_at, runtime_failures, auto_disabled_at, auto_disabled_reason, durations_json, billing_unit) SELECT 'historical-image', 'seedance-2.0-img', display_name, provider, adapter_type, base_url, credential_id, upstream_model_id, quality, duration_seconds, priority, 300, 400, admin_enabled, catalog_status, catalog_message, catalog_details_json, catalog_checked_at, consecutive_failures, 7, 'admin', '2099-01-01', runtime_failures, auto_disabled_at, auto_disabled_reason, '[5,15]', 'second' FROM model_routes WHERE id=:id`).run({id});
+    sql(`INSERT INTO model_route_policies(logical_model_id, quality, forced_route_id, version, updated_at) VALUES('seedance-2.0-text', '480p', :id, 4, '2098-01-01')`).run({id});
+    sql(`INSERT INTO model_route_policies(logical_model_id, quality, forced_route_id, version, updated_at) VALUES('seedance-2.0-img', '480p', 'historical-image', 5, '2099-01-01')`).run();
+    consolidateSeedanceModelRoutes();
+    assert.ok(!listModelRoutes().some(route => route.id === id));
+    const retained = listModelRoutes().find(route => route.id === 'historical-image');
+    assert.equal(retained.logicalModelId, 'seedance-2.0');
+    assert.equal(retained.costFen, 300);
+    assert.equal(retained.salePriceYuan, 4);
+    assert.deepEqual(retained.durations, [5,15]);
+    assert.equal(sql("SELECT forced_route_id FROM model_route_policies WHERE logical_model_id='seedance-2.0' AND quality='480p'").get().forced_route_id, retained.id);
+    assert.equal(sql("SELECT COUNT(*) AS n FROM model_route_policies WHERE logical_model_id IN ('seedance-2.0-text','seedance-2.0-img')").get().n, 0);
+    const before = listModelRoutes();
+    ensureDefaultModelRoutes();
+    assert.deepEqual(listModelRoutes(), before);
+    assert.equal(sql("SELECT COUNT(*) AS n FROM audit_events WHERE action='model_route.consolidate'").get().n, 1);
   });
 
   await t.test('route priorities stay unique inside a pool and other routes make room', () => {

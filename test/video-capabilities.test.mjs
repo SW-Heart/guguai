@@ -16,7 +16,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
-    'Seedance 2.0', 'Seedance 2.5', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
+    'Seedance 2.0', 'Seedance 2.5', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
   ]);
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
@@ -127,7 +127,7 @@ test('continuity payload follows provider field contract', () => {
 });
 
 test('removed models reject new generation requests', () => {
-  for (const modelId of ['minimax-h3', 'seedance-2.0-fast']) {
+  for (const modelId of ['minimax-h3']) {
     assert.equal(publicVideoCapabilities().models.some(model => model.id === modelId), false);
     assert.throws(() => validateVideoRequest({ modelId, generationType: 'TEXT', duration: 15 }), /不支持的视频模型/);
   }
@@ -176,5 +176,16 @@ test('Seedance 2.0 validates 1080p for text and reference generation', () => {
     assert.equal(request.quality, '1080p');
     assert.equal(request.provider, 'route');
     assert.equal(buildVideoPayload({ videoModelId:VIDEO_MODEL_IDS.SEEDANCE_2, ...request, prompt:'镜头推进' }, { images:[], videos:[], audios:[] }).resolution, '1080p');
+  }
+});
+
+test('Seedance 2.0 Fast supports text and multimodal reference generation', () => {
+  const model = publicVideoCapabilities().models.find(model => model.id === 'seedance-2.0-fast');
+  assert.deepEqual(model.modes.map(mode => mode.generationType), ['TEXT', 'REFERENCE']);
+  assert.deepEqual(model.modes[1].qualityOptions, ['720p']);
+  assert.deepEqual(model.modes[1].referenceLimits, { image:9, video:3, audio:3, total:15 });
+  for (const generationType of ['TEXT', 'REFERENCE']) {
+    const request = validateVideoRequest({ modelId:model.id, generationType, duration:15, quality:'720p' }, generationType === 'REFERENCE' ? 1 : 0);
+    assert.equal(request.provider, 'route');
   }
 });

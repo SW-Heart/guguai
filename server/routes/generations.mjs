@@ -134,7 +134,7 @@ export function createGenerationRouteHandler({
     const quotedReferenceCounts = referenceAssetIds.length ? referenceAssetCounts(user.id, referenceAssetIds, scope) : suppliedReferenceCounts;
     assertReferenceCountsWithinLimits(quotedReferenceCounts, request.referenceLimits);
     const route = request.provider === 'route'
-      ? selectModelRoute({ logicalModelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, referenceCounts:quotedReferenceCounts })
+      ? selectModelRoute({ logicalModelId:request.modelId, availableOnly:true, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, referenceCounts:quotedReferenceCounts })
       : null;
     if (request.provider === 'route' && !route) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     if (route) {
@@ -305,7 +305,7 @@ export function createGenerationRouteHandler({
     if (referenceCounts.image && !r2ReferenceConfigured) return sendJson(res, 503, { error:`${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` }), true;
     const modelId = type === 'image' ? requestedImageModelId : videoRequest.modelId;
     if (!isModelEnabled(modelId)) return sendJson(res, 503, { error:'当前模型暂不可用' }), true;
-    const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
+    const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, availableOnly:true, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;

@@ -105,12 +105,12 @@ test('defaults respect quality-specific duration limits and fixed-duration model
 
 test('video defaults refresh every versioned entry and shared import', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=479']],
-    ['app.js', ['./features/generation/video-defaults.js?v=1', './drama-studio.js?v=220', './features/agent/workspace.js?v=84']],
-    ['drama-studio.js', ['./features/generation/video-defaults.js?v=1', './features/drama/director-workspace.js?v=120']],
-    ['features/drama/canvas-generation.js', ['../generation/video-defaults.js?v=1']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=6', '../agent/model-preference-picker.js?v=5']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=6']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=120', './model-preference-picker.js?v=5']],
+    ['index.html', ['/app.js?v=483']],
+    ['app.js', ['./features/generation/video-defaults.js?v=2', './drama-studio.js?v=224', './features/agent/workspace.js?v=88']],
+    ['drama-studio.js', ['./features/generation/video-defaults.js?v=2', './features/drama/director-workspace.js?v=124']],
+    ['features/drama/canvas-generation.js', ['../generation/video-defaults.js?v=2']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=10', '../agent/model-preference-picker.js?v=9']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=10']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=124', './model-preference-picker.js?v=9']],
   ]) for (const url of urls) assert.ok(read(file).includes(url), `${file}: ${url}`);
 });

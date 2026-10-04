@@ -1,9 +1,9 @@
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
-import { defaultVideoDuration } from './features/generation/video-defaults.js?v=1';
+import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createRecordIndexes } from './state/records.js?v=2';
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=1';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=2';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=120';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=124';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -69,7 +69,7 @@ const imageQualities = [['low','低'],['medium','中'],['high','高']];
 const DEFAULT_SHOT_TITLE = '未命名分镜';
 const LEGACY_GUGU_2_MODEL_ID = 'grok-15';
 const MINIMAX_H3_15S_MODEL_ID = 'minimax-h3-15s';
-const ROUTED_VIDEO_MODEL_IDS = new Set(['seedance-2.0','seedance-2.0-fast','seedance-2.5']);
+const ROUTED_VIDEO_MODEL_IDS = new Set(['seedance-2.0','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value']);
 const canonicalVideoModelId = value => String(value || '').trim().toLowerCase() === LEGACY_GUGU_2_MODEL_ID ? MINIMAX_H3_15S_MODEL_ID : String(value || '').trim();
 const PREVIEW_PLAY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 8 5-8 5z"/></svg>';
 const stepOrder = ['script','resources','storyboard','video'];
@@ -2578,7 +2578,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     });
   }
   const professionalModelIconUrls=modelLogoUrls;
-  const professionalModelIsAvailable=model=>model?.enabled!==false&&model?.availability!=='coming-soon';
+  const professionalModelIsAvailable=model=>Boolean(model&&model.enabled!==false&&model.availability!=='coming-soon'&&model.availability!=='unavailable'&&model.modes?.some(mode=>mode.qualityOptions?.length&&mode.durations?.length&&mode.aspectRatios?.length));
   function professionalModelIcon(modelId){const src=professionalModelIconUrls[modelId];return src?modelLogoMarkup(src,{className:'select-model-icon'}):'<span class="select-clock" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7v5l3.5 2"></path></svg></span>';}
   function professionalSelectIcon(kind,value){
     if(kind==='model')return professionalModelIcon(value);
@@ -3293,7 +3293,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   function shotPreviewAssetIds(shot){return [...new Set([...shotReferenceIds(shot),shot.generation?.firstFrameAssetId,shot.generation?.lastFrameAssetId].filter(Boolean))];}
   function shotGenerationAssetIds(shot){if(shot.generation.type==='TEXT')return [];if(shot.generation.type==='FIRST&LAST')return [shot.generation.firstFrameAssetId,shot.generation.lastFrameAssetId].filter(id=>asset(id));return availableShotReferenceIds(shot);}
   function shotGenerationReady(shot){const count=shotGenerationAssetIds(shot).length;if(shot.generation.type==='TEXT')return true;if(shot.generation.type==='FIRST&LAST')return count>=1&&count<=professionalMaxImages(shot);return count>=1&&count<=professionalMaxImages(shot);}
-  function professionalVideoModels(shot){const models=state.config?.videoCapabilities?.models;return Array.isArray(models)?models.filter(model=>{const supportsMode=Array.isArray(model.modes)&&model.modes.some(mode=>mode.generationType===shot.generation.type);return !['minimax-h3','seedance-2.0-fast'].includes(model.id)&&professionalModelIsAvailable(model)&&supportsMode;}).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model).sort((a,b)=>{const order=['minimax-h3-15s','seedance-2.0','seedance-2.5','oai','veo-31','grok','veo'];return (order.indexOf(a.id)<0?99:order.indexOf(a.id))-(order.indexOf(b.id)<0?99:order.indexOf(b.id));}):[];}
+  function professionalVideoModels(shot){const models=state.config?.videoCapabilities?.models;return Array.isArray(models)?models.filter(model=>{const supportsMode=Array.isArray(model.modes)&&model.modes.some(mode=>mode.generationType===shot.generation.type);return !['minimax-h3'].includes(model.id)&&professionalModelIsAvailable(model)&&supportsMode;}).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model):[];}
   function professionalVideoParameters(shot){const mode=professionalVideoModels(shot).find(model=>model.id===shot.generation.modelId)?.modes?.find(mode=>mode.generationType===shot.generation.type);return mode?{...mode,durations:mode.durationsByQuality?.[shot.generation.quality]?.[shot.aspectRatio]||mode.durations}:null;}
   function professionalMaxImages(shot){const parameters=professionalVideoParameters(shot);return parameters?.maxImages||parameters?.referenceLimits?.total||7;}
   function professionalReferenceLimit(shot){const parameters=professionalVideoParameters(shot);return parameters?.referenceLimits||{image:7,video:0,audio:0,total:professionalMaxImages(shot)};}

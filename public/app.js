@@ -1,5 +1,5 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=1';
-import { defaultVideoDuration } from './features/generation/video-defaults.js?v=1';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=2';
+import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createConfigSync } from './state/config-sync.js?v=1';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
@@ -2103,7 +2103,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=84').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=88').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2114,7 +2114,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=220').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=224').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2340,7 +2340,7 @@ async function loadConfig({ background = false } = {}) {
   try { return await refreshConfig(); }
   catch {
     if (background || !accountScope.isCurrent(requestAccount)) return null;
-    applyLiveConfig({ imageModels:fallbackImageModels, videoCapabilities:{ models:[] } });
+    applyLiveConfig({ imageModels:[], videoCapabilities:{ models:[] } });
     return null;
   }
 }
@@ -3118,7 +3118,7 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
   if (carryPrompt && target === 'image' && task.batchSize) commitImageQuantity(task.batchSize);
   if (target === 'video' && task.type === 'video') {
     const taskModelId = task.videoModelId || task.modelId;
-    const selectableModel = videoModelOptions().some(model => model.id === taskModelId && model.availability !== 'coming-soon');
+    const selectableModel = videoModelOptions().some(model => model.id === taskModelId && model.availability !== 'coming-soon' && model.availability !== 'unavailable');
     if (selectableModel) $('#videoModel').value = taskModelId;
     refreshProductSelect('videoModel');
     syncVideoModelParameters();
@@ -3947,34 +3947,25 @@ const fallbackVideoModels = Object.freeze([
     { generationType:'FIRST&LAST', aspectRatios:['16:9','9:16'], durations:[8], qualityOptions:['720p'], minImages:1, maxImages:2 },
   ] },
 ]);
-const hiddenVideoModelIds = new Set(['minimax-h3', 'seedance-2.0-fast']);
-const videoModelOrder = ['minimax-h3-15s', 'seedance-2.0', 'seedance-2.5', 'oai', 'veo-31', 'grok', 'veo'];
+const hiddenVideoModelIds = new Set(['minimax-h3']);
 const modeLabels = Object.freeze({ TEXT:'文生视频', REFERENCE:'参考图模式', 'FIRST&LAST':'首尾帧' });
 function videoModelModes(modelId=$('#videoModel')?.value) { return videoModelOptions().find(model => model.id === modelId)?.modes || []; }
 function supportsVideoMode(type, modelId=$('#videoModel')?.value) { return videoModelModes(modelId).some(mode => mode.generationType === type); }
 function supportsVideoFirstLast(modelId=$('#videoModel')?.value) { return supportsVideoMode('FIRST&LAST', modelId); }
 function videoModelOptions() {
   const hasServerCatalog = Array.isArray(state.config?.videoCapabilities?.models);
-  const models = hasServerCatalog ? state.config.videoCapabilities.models : fallbackVideoModels;
+  const models = hasServerCatalog ? state.config.videoCapabilities.models : [];
   return models
-    .filter(model => !hiddenVideoModelIds.has(model.id) && model.enabled !== false && model.availability !== 'coming-soon')
+    .filter(model => !hiddenVideoModelIds.has(model.id) && model.enabled !== false && model.availability !== 'coming-soon' && model.availability !== 'unavailable' && model.modes?.some(mode => mode.qualityOptions?.length && mode.durations?.length && mode.aspectRatios?.length))
     .map(model => model.id === 'grok'
       ? { ...model, modes: model.modes?.map(mode => ({ ...mode, durations: mode.durations?.filter(value => Number(value) !== 30) })) }
-      : model)
-    .sort((a, b) => {
-      return (videoModelOrder.indexOf(a.id) < 0 ? 99 : videoModelOrder.indexOf(a.id)) - (videoModelOrder.indexOf(b.id) < 0 ? 99 : videoModelOrder.indexOf(b.id));
-    });
+      : model);
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
 function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s 起' : ''; }
-const fallbackImageModels = Object.freeze([
-  { id:'gpt-image-2.5', label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', enabled:true },
-  { id:'gpt-image-2', label:'GPT-Image-2', description:'从文字或参考图快速探索画面。', enabled:true },
-  { id:'midjourney', label:'Midjourney', description:'通过参数精细控制艺术风格。', enabled:true },
-]);
 function imageModelOptions() {
-  const models = Array.isArray(state.config?.imageModels) ? state.config.imageModels : fallbackImageModels;
-  return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon');
+  const models = Array.isArray(state.config?.imageModels) ? state.config.imageModels : [];
+  return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon' && model.availability !== 'unavailable');
 }
 function imageModelPromo() { return ''; }
 const modelIconUrls = modelLogoUrls;
@@ -4006,7 +3997,7 @@ function syncVideoModelOptions() {
   const current = select.value;
   const models = videoModelOptions();
   select.innerHTML = models.map(model => `<option value="${esc(model.id)}">${esc(model.label)}</option>`).join('');
-  const selectableModels = models.filter(model => model.availability !== 'coming-soon');
+  const selectableModels = models.filter(model => model.availability !== 'coming-soon' && model.availability !== 'unavailable');
   select.value = selectableModels.some(model => model.id === current) ? current : String(selectableModels[0]?.id || '');
   widget.dataset.dynamicOptions = 'true';
   refreshProductSelect('videoModel');
@@ -4198,7 +4189,7 @@ async function submitGeneration(type, form, payload) {
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
-  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(payload.modelId);
+  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
   const preparationGroupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -4408,7 +4399,7 @@ function updateVideoCost() {
   const sequence = ++videoQuoteSequence;
   const input = currentVideoQuoteInput();
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
-  const routed = ['seedance-2.0','seedance-2.0-fast','seedance-2.5'].includes(input.modelId);
+  const routed = ['seedance-2.0','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }

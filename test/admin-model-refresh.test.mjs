@@ -11,11 +11,11 @@ function harness({ initial = false } = {}) {
   const table = (label, left = 0) => ({ label, scrollTop: 0, scrollLeft: left });
   const tabs = ['routes', 'models', 'pricing'].map(tab => ({ dataset: { tab }, setAttribute() {} }));
   const panels = Object.fromEntries(['routePanel', 'modelPanel', 'pricingPanel'].map(id => [id, { id, dataset: {}, innerHTML: 'existing content' }]));
-  panels.routePanel.dataset.routeFilter = 'seedance-2.0-img';
+  panels.routePanel.dataset.routeFilter = 'seedance-2.0';
   const refresh = {};
   let mounted = !initial;
   let shellWrites = 0;
-  let wraps = [table('seedance-2.0-img 720p', 240)];
+  let wraps = [table('seedance-2.0 720p', 240)];
   const root = {
     set innerHTML(value) { shellWrites++; mounted = true; scroller.scrollTop = 0; this.markup = value; },
   };
@@ -49,7 +49,7 @@ function harness({ initial = false } = {}) {
       panels.routePanel.innerHTML = 'updated routes';
       // Replacing a list can clamp document scroll and resets table scroll.
       scroller.scrollTop = 0;
-      wraps = [table('new group'), table('seedance-2.0-img 720p')];
+      wraps = [table('new group'), table('seedance-2.0 720p')];
     },
     renderModelPanel: () => { renders.push('models'); panels.modelPanel.innerHTML = 'updated models'; },
     renderPricingPanel: () => { renders.push('pricing'); panels.pricingPanel.innerHTML = 'updated pricing'; },
@@ -64,7 +64,7 @@ function harness({ initial = false } = {}) {
 }
 
 for (const [name, action, method] of [
-  ['adding a route', "addModelRoute('seedance-2.0-img', '720p', { items: [], channels: [] })", 'POST'],
+  ['adding a route', "addModelRoute('seedance-2.0', '720p', { items: [], channels: [] })", 'POST'],
   ['editing a route', "editRoute({ id: 'route', displayName: 'Route', version: 1 })", 'PATCH'],
   ['editing model visibility', "editModel({ modelId: 'model', sortOrder: 1, version: 1 })", 'PATCH'],
 ]) {
@@ -76,7 +76,7 @@ for (const [name, action, method] of [
     assert.equal(h.requests[0].options.method, method);
     assert.equal(h.shellWrites(), 0);
     assert.equal(h.panels.routePanel, panel);
-    assert.equal(panel.dataset.routeFilter, 'seedance-2.0-img');
+    assert.equal(panel.dataset.routeFilter, 'seedance-2.0');
     assert.equal(h.state.modelsTab, name === 'editing model visibility' ? 'models' : 'routes');
     assert.equal(h.state.modelItems[0].modelId, 'updated-model');
     assert.equal(h.state.routeData.items[0].id, 'updated-route');

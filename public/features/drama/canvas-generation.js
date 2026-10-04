@@ -1,5 +1,5 @@
-import { modelLogoUrl } from '../../components/model-logo.js?v=1';
-import { defaultVideoDuration } from '../generation/video-defaults.js?v=1';
+import { modelLogoUrl } from '../../components/model-logo.js?v=2';
+import { defaultVideoDuration } from '../generation/video-defaults.js?v=2';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
 const tuziDimensions={
   '1:1':['1024x1024','2048x2048','2880x2880'],'2:3':['816x1232','1360x2048','2352x3520'],
@@ -9,8 +9,6 @@ const tuziDimensions={
   '2:1':['1440x720','2048x1024','3840x1920'],'5:4':['1120x896','1920x1536','3200x2560'],
   '4:5':['896x1120','1536x1920','2560x3200'],
 };
-const fallbackImageModels=[{id:'gpt-image-2.5',label:'GPT Image 2.5'},{id:'gpt-image-2',label:'GPT-Image-2'},{id:'midjourney',label:'Midjourney'}];
-const videoOrder=['minimax-h3-15s','seedance-2.0','seedance-2.5','oai','veo-31','grok','veo'];
 export const canvasGenerationModeLabels={TEXT:'文生视频',REFERENCE:'参考素材','FIRST&LAST':'首尾帧'};
 export const canvasGenerationModeDescriptions={TEXT:'只用文字描述生成视频',REFERENCE:'用图片、视频或音频作为参考','FIRST&LAST':'指定开始和结束的画面'};
 export const canvasGenerationRatios=imageRatios;
@@ -29,8 +27,8 @@ export function canvasGenerationFrameSize(type,aspect){
 }
 
 export function canvasGenerationModels(type,config={}){
-  if(type==='image')return (Array.isArray(config.imageModels)?config.imageModels:fallbackImageModels).filter(model=>model.enabled!==false&&model.availability!=='coming-soon');
-  return (config.videoCapabilities?.models||[]).filter(model=>!['minimax-h3','seedance-2.0-fast'].includes(model.id)&&model.enabled!==false&&model.availability!=='coming-soon').map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model).sort((a,b)=>(videoOrder.indexOf(a.id)<0?99:videoOrder.indexOf(a.id))-(videoOrder.indexOf(b.id)<0?99:videoOrder.indexOf(b.id)));
+  if(type==='image')return (Array.isArray(config.imageModels)?config.imageModels:[]).filter(model=>model.enabled!==false&&model.availability!=='coming-soon'&&model.availability!=='unavailable');
+  return (config.videoCapabilities?.models||[]).filter(model=>!['minimax-h3'].includes(model.id)&&model.enabled!==false&&model.availability!=='coming-soon'&&model.availability!=='unavailable'&&model.modes?.some(mode=>mode.qualityOptions?.length&&mode.durations?.length&&mode.aspectRatios?.length)).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model);
 }
 
 export function createCanvasGenerationDraft(type,config={}){

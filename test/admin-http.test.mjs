@@ -90,9 +90,17 @@ test('admin HTTP permissions and core workflows', async t => {
     .run({ userId: refundedUserId, docJson: paymentDoc });
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_KEY:'test-diw', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_KEY:'test-diw', DUOMI_API_KEY:'test-duomi', TUZI_DEFAULT_API_KEY:'test-tuzi', AUTODL_COMFYUI_KEY:'test-autodl', TTAPI_API_KEY:'test-ttapi', OAIAPI_GEMINI_KEY:'test-gemini', OAIAPI_VEO_KEY:'test-veo', OAIAPI_MINIMAX_KEY:'test-minimax', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
+  function markRouteAvailable(id = null) {
+    openDatabase({file:path.join(workDir, 'studio.db')});
+    if (id) sql("UPDATE model_routes SET catalog_status='available' WHERE id=:id").run({id});
+    else sql("UPDATE model_routes SET catalog_status='available'").run();
+    closeDatabase({checkpoint:false});
+  }
+  markRouteAvailable();
+
   const admin = client(base);
   const unauth = await admin.call('/api/admin/auth/session');
   assert.equal(unauth.response.status, 401);
@@ -100,7 +108,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=31/);
+  assert.match(adminHtml, /guguadmin\.js\?v=34/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -143,10 +151,32 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(createdRoute.data.route.salePriceYuan, 2.2);
   assert.equal(createdRoute.data.route.adminEnabled, false);
   assert.deepEqual(createdRoute.data.route.durations, [5,7,15]);
+  // Simulate historical data arriving while the server is already running.
+  openDatabase({ file: path.join(workDir, 'studio.db') });
+  sql("UPDATE model_routes SET logical_model_id='seedance-2.0-img' WHERE id=:id").run({ id:createdRoute.data.route.id });
+  closeDatabase({ checkpoint:false });
+  const normalizedRoutes = await admin.call('/api/admin/model-routes');
+  assert.equal(normalizedRoutes.response.status, 200);
+  assert.equal(normalizedRoutes.data.items.find(route => route.id === createdRoute.data.route.id).logicalModelId, 'seedance-2.0');
+  assert.ok(normalizedRoutes.data.items.every(route => !['seedance-2.0-img', 'seedance-2.0-text'].includes(route.logicalModelId)));
+  createdRoute.data.route = normalizedRoutes.data.items.find(route => route.id === createdRoute.data.route.id);
   const editedRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[30], expectedVersion:createdRoute.data.route.version } });
   assert.equal(editedRoute.response.status, 200);
   assert.deepEqual(editedRoute.data.route.durations, [30]);
   assert.equal(editedRoute.data.route.salePriceYuan, 2.2);
+  await t.test('model settings accept IDs containing dots and retain version checks', async () => {
+    const catalog = await admin.call('/api/admin/models');
+    for (const modelId of ['seedance-2.0', 'seedance-2.0-fast', 'seedance-2.5', 'seedance-2.0-value', 'gpt-image-2.5']) {
+      const model = catalog.data.items.find(item => item.modelId === modelId);
+      const options = { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ userVisible:true, enabled:true, expectedVersion:model.version } };
+      const saved = await admin.call(`/api/admin/models/${modelId}`, options);
+      assert.equal(saved.response.status, 200, modelId);
+      assert.equal(saved.data.model.userVisible, true);
+      assert.equal(saved.data.model.version, model.version + 1);
+      const stale = await admin.call(`/api/admin/models/${modelId}`, options);
+      assert.equal(stale.response.status, 409);
+    }
+  });
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
   const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'llm:cache-read':0, 'llm:cache-creation':2.5, 'minimax-h3-15s:768p':0.8, 'minimax-h3-15s:480p':0.5 }, expectedVersion: 1 } });
@@ -215,8 +245,9 @@ test('admin HTTP permissions and core workflows', async t => {
       }
     }
   });
-  const activeRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,7,30], adminEnabled:true } });
+  const activeRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,7,30], adminEnabled:true, priority:1 } });
   assert.equal(activeRoute.response.status, 200);
+  markRouteAvailable(createdRoute.data.route.id);
   for (const duration of [5,7,30]) {
     const result = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'720p', duration, aspectRatio:'16:9' } });
     assert.equal(result.response.status, 200);
@@ -232,10 +263,11 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(durationsOf(afterChange.data), [5,10,15]);
   const invalidDuration = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'720p', duration:6, aspectRatio:'16:9' } });
   assert.equal(invalidDuration.response.status, 503);
-  const qualities1080 = data => data.videoCapabilities.models.find(model => model.id === 'seedance-2.0').modes.find(mode => mode.generationType === 'TEXT').qualityOptions.includes('1080p');
+  const qualities1080 = data => data.videoCapabilities.models.find(model => model.id === 'seedance-2.0')?.modes.find(mode => mode.generationType === 'TEXT')?.qualityOptions.includes('1080p') || false;
   assert.equal(qualities1080(afterChange.data), false);
   const route1080 = await admin.call('/api/admin/model-routes', { method:'POST', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ logicalModelId:'seedance-2.0-text', quality:'1080p', credentialId:'diw-main', upstreamModelId:'http-test-1080p', durations:[5,10,15], priority:1, costYuan:1, salePriceYuan:2 } });
   assert.equal(route1080.response.status, 201);
+  markRouteAvailable(route1080.data.route.id);
   assert.equal(qualities1080((await userClient.call('/api/config')).data), true);
   const quote1080 = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'1080p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote1080.response.status, 200);
@@ -243,6 +275,19 @@ test('admin HTTP permissions and core workflows', async t => {
   const disable1080 = await admin.call('/api/admin/model-routes/' + route1080.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ adminEnabled:false, expectedVersion:route1080.data.route.version } });
   assert.equal(disable1080.response.status, 200);
   assert.equal(qualities1080((await userClient.call('/api/config')).data), false);
+  for (const [modelId, label] of [['seedance-2.0-value','Seedance 2.0 特价'], ['seedance-2.5-value','Seedance 2.5 特价']]) {
+    const added = await admin.call('/api/admin/model-routes', {method:'POST', headers:{Origin:base, 'X-CSRF-Token':csrf}, body:{logicalModelId:modelId, quality:'1080p', credentialId:'diw-main', upstreamModelId:`http-${modelId}`, durations:[5,10,15], priority:1, costYuan:0.1, salePriceYuan:0.2}});
+    assert.equal(added.response.status, 201);
+    markRouteAvailable(added.data.route.id);
+    const config = (await userClient.call('/api/config')).data;
+    assert.equal(config.videoCapabilities.models.find(model => model.id === modelId).label, label);
+    const quote = await userClient.call('/api/model-quote', {method:'POST',body:{modelId,generationType:'TEXT',quality:'1080p',duration:10,aspectRatio:'16:9'}});
+    assert.equal(quote.response.status, 200);
+    assert.equal(quote.data.credits, 20);
+    const prices = (await userClient.call('/api/public/model-prices')).data.items;
+    assert.equal(prices.find(price => price.modelId === modelId && price.quality === '1080p').credits, 2);
+  }
+
   const unavailable1080 = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'1080p', duration:10, aspectRatio:'16:9' } });
   assert.equal(unavailable1080.response.status, 503);
   const forbidden = await userClient.call('/api/admin/overview');
