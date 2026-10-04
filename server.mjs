@@ -42,6 +42,7 @@ import { createRoutedProvider } from './providers/routed.mjs';
 import { createAutodlProvider } from './providers/autodl.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
 import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
+import { repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
@@ -1974,6 +1975,10 @@ async function failGeneration(userId, task, error) {
   trackModelRouteFailure(task, error);
   if (prepareGenerationRetry(task, error)) {
     clearProviderTaskIdTimeout(task.id);
+    await repairGenerationPrompt(task, error, {
+      callLlm, config: llmConfig,
+      save: task => saveGenerationWithRetry(userId, task, 'generation-prompt-repair'),
+    });
     await saveGenerationWithRetry(userId, task, 'generation-retry-scheduled');
     console.info('[generation] retry scheduled', { generationId:task.id, retryCount:task.generationRetryCount, error:error.message });
     return;
