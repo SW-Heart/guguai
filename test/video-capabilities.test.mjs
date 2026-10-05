@@ -16,7 +16,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
-    'Seedance 2.0', 'Seedance 2.5', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
+    'Seedance 2.0', 'Seedance 2.0 Mini', 'Seedance 2.5', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
   ]);
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
@@ -188,4 +188,17 @@ test('Seedance 2.0 Fast supports text and multimodal reference generation', () =
     const request = validateVideoRequest({ modelId:model.id, generationType, duration:15, quality:'720p' }, generationType === 'REFERENCE' ? 1 : 0);
     assert.equal(request.provider, 'route');
   }
+});
+
+
+test('Seedance Mini validates text and reference requests through the shared router', () => {
+  for (const generationType of ['TEXT', 'REFERENCE']) {
+    const request = validateVideoRequest({ modelId:VIDEO_MODEL_IDS.SEEDANCE_2_MINI, generationType, quality:'720p' }, generationType === 'REFERENCE' ? 15 : 0);
+    assert.equal(request.modelId, 'seedance-2.0-mini');
+    assert.equal(request.provider, 'route');
+    assert.equal(request.duration, 15);
+    assert.deepEqual(request.referenceLimits, { image:9, video:3, audio:3, total:15 });
+    assert.equal(validateVideoRequest({ modelId:request.modelId, duration:5 }).duration, 5);
+  }
+  assert.throws(() => validateVideoRequest({ modelId:VIDEO_MODEL_IDS.SEEDANCE_2_MINI, generationType:'FIRST&LAST' }, 2), /不支持首尾帧/);
 });

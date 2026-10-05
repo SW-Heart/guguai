@@ -3,6 +3,7 @@ const files = Object.freeze({
   'minimax-h3-15s': 'minimax-color', 'minimax-h3': 'minimax-color',
   veo: 'gemini-color', oai: 'gemini-color', 'veo-31': 'gemini-color',
   'seedance-2.0-value': 'bytedance-color', 'seedance-2.5-value': 'bytedance-color',
+  'seedance-2.0-mini': 'bytedance-color',
   'seedance-2.0': 'bytedance-color', 'seedance-2.5': 'bytedance-color', 'seedance-2.0-fast': 'bytedance-color',
 });
 const iconKeys = Object.freeze({ openai: 'openai', midjourney: 'midjourney', grok: 'grok', minimax: 'minimax-color', google: 'gemini-color', gemini: 'gemini-color', bytedance: 'bytedance-color' });

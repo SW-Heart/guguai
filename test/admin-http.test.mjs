@@ -108,7 +108,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=34/);
+  assert.match(adminHtml, /guguadmin\.js\?v=35/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -275,7 +275,7 @@ test('admin HTTP permissions and core workflows', async t => {
   const disable1080 = await admin.call('/api/admin/model-routes/' + route1080.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ adminEnabled:false, expectedVersion:route1080.data.route.version } });
   assert.equal(disable1080.response.status, 200);
   assert.equal(qualities1080((await userClient.call('/api/config')).data), false);
-  for (const [modelId, label] of [['seedance-2.0-value','Seedance 2.0 特价'], ['seedance-2.5-value','Seedance 2.5 特价']]) {
+  for (const [modelId, label] of [['seedance-2.0-mini','Seedance 2.0 Mini'], ['seedance-2.0-value','Seedance 2.0 特价'], ['seedance-2.5-value','Seedance 2.5 特价']]) {
     const added = await admin.call('/api/admin/model-routes', {method:'POST', headers:{Origin:base, 'X-CSRF-Token':csrf}, body:{logicalModelId:modelId, quality:'1080p', credentialId:'diw-main', upstreamModelId:`http-${modelId}`, durations:[5,10,15], priority:1, costYuan:0.1, salePriceYuan:0.2}});
     assert.equal(added.response.status, 201);
     markRouteAvailable(added.data.route.id);

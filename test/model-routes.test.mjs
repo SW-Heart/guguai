@@ -90,6 +90,31 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 0.24);
   });
 
+  await t.test('Seedance Mini uses configured routes, durations, prices and fallback independently', () => {
+    const modelId = 'seedance-2.0-mini';
+    const visible = () => publicVideoCapabilitiesWithControls().models.find(model => model.id === modelId);
+    assert.equal(visible(), undefined);
+    const primary = createAvailableRoute({ logicalModelId:modelId, quality:'1080p', credentialId:'diw-main', upstreamModelId:'mini-primary', durations:[5,10,15], priority:1, costYuan:0.5, salePriceYuan:1 });
+    const fallback = createAvailableRoute({ logicalModelId:modelId, quality:'1080p', credentialId:'wj-tjwd', upstreamModelId:'mini-fallback', durations:[5,10], priority:2, costYuan:0.6, salePriceYuan:1.2 });
+    assert.equal(visible().label, 'Seedance 2.0 Mini');
+    for (const mode of visible().modes) {
+      assert.deepEqual(mode.qualityOptions, ['1080p']);
+      assert.deepEqual(mode.durations, [5,10,15]);
+    }
+    const request = { logicalModelId:modelId, quality:'1080p', duration:10, aspectRatio:'16:9' };
+    for (const image of [0,9]) assert.equal(selectModelRoute({ ...request, referenceCounts:{image,video:3,audio:3} }).id, primary.id);
+    const price = publicModelPrices().find(item => item.modelId === modelId && item.quality === '1080p');
+    assert.equal(price.label, 'Seedance 2.0 Mini');
+    assert.equal(price.yuan, 1);
+    assert.equal(modelRouteCharge(primary, 10).total, 100);
+    updateRoutePolicy(modelId, '1080p', fallback.id);
+    assert.equal(selectModelRoute(request).id, fallback.id);
+    updateModelRoute(fallback.id, { adminEnabled:false }, { expectedVersion:fallback.version });
+    assert.equal(selectModelRoute(request).id, primary.id);
+    updateModelRoute(primary.id, { adminEnabled:false }, { expectedVersion:primary.version });
+    assert.equal(visible(), undefined);
+  });
+
   await t.test('Seedance 2.5 1080p appears only with an available configured route', () => {
     const qualities = modelId => publicVideoCapabilitiesWithControls().models.find(model => model.id === modelId).modes.map(mode => mode.qualityOptions);
     assert.ok(qualities('seedance-2.5').every(options => !options.includes('1080p')));

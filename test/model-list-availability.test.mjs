@@ -97,12 +97,12 @@ test('canvas catalogs and restored selections contain only available models', ()
 
 test('model list changes have refreshed cache keys through every importing entry', () => {
   const entries = [
-    ['index.html', ['/app.js?v=483']],
-    ['app.js', ['./drama-studio.js?v=224', './features/agent/workspace.js?v=88']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=124']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=124', './model-preference-picker.js?v=9']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=10', '../agent/model-preference-picker.js?v=9']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=10']],
+    ['index.html', ['/app.js?v=484']],
+    ['app.js', ['./drama-studio.js?v=225', './features/agent/workspace.js?v=89']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=125']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=125', './model-preference-picker.js?v=10']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=11', '../agent/model-preference-picker.js?v=10']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=11']],
   ];
   for (const [file, urls] of entries) {
     const source = read(file);
@@ -120,6 +120,21 @@ test('Seedance 2.0 Fast can be selected in the workbench, storyboard and canvas'
   vm.runInContext(extract(drama, 'function professionalVideoModels(', 'function professionalVideoParameters('), context);
   assert.deepEqual(Array.from(context.professionalVideoModels({ generation:{ type:'TEXT' } }), model => model.id), ['seedance-2.0-fast']);
   assert.deepEqual(canvasGenerationModels('video', config).map(model => model.id), ['seedance-2.0-fast']);
+  config.videoCapabilities.models[0].enabled = false;
+  assert.equal(context.videoModelOptions().length, 0);
+  assert.equal(context.professionalVideoModels({ generation:{ type:'TEXT' } }).length, 0);
+  assert.equal(canvasGenerationModels('video', config).length, 0);
+});
+
+test('Seedance 2.0 Mini can be selected in the workbench, storyboard and canvas', () => {
+  const config = { videoCapabilities:{ models:[{ id:'seedance-2.0-mini', enabled:true, modes:[mode] }] } };
+  const context = vm.createContext({ state:{ config } });
+  vm.runInContext(extract(app, 'const fallbackVideoModels =', 'const modelIconUrls ='), context);
+  assert.deepEqual(Array.from(context.videoModelOptions(), model => model.id), ['seedance-2.0-mini']);
+  vm.runInContext(extract(drama, 'const professionalModelIsAvailable=', 'function professionalModelIcon('), context);
+  vm.runInContext(extract(drama, 'function professionalVideoModels(', 'function professionalVideoParameters('), context);
+  assert.deepEqual(Array.from(context.professionalVideoModels({ generation:{ type:'TEXT' } }), model => model.id), ['seedance-2.0-mini']);
+  assert.deepEqual(canvasGenerationModels('video', config).map(model => model.id), ['seedance-2.0-mini']);
   config.videoCapabilities.models[0].enabled = false;
   assert.equal(context.videoModelOptions().length, 0);
   assert.equal(context.professionalVideoModels({ generation:{ type:'TEXT' } }).length, 0);

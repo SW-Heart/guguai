@@ -14,7 +14,7 @@ test('admin offers empty 1080p groups for unified Seedance routes', () => {
     esc: value => String(value),
     routeModelLabels: { 'seedance-2.0':'Seedance 2.0', 'seedance-2.5':'Seedance 2.5' },
   });
-  for (const modelId of ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-value', 'seedance-2.5-value']) {
+  for (const modelId of ['seedance-2.0', 'seedance-2.0-mini', 'seedance-2.5', 'seedance-2.0-value', 'seedance-2.5-value']) {
     assert.ok(root.innerHTML.includes(`data-add-route="${modelId}:1080p"`));
     assert.ok(root.innerHTML.includes(`data-route-policy="${modelId}:1080p"`));
   }
@@ -38,8 +38,8 @@ test('historical route data renders only supported Seedance models and deduplica
     esc: String, status:String, routeModelLabels: {'seedance-2.0':'Seedance 2.0','seedance-2.5':'Seedance 2.5','seedance-2.0-fast':'Seedance 2.0 Fast'},
     routeRowMarkup: (route, selected) => { rowIds.push([route.id, selected]); return ''; },
   });
-  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-value', 'seedance-2.5-value']);
-  assert.ok(root.innerHTML.includes('全部 5'));
+  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value']);
+  assert.ok(root.innerHTML.includes('全部 6'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-img'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-text'));
   assert.deepEqual(rowIds.map(([id]) => id), ['route-2', 'route-3', 'route-4']);
@@ -58,6 +58,6 @@ test('Seedance route forms no longer require a creation type', () => {
 
 test('admin HTML loads the updated model configuration script cache key', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=34\b/);
+  assert.match(html, /\/guguadmin\.js\?v=35\b/);
   assert.doesNotMatch(html, /\/guguadmin\.js\?v=26\b/);
 });

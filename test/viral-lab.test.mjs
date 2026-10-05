@@ -106,7 +106,7 @@ test('旧实验室页面已移除，旧链接仍由应用入口接管',()=>{
   assert.equal(staticEntryFile('/lab',{desktop:true}),'index.html');
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.match(html,/app\.js\?v=483\b/);
+  assert.match(html,/app\.js\?v=484\b/);
   assert.doesNotMatch(html,/viralLabView|motionGeneratorPanel|labMotionBack|data-rail-legacy|features\/viral-lab\/styles\.css/);
   assert.doesNotMatch(app,/lab:'\/lab'|features\/viral-lab\/controller\.js|ensureViralController/);
   assert.match(app,/\|\| 'agent';/);

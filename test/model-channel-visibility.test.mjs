@@ -13,7 +13,7 @@ test('all Seedance models disappear without a healthy channel and return after r
   try {
     ensureDefaultModelRoutes();
     const visible = id => publicVideoCapabilitiesWithControls().models.some(model => model.id === id);
-    for (const id of ['seedance-2.0','seedance-2.5','seedance-2.0-fast','seedance-2.0-value','seedance-2.5-value']) {
+    for (const id of ['seedance-2.0','seedance-2.0-mini','seedance-2.5','seedance-2.0-fast','seedance-2.0-value','seedance-2.5-value']) {
       updateModelControl(id, {enabled:true, userVisible:true}, {actorUserId:null});
       assert.equal(visible(id), false);
       const route = createModelRoute({logicalModelId:id, quality:'720p', credentialId:'diw-main', upstreamModelId:`visibility-${id}`, durations:[5,15], priority:1, costYuan:0.1, salePriceYuan:0.2});

@@ -1,4 +1,4 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=2';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createConfigSync } from './state/config-sync.js?v=1';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
@@ -2103,7 +2103,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=88').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=89').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2114,7 +2114,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=224').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=225').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -4189,7 +4189,7 @@ async function submitGeneration(type, form, payload) {
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
-  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
+  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-mini','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
   const preparationGroupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -4399,7 +4399,7 @@ function updateVideoCost() {
   const sequence = ++videoQuoteSequence;
   const input = currentVideoQuoteInput();
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
-  const routed = ['seedance-2.0','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
+  const routed = ['seedance-2.0','seedance-2.0-mini','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }

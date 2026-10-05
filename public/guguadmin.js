@@ -30,6 +30,7 @@ import { createApiClient } from './api-client.js?v=4';
   const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '邀请码', announcements: '消息通知', models: '模型与价格', credentials: '渠道与 Key', logs: '日志中心' };
   const routeModelLabels = {
     'seedance-2.0': 'Seedance 2.0',
+    'seedance-2.0-mini': 'Seedance 2.0 Mini',
     'seedance-2.0-fast': 'Seedance 2.0 Fast',
     'seedance-2.0-value': 'Seedance 2.0 特价',
     'seedance-2.5-value': 'Seedance 2.5 特价',
@@ -1546,7 +1547,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 这样空分组（例如尚未配置的 1080p 线路池）也能稳定渲染“新增线路”和选路策略。
   function renderRoutePanel(data) {
     const root = $('#routePanel'); if (!root) return;
-    const families = ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-value', 'seedance-2.5-value'];
+    const families = ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value'];
     const normalizeModelId = id => /^seedance-?2\.0(?:[-_](?:text|img))$/.test(id) ? 'seedance-2.0' : id;
     const uniqueRoutes = new Map();
     const replacements = new Map();
