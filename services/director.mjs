@@ -1,6 +1,7 @@
 import { validateDirectorPlan } from '../public/features/drama/director-actions.js';
 import { randomUUID } from 'node:crypto';
 import { buildPromptOptimizationInput, loadPromptOptimizationGuidance, promptOptimizationSystem, validatePromptOptimization } from '../lib/prompt-optimization.mjs';
+import { collectPromptRepairCues } from './generation-prompt-repair.mjs';
 
 import {
   analyzeDirectorPlanRecovery,
@@ -557,6 +558,7 @@ export function createDirectorService({
     const input = buildPromptOptimizationInput({ originalPrompt, prompt, direction, mentionLabels, shot, project, references, model, maxLength });
     const guidance = await loadPromptOptimizationGuidance({ skills, modelId:shot.generation?.modelId, mode:shot.generation?.type,
       dialogue:Boolean(input.projectContext.scene?.beats.some(item => item.kind === 'dialogue') || /台词|对白|[“「]|说[：:]/.test(prompt)) });
+    input.riskCueMatches = collectPromptRepairCues(prompt, guidance).map(({ category, term, start, context, review }) => ({ category, term, start, context, review }));
     const system = `${promptOptimizationSystem}\n\n以下是当前任务的创作资料。只取与本镜有关的写作方法，保持上面的输出格式、@引用和平台能力约束：\n${JSON.stringify(guidance)}`;
     const requestId = randomId();
     const maxOutputTokens = Math.min(16000, maxLength * 2 + 1200);

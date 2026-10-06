@@ -89,7 +89,7 @@ export function createAccountRepository({ sql, tx, parseUserRow } = {}) {
     });
   }
 
-  function updateUserProfile(userId, { nickname, passwordHash, updatedAt } = {}) {
+  function updateUserProfile(userId, { nickname, passwordHash, preferences, updatedAt } = {}) {
     return tx(() => {
       const current = findUserById(userId);
       if (!current) return null;
@@ -99,6 +99,7 @@ export function createAccountRepository({ sql, tx, parseUserRow } = {}) {
       }
       const next = { ...current, nickname: nextNickname, updatedAt: updatedAt || new Date().toISOString() };
       if (passwordHash !== undefined) next.passwordHash = passwordHash;
+      if (preferences !== undefined) next.preferences = { ...current.preferences, ...preferences };
       sql(`
         UPDATE users
         SET nickname = :nickname,

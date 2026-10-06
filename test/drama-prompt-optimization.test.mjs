@@ -16,8 +16,8 @@ test('the optimization button precedes generation and every changed frontend ent
   assert.ok(studio.includes('./features/drama/prompt-optimization.js?v=4'));
   assert.ok(read('features/drama/prompt-optimization.js').includes('./prompt-optimization-loading.js?v=1'));
   assert.ok(read('app.js').includes('./drama-studio.js?v=225'));
-  assert.ok(read('index.html').includes('/app.js?v=484'));
-  assert.ok(read('index.html').includes('/styles.css?v=361'));
+  assert.ok(read('index.html').includes('/app.js?v=485'));
+  assert.ok(read('index.html').includes('/styles.css?v=362'));
   const css = read('styles.css');
   assert.match(css,/prompt-optimization-comparison\{[^}]*grid-template-columns:1fr 1fr/);
   assert.match(css,/@media\(max-width:640px\)[\s\S]*prompt-optimization-comparison\{grid-template-columns:1fr/);
@@ -96,7 +96,7 @@ function directorDeps(overrides = {}) {
     reserveLlmCredits:async () => ({}), settleLlmCredits:async () => ({ wallet:{balance:9} }),
     releaseLlmCredits:async () => {}, markLlmBillingReconcile:async () => {},
     callLlm:async () => ({text:JSON.stringify({prompt:'@小美.png 推门走进房间',suggestions:['明确进门动作']})}),
-    skills:{read:async (name,resource) => ({text:`${name}/${resource}:实际创作资料`})},
+    skills:{read:async (name,resource) => ({text:resource.endsWith('.json') ? JSON.stringify({classes:[{category:'伤害与遗体',zh:['血'],en:[],context:'区分颜色与伤害',sourceIds:['emily']}]}) : `${name}/${resource}:实际创作资料`})},
     publicLlmUsage:value => value, publicDramaProject:value => value, normalizeDramaProject:value => value, ...overrides };
 }
 const serviceInput = { userId:'u', project:{id:'p'}, shot:{duration:15,generation:{modelId:'seedance-2.5',type:'REFERENCE'}}, originalPrompt:'@小美.png 进门', prompt:'@小美.png 进门', mentionLabels:['小美.png'], maxLength:4096 };
@@ -115,6 +115,20 @@ test('optimization uses the existing AI billing service and never persists uncon
   const result = await service.optimizeShotPrompt({...serviceInput,project});
   assert.equal(result.balance, 9); assert.equal(settled, 1);
   assert.deepEqual(project, serviceInput.project);
+});
+
+test('optimization checks wording that may be rejected by the video platform', async () => {
+  const service = createDirectorService(directorDeps({ callLlm:async options => {
+    const body = JSON.parse(options.prompt);
+    assert.deepEqual(body.riskCueMatches.map(item => [item.term,item.start,item.category]), [['血',15,'伤害与遗体']]);
+    assert.match(options.system, /prompt-optimization\/references\/content-risk-reference.md/);
+    assert.match(options.system, /"resource":"references\/moderation-cues.json"/);
+    assert.match(options.system, /谐音、拆字/);
+    return {text:JSON.stringify({prompt:'@小美.png 进门，墙上映着深红色灯光',suggestions:['把灯光颜色写得更明确']})};
+  } }));
+  const prompt = '@小美.png 进门，墙上映着血红色灯光';
+  const result = await service.optimizeShotPrompt({...serviceInput,originalPrompt:prompt,prompt});
+  assert.equal(result.prompt, '@小美.png 进门，墙上映着深红色灯光');
 });
 
 test('AI failures release reservations and missing usage goes through reconciliation', async () => {

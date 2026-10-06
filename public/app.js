@@ -1915,6 +1915,33 @@ function maskedPhoneNumber(phone) {
   const value = String(phone || '');
   return /^1[3-9]\d{9}$/.test(value) ? `${value.slice(0, 3)} ${value.slice(3, 7)} ${value.slice(7)}` : '未绑定手机号';
 }
+function selectSettingsTab(name, { focus = false } = {}) {
+  for (const tab of $$('#accountSettingsDialog [data-settings-tab]')) {
+    const selected = tab.dataset.settingsTab === name;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    $(`#${tab.getAttribute('aria-controls')}`).hidden = !selected;
+    if (selected && focus) tab.focus();
+  }
+}
+function showAccountSettingsFieldError(message, field) {
+  accountSettingsError(message);
+  selectSettingsTab('account');
+  field.focus();
+}
+$('#accountSettingsDialog .settings-tabs').addEventListener('click', event => {
+  const tab = event.target.closest('[data-settings-tab]');
+  if (tab) selectSettingsTab(tab.dataset.settingsTab);
+});
+$('#accountSettingsDialog .settings-tabs').addEventListener('keydown', event => {
+  const tabs = $$('#accountSettingsDialog [data-settings-tab]');
+  const index = tabs.indexOf(document.activeElement);
+  const step = { ArrowDown:1, ArrowRight:1, ArrowUp:-1, ArrowLeft:-1 }[event.key];
+  if (index < 0 || (!step && !['Home', 'End'].includes(event.key))) return;
+  event.preventDefault();
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + step + tabs.length) % tabs.length;
+  selectSettingsTab(tabs[next].dataset.settingsTab, { focus:true });
+});
 function openAccountSettings() {
   const dialog = $('#accountSettingsDialog');
   if (!dialog || dialog.open || !state.user) return;
@@ -1925,7 +1952,9 @@ function openAccountSettings() {
   $('#accountNickname').value = state.user.nickname || '';
   $('#accountNewPassword').value = '';
   $('#accountPasswordConfirm').value = '';
+  $('#autoPromptRepair').checked = state.user.preferences?.autoPromptRepair !== false;
   accountSettingsError();
+  selectSettingsTab('account');
   $('#saveAccountSettings').disabled = false;
   dialog.showModal();
   requestAnimationFrame(() => $('#accountNickname').focus());
@@ -1941,30 +1970,27 @@ $('#accountSettingsForm').addEventListener('submit', async event => {
   const confirmation = $('#accountPasswordConfirm').value;
   accountSettingsError();
   if (nickname && !/^[\p{L}\p{N}_-]{2,24}$/u.test(nickname)) {
-    accountSettingsError('昵称需为 2–24 位中文、字母、数字、下划线或短横线');
-    $('#accountNickname').focus();
+    showAccountSettingsFieldError('昵称需为 2–24 位中文、字母、数字、下划线或短横线', $('#accountNickname'));
     return;
   }
   if (password && (password.length < 8 || password.length > 128)) {
-    accountSettingsError('密码长度需为 8–128 位');
-    $('#accountNewPassword').focus();
+    showAccountSettingsFieldError('密码长度需为 8–128 位', $('#accountNewPassword'));
     return;
   }
   if (password !== confirmation) {
-    accountSettingsError('两次输入的密码不一致');
-    $('#accountPasswordConfirm').focus();
+    showAccountSettingsFieldError('两次输入的密码不一致', $('#accountPasswordConfirm'));
     return;
   }
   const button = $('#saveAccountSettings');
   button.disabled = true;
   try {
-    const payload = { nickname };
+    const payload = { nickname, preferences:{ autoPromptRepair:$('#autoPromptRepair').checked } };
     if (password) payload.password = password;
     const result = await api('/api/auth/profile', { method:'PATCH', body:JSON.stringify(payload) });
     state.user = result.user;
     updateAccountIdentity(result.user);
     closeAccountSettings();
-    toast('账号设置已保存');
+    toast('设置已保存');
   } catch (error) {
     accountSettingsError(error.message);
     button.disabled = false;

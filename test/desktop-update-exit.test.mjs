@@ -31,7 +31,7 @@ test('dismissing an installing update cannot unlock the window or snooze the ins
 test('updated entry loads the legacy exit fix with the current cache key', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=484'));
+  assert.ok(html.includes('/app.js?v=485'));
   assert.ok(source.includes('./platform/desktop-update-exit.js?v=3'));
   assert.doesNotMatch(source, /desktopUpdateExit\.resume/);
 });

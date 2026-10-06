@@ -57,3 +57,13 @@ test('legacy registration rejects a username that matches another nickname', () 
   assert.deepEqual(result, { status: 409, error: '账号已存在' });
   assert.equal(sql('SELECT COUNT(*) AS count FROM users').get().count, 1);
 });
+
+test('profile preferences merge without touching nickname or password', () => {
+  const user = makeUser('preference_account', '偏好用户');
+  insertUser(user);
+  const updated = updateUserProfile(user.id, { preferences: { autoPromptRepair: false } });
+  assert.equal(updated.preferences.autoPromptRepair, false);
+  assert.equal(updated.nickname, '偏好用户');
+  assert.equal(updated.passwordHash, 'scrypt:x:y');
+  assert.equal(updateUserProfile(user.id, { nickname: '偏好用户' }).preferences.autoPromptRepair, false);
+});

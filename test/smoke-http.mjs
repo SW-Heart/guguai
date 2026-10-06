@@ -259,6 +259,13 @@ try {
   check('正确密码登录成功', () => assert.equal(r.status, 200));
   r = await call('PATCH', '/api/auth/profile', { nickname: '烟火用户', password: 'newpassword1234' });
   check('登录后可以设置昵称和密码', () => { assert.equal(r.status, 200); assert.equal(r.body.user.nickname, '烟火用户'); });
+  check('违禁词自动优化默认开启', () => assert.equal(r.body.user.preferences.autoPromptRepair, true));
+  r = await call('PATCH', '/api/auth/profile', { preferences: { autoPromptRepair: false } });
+  check('可以单独关闭违禁词自动优化', () => { assert.equal(r.status, 200); assert.equal(r.body.user.preferences.autoPromptRepair, false); assert.equal(r.body.user.nickname, '烟火用户'); });
+  r = await call('PATCH', '/api/auth/profile', { preferences: { autoPromptRepair: 'no' } });
+  check('无效的设置值返回 400', () => assert.equal(r.status, 400));
+  r = await call('GET', '/api/auth/me');
+  check('关闭状态会保留', () => assert.equal(r.body.user.preferences.autoPromptRepair, false));
   const cookieAWithProfile = cookie;
   cookie = cookieB;
   r = await call('PATCH', '/api/auth/profile', { nickname: '烟火用户' });

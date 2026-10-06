@@ -128,7 +128,17 @@ export function createAuthRouteHandler({
       const input = await bodyJson(req);
       const hasNickname = Object.prototype.hasOwnProperty.call(input, 'nickname');
       const hasPassword = Object.prototype.hasOwnProperty.call(input, 'password');
-      if (!hasNickname && !hasPassword) { sendJson(res, 400, { error:'没有需要保存的设置' }); return true; }
+      const hasPreferences = Object.prototype.hasOwnProperty.call(input, 'preferences');
+      if (!hasNickname && !hasPassword && !hasPreferences) { sendJson(res, 400, { error:'没有需要保存的设置' }); return true; }
+      let preferences;
+      if (hasPreferences) {
+        if (!input.preferences || typeof input.preferences !== 'object' || Array.isArray(input.preferences)
+          || Object.keys(input.preferences).some(key => key !== 'autoPromptRepair')
+          || (input.preferences.autoPromptRepair !== undefined && typeof input.preferences.autoPromptRepair !== 'boolean')) {
+          sendJson(res, 400, { error:'设置格式不正确' }); return true;
+        }
+        preferences = { ...input.preferences };
+      }
       let nickname;
       if (hasNickname) {
         if (input.nickname !== null && typeof input.nickname !== 'string') { sendJson(res, 400, { error:'昵称格式不正确' }); return true; }
@@ -141,9 +151,9 @@ export function createAuthRouteHandler({
         if (input.password && (input.password.length < 8 || input.password.length > 128)) { sendJson(res, 400, { error:'密码长度需为 8–128 位' }); return true; }
         if (input.password) passwordHash = await hashPassword(input.password);
       }
-      if (!hasNickname && passwordHash === undefined) { sendJson(res, 400, { error:'请输入新密码' }); return true; }
+      if (!hasNickname && !hasPreferences && passwordHash === undefined) { sendJson(res, 400, { error:'请输入新密码' }); return true; }
       try {
-        const updated = updateUserProfile(user.id, { nickname, passwordHash, updatedAt:now() });
+        const updated = updateUserProfile(user.id, { nickname, passwordHash, preferences, updatedAt:now() });
         sendJson(res, updated ? 200 : 401, updated ? { user:publicUser(updated) } : { error:'登录状态已失效，请重新登录' });
       } catch (error) {
         sendJson(res, error.statusCode || 500, { error:error.statusCode === 409 ? error.message : '账号设置保存失败，请稍后重试' });

@@ -193,6 +193,7 @@ test('generation retry wires repair into the shared failure path without custome
   const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
   const start = server.indexOf('if (prepareGenerationRetry(task, error))');
   const end = server.indexOf("task.status = 'failed'", start);
-  assert.match(server.slice(start, end), /await repairGenerationPrompt\(task, error/);
+  assert.match(server.slice(start, end), /if \(autoPromptRepairEnabled\(findUserById\(userId\)\)\) await repairGenerationPrompt\(task, error/);
+  assert.match(server, /autoPromptRepairEnabled = user => user\?\.preferences\?\.autoPromptRepair !== false/);
   assert.doesNotMatch(server.slice(start, end), /reserveLlmCredits|settleLlmCredits/);
 });

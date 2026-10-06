@@ -359,12 +359,15 @@ function requireDesktopWorkspaceScope(req, res) {
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 const charLength = value => Array.from(String(value || '')).length;
 const profileNicknamePattern = /^[\p{L}\p{N}_-]{2,24}$/u;
+// Opt-out preference: users who never saved it keep automatic rewording on.
+const autoPromptRepairEnabled = user => user?.preferences?.autoPromptRepair !== false;
 const publicUser = user => ({
   id: user.id,
   username: user.username,
   nickname: user.nickname || '',
   displayName: user.nickname || user.username,
   phoneNumber: user.phoneNumber || '',
+  preferences: { autoPromptRepair: autoPromptRepairEnabled(user) },
   role: user.role || 'user',
   status: user.status || 'active',
   credits: normalizeWallet(user).balance,
@@ -1975,7 +1978,7 @@ async function failGeneration(userId, task, error) {
   trackModelRouteFailure(task, error);
   if (prepareGenerationRetry(task, error)) {
     clearProviderTaskIdTimeout(task.id);
-    await repairGenerationPrompt(task, error, {
+    if (autoPromptRepairEnabled(findUserById(userId))) await repairGenerationPrompt(task, error, {
       callLlm, config: llmConfig,
       save: task => saveGenerationWithRetry(userId, task, 'generation-prompt-repair'),
     });
