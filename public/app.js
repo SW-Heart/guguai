@@ -3425,6 +3425,9 @@ document.addEventListener('click', () => $$('.file-card .file-menu[data-menu]').
 function videoReferenceParameters(modelId=$('#videoModel')?.value) { return videoModelParameters(modelId, 'REFERENCE'); }
 function referenceLimits(modelId=$('#videoModel')?.value) { const parameters = videoReferenceParameters(modelId); const configured = parameters?.referenceLimits; if (configured) return configured; const maxImages = Number(parameters?.maxImages || 0); return { image: maxImages, video: 0, audio: 0, total: maxImages }; }
 function referenceFileKinds(modelId=$('#videoModel')?.value) { const limits = referenceLimits(modelId); return new Set(['image', 'video', 'audio'].filter(kind => Number(limits[kind] || 0) > 0)); }
+const IMAGE_REFERENCE_MAX_BYTES = 10 * 1024 * 1024;
+function imageReferenceTooLarge(file) { return file?.kind === 'image' && Number(file.size || 0) >= IMAGE_REFERENCE_MAX_BYTES; }
+function imageReferenceTooLargeText(file) { return `${file?.name || '图片'} 超过 10 MB，请选择小于 10 MB 的图片`; }
 function normalizeImageReferenceIds(ids) { return [...new Set(Array.isArray(ids) ? ids : [])].filter(id => referenceFileById(id)?.kind === 'image').slice(0, 7); }
 function pendingReferenceJob(id) { return state.uploadJobs.find(job => job.id === id && job.context === 'reference') || null; }
 function pendingReferenceFile(job) { return job ? { id:job.id, name:job.name, kind:job.kind, mimeType:job.mimeType, size:job.size, url:job.previewUrl, previewUrl:job.previewUrl, pendingUpload:true, localOnly:true } : null; }
@@ -3490,6 +3493,11 @@ async function desktopImportToContext(context, { multiple = true, maxFiles = Inf
     if (item.error) { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(()=>{}); toast(`${item.filePath || '文件'} 导入失败：${item.error}`); continue; }
     const kind = desktopMediaKind(item);
     const discardImported = () => { if (canRemoveImportedLocalAsset(item)) void bridge.media.removeLocal(item.id).catch(error => console.warn('[desktop] 清理非法导入失败', error)); };
+    if (inDialog && state.referenceTarget === 'image' && imageReferenceTooLarge({ kind, size:item.size })) {
+      discardImported();
+      toast(imageReferenceTooLargeText(item));
+      continue;
+    }
     const sizeLimit = kind === 'image' ? 20 * 1024 * 1024 : 25 * 1024 * 1024;
     if (item.size > sizeLimit) {
       discardImported();
@@ -3805,7 +3813,7 @@ function renderReferenceDialog() {
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
   const totalSelected = limitSelectionIds.length;
   $('#referenceDialog h2').textContent = isCanvas ? (canvasAssetRequest?.generation?'添加参考素材':isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；图片不超过 20 MB，视频或音频不超过 25 MB。`;
+  $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；${isVideo ? '图片不超过 20 MB，视频或音频不超过 25 MB' : '单张图片需小于 10 MB'}。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
   $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / ${canvasLimit}` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
   const confirmLabel = isCanvas ? (canvasAssetRequest?.generation?'使用此素材':isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
@@ -3836,12 +3844,14 @@ function renderReferenceDialog() {
     if (!file) {
       const local = state.files.find(item => item.id === id && item.localOnly);
       if (!local) return;
+      if (state.referenceTarget === 'image' && imageReferenceTooLarge(local)) return toast(imageReferenceTooLargeText(local));
       const localAssetId = local.localId || local.id;
       const existingJob = state.uploadJobs.find(job => job.context === 'reference' && job.deferUpload && job.localAssetId === localAssetId);
       const job = existingJob || createUploadJob({ name:local.name, size:local.size, type:local.mimeType }, 'reference', { previewUrl:local.url, mimeType:local.mimeType, deferUpload:true, localAssetId });
       id = job.id; file = pendingReferenceFile(job);
     }
     if (!file || !allowedKinds.has(file.kind)) return toast('该素材不符合当前创作模式');
+    if (state.referenceTarget === 'image' && !state.dialogSelection.includes(id) && imageReferenceTooLarge(file)) return toast(imageReferenceTooLargeText(file));
     if (state.dialogSelection.includes(id)) {
       state.dialogSelection = state.dialogSelection.filter(item => item !== id);
       if (pendingReferenceJob(id)) {
@@ -4211,6 +4221,10 @@ function referenceCountsForIds(ids) {
 }
 async function submitGeneration(type, form, payload) {
   if (generationSubmissionForms.has(form)) return;
+  if (type === 'image') {
+    const oversized = state.refs.image.map(referenceFileById).find(imageReferenceTooLarge);
+    if (oversized) return toast(imageReferenceTooLargeText(oversized));
+  }
   generationSubmissionForms.add(form);
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
