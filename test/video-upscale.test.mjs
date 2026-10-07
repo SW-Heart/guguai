@@ -261,11 +261,23 @@ test('changed frontend modules are reachable through current cache keys', () => 
   const controller = readFileSync(new URL('../public/features/generation/upscale-controller.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.match(app, /features\/generation\/presentation\.js\?v=5'/);
-  assert.match(app, /features\/generation\/upscale-controller\.js\?v=1'/);
+  assert.match(app, /features\/generation\/upscale-controller\.js\?v=2'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(controller, /'\.\/upscale\.js\?v=1'/);
-  assert.match(html, /\/app\.js\?v=487"/);
+  assert.match(html, /\/app\.js\?v=488"/);
   assert.match(html, /\/styles\.css\?v=363"/);
   assert.match(html, /id="videoUpscaleDialog"/);
+});
+
+test('local media can be read by fetch from the web-origin workbench', () => {
+  const main = readFileSync(new URL('../desktop/main.mjs', import.meta.url), 'utf8');
+  assert.match(main, /scheme: 'gugu-media', privileges: \{[^}]*supportFetchAPI: true[^}]*corsEnabled: true/);
+});
+
+test('a source the client cannot read points users to a client update', () => {
+  const failure = __test.generationFailure({ modelId:'video-upscale', error:'视频上传未完成：读取本地视频失败' });
+  assert.equal(failure.message, '无法读取本地视频');
+  assert.match(failure.suggestion, /更新到最新版本/);
+  assert.equal(__test.generationFailure({ modelId:'video-upscale', error:'视频文件无法读取，请确认文件完整后重试' }).message, '视频文件无法处理');
 });

@@ -437,7 +437,8 @@ function videoUpscaleFailure(task) {
   const raw = String(task.error || '');
   const failure = /分辨率超出/.test(raw) ? { code:'UPSCALE_SOURCE_UNSUPPORTED', message:'这个视频的分辨率无法放大', suggestion:'高清放大支持 1080p 及以下的视频。', action:'none' }
     : /时长超出/.test(raw) ? { code:'UPSCALE_SOURCE_UNSUPPORTED', message:'这个视频的时长无法放大', suggestion:'高清放大支持 120 秒以内的视频。', action:'none' }
-    : /无法读取/.test(raw) ? { code:'UPSCALE_SOURCE_UNREADABLE', message:'视频文件无法读取', suggestion:'请确认作品已完整下载到本地后重新放大。', action:'retry' }
+    : /读取本地视频失败/.test(raw) ? { code:'UPSCALE_SOURCE_UNREADABLE', message:'无法读取本地视频', suggestion:'请将客户端更新到最新版本后重新放大。', action:'retry' }
+    : /无法读取/.test(raw) ? { code:'UPSCALE_SOURCE_UNREADABLE', message:'视频文件无法处理', suggestion:'请确认视频可以正常播放后重新放大。', action:'retry' }
     : /上传/.test(raw) ? { code:'UPSCALE_UPLOAD_FAILED', message:'视频上传未完成', suggestion:'请保持客户端开启并联网，重新发起高清放大。', action:'retry' }
     : /超时/.test(raw) ? { code:'TIMEOUT', message:'高清放大处理超时', suggestion:'请稍后重新放大。', action:'retry' }
     : { code:'UPSCALE_FAILED', message:'高清放大失败', suggestion:'请稍后重新放大；若持续失败，请联系支持。', action:'retry' };

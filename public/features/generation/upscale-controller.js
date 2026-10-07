@@ -42,7 +42,7 @@ async function readSource(asset) {
       if (response.ok) return await response.blob();
     } catch {}
   }
-  throw new Error('无法读取视频文件');
+  throw new Error('读取本地视频失败');
 }
 
 export function isVideoUpscaleTask(task) {

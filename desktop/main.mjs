@@ -81,7 +81,10 @@ function startupTrace(stage) {
 }
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'gugu-media', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  // The workbench page is served from the web origin, so reading local media
+  // with fetch() is a cross-origin request; Chromium rejects it unless the
+  // scheme is CORS-enabled. Video playback alone does not need this.
+  { scheme: 'gugu-media', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
 ]);
 
 let mainWindow;

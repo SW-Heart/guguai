@@ -68,7 +68,7 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(admin.includes('/guguadmin.css?v=20'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=487\b/);
+  assert.match(index, /\/app\.js\?v=488\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
   assert.match(index, /\/styles\.css\?v=363/);
   assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
