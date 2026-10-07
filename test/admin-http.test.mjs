@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
@@ -13,6 +14,7 @@ import { adjustCredits, chargeGenerationMicro, refundGenerationMicro, configureL
 import { llmRatesFromEnv } from '../lib/billing.mjs';
 import { appendSystemEvent } from '../lib/audit.mjs';
 import { insertUser } from '../lib/store.mjs';
+import { DEFAULT_MODEL_ROUTES } from '../lib/model-routes.mjs';
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -54,6 +56,19 @@ function client(base) {
 }
 
 test('admin HTTP permissions and core workflows', async t => {
+  // Keep the startup catalog probe local so real provider responses cannot
+  // overwrite the route availability used by these HTTP assertions.
+  const catalog = createServer((_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ data: [
+      ...DEFAULT_MODEL_ROUTES.map(route => ({ id: route.upstreamModelId })),
+      { id: 'http-test-upstream' }, { id: 'http-test-1080p' },
+      ...['seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value'].map(id => ({ id: `http-${id}` })),
+    ] }));
+  });
+  await new Promise(resolve => catalog.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => catalog.close(resolve)));
+  const catalogBase = `http://127.0.0.1:${catalog.address().port}`;
   const workDir = mkdtempSync(path.join(tmpdir(), 'admin-http-'));
   const port = await freePort();
   const adminId = randomUUID();
@@ -90,7 +105,7 @@ test('admin HTTP permissions and core workflows', async t => {
     .run({ userId: refundedUserId, docJson: paymentDoc });
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_KEY:'test-diw', DUOMI_API_KEY:'test-duomi', TUZI_DEFAULT_API_KEY:'test-tuzi', AUTODL_COMFYUI_KEY:'test-autodl', TTAPI_API_KEY:'test-ttapi', OAIAPI_GEMINI_KEY:'test-gemini', OAIAPI_VEO_KEY:'test-veo', OAIAPI_MINIMAX_KEY:'test-minimax', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_API_BASE:catalogBase, WJ_API_BASE:catalogBase, CNTCN_API_BASE:catalogBase, DIW_KEY:'test-diw', DUOMI_API_KEY:'test-duomi', TUZI_DEFAULT_API_KEY:'test-tuzi', AUTODL_COMFYUI_KEY:'test-autodl', TTAPI_API_KEY:'test-ttapi', OAIAPI_GEMINI_KEY:'test-gemini', OAIAPI_VEO_KEY:'test-veo', OAIAPI_MINIMAX_KEY:'test-minimax', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
   function markRouteAvailable(id = null) {
