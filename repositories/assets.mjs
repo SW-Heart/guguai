@@ -143,6 +143,17 @@ export function createAssetRepository({ sql, tx, keysetPage, scopeWhere, decodeC
     )));
   }
 
+  // Retention sweeps walk every asset that still has a cloud copy, in id order
+  // so a sweep can resume after a page without holding a long transaction.
+  function listAssetsWithObjects({ afterId = '', limit = 500 } = {}) {
+    return sql(`
+      SELECT user_id AS userId, id, doc_json FROM assets
+      WHERE COALESCE(object_key, '') <> '' AND id > :afterId
+      ORDER BY id LIMIT :limit`).all({ afterId, limit })
+      .map(row => ({ userId:row.userId, id:row.id, asset:parseDoc(row) }))
+      .filter(row => row.asset);
+  }
+
   return {
     saveAssetRecord,
     findAsset,
@@ -152,5 +163,6 @@ export function createAssetRepository({ sql, tx, keysetPage, scopeWhere, decodeC
     listAssetChanges,
     findAssets,
     findCloudAssets,
+    listAssetsWithObjects,
   };
 }

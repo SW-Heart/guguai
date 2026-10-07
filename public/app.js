@@ -192,8 +192,13 @@ function isDesktopAssetSyncing(file) {
   if (file?.localStatus === 'missing') return false;
   return Boolean(window.guguDesktop && file && file.localStatus !== 'saved' && !String(file.url || '').startsWith('gugu-media://')) || mediaController.isHydrating(file);
 }
+// Cloud copies are deleted a few days after a device saved the file. On any
+// other computer the work then has nothing left to download.
+function cloudCopyGone(file) {
+  return Boolean(file?.remoteExpiredAt && file.localStatus !== 'saved' && ['local_only', 'expired'].includes(file.remoteStatus));
+}
 function taskLocalSyncing(task, file = fileById(task?.assetId)) {
-  if (file?.localStatus === 'missing') return false;
+  if (file?.localStatus === 'missing' || cloudCopyGone(file)) return false;
   if (!window.guguDesktop || task?.status !== 'completed' || !task.assetId) return false;
   const localReady = Boolean(file && file.localStatus === 'saved' && !isDesktopAssetSyncing(file));
   // A completed cloud task can be rendered before startup recovery has found
@@ -2664,6 +2669,8 @@ function taskCard(task) {
   const failure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localReady
     ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
+    : cloudCopyGone(asset)
+      ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${asset.remoteStatus === 'expired' ? '文件已过保存期限' : '文件保存在其他电脑上'}</b><p>${asset.remoteStatus === 'expired' ? '这个作品没有保存到本地，已无法下载' : '请在保存过它的电脑上查看'}</p></div>`
     : task.status === 'failed'
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${esc(failure?.message || '生成失败')}</b><p>${esc(failure?.suggestion || '请调整内容后重试')}</p></div>`
       : `<div class="card-placeholder ${displayStatus}"${progressMarkup ? '' : ' aria-hidden="true"'}><div class="skeleton-frame"><i></i><i></i><i></i></div>${progressMarkup}</div>`;

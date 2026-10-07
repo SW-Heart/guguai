@@ -70,6 +70,14 @@ export function createFilesRouteHandler({
   removeGenerationOutput,
   deleteAssetRecord,
 } = {}) {
+  // Cloud copies are removed a few days after a device saved the file, so a
+  // missing copy usually means the file now only lives on the user's computer.
+  function sendMissingContent(res, asset) {
+    if (asset.remoteExpiredAt && asset.remoteStatus === 'local_only') return sendJson(res, 410, { error:'这个文件只保存在本地电脑上，请在保存过它的电脑上查看' });
+    if (asset.remoteExpiredAt) return sendJson(res, 410, { error:'这个文件已过云端保存期限，无法再下载' });
+    return sendJson(res, 404, { error:'文件内容不存在' });
+  }
+
   return async function handleFilesRoute(req, res, url) {
     if (url.pathname === '/api/files/sync' && req.method === 'GET') {
       const user = requireUser(req, res); if (!user) return true;
@@ -287,7 +295,7 @@ export function createFilesRouteHandler({
       if (await fs.access(localFile).then(() => true).catch(() => false)) { res.writeHead(302, { Location:`/api/files/${asset.id}/content`, 'Cache-Control':'private, no-store' }); res.end(); return true; }
       if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); res.end(); return true; }
       if (await servePendingGenerationSource(res, asset)) return true;
-      sendJson(res, 404, { error:'文件内容不存在' });
+      sendMissingContent(res, asset);
       return true;
     }
     const fileMatch = url.pathname.match(/^\/api\/files\/([\w-]+)(?:\/(content))?$/);
@@ -301,7 +309,7 @@ export function createFilesRouteHandler({
         if (await fs.access(localFile).then(() => true).catch(() => false)) { serveFile(res, localFile, asset.mimeType); return true; }
         if (asset.objectKey) { res.writeHead(302, { Location:await signedAssetUrl(asset.objectKey), 'Cache-Control':'private, no-store' }); res.end(); return true; }
         if (await servePendingGenerationSource(res, asset)) return true;
-        sendJson(res, 404, { error:'文件内容不存在' });
+        sendMissingContent(res, asset);
         return true;
       }
       if (req.method === 'PATCH' && !fileMatch[2]) {

@@ -14,7 +14,7 @@ import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
-import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmReservationMicro, normalizeWallet } from './lib/billing.mjs';
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
-import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, findDramaProject, findGeneration, findUploadIntent, findUserById, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
+import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, listAssetsWithObjects, findDramaProject, findGeneration, findUploadIntent, findUserById, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
@@ -43,6 +43,7 @@ import { createAutodlProvider } from './providers/autodl.mjs';
 import { createAliyunVsrProvider } from './providers/aliyun-vsr.mjs';
 import { VIDEO_UPSCALE_MODEL_ID, VIDEO_UPSCALE_PROVIDER } from './public/features/generation/upscale.js';
 import { createVideoUpscaleService } from './services/video-upscale.mjs';
+import { createMediaRetentionService } from './services/media-retention.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
 import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
 import { repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
@@ -114,6 +115,8 @@ const autodlMotionWorkflowId = process.env.AUTODL_MOTION_RETARGETING_WORKFLOW_ID
 const autodlMotionConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlMotionWorkflowId);
 const videoUpscaleSourceRetentionMs = Math.max(60 * 60_000, Number(process.env.ALIYUN_VSR_SOURCE_RETENTION_HOURS || 6) * 3600_000);
 const videoUpscaleSweepMs = 60 * 60_000;
+const mediaRetentionEnabled = String(process.env.MEDIA_RETENTION_ENABLED ?? 'true').toLowerCase() !== 'false';
+const mediaRetentionSweepMs = 60 * 60_000;
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
@@ -1204,7 +1207,7 @@ async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mim
 }
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.objectKey) await deleteObject(asset.objectKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 const publicAssetFields = Object.freeze([
-  'id', 'name', 'kind', 'mimeType', 'size', 'sha256', 'width', 'height', 'source', 'createdAt', 'updatedAt', 'deliveryStatus', 'remoteStatus', 'sourceGenerationId',
+  'id', 'name', 'kind', 'mimeType', 'size', 'sha256', 'width', 'height', 'source', 'createdAt', 'updatedAt', 'deliveryStatus', 'remoteStatus', 'sourceGenerationId', 'remoteExpiredAt',
 ]);
 function publicAsset(asset) {
   const value = Object.fromEntries(publicAssetFields
@@ -1805,6 +1808,7 @@ function autodlPersistenceHooks(userId, task) {
 function requestGenerationArchive(userId, asset) {
   if (asset.objectKey) return { status:'ready' };
   if (asset.localReadyAt || asset.deliveryStatus === 'local_ready') return { status:'local_ready' };
+  if (asset.remoteExpiredAt) return { error:'这个文件已过云端保存期限' };
   const task = asset.sourceGenerationId ? findGeneration(userId, asset.sourceGenerationId, { deviceId:asset.originDeviceId, workspaceId:asset.originWorkspaceId }) : null;
   if (!task || task.assetId !== asset.id || task.status !== 'completed' || !asset.sourceUrl) return { error:'没有可恢复的生成结果' };
   if (task.localReadyAt) return { status:'local_ready' };
@@ -2475,6 +2479,52 @@ function startGenerationRecoverySweeper() {
   return timer;
 }
 
+const mediaRetention = createMediaRetentionService({
+  listAssetsWithObjects,
+  saveAsset,
+  deleteObject,
+  removeServerCopy: async (userId, asset) => {
+    if (!asset.storageName) return;
+    await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  },
+  // A file an active task still reads must outlive its countdown.
+  activeReferenceAssetIds: () => listPendingGenerations().flatMap(({ task }) => [...(task.referenceAssetIds || []), task.assetId].filter(Boolean)),
+  listReferenceObjects: async function* () {
+    let token;
+    do {
+      const page = await r2Reference.send(new ListObjectsV2Command({ Bucket:r2ReferenceBucket, Prefix:`${r2ReferenceImagePrefix}/`, ContinuationToken:token }));
+      for (const object of page.Contents || []) yield { key:object.Key, lastModified:object.LastModified };
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+  },
+  deleteReferenceObject: deleteR2ReferenceObject,
+});
+function startMediaRetentionSweeper() {
+  if (!mediaRetentionEnabled || !r2Configured) return null;
+  let running = false;
+  const run = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const assets = await mediaRetention.sweepExpiredAssets();
+      if (assets.expired || assets.failed) console.log(`[retention] 云端副本到期删除 ${assets.expired} 个，失败 ${assets.failed} 个，使用中跳过 ${assets.skippedInUse} 个`);
+      if (r2ReferenceConfigured) {
+        const references = await mediaRetention.sweepReferenceObjects();
+        if (references.deleted) console.log(`[retention] 过期参考图删除 ${references.deleted} 个`);
+      }
+    } catch (error) {
+      console.error('[retention] 定期清理失败', error.message);
+    } finally {
+      running = false;
+    }
+  };
+  const timer = setInterval(run, mediaRetentionSweepMs);
+  timer.unref();
+  runtimeLifecycle.registerTimer(timer);
+  void run();
+  return timer;
+}
+
 // Upscale sources live in a temporary bucket. Finished tasks delete their own
 // file; this sweep removes abandoned uploads and sources of failed tasks.
 function startVideoUpscaleSourceSweeper() {
@@ -2907,7 +2957,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, buildAutodlMotionPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, buildAutodlMotionPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));
@@ -3021,6 +3071,7 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     generationRecoverySweeper = startGenerationRecoverySweeper();
     generationJobPoller = startGenerationJobPoller();
     startVideoUpscaleSourceSweeper();
+    startMediaRetentionSweeper();
     startModelRouteMonitor();
     agentRuntime.start();
   });
