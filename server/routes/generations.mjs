@@ -3,6 +3,7 @@ import { modelPrice } from '../../lib/pricing.mjs';
 
 export function createGenerationRouteHandler({
   prepareViralGeneration,
+  videoUpscale,
   bodyJson,
   sendJson,
   requireUser,
@@ -202,6 +203,23 @@ export function createGenerationRouteHandler({
         saveGeneration(user.id, task);
       }
       return sendJson(res, 200, { tasks:tasks.map(publicGeneration), balance:walletOf(user.id).balance }), true;
+    }
+    const upscaleAction = { '/api/generations/upscale/quote':'quote', '/api/generations/upscale':'create', '/api/generations/upscale/complete':'complete' }[url.pathname];
+    if (upscaleAction && req.method === 'POST') {
+      const user = await requireUser(req, res); if (!user) return true;
+      const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
+      const input = await bodyJson(req);
+      try {
+        const result = await videoUpscale[upscaleAction]({ user, scope, input });
+        return sendJson(res, upscaleAction === 'quote' ? 200 : 202, result), true;
+      } catch (error) {
+        if (!error.statusCode) {
+          console.error('[upscale] request failed', { action:upscaleAction, message:error.message });
+          return sendJson(res, 502, { error:'高清放大服务暂时不可用，请稍后重试' }), true;
+        }
+        const extra = Object.fromEntries(['code', 'quote', 'balance'].filter(key => error[key] !== undefined).map(key => [key, error[key]]));
+        return sendJson(res, error.statusCode, { error:error.message, ...extra }), true;
+      }
     }
     const generationMatch = url.pathname.match(/^\/api\/generations\/([\w-]+)$/);
     if (generationMatch && req.method === 'DELETE') {

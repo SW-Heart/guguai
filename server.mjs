@@ -40,6 +40,9 @@ import { createTtapiProvider } from './providers/ttapi.mjs';
 import { createCntcnProvider } from './providers/cntcn.mjs';
 import { createRoutedProvider } from './providers/routed.mjs';
 import { createAutodlProvider } from './providers/autodl.mjs';
+import { createAliyunVsrProvider } from './providers/aliyun-vsr.mjs';
+import { VIDEO_UPSCALE_MODEL_ID, VIDEO_UPSCALE_PROVIDER } from './public/features/generation/upscale.js';
+import { createVideoUpscaleService } from './services/video-upscale.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
 import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
 import { repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
@@ -109,6 +112,8 @@ const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_15S_WORKFLOW_ID || proces
 const autodlConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlWorkflowId);
 const autodlMotionWorkflowId = process.env.AUTODL_MOTION_RETARGETING_WORKFLOW_ID || 'wan2.2animate-v4-motion_retargeting';
 const autodlMotionConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlMotionWorkflowId);
+const videoUpscaleSourceRetentionMs = Math.max(60 * 60_000, Number(process.env.ALIYUN_VSR_SOURCE_RETENTION_HOURS || 6) * 3600_000);
+const videoUpscaleSweepMs = 60 * 60_000;
 const ttapiConfigured = Boolean(process.env.TTAPI_API_KEY);
 const cntcnConfigured = Boolean(process.env.CNTCN_KEY);
 const oaiConfigured = Boolean(process.env.OAIAPI_GEMINI_KEY);
@@ -423,7 +428,20 @@ function referenceNumber(raw) {
   const match = String(raw || '').match(/(?:reference\s+(?:image\s+)?|image\s+reference\s+|参考(?:图片|图)\s*)#?(\d+)/i);
   return match ? Number(match[1]) : 0;
 }
+// Upscale failures never involve prompts or references, so the generic
+// generation suggestions would point users at the wrong fix.
+function videoUpscaleFailure(task) {
+  const raw = String(task.error || '');
+  const failure = /分辨率超出/.test(raw) ? { code:'UPSCALE_SOURCE_UNSUPPORTED', message:'这个视频的分辨率无法放大', suggestion:'高清放大支持 1080p 及以下的视频。', action:'none' }
+    : /时长超出/.test(raw) ? { code:'UPSCALE_SOURCE_UNSUPPORTED', message:'这个视频的时长无法放大', suggestion:'高清放大支持 120 秒以内的视频。', action:'none' }
+    : /无法读取/.test(raw) ? { code:'UPSCALE_SOURCE_UNREADABLE', message:'视频文件无法读取', suggestion:'请确认作品已完整下载到本地后重新放大。', action:'retry' }
+    : /上传/.test(raw) ? { code:'UPSCALE_UPLOAD_FAILED', message:'视频上传未完成', suggestion:'请保持客户端开启并联网，重新发起高清放大。', action:'retry' }
+    : /超时/.test(raw) ? { code:'TIMEOUT', message:'高清放大处理超时', suggestion:'请稍后重新放大。', action:'retry' }
+    : { code:'UPSCALE_FAILED', message:'高清放大失败', suggestion:'请稍后重新放大；若持续失败，请联系支持。', action:'retry' };
+  return task.creditStatus === 'refund_failed' ? { code:'REFUND_PENDING', ...generationFailureCatalog.REFUND_PENDING } : failure;
+}
 function generationFailure(task) {
+  if (task.modelId === VIDEO_UPSCALE_MODEL_ID) return videoUpscaleFailure(task);
   const code = generationFailureCode(task);
   const base = { code, ...(generationFailureCatalog[code] || generationFailureCatalog.UNKNOWN) };
   const raw = String(task.error || '');
@@ -492,8 +510,18 @@ function publicGeneration(task) {
           : task.providerTaskId ? 'provider_processing'
             : 'submitting';
   if (failure && task.creditStatus === 'refunded') failure.suggestion += ' 本次预扣积分已退回。';
+  const upscale = task.upscale ? {
+    upscale:{
+      sourceGenerationId:task.upscale.sourceGenerationId,
+      sourceWidth:task.upscale.sourceWidth,
+      sourceHeight:task.upscale.sourceHeight,
+      outputWidth:task.upscale.outputWidth,
+      outputHeight:task.upscale.outputHeight,
+    },
+  } : {};
   return {
     ...value,
+    ...upscale,
     progressStage,
     error: failure ? `${failure.message}。${failure.suggestion}` : '',
     failure,
@@ -808,6 +836,17 @@ const autodlMotionProvider = createAutodlProvider({
   maxPollDurationMs: autodlMaxPollDurationMs,
   maxPolls: autodlMaxPolls,
 });
+const aliyunVsrProvider = createAliyunVsrProvider({
+  accessKeyId: process.env.ALIYUN_VSR_ACCESS_KEY_ID,
+  accessKeySecret: process.env.ALIYUN_VSR_ACCESS_KEY_SECRET,
+  bucket: process.env.ALIYUN_VSR_OSS_BUCKET || 'gugu-vsr-sh',
+  region: process.env.ALIYUN_VSR_OSS_REGION || 'oss-cn-shanghai',
+  prefix: process.env.ALIYUN_VSR_OSS_PREFIX || 'video-upscale',
+  endpoint: process.env.ALIYUN_VSR_ENDPOINT || 'https://videoenhan.cn-shanghai.aliyuncs.com/',
+  fetchImpl: (...args) => fetch(...args),
+  sleep,
+  maxPollDurationMs: videoMaxPollDurationMs,
+});
 const oaiProvider = createOaiProvider({
   submitTimeoutMs: providerTaskIdTimeoutMs,
   baseUrl: oaiBase,
@@ -920,6 +959,12 @@ const videoProviderAdapters = createProviderAdapterRegistry({
     validate: task => { validVideoTask(task); if (!autodlMotionConfigured) throw new Error('AutoDL 动作迁移服务尚未配置'); return task; },
     submit: (task, refs, hooks) => autodlMotionProvider.createVideo(task, refs, hooks),
     poll: (task, hooks, _startedAt) => autodlMotionProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
+    lookup: persistedProviderTask,
+  },
+  [VIDEO_UPSCALE_PROVIDER]: {
+    validate: task => { validVideoTask(task); if (!aliyunVsrProvider.configured) throw Object.assign(new Error('高清放大服务尚未配置'), { upstreamTerminal:true, retryable:false }); return task; },
+    submit: (task, _refs, hooks) => aliyunVsrProvider.submit(task, hooks),
+    poll: (task, hooks, _startedAt, options) => aliyunVsrProvider.poll(task, hooks, options),
     lookup: persistedProviderTask,
   },
   oai: {
@@ -1554,7 +1599,8 @@ function generationSourceHeaders(task, resultUrl) {
 }
 function generationAssetExtension(task) { return task?.type === 'image' ? '.png' : '.mp4'; }
 function generationAssetName(task, extension = generationAssetExtension(task)) {
-  return `${task?.type === 'image' ? '生成图片' : '生成视频'} ${new Date(task?.createdAt || Date.now()).toLocaleString('zh-CN')}${extension}`;
+  const kind = task?.type === 'image' ? '生成图片' : task?.modelId === VIDEO_UPSCALE_MODEL_ID ? `高清视频 ${task.quality || ''}`.trim() : '生成视频';
+  return `${kind} ${new Date(task?.createdAt || Date.now()).toLocaleString('zh-CN')}${extension}`;
 }
 async function servePendingGenerationSource(res, asset) {
   if (!asset?.sourceUrl || asset.objectKey) return false;
@@ -2093,7 +2139,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
         ? ttapiPersistenceHooks(userId, task)
         : task.provider === 'cntcn'
           ? cntcnPersistenceHooks(userId, task)
-          : ['autodl', 'autodl-motion'].includes(task.provider)
+          : ['autodl', 'autodl-motion', VIDEO_UPSCALE_PROVIDER].includes(task.provider)
             ? autodlPersistenceHooks(userId, task)
             : {};
       hooks.deferPolling = deferPolling;
@@ -2107,7 +2153,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       if (error.submissionUncertain) {
         generationLifecycle.markSubmissionUncertain(task, error);
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl', 'autodl-motion'].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
+      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl', 'autodl-motion', VIDEO_UPSCALE_PROVIDER].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
         generationLifecycle.markProviderTaskPaused(task, error);
         console.error('[video] async provider task paused without refund', { generationId: task.id, provider: task.provider, providerTaskId: task.providerTaskId, message: error.message });
       } else {
@@ -2209,6 +2255,14 @@ function resumeAutodlMotionGeneration(userId, task, options = {}) {
     logContext: () => ({ providerTaskId:task.providerTaskId }),
   });
 }
+function resumeVideoUpscaleGeneration(userId, task, options = {}) {
+  return generationRecovery.resume(userId, task, {
+    ...options,
+    finalPhase: 'video-upscale-recovery-final',
+    poll: ({ pollOnce }) => aliyunVsrProvider.poll(task, autodlPersistenceHooks(userId, task), { pollOnce }),
+    logContext: () => ({ providerTaskId:task.providerTaskId }),
+  });
+}
 function resumeGenerationArchive(userId, task) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
@@ -2282,6 +2336,7 @@ function processGenerationTask(userId, task, kind = 'generation') {
   if (task.provider === 'cntcn' && task.providerTaskId) return resumeCntcnGeneration(userId, task, { pollOnce });
   if (task.provider === 'autodl' && task.providerTaskId) return resumeAutodlGeneration(userId, task, { pollOnce });
   if (task.provider === 'autodl-motion' && task.providerTaskId) return resumeAutodlMotionGeneration(userId, task, { pollOnce });
+  if (task.provider === VIDEO_UPSCALE_PROVIDER && task.providerTaskId) return resumeVideoUpscaleGeneration(userId, task, { pollOnce });
   if (!task.providerTaskId) return reconcileMissingProviderTaskId(userId, task);
   return failUnsupportedGenerationRecovery(userId, task);
 }
@@ -2380,6 +2435,9 @@ async function recoverPendingGenerations() {
       enqueueGenerationJob({ userId, generationId:task.id, kind:'refund_reconcile', nextRunAt:Date.now(), preserveScheduledTime:true });
       refundReconciliations++;
     } else if (task.awaitingReferences) {
+      if (videoUpscale.uploadExpired(task)) {
+        await videoUpscale.expireUpload(userId, task).catch(error => console.error('[upscale] 过期上传任务退款失败', { generationId:task.id, message:error.message }));
+      }
       continue;
     } else {
       const kind = generationRecoveryKind(task);
@@ -2411,6 +2469,20 @@ function startGenerationRecoverySweeper() {
     }
   };
   const timer = setInterval(run, generationRecoverySweepMs);
+  timer.unref();
+  runtimeLifecycle.registerTimer(timer);
+  void run();
+  return timer;
+}
+
+// Upscale sources live in a temporary bucket. Finished tasks delete their own
+// file; this sweep removes abandoned uploads and sources of failed tasks.
+function startVideoUpscaleSourceSweeper() {
+  if (!aliyunVsrProvider.configured) return null;
+  const run = () => aliyunVsrProvider.sweepExpiredSources({ maxAgeMs:videoUpscaleSourceRetentionMs })
+    .then(({ deleted }) => { if (deleted) console.log(`[upscale] 清理过期临时文件 ${deleted} 个`); })
+    .catch(error => console.error('[upscale] 临时文件定期清理失败', error.message));
+  const timer = setInterval(run, videoUpscaleSweepMs);
   timer.unref();
   runtimeLifecycle.registerTimer(timer);
   void run();
@@ -2630,8 +2702,25 @@ const filesRoute = createFilesRouteHandler({
   removeGenerationOutput,
   deleteAssetRecord,
 });
+const videoUpscale = createVideoUpscaleService({
+  provider: aliyunVsrProvider,
+  findGeneration,
+  saveGeneration,
+  enqueueGenerationJob: job => { enqueueGenerationJob(job); drainGenerationJobs(); },
+  failGeneration,
+  chargeGenerationMicro,
+  walletOf,
+  currentPricing,
+  pricingSnapshot,
+  creditsToMicro,
+  modelPrice,
+  publicGeneration,
+  safeId,
+  now,
+});
 const generationRoute = createGenerationRouteHandler({
   prepareViralGeneration: viralLab.prepareGeneration,
+  videoUpscale,
   bodyJson,
   sendJson,
   requireUser,
@@ -2931,6 +3020,7 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     // Recovery runs after the port is open so a backlog never delays startup.
     generationRecoverySweeper = startGenerationRecoverySweeper();
     generationJobPoller = startGenerationJobPoller();
+    startVideoUpscaleSourceSweeper();
     startModelRouteMonitor();
     agentRuntime.start();
   });

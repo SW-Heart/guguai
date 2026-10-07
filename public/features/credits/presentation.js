@@ -39,12 +39,14 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
     const modelId = entry?.modelId || task?.modelId || entry?.model || entry?.modelName;
     if (!modelId) return '—';
     if (modelId === 'gpt-image-2') return 'GPT-Image-2';
+    if (modelId === 'video-upscale') return '高清放大';
     const catalog = readState().config?.videoCapabilities?.models || [];
     return catalog.find(model => model.id === modelId)?.label || String(modelId);
   }
 
   function creditGenerationType(entry) {
     const task = entry?.generationId ? readState().tasks?.find(item => item.id === entry.generationId) : null;
+    if (entry?.modelId === 'video-upscale' || task?.modelId === 'video-upscale') return '视频高清放大';
     if (entry?.contentType === 'image' || task?.type === 'image' || entry?.modelId === 'gpt-image-2') return '图像生成';
     if (entry?.contentType === 'video' || task?.type === 'video') return '视频生成';
     return '视频生成';

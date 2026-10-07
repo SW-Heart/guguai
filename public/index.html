@@ -8,7 +8,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=3">
-  <link rel="stylesheet" href="/styles.css?v=362">
+  <link rel="stylesheet" href="/styles.css?v=363">
   <link rel="stylesheet" href="/vendor/director/reference-canvas.css?v=6">
   <link rel="stylesheet" href="/payment.css?v=3">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
@@ -277,7 +277,18 @@
       <footer class="desktop-update-actions"><button id="laterDesktopUpdate" class="desktop-update-later" type="button">稍后提醒</button><button id="desktopUpdateAction" class="gradient-button" type="button" disabled>正在下载…</button></footer>
     </div>
   </dialog>
+  <dialog id="videoUpscaleDialog" class="desktop-restart-dialog video-upscale-dialog" aria-labelledby="videoUpscaleTitle" aria-describedby="videoUpscaleMessage">
+    <div class="desktop-restart-card">
+      <span class="desktop-restart-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="m10 9 5 3-5 3z"/></svg></span>
+      <h2 id="videoUpscaleTitle">高清放大</h2>
+      <p id="videoUpscaleMessage">清晰度提升到原来的 2 倍，画面内容和声音保持不变。</p>
+      <div class="desktop-restart-summary" aria-live="polite"><span><small>当前分辨率</small><strong id="videoUpscaleSource">—</strong></span><i aria-hidden="true"></i><span><small>放大后</small><strong id="videoUpscaleTarget">—</strong></span></div>
+      <dl class="video-upscale-cost" aria-live="polite"><div><dt>本次需要</dt><dd id="videoUpscaleCredits">—</dd></div><div><dt>当前余额</dt><dd id="videoUpscaleBalance">—</dd></div></dl>
+      <p id="videoUpscaleError" class="video-upscale-error hidden" role="alert"></p>
+      <footer class="desktop-restart-actions"><button id="cancelVideoUpscale" class="desktop-restart-later" type="button">取消</button><button id="confirmVideoUpscale" class="gradient-button" type="button" disabled>开始放大</button></footer>
+    </div>
+  </dialog>
   <div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
-  <script type="module" src="/app.js?v=486"></script>
+  <script type="module" src="/app.js?v=487"></script>
 </body>
 </html>

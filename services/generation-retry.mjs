@@ -45,7 +45,7 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceC
 
 export function prepareGenerationRetry(task, error, at = new Date().toISOString()) {
   if (!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
-    || error.submissionUncertain || error.pollTimedOut || [408, 409, 425].includes(Number(error.upstreamStatus))
+    || error.submissionUncertain || error.pollTimedOut || error.retryable === false || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
     || (Number(task.generationRetryCount) || 0) >= (task.routeId ? maxRoutedGenerationRetries : maxGenerationRetries)
     || task.generationFallbackRouteId) return false;

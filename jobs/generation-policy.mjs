@@ -5,14 +5,15 @@ export function createGenerationJobPolicy({
   ttapiPollIntervalMs,
   cntcnPollIntervalMs,
   duomiPollIntervalMs = 8_000,
+  videoUpscalePollIntervalMs = 10_000,
   defaultPollIntervalMs,
   recoverySweepMs,
   archiveRescheduleMs,
   providerTaskIdDeadline,
 } = {}) {
-  const dependencies = { imagePollIntervalMs, oaiPollIntervalMs, autodlPollIntervalMs, ttapiPollIntervalMs, cntcnPollIntervalMs, duomiPollIntervalMs, defaultPollIntervalMs, recoverySweepMs, archiveRescheduleMs, providerTaskIdDeadline };
+  const dependencies = { imagePollIntervalMs, oaiPollIntervalMs, autodlPollIntervalMs, ttapiPollIntervalMs, cntcnPollIntervalMs, duomiPollIntervalMs, videoUpscalePollIntervalMs, defaultPollIntervalMs, recoverySweepMs, archiveRescheduleMs, providerTaskIdDeadline };
   for (const [name, dependency] of Object.entries(dependencies)) {
-    if (typeof dependency !== 'function' && !['imagePollIntervalMs', 'oaiPollIntervalMs', 'autodlPollIntervalMs', 'ttapiPollIntervalMs', 'cntcnPollIntervalMs', 'duomiPollIntervalMs', 'defaultPollIntervalMs', 'recoverySweepMs', 'archiveRescheduleMs'].includes(name)) throw new TypeError(`生成任务策略缺少 ${name} 依赖`);
+    if (typeof dependency !== 'function' && !['imagePollIntervalMs', 'oaiPollIntervalMs', 'autodlPollIntervalMs', 'ttapiPollIntervalMs', 'cntcnPollIntervalMs', 'duomiPollIntervalMs', 'videoUpscalePollIntervalMs', 'defaultPollIntervalMs', 'recoverySweepMs', 'archiveRescheduleMs'].includes(name)) throw new TypeError(`生成任务策略缺少 ${name} 依赖`);
   }
 
   function pollInterval(task) {
@@ -22,6 +23,7 @@ export function createGenerationJobPolicy({
     if (task?.provider === 'ttapi') return ttapiPollIntervalMs;
     if (task?.provider === 'cntcn' || task?.routeId) return task?.routeId ? 10_000 : cntcnPollIntervalMs;
     if (task?.provider === 'duomi') return duomiPollIntervalMs;
+    if (task?.provider === 'aliyun-vsr') return videoUpscalePollIntervalMs;
     return defaultPollIntervalMs;
   }
   function nextRunAt(task, kind, at = Date.now()) {

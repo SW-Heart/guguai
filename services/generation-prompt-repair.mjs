@@ -95,7 +95,9 @@ export function applyPromptRepair(prompt, text) {
 // Persist the claim BEFORE the network call: a restart must never charge the
 // platform again for the same failed generation attempt. No customer billing calls here.
 export async function repairGenerationPrompt(task, error, { callLlm, config, save, guidance = loadPromptRepairGuidance, now = () => new Date().toISOString() }) {
-  if (!['image', 'video'].includes(task.type) || !task.prompt || !isPromptRejection(error)) return false;
+  // Upscale tasks only carry the source work's description for display; it
+  // never reaches the upscale service, so there is nothing to repair.
+  if (!['image', 'video'].includes(task.type) || !task.prompt || task.upscale || !isPromptRejection(error)) return false;
   const previous = task.promptRepair;
   const attempts = previous?.attempts || (previous ? [{ ...previous, generationRetryCount: previous.generationRetryCount ?? 1 }] : []);
   const attemptCount = Math.max(Number(previous?.attemptCount) || 0, attempts.length);

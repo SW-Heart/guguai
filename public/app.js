@@ -9,8 +9,9 @@ import { createApiClient } from './api-client.js?v=4';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=4';
-import { createGenerationPresentation } from './features/generation/presentation.js?v=4';
-import { createCreditPresentation } from './features/credits/presentation.js?v=5';
+import { createGenerationPresentation } from './features/generation/presentation.js?v=5';
+import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=1';
+import { createCreditPresentation } from './features/credits/presentation.js?v=6';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=7';
@@ -168,6 +169,19 @@ const { load:loadNotifications, render:renderNotifications, setPanelOpen:setNoti
 const supportLogController = createSupportLogController({ api, toast, closeNotifications:() => setNotificationPanelOpen(false), getClientInfo:() => desktopClientInfo, getSyncInfo:() => desktopSyncInfo });
 const generationPresentation = createGenerationPresentation({ escapeHtml:esc });
 const { taskProgress, videoProgressLabel, videoProgressMarkup, generationPreparationMarkup } = generationPresentation;
+const videoUpscale = createVideoUpscaleController({
+  $, api, toast, setCreditBalance,
+  creditText:value => creditText(value), fileById, taskById, observeTaskFailure,
+  getBalance:() => state.credits,
+  onTasksChanged:tasks => {
+    if (tasks.length) {
+      state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
+      mergeTasksIntoLoadedHistory(tasks);
+    }
+    renderTasks();
+    if (tasks.length) void loadTasks({ background:true });
+  },
+});
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
   const preview = assetPreviewUrl(file);
   const original = String(file?.remoteUrl || file?.url || '');
@@ -2611,6 +2625,7 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
       } else if ((cardsChanged || assetsChanged) && state.initialSyncReady) {
         scheduleRouteContentRender(state.route, false);
       }
+      videoUpscale.resumePendingUploads(state.tasks);
       if (state.user && (!document.hidden || window.guguDesktop)) scheduleTaskPoll();
       return state.tasks;
     } catch (error) {
@@ -2645,7 +2660,7 @@ function taskCard(task) {
   const localSyncing = taskLocalSyncing(task, asset);
   const localReady = Boolean(asset && asset.localStatus === 'saved' && !localSyncing);
   const displayStatus = taskDisplayStatus(task, asset);
-  const progressMarkup = task.localPreparation || task.awaitingReferences ? generationPreparationMarkup(task) : localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
+  const progressMarkup = task.localPreparation || task.awaitingReferences ? generationPreparationMarkup(task, videoUpscale.preparationProgress(task)) : localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
   const failure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localReady
     ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
@@ -2660,10 +2675,15 @@ function taskCard(task) {
     ? '<path d="M8 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/><path d="m9 15 2-2 2 2 2-2 2 2"/>'
     : '<path d="M8 8h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/><path d="m10 12 4 2-4 2z"/>';
   const copyLabel = task.type === 'image' ? '复制图片' : '复制视频';
+  const upscaleAction = videoUpscale.canUpscale(task)
+    ? `<button class="task-action" type="button" data-action="upscale" data-task-id="${task.id}" data-tooltip="高清放大" aria-label="高清放大"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="m10 9 5 3-5 3z"/></svg></button>`
+    : '';
+  const regenerateAction = isVideoUpscaleTask(task) ? '' : `<button class="task-action" type="button" data-action="regenerate" data-task-id="${task.id}" data-tooltip="再次生成" aria-label="再次生成"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>`;
   const completedActions = localReady
     ? `<div class="card-workflow-actions" aria-label="作品操作">
         ${imageActions}
-        <button class="task-action" type="button" data-action="regenerate" data-task-id="${task.id}" data-tooltip="再次生成" aria-label="再次生成"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+        ${upscaleAction}
+        ${regenerateAction}
         <button class="task-action" type="button" data-action="copy" data-task-id="${task.id}" data-tooltip="${copyLabel}" aria-label="${copyLabel}"><svg viewBox="0 0 24 24" aria-hidden="true">${copyIcon}</svg></button>
         ${localFileAction(asset)}
         <button class="task-action danger-action" type="button" data-action="delete" data-task-id="${task.id}" data-tooltip="删除" aria-label="删除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg></button>
@@ -2812,7 +2832,7 @@ function historyTaskSummary(task) {
 }
 function historyTaskMeta(task) {
   const type = task.type === 'image' ? '图像' : '视频';
-  const parameter = task.type === 'image' ? task.size || '—' : `${task.aspectRatio || '—'} · ${task.duration || '—'} 秒`;
+  const parameter = task.type === 'image' ? task.size || '—' : isVideoUpscaleTask(task) ? videoUpscale.resolutionText(task) : `${task.aspectRatio || '—'} · ${task.duration || '—'} 秒`;
   return `${type} · ${generationModelName(task)} · ${parameter}`;
 }
 function historyTaskCredit(task) {
@@ -2951,6 +2971,7 @@ function generationModelName(task) {
   if (modelId === 'gpt-image-2') return 'GPT-Image-2';
   if (modelId === 'gpt-image-2.5') return 'GPT Image 2.5';
   if (modelId === 'midjourney') return 'Midjourney';
+  if (modelId === 'video-upscale') return '高清放大';
   const configuredModels = Array.isArray(state.config?.videoCapabilities?.models) ? state.config.videoCapabilities.models : [];
   const model = [...configuredModels, ...fallbackVideoModels].find(item => item.id === modelId);
   if (model?.label) return model.label;
@@ -2993,6 +3014,11 @@ function generationParameterRows(task) {
       rows.push(detailRow('质量', imageQualityLabels[task.quality] || task.quality || '—'));
     }
     if (Number(task.batchSize) > 1) rows.push(detailRow('生成数量', `${task.batchSize} 张`));
+  } else if (isVideoUpscaleTask(task)) {
+    const output = task.upscale || {};
+    rows.push(detailRow('原分辨率', output.sourceWidth ? `${output.sourceWidth} × ${output.sourceHeight}` : '—'));
+    rows.push(detailRow('放大后', videoUpscale.resolutionText(task)));
+    rows.push(detailRow('时长', Number.isFinite(Number(task.duration)) ? `${task.duration} 秒` : '—'));
   } else {
     rows.push(detailRow('生成模式', generationModeName(task)));
     rows.push(detailRow('画幅', task.aspectRatio || '—'));
@@ -3088,6 +3114,13 @@ function addTaskReference(task, target=task.type, { fallbackToOutput = false, fo
 }
 function continueFromTask(task, target=task.type, includeReference=false, { fallbackToOutput = false, forceOutput = false, replaceReferences = false, restoreMentions = false, carryPrompt = true } = {}) {
   if (!task) return;
+  // An upscaled video carries no creation settings of its own; reuse the
+  // settings of the video it was made from.
+  if (isVideoUpscaleTask(task)) {
+    const source = taskById(task.upscale?.sourceGenerationId);
+    if (!source) return toast('原视频已不在作品列表中');
+    task = source;
+  }
   if ($('#generationDetailDialog').open) closeGenerationDetail();
   if (includeReference && replaceReferences) {
     state.refs[target] = [];
@@ -3215,6 +3248,13 @@ function handleTaskAction(action, id, button = null) {
   if (action === 'video-reference') { continueFromTask(task, 'video', true, { forceOutput:true, carryPrompt:false }); return; }
   if (action === 'regenerate') { continueFromTask(task, task.type, true, { replaceReferences:true, restoreMentions:true }); return; }
   if (action === 'copy') { void copyTaskAsset(task, button); return; }
+  if (action === 'upscale') { void videoUpscale.open(task); return; }
+  if (isVideoUpscaleTask(task) && (action === 'retry' || action === 'continue')) {
+    const source = taskById(task.upscale?.sourceGenerationId);
+    if (!source) return toast('原视频已不在作品列表中，无法重新放大');
+    void videoUpscale.open(source);
+    return;
+  }
   if (action === 'retry' || action === 'continue') { continueFromTask(task); return; }
   if (action === 'delete') return deleteGenerationTask(task, button);
 }

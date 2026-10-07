@@ -170,7 +170,7 @@ test('wechat order routes require authentication; notify is public and fails clo
 test('all modified versioned entries have current cache keys', () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
   assert.ok(Number(read('public/index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=5'));
+  assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=6'));
   assert.ok(read('public/index.html').includes('/payment.css?v=3'));
   assert.ok(!read('public/pricing.html').includes('/payment.css'));
   for (const page of ['pricing', 'home', 'features', 'help']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=20'));

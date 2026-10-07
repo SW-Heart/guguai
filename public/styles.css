@@ -1283,6 +1283,17 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .desktop-restart-dialog { width: min(430px, calc(100% - 32px)); }
 .desktop-restart-summary { margin-top: 22px; margin-bottom: 4px; }
 .desktop-restart-actions .gradient-button { min-width: 146px; }
+/* Video upscale confirmation reuses the restart dialog glass surface; the
+   summary row compares resolutions and the cost list states the charge. */
+.video-upscale-dialog .desktop-restart-summary { margin-bottom: 12px; }
+.video-upscale-dialog .desktop-restart-summary strong { overflow-wrap: anywhere; }
+.video-upscale-cost { position: relative; z-index: 1; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.video-upscale-cost div { min-width: 0; padding: 11px 14px; border: 1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.72); border-radius: 13px; background: rgb(var(--theme-panel-rgb, 255 255 255) / 0.32); display: grid; gap: 4px; }
+.video-upscale-cost dt { color: var(--theme-muted, #969bb0); font-size: 10px; }
+.video-upscale-cost dd { margin: 0; color: var(--theme-ink-soft, #454b69); font: 600 13px var(--mono); }
+.video-upscale-cost div:first-child dd { color: var(--theme-brand, #555be0); }
+.video-upscale-error { position: relative; z-index: 1; margin: 12px 0 0; color: var(--theme-danger, #b24d55); font-size: 12px; line-height: 1.6; }
+.video-upscale-dialog .desktop-restart-actions .gradient-button:disabled { color: var(--theme-muted, #8a8fa5); background: rgb(var(--theme-panel-rgb, 255 255 255) / 0.5); border-color: rgb(var(--theme-line-rgb, 255 255 255) / 0.72); box-shadow: none; cursor: not-allowed; }
 
 @media (max-width: 560px) {
   .desktop-update-card,
