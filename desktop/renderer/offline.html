@@ -82,6 +82,11 @@
     .desktop-window-controls button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
     .desktop-window-controls button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.55; }
     .desktop-window-controls .window-icon { width: 13px; height: 13px; }
+    body.desktop-win32 .desktop-window-controls { border: 0; background: transparent; backdrop-filter: none; }
+    body.desktop-win32 .desktop-window-controls button { transition: color 180ms cubic-bezier(.2,.8,.2,1); }
+    body.desktop-win32 .desktop-window-controls button:is(:hover, :active) { color: var(--ink); background: transparent; }
+    body.desktop-win32 .desktop-window-controls .window-close:hover { color: var(--danger); }
+    body.desktop-win32 .desktop-window-controls .window-close:active { color: #b63d46; }
 
     .offline-shell {
       position: relative;

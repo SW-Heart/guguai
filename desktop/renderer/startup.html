@@ -36,6 +36,11 @@
     .desktop-window-controls .window-close:hover { color: #fff; background: #d6535c; }
     .desktop-window-controls .window-icon { width: 13px; height: 13px; }
     .desktop-window-controls button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    body.desktop-win32 .desktop-window-controls { border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    body.desktop-win32 .desktop-window-controls button { transition-property: color; }
+    body.desktop-win32 .desktop-window-controls button:is(:hover, :active) { color: var(--ink); background: transparent; }
+    body.desktop-win32 .desktop-window-controls .window-close:hover { color: #d6535c; }
+    body.desktop-win32 .desktop-window-controls .window-close:active { color: #b63d46; }
     .startup-shell { position: relative; z-index: 1; min-height: calc(100vh - 56px); display: grid; place-items: center; padding: 32px; }
     .startup-content { width: min(430px, 100%); text-align: center; }
     .startup-stage { position: relative; width: 190px; height: 150px; margin: 0 auto 25px; display: grid; place-items: center; }

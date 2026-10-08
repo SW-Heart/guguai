@@ -71,8 +71,7 @@ body.keyboard-nav .skip-link { transition: transform var(--ease); }
 body.keyboard-nav .skip-link:focus-visible { transform: none; }
 
 /* Desktop chrome: the workbench topbar becomes the native-feeling titlebar. */
-/* The 56px titlebar band belongs to the native traffic lights and the Windows
-   controls overlay, so the skip link drops below it in the desktop shell. */
+/* Keep the skip link below the 56px desktop titlebar band. */
 body.desktop-runtime .skip-link { --skip-link-top: 64px; left: 16px; }
 .desktop-drag-region { position: fixed; z-index: 80; top: 0; right: 144px; left: 0; height: 56px; -webkit-app-region: drag; user-select: none; }
 .desktop-window-controls { position: fixed; z-index: 100; top: 0; right: 0; height: 56px; display: flex; align-items: stretch; border-left: 1px solid rgba(24,24,27,.08); background: rgba(247,247,248,.92); box-shadow: -8px 0 18px rgba(24,24,27,.035); backdrop-filter: blur(16px); -webkit-app-region: no-drag; }
@@ -100,9 +99,13 @@ body.desktop-runtime.desktop-linux .topbar { padding-right: 144px; }
 body.desktop-runtime.desktop-darwin .topbar { padding-left: 72px; grid-template-columns: 0 var(--creator-width) 1fr; }
 body.desktop-runtime.desktop-darwin .topbar .brand { min-width: 0; overflow: hidden; }
 body.desktop-runtime.desktop-darwin .desktop-window-controls { display: none; }
-/* Windows uses Electron's native Window Controls Overlay. The old HTML
-   controls remain in the markup for fallback compatibility but must not sit
-   under the native hit area. */
-body.desktop-runtime.desktop-win32 .desktop-window-controls { display: none; }
+/* Keep the workspace surface visible through Windows caption controls.
+   Older clients with native controls still hide this group via .hidden. */
+body.desktop-runtime.desktop-win32 .desktop-window-controls { border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+body.desktop-runtime.desktop-win32 .desktop-window-controls button { transition: color var(--ease); }
+body.desktop-runtime.desktop-win32 .desktop-window-controls button:is(:hover, :active) { color: var(--ink); background: transparent; }
+body.desktop-runtime.desktop-win32 .desktop-window-controls .window-close:hover { color: var(--theme-danger, #d6535c); }
+body.desktop-runtime.desktop-win32 .desktop-window-controls .window-close:active { color: var(--theme-danger, #b63d46); }
+body.desktop-runtime.desktop-win32 .desktop-window-controls button:focus-visible { outline-offset: -4px; }
 
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

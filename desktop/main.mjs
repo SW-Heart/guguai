@@ -136,23 +136,6 @@ let windowFullscreenTransition = false;
 const remoteDownloadLocks = new Map();
 const paymentToolbarHeight = 64;
 
-const windowsTitleBarOverlayHeight = 56;
-const windowsTitleBarOverlay = {
-  // Transparent so the caption buttons sit on the shell background and the
-  // rounded workspace frame instead of a white block in the corner.
-  color: 'rgba(0, 0, 0, 0)',
-  symbolColor: '#667085',
-  height: windowsTitleBarOverlayHeight,
-};
-const windowsModalTitleBarOverlay = {
-  // The HTML dialog backdrop must remain visible beneath the native caption
-  // buttons. Native WCO is outside the renderer's z-index stack, so make its
-  // surface and symbols transparent while the modal is active.
-  color: 'rgba(0, 0, 0, 0)',
-  symbolColor: 'rgba(255, 255, 255, 0)',
-  height: windowsTitleBarOverlayHeight,
-};
-
 function commandLineApiBase() {
   const value = process.argv.find(argument => argument.startsWith('--api-base='));
   return value ? value.slice('--api-base='.length) : '';
@@ -982,7 +965,6 @@ async function openOfflinePage(message = '') {
   if (!mainWindow) return;
   if (process.platform === 'win32') {
     setWindowsModalState(false);
-    mainWindow.setTitleBarOverlay(windowsTitleBarOverlay);
   }
   await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: { message } });
 }
@@ -1242,7 +1224,6 @@ async function loadStudio() {
   try {
     if (process.platform === 'win32') {
       setWindowsModalState(false);
-      mainWindow.setTitleBarOverlay(windowsTitleBarOverlay);
     }
     // Loading the actual page is the health check. A separate `/healthz`
     // request used to add one full network round trip before the renderer
@@ -1310,10 +1291,8 @@ function setWindowsModalState(active) {
   if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) return false;
   const modal = Boolean(active);
   try {
-    // WCO caption buttons are native and always hit-tested above the renderer.
-    // Update the overlay first, then disable their commands while a renderer
-    // modal is open so the backdrop owns the complete interactive surface.
-    mainWindow.setTitleBarOverlay(modal ? windowsModalTitleBarOverlay : windowsTitleBarOverlay);
+    // Custom caption controls live in the renderer. Also guard their IPC
+    // commands while a modal is open, including during update installation.
     mainWindow.setMinimizable(!modal);
     mainWindow.setMaximizable(!modal);
     mainWindow.setClosable(!modal);
@@ -1533,7 +1512,7 @@ function registerIpc() {
     platform: process.platform,
     arch: process.arch,
     version: clientVersion(),
-    nativeWindowControls: process.platform === 'win32',
+    nativeWindowControls: false,
     apiBase: configuredApiBase(),
     workspacePath: workspace || workspaceRoot || '',
     workspaceRootPath: workspaceRoot || '',
@@ -1584,11 +1563,13 @@ function registerIpc() {
   handle('desktop:retry', () => loadStudio());
   handle('window:minimize', event => {
     if (!isMainWindowEvent(event)) return false;
+    if (process.platform === 'win32' && !mainWindow.isMinimizable()) return false;
     mainWindow.minimize();
     return true;
   });
   handle('window:toggle-maximize', event => {
     if (!isMainWindowEvent(event)) return false;
+    if (process.platform === 'win32' && !mainWindow.isMaximizable()) return false;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
     return mainWindow.isMaximized();
@@ -1602,6 +1583,7 @@ function registerIpc() {
   });
   handle('window:close', event => {
     if (!isMainWindowEvent(event)) return false;
+    if (process.platform === 'win32' && !mainWindow.isClosable()) return false;
     return closeMainWindow();
   });
   handle('updates:check', () => checkForUpdates());
@@ -1724,7 +1706,6 @@ function registerIpc() {
 
 async function createWindow({ loadStudioAfter = true } = {}) {
   const usesNativeMacTitlebar = process.platform === 'darwin';
-  const usesNativeWindowsControls = process.platform === 'win32';
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -1736,14 +1717,11 @@ async function createWindow({ loadStudioAfter = true } = {}) {
     // and the remote studio page are still loading.
     show: false,
     backgroundColor: '#f7f7f8',
-    frame: usesNativeMacTitlebar || usesNativeWindowsControls,
+    // Windows reuses the HTML caption controls so hover changes only the icon.
+    frame: usesNativeMacTitlebar,
     ...(usesNativeMacTitlebar ? {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 8, y: 18 },
-    } : {}),
-    ...(usesNativeWindowsControls ? {
-      titleBarStyle: 'hidden',
-      titleBarOverlay: windowsTitleBarOverlay,
     } : {}),
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
