@@ -3,7 +3,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=125';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=126';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -77,7 +77,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
+export function createDramaStudio({ api, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -1151,7 +1151,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
         const requestShot=videoRequestShot(shot,refs);
         body={type:'video',prompt:shotVideoPrompt(requestShot),dramaProjectId:project.id,dramaShotId:shot.id,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs};
       }else throw new Error('不支持的制作操作');
-      action.requestBody ||= {...body,requestId:`${project.directorWorkspace.plan.id}-${action.id}-${action.previousTaskIds?.length||0}`};
+      action.requestBody ||= {...body,precheckSource:'agent',requestId:`${project.directorWorkspace.plan.id}-${action.id}-${action.previousTaskIds?.length||0}`};
       project.directorWorkspace.plan.actions=project.directorWorkspace.plan.actions.map(a=>a.id===action.id?{...action}:a);
       await patch({directorWorkspace:project.directorWorkspace},{quiet:true});ensure();
       const generation=await api('/api/generations',{method:'POST',body:JSON.stringify(action.requestBody)});assertProjectRequest(request);
@@ -2785,12 +2785,14 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     if(!professionalAssetGeneration)return;
     const request=projectRequest();
     const pending={...professionalAssetGeneration};
+    const checked=await promptPrecheck.check({prompts:[pending.prompt],source:'drama',scopeNote:true});
+    if(checked.action==='cancel')return;
     professionalPendingImageGenerations=[pending,...professionalPendingImageGenerations];
     render(true);
     try{
       const referenceAssetIds=await ensureCloudReferenceIds(pending.referenceAssetIds);
       assertProjectRequest(request);
-      const result=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'image',prompt:pending.prompt,size:pending.size,quality:pending.quality,referenceAssetIds})});
+      const result=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'image',prompt:checked.prompts[0],size:pending.size,quality:pending.quality,referenceAssetIds,...checked.fields})});
       assertProjectRequest(request);
       setCreditBalance(result.balance);
       state.tasks=[result,...state.tasks.filter(item=>item.id!==result.id)];
@@ -2844,10 +2846,12 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
       if(warning){clearPending();render(true,{focus:false});return toast(warning);}
       if(!shotGenerationReady(shot)){clearPending();render(true,{focus:false});return;}
       const refs=shotGenerationAssetIds(shot); const requestShot=videoRequestShot(shot,refs); const count=Math.max(1,Math.min(4,Number(shot.generation.count)||1));
-      const finalPrompt=shotVideoPrompt(requestShot);
+      const checked=await promptPrecheck.check({prompts:[shotVideoPrompt(requestShot)],modelId:shot.generation.modelId,source:'drama',scopeNote:true});
+      if(checked.action==='cancel'){clearPending();render(true,{focus:false});return;}
+      const finalPrompt=checked.prompts[0];
       const cloudRefs=await ensureCloudReferenceIds(refs);
       if(!isProjectRequestCurrent(request)){clearPending();return;}
-      const payload={type:'video',quantity:count,prompt:finalPrompt,dramaProjectId:targetProjectId,dramaShotId:targetShotId,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs};
+      const payload={...checked.fields,type:'video',quantity:count,prompt:finalPrompt,dramaProjectId:targetProjectId,dramaShotId:targetShotId,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs};
       const response=await api('/api/generations',{method:'POST',body:JSON.stringify(payload)});
       if(!isProjectRequestCurrent(request)){clearPending();return;}
       const results=Array.isArray(response.tasks)?response.tasks:[response];
@@ -3139,9 +3143,9 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
     const request=projectRequest();
     if(!await saveResource(id,{quiet:true,notify:false},request))return;
     if(!isProjectRequestCurrent(request))return;
-    const resource=project.resources.find(x=>x.id===id);const finalPrompt=buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio});button=document.querySelector(`[data-generate-resource="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';
+    const resource=project.resources.find(x=>x.id===id);const checked=await promptPrecheck.check({prompts:[buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio})],source:'drama',scopeNote:true});if(checked.action==='cancel'||!isProjectRequestCurrent(request))return;const finalPrompt=checked.prompts[0];button=document.querySelector(`[data-generate-resource="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';
     try{
-      const generation=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'image',prompt:finalPrompt,size:project.settings.aspectRatio,quality:'medium',referenceAssetIds:[]})});
+      const generation=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'image',prompt:finalPrompt,size:project.settings.aspectRatio,quality:'medium',referenceAssetIds:[],...checked.fields})});
       assertProjectRequest(request);setCreditBalance(generation.balance);state.tasks=[generation,...state.tasks.filter(x=>x.id!==generation.id)];scheduleTaskPoll();
       const result=await api(`/api/drama/projects/${project.id}/resources/${id}/versions`,{method:'POST',body:JSON.stringify({taskId:generation.id})});
       assertProjectRequest(request);project=result.project;state.dramaProject=project;render();toast(`素材图已开始生成，预计消耗 ${generation.creditCost} 积分`);
@@ -3347,7 +3351,7 @@ export function createDramaStudio({ api, state, esc, toast, setCreditBalance, cr
   }
   async function setGenerationMode(id,mode){const request=projectRequest();try{assertProjectRequest(request);const shot=project.shots.find(x=>x.id===id);if(!shot)return;shot.generation.type=mode;videoAssetPickerShotId='';if(mode==='FIRST&LAST')shot.duration=8;if(mode==='FIRST&LAST'&&!shot.generation.firstFrameAssetId)shot.generation.firstFrameAssetId=selectedResourceAssetIds(shot)[0]||'';if(mode==='REFERENCE'&&!shot.generation.referenceAssetIds.length)shot.generation.referenceAssetIds=selectedResourceAssetIds(shot).slice(0,professionalMaxImages(shot));await patch({shots:project.shots});assertProjectRequest(request);}catch(error){if(error.stale)return;throw error;}}
   async function saveGenerationConfig(id){const request=projectRequest();try{assertProjectRequest(request);const card=document.querySelector(`[data-video-shot="${id}"]`);const shot=project.shots.find(x=>x.id===id);if(!card||!shot)return null;card.querySelectorAll('[data-generation-field]').forEach(field=>shot.generation[field.dataset.generationField]=field.value);card.querySelectorAll('[data-video-field]').forEach(field=>shot[field.dataset.videoField]=field.dataset.videoField==='duration'?Number(field.value):field.value);const promptEditor=card.querySelector('[data-prompt-override]');if(promptEditor){const value=Array.from(promptEditor.value.trim()).slice(0,videoPromptMaxLength(shot.generation.modelId)).join('');shot.promptOverride=value&&value!==promptEditor.dataset.systemPrompt?value:'';}ensureProfessionalVideoSettings(shot);const updated=await patch({shots:project.shots});assertProjectRequest(request);toast('本镜设置已保存');return updated?.shots?.find(item=>item.id===id)||null;}catch(error){if(error.stale)return null;throw error;}}
-  async function generateShotVideo(id,button){let shot=project.shots.find(x=>x.id===id);if(!shot)return;const request=projectRequest();shot=await saveGenerationConfig(id)||project.shots.find(x=>x.id===id);if(!shot||!isProjectRequestCurrent(request))return;ensureProfessionalVideoSettings(shot);if(!shot.generation.modelId)return toast('当前没有可用的视频模型，请稍后再试。');const warning=professionalProductionWarning(shot);if(warning)return toast(warning);const referenceAssetIds=shotGenerationAssetIds(shot);const requestShot=videoRequestShot(shot,referenceAssetIds);const finalPrompt=shotVideoPrompt(requestShot);button=document.querySelector(`[data-generate-shot-video="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';try{const cloudRefs=await ensureCloudReferenceIds(referenceAssetIds);assertProjectRequest(request);const generation=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'video',prompt:finalPrompt,dramaProjectId:project.id,dramaShotId:id,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs})});assertProjectRequest(request);setCreditBalance(generation.balance);state.tasks=[generation,...state.tasks.filter(x=>x.id!==generation.id)];const result=await api(`/api/drama/projects/${project.id}/shots/${id}/videos`,{method:'POST',body:JSON.stringify({taskId:generation.id})});assertProjectRequest(request);project=result.project;state.dramaProject=project;render();toast(`分镜视频已开始生成，预计消耗 ${generation.creditCost} 积分`);}catch(error){if(error.stale)return;toast(error.message);button.disabled=false;button.textContent='重新生成';}}
+  async function generateShotVideo(id,button){let shot=project.shots.find(x=>x.id===id);if(!shot)return;const request=projectRequest();shot=await saveGenerationConfig(id)||project.shots.find(x=>x.id===id);if(!shot||!isProjectRequestCurrent(request))return;ensureProfessionalVideoSettings(shot);if(!shot.generation.modelId)return toast('当前没有可用的视频模型，请稍后再试。');const warning=professionalProductionWarning(shot);if(warning)return toast(warning);const referenceAssetIds=shotGenerationAssetIds(shot);const requestShot=videoRequestShot(shot,referenceAssetIds);const checked=await promptPrecheck.check({prompts:[shotVideoPrompt(requestShot)],modelId:shot.generation.modelId,source:'drama',scopeNote:true});if(checked.action==='cancel'||!isProjectRequestCurrent(request))return;const finalPrompt=checked.prompts[0];button=document.querySelector(`[data-generate-shot-video="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';try{const cloudRefs=await ensureCloudReferenceIds(referenceAssetIds);assertProjectRequest(request);const generation=await api('/api/generations',{method:'POST',body:JSON.stringify({...checked.fields,type:'video',prompt:finalPrompt,dramaProjectId:project.id,dramaShotId:id,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs})});assertProjectRequest(request);setCreditBalance(generation.balance);state.tasks=[generation,...state.tasks.filter(x=>x.id!==generation.id)];const result=await api(`/api/drama/projects/${project.id}/shots/${id}/videos`,{method:'POST',body:JSON.stringify({taskId:generation.id})});assertProjectRequest(request);project=result.project;state.dramaProject=project;render();toast(`分镜视频已开始生成，预计消耗 ${generation.creditCost} 积分`);}catch(error){if(error.stale)return;toast(error.message);button.disabled=false;button.textContent='重新生成';}}
   async function generateAllVideos(){
     const request=projectRequest();
     const pending=project.shots.filter(shot=>task(shot.selectedVideoTaskId)?.status!=='completed');

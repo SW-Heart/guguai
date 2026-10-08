@@ -1,12 +1,12 @@
 # Seedance 2.0 / 2.5 审核词句排查
 
-核对日期：2026-10-06。用于 GuGu 的提示词优化和自动优化。必须读取同目录 [具体中文与英文候选词表](moderation-cues.json)。候选词集中保存在 JSON，不另维护重复列表。
+核对日期：2026-10-08。用于 GuGu 的提示词优化和自动优化。Seedance 社区候选词已并入 `prompt-optimization` 的风险词表 `references/prompt-risk-lexicon.json`，以 `sd-` 开头的分组只对 Seedance 生效。词表由系统匹配，Agent 用 `prompt_risk_scan` 获取命中位置，不整份读取。
 
 ## 证据与版本
 
-未在本次查阅的官方资料中找到逐词、完整且保证触发的 Seedance 2.0 或 2.5 禁词表。不能把 Google 的审核类别或支持码当成 Seedance 规则。
+未在本次查阅的官方资料中找到逐词、完整且保证触发的 Seedance 2.0 或 2.5 禁词表。社区候选词证据弱，迁移后大多为 `off`（只作阅读线索，不向用户弹窗），少数含义明确的词为 `suspect`；它们的级别需要由 GuGu 实际生成结果校准。不能把 Google 的审核类别或支持码当成 Seedance 规则。
 
-词表整合下列五个 GitHub 来源，核对于上述日期。完整地址、版本范围和证据等级保存在 JSON 的 `sources`，每组通过 `sourceIds` 追溯。源作者的实测声明仅记为作者报告，未独立复现；2.0 即梦记录不能视为 2.5 API 或 GuGu 渠道的实测结论。因此两版均可读取来辅助排查，2.5 的适用性标为未验证。
+社区候选词整合下列五个 GitHub 来源。完整地址、版本范围和证据等级保存在风险词表的 `sources`，每组通过 `sourceIds` 追溯。源作者的实测声明仅记为作者报告，未独立复现；2.0 即梦记录不能视为 2.5 API 或 GuGu 渠道的实测结论。因此两版均可读取来辅助排查，2.5 的适用性标为未验证。
 
 | 来源 | 纳入内容 | 证据限制 |
 | --- | --- | --- |
@@ -27,9 +27,15 @@
 - [官方肖像素材说明](https://docs.volcengine.com/docs/ark/seedance-portrait-asset-guide?lang=zh)对两版的真人参考素材提供受支持的处理途径。此类输入限制不是写一句“已授权”就能解决；不自动改变参考人物。
 - [火山方舟错误码](https://docs.volcengine.com/docs/82379/1299023)区分输入文字、输入素材、生成结果与版权问题。优先按实际返回类别处理；通用提示“请修改提示词后重试”不能证明具体词被拒。
 
+## GuGu 线上记录
+
+- Seedance 2.0 的通用拒绝码 710082022（“疑似包含侵权/违规内容”）不说明是文字还是素材。线上多数此类拒绝来自带真人参考图的普通对话戏，提示词本身没有风险词；不要凭这个错误码改词。
+- 同一场“婚纱从身上滑落、镜头顺着身体下移、露出后背和大腿”的戏换了七种写法都被 Seedance 2.0 拒绝，即使写明“不呈现裸露”。脱衣过程与身体特写本身就是触发点，只能改变剧情呈现，不能靠换说法通过。
+- 提示词里罗列“不生成低俗、挑逗、露骨、色情内容”的安全声明也出现在被拒记录中；这些词按字面触发审核，应删除声明。
+
 ## 每轮实际使用
 
-1. 阅读词表和原描述。自动优化收到的 `candidateCueMatches` 带有词、原文位置、上下文和类别；这些只是定位线索。普通 agent 使用 `skills_read` 读 JSON 后自行检查原文。
+1. 阅读原描述和命中。自动优化收到的 `candidateCueMatches`、Agent 调用 `prompt_risk_scan` 得到的结果，都带有词、原文位置、级别、上下文和核对要点；这些只是定位线索。
 2. 对每个命中结合前后句、否定词、引用、人物年龄、动作对象和镜头判断。单字容易误匹配：刀工不一定涉及攻击，血橙不涉及血腥，鬼斧神工不涉及恐怖。学生、医院、合同、商标的正常描述保留。没有命中也不能断定安全。
 3. 只对允许内容中确有歧义的词句进行等价澄清。例如已有颜色含义的“血红色灯光”可以明确为“深红色灯光”；明确的受伤流血不能换成红色颜料。不是批量同义替换。
 4. 台词、引号内逐字文字、素材标签与已确认事实保持。无法保留原意、错误只指向素材/参数、或没有可靠改动时返回空 replacements；需要改剧情的方案留给用户选择。
@@ -41,28 +47,4 @@
 
 ## 词表来源许可
 
-JSON 中中文候选项与部分英文项改编自上述 MIT 项目；GuGu 增加上下文边界，不采用其规避式替代建议。保留原许可：
-
-```text
-MIT License
-
-Copyright (c) 2026 Iamemily2050 (@iamemily2050)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+社区候选词改编自上述项目，许可与署名见 `prompt-optimization` 的 `references/prompt-risk-lexicon-NOTICE.md`。GuGu 增加上下文边界，不采用其规避式替代建议。

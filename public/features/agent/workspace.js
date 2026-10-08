@@ -1,5 +1,5 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=125';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=126';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=11';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=6';

@@ -566,7 +566,7 @@ import { createApiClient } from './api-client.js?v=4';
     }
   }
 
-  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, models: loadModels, credentials: loadCredentials, logs: loadLogs };
+  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, precheck: loadPrecheck, models: loadModels, credentials: loadCredentials, logs: loadLogs };
   const viewFromHash = () => { const name = location.hash.replace(/^#\/?/, ''); return loaders[name] ? name : 'overview'; };
   function scrollAdminToTop() {
     const scroller = document.scrollingElement || document.documentElement;
@@ -927,6 +927,82 @@ import { createApiClient } from './api-client.js?v=4';
       doneLoading(table);
       table.innerHTML = errorMarkup(error.message, 'orders');
       bindRetry(table, 'orders', fetchOrders);
+    }
+  }
+
+  /* ---------- 提示词检查 ---------- */
+  const precheckRanges = [['7', '近 7 天'], ['30', '近 30 天']];
+  const precheckLevel = level => level === 'banned' ? pill('标红', 'bad') : level === 'suspect' ? pill('标黄', 'warn') : pill('仅参考', 'muted');
+  const percent = value => value === null || value === undefined ? '—' : `${value}%`;
+
+  async function loadPrecheck() {
+    const root = $('#view-precheck');
+    state.precheckDays ||= '7';
+    root.innerHTML = pageHead('precheckTitle', '提示词检查', '提交前检查的弹窗、用户选择和识别准确度', `${segmented('precheckRange', precheckRanges, state.precheckDays, '统计时间范围')}${refreshButton('precheck')}`) + `<div id="precheckBody">${skeletonMarkup(8)}</div>`;
+    $('[data-refresh="precheck"]', root).onclick = fetchPrecheck;
+    $$('[data-seg="precheckRange"]', root).forEach(button => button.onclick = () => {
+      state.precheckDays = button.dataset.value;
+      $$('[data-seg="precheckRange"]', root).forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+      fetchPrecheck();
+    });
+    await fetchPrecheck();
+  }
+
+  function precheckTermTable(rows, label) {
+    return `<div class="table-wrap"><table aria-label="${esc(label)}"><thead><tr><th>词</th><th>级别</th><th class="is-num">触发</th><th class="is-num">修改后提交</th><th class="is-num">仍然提交</th><th class="is-num">其中生成成功</th><th class="is-num">其中被拒</th><th class="is-num">取消</th></tr></thead><tbody>${rows.map(row => `<tr>
+      <td><div class="cell-stack"><b>${esc(row.term)}</b><span class="muted">${esc(row.groupId)}</span></div></td>
+      <td>${precheckLevel(row.level)}</td>
+      <td class="is-num">${money(row.triggers)}</td><td class="is-num">${money(row.edited)}</td><td class="is-num">${money(row.kept)}</td>
+      <td class="is-num">${money(row.keptSuccess)}</td><td class="is-num">${money(row.keptRejected)}</td><td class="is-num">${money(row.cancelled)}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  async function fetchPrecheck() {
+    const body = $('#precheckBody'); if (!body) return;
+    const token = nextRequest('precheck');
+    const refresh = $('[data-refresh="precheck"]');
+    setButtonBusy(refresh, true, '刷新中…');
+    markLoading(body);
+    try {
+      const data = await api(`/api/admin/prompt-precheck?days=${encodeURIComponent(state.precheckDays)}`);
+      if (isStale('precheck', token)) return;
+      const { summary, accuracy } = data;
+      body.innerHTML = `
+        <div class="cards">
+          <div class="stat"><span class="stat-head">弹窗次数</span><strong>${money(summary.shown)}</strong><span class="stat-sub">占同期生成任务 ${percent(summary.shownRate)} · 共 ${money(summary.generationTotal)} 个任务</span></div>
+          <div class="stat tone-success"><span class="stat-head">修改后提交</span><strong>${money(summary.edited)}</strong><span class="stat-sub">取消 ${money(summary.cancelled)} 次</span></div>
+          <div class="stat tone-warn"><span class="stat-head">照原样提交</span><strong>${money(summary.kept)}</strong><span class="stat-sub">其中标红后确认 ${money(summary.confirmedRed)} 次</span></div>
+          <div class="stat ${data.misses.length ? 'tone-danger' : ''}"><span class="stat-head">漏报</span><strong>${money(data.misses.length)}</strong><span class="stat-sub">因描述被拒但没有标出</span></div>
+        </div>
+        <div class="overview-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+          <section class="overview-card"><h3>标红的准确度</h3><p>标红后仍提交的任务中，真的因描述被拒的比例；越高说明标红越准</p>
+            <div class="meter-caption"><span>被拒比例</span><b>${percent(accuracy.redRejectedRate)}</b></div>
+            <div class="meter${accuracy.redRejectedRate !== null && accuracy.redRejectedRate < 80 ? ' is-warn' : ''}"><span style="width:${accuracy.redRejectedRate ?? 0}%"></span></div>
+            <div class="kv-list" style="margin-top:10px"><div class="kv-row"><span>标红后仍提交并已出结果</span><strong>${money(accuracy.redKept)}</strong></div><div class="kv-row"><span>其中被拒</span><strong>${money(accuracy.redRejected)}</strong></div></div>
+          </section>
+          <section class="overview-card"><h3>误报程度</h3><p>照原样提交后仍然生成成功的比例；越高说明弹窗越多余</p>
+            <div class="meter-caption"><span>成功比例</span><b>${percent(accuracy.keptSuccessRate)}</b></div>
+            <div class="meter${accuracy.keptSuccessRate !== null && accuracy.keptSuccessRate > 50 ? ' is-warn' : ''}"><span style="width:${accuracy.keptSuccessRate ?? 0}%"></span></div>
+            <div class="kv-list" style="margin-top:10px"><div class="kv-row"><span>照原样提交并已出结果</span><strong>${money(accuracy.keptFinished)}</strong></div><div class="kv-row"><span>服务端拦下（前端未弹窗）</span><strong>${money(summary.blocked)}</strong></div></div>
+          </section>
+        </div>
+        <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>误报候选</h3><p>至少 3 次照原样提交、且八成以上生成成功的词，建议降级或加放行短语</p></div></header>
+          ${data.falsePositives.length ? precheckTermTable(data.falsePositives, '误报候选') : emptyMarkup('暂无误报候选', '照原样提交的次数还不够多。')}</section>
+        <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>漏报</h3><p>因描述被拒、却没有任何标记的任务，可以从中补充词表</p></div></header>
+          ${data.misses.length ? `<div class="table-wrap"><table aria-label="漏报任务"><thead><tr><th>任务</th><th>模型</th><th>描述</th><th>失败原因</th><th>时间</th></tr></thead><tbody>${data.misses.map(item => `<tr>
+            <td>${idText(item.id, '任务 ID')}</td><td>${esc(item.modelId || '—')}</td><td style="max-width:420px;white-space:normal">${esc(item.prompt)}</td><td style="max-width:220px;white-space:normal">${esc(item.error)}</td><td>${date(item.createdAt)}</td>
+          </tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无漏报', '因描述被拒的任务都已被标出。')}</section>
+        <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>词条触发排行</h3><p>按触发次数排序，最多 50 条</p></div></header>
+          ${data.terms.length ? precheckTermTable(data.terms, '词条触发排行') : emptyMarkup('所选时间内没有触发记录')}</section>
+        <p class="muted" style="margin:14px 2px 0">统计自 ${date(data.since)}；生成结果以任务当前状态为准，排队中的任务不计入比例。</p>`;
+      doneLoading(body);
+    } catch (error) {
+      if (isStale('precheck', token)) return;
+      doneLoading(body);
+      body.innerHTML = errorMarkup(error.message, 'precheck');
+      bindRetry(body, 'precheck', fetchPrecheck);
+    } finally {
+      if (!isStale('precheck', token)) setButtonBusy(refresh, false);
     }
   }
 

@@ -58,6 +58,6 @@ test('Seedance route forms no longer require a creation type', () => {
 
 test('admin HTML loads the updated model configuration script cache key', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=35\b/);
+  assert.match(html, /\/guguadmin\.js\?v=36\b/);
   assert.doesNotMatch(html, /\/guguadmin\.js\?v=26\b/);
 });

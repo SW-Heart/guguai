@@ -64,22 +64,22 @@ test('each login activates its account workspace before the legacy claim', () =>
 test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(app.includes('./features/credits/presentation.js?v=6'));
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(admin.includes('/guguadmin.js?v=35'));
+  assert.ok(admin.includes('/guguadmin.js?v=36'));
   assert.ok(admin.includes('/guguadmin.css?v=20'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=488\b/);
+  assert.match(index, /\/app\.js\?v=489\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=363/);
+  assert.match(index, /\/styles\.css\?v=364/);
   assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
-  assert.match(index, /\/styles\/base\.css\?v=3/);
+  assert.match(index, /\/styles\/base\.css\?v=4/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=15/);
-  assert.match(app, /\.\/drama-studio\.js\?v=225/);
+  assert.match(app, /\.\/drama-studio\.js\?v=226/);
   assert.match(app, /\.\/features\/generation\/polling\.js\?v=4/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
   assert.match(app, /\.\/features\/media\/controller\.js\?v=12/);
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=3/);
-  assert.match(dramaStudio, /director-workspace\.js\?v=125\b/);
+  assert.match(dramaStudio, /director-workspace\.js\?v=126\b/);
   assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=13\b/);
   assert.match(app, /\.\/state\/account-state\.js\?v=1/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
@@ -193,7 +193,7 @@ test('image prompt supports reference mentions and compiles them before submissi
   assert.match(index, /id="imagePrompt" class="rich-prompt-editor" contenteditable="true"/);
   assert.match(app, /function insertImagePromptMentions\(/);
   assert.match(app, /openReferenceDialog\('image', \{ mentionRequest:imagePromptMentionRequest \}\)/);
-  assert.match(app, /prompt:replaceAssetMentions\(prompt, state\.imagePromptMentions\)/);
+  assert.match(app, /prompt:replaceAssetMentions\(checked\.prompts\[0\], state\.imagePromptMentions\)/);
   assert.match(app, /data-image-prompt-mention-id/);
   assert.match(app, /target === 'image' && !state\.refs\.image\.includes\(id\)\) removeImagePromptMentionNodes/);
 });

@@ -1,0 +1,1994 @@
+{
+ "schemaVersion": 2,
+ "reviewedAt": "2026-10-08",
+ "purpose": "提交前预检与提示词优化共用的风险词表。banned 标红并要求用户再次确认，suspect 标黄，off 只作为 Agent 阅读上下文的线索，不向用户弹窗。命中只是定位，不等于上游一定拒绝；未命中也不代表安全。不用于规避审核。",
+ "levels": {
+  "banned": "大概率被上游拒绝",
+  "suspect": "取决于上下文，可能被拒绝",
+  "off": "仅供 Agent 参考"
+ },
+ "riskTaxonomy": {
+  "standard": "GB/T 45654-2025《网络安全技术 生成式人工智能服务 安全基本要求》附录 A（前身 TC260-003）",
+  "A.1.1": "煽动颠覆国家政权、推翻社会主义制度",
+  "A.1.2": "危害国家安全和利益、损害国家形象",
+  "A.1.3": "煽动分裂国家、破坏国家统一和社会稳定",
+  "A.1.4": "宣扬恐怖主义、极端主义",
+  "A.1.5": "宣扬民族仇恨、民族歧视",
+  "A.1.6": "宣扬暴力、淫秽色情",
+  "A.1.7": "传播虚假有害信息",
+  "A.1.8": "其他法律、行政法规禁止的内容",
+  "A.2.1": "民族歧视",
+  "A.2.2": "信仰歧视",
+  "A.2.3": "国别歧视",
+  "A.2.4": "地域歧视",
+  "A.2.5": "性别歧视",
+  "A.2.6": "年龄歧视",
+  "A.2.7": "职业歧视",
+  "A.2.8": "健康歧视",
+  "A.2.9": "其他方面歧视",
+  "A.3.1": "侵犯他人知识产权",
+  "A.3.2": "违反商业道德",
+  "A.3.3": "泄露他人商业秘密",
+  "A.3.4": "利用算法、数据、平台等实施垄断和不正当竞争",
+  "A.3.5": "其他商业违法违规行为",
+  "A.4.1": "危害他人身心健康",
+  "A.4.2": "侵害他人肖像权",
+  "A.4.3": "侵害他人名誉权",
+  "A.4.4": "侵害他人荣誉权",
+  "A.4.5": "侵害他人隐私权",
+  "A.4.6": "侵害他人个人信息权益",
+  "A.4.7": "侵犯他人其他合法权益",
+  "A.5.1": "内容不准确，严重不符合科学常识或主流认知",
+  "A.5.2": "内容不可靠，无法对使用者形成帮助"
+ },
+ "groups": [
+  {
+   "id": "sexual-explicit",
+   "category": "露骨色情",
+   "label": "露骨色情",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "色情",
+    "淫秽",
+    "淫荡",
+    "性交",
+    "做爱",
+    "口交",
+    "肛交",
+    "乳交",
+    "群交",
+    "乱交",
+    "啪啪啪",
+    "自慰",
+    "手淫",
+    "射精",
+    "潮吹",
+    "阴茎",
+    "阴道",
+    "阴蒂",
+    "阴唇",
+    "阴户",
+    "阳具",
+    "龟头",
+    "睾丸",
+    "生殖器",
+    "乳头",
+    "乳晕",
+    "奶头",
+    "私处特写",
+    "下体特写",
+    "露点",
+    "露出乳房",
+    "露出下体",
+    "全裸",
+    "一丝不挂",
+    "赤身裸体",
+    "赤裸身体",
+    "裸体",
+    "裸照",
+    "无码",
+    "黄片",
+    "成人片",
+    "A片",
+    "AV女优",
+    "脱衣舞",
+    "春宫图",
+    "强奸",
+    "轮奸",
+    "迷奸",
+    "性侵",
+    "猥亵",
+    "乱伦",
+    "恋童",
+    "援交",
+    "卖淫",
+    "嫖娼",
+    "淫乱"
+   ],
+   "en": [
+    "porn",
+    "porno",
+    "pornography",
+    "pornographic",
+    "nsfw",
+    "hentai",
+    "xxx",
+    "nude",
+    "nudes",
+    "nudity",
+    "naked",
+    "topless",
+    "nipple",
+    "nipples",
+    "areola",
+    "genitals",
+    "genitalia",
+    "penis",
+    "vagina",
+    "vulva",
+    "clitoris",
+    "testicles",
+    "orgasm",
+    "masturbate",
+    "masturbation",
+    "sex",
+    "sexual intercourse",
+    "intercourse",
+    "blowjob",
+    "fellatio",
+    "cunnilingus",
+    "anal sex",
+    "cumshot",
+    "ejaculation",
+    "rape",
+    "raped",
+    "incest",
+    "pedophile",
+    "pedophilia",
+    "lolicon",
+    "shotacon",
+    "erotic",
+    "erotica",
+    "bdsm",
+    "striptease"
+   ],
+   "overrides": {
+    "sex": "suspect",
+    "intercourse": "suspect",
+    "sexual intercourse": "banned"
+   },
+   "allow": [
+    "nude makeup",
+    "nude lipstick",
+    "nude color",
+    "nude colour",
+    "nude tone",
+    "nude tones",
+    "nude palette",
+    "nude heels",
+    "nude beige",
+    "naked eye",
+    "rape flower",
+    "rape flowers",
+    "rape field",
+    "rape fields",
+    "色情绪",
+    "色情侣",
+    "色情书",
+    "色情人",
+    "色情调",
+    "色情景",
+    "色情感",
+    "色情节",
+    "色情怀",
+    "性交流",
+    "性交往",
+    "性交谈",
+    "性交友",
+    "性交际",
+    "性交通",
+    "性交替",
+    "性交错",
+    "性交叉",
+    "性交织",
+    "性交代",
+    "性交给",
+    "性交汇",
+    "口交通",
+    "口交易",
+    "口交叉",
+    "口交警",
+    "口交接",
+    "口交汇",
+    "口交流",
+    "口交谈",
+    "口交给",
+    "口交换",
+    "口交界",
+    "口交错",
+    "口交代",
+    "群交流",
+    "群交友",
+    "群交互",
+    "水乳交融",
+    "做爱心",
+    "乌龟头",
+    "海龟头",
+    "露点温度",
+    "蛋黄片",
+    "姜黄片",
+    "黄片状"
+   ],
+   "modelCaps": {
+    "minimax": "suspect",
+    "gpt-image": "suspect"
+   },
+   "context": "明确的性器官、性行为、裸露与性暴力表述，国内上游几乎都会拒绝。“不生成色情内容”这类否定声明同样按字面被拦截，线上记录里带这类声明的提示词被拒，应直接删去声明而不是换说法。放行短语用于排除“蓝色情绪”“个性交流”“路口交通”“裸色妆容”这类跨词误命中。英文 sex 常见于角色设定的性别字段，只标黄。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "ldnoobw"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sexual-suggestive",
+   "category": "性暗示",
+   "label": "性暗示",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "半裸",
+    "裸背",
+    "湿身",
+    "乳沟",
+    "透视装",
+    "情趣内衣",
+    "床戏",
+    "爱抚",
+    "挑逗",
+    "撩人",
+    "胸部特写",
+    "臀部特写",
+    "翘臀",
+    "美臀",
+    "丝袜",
+    "吊带袜",
+    "低胸",
+    "内衣",
+    "呻吟",
+    "性感",
+    "诱惑",
+    "比基尼",
+    "泳装",
+    "暧昧",
+    "性暗示",
+    "露骨",
+    "敏感部位",
+    "敏感身体部位",
+    "露出的后背",
+    "光洁的背部",
+    "裸露的后背",
+    "大腿高处",
+    "大腿内侧",
+    "顺着她的身体",
+    "沿着她的身体",
+    "顺着他的身体",
+    "沿着他的身体"
+   ],
+   "en": [
+    "sexy",
+    "seductive",
+    "sensual",
+    "lingerie",
+    "underwear",
+    "bikini",
+    "cleavage",
+    "see-through",
+    "stockings",
+    "thong",
+    "busty",
+    "fetish",
+    "provocative"
+   ],
+   "overrides": {
+    "挑逗": "off",
+    "性感": "off",
+    "诱惑": "off",
+    "比基尼": "off",
+    "泳装": "off",
+    "暧昧": "off",
+    "内衣": "off",
+    "丝袜": "off",
+    "低胸": "off",
+    "bikini": "off",
+    "sexy": "off",
+    "underwear": "off",
+    "stockings": "off"
+   },
+   "allow": [],
+   "modelCaps": {
+    "minimax": "suspect",
+    "gpt-image": "off"
+   },
+   "context": "服装、身体部位和亲密动作本身可以合法出现；结合镜头是否聚焦身体、是否性化判断。镜头沿身体移动、聚焦后背和大腿的写法在线上记录中与脱衣场景一起被拒。与未成年人同句出现时由组合规则升为红色。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "ldnoobw"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "undressing",
+   "category": "脱衣与裸露",
+   "label": "脱衣或裸露",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "脱衣",
+    "宽衣",
+    "裸露",
+    "身体裸露",
+    "裸露身体",
+    "裸露的身体",
+    "裸露画面",
+    "裸露镜头",
+    "衣服滑落",
+    "婚纱滑落",
+    "礼服滑落",
+    "裙子滑落",
+    "睡袍滑落",
+    "从身上滑落",
+    "从她身上滑落",
+    "从她身体上滑落",
+    "从身体上滑落",
+    "褪去衣物",
+    "褪下衣服",
+    "脱掉衣服",
+    "脱下衣服",
+    "脱下婚纱",
+    "解开婚纱",
+    "拉开婚纱",
+    "无内搭",
+    "真空"
+   ],
+   "en": [
+    "undress",
+    "undressing",
+    "strip",
+    "stripping",
+    "disrobe"
+   ],
+   "overrides": {
+    "真空": "off",
+    "strip": "off",
+    "裸露": "off"
+   },
+   "allow": [
+    "真空包装",
+    "真空管",
+    "真空泵",
+    "真空杯",
+    "真空吸尘",
+    "comic strip",
+    "strip mall",
+    "landing strip",
+    "film strip"
+   ],
+   "modelCaps": {
+    "minimax": "suspect"
+   },
+   "context": "线上记录：同一场“婚纱从身上滑落、镜头顺着身体下移、露出后背”的戏换了 7 种写法都被 Seedance 2.0 拒绝，同样内容在 MiniMax 上生成成功。即使写了“不呈现裸露”，脱衣过程本身仍会触发 Seedance 审核。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "forgery",
+   "category": "伪造与欺诈",
+   "label": "伪造证件或虚假信息",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "伪造证件",
+    "伪造身份证",
+    "假身份证",
+    "伪造公章",
+    "假公章",
+    "伪造签名",
+    "伪造合同",
+    "伪造聊天记录",
+    "伪造转账记录",
+    "假新闻截图",
+    "伪造新闻",
+    "假钞",
+    "伪钞",
+    "冒充警察",
+    "冒充官方",
+    "诈骗话术",
+    "伪造病历"
+   ],
+   "en": [
+    "fake id",
+    "forged document",
+    "fake passport",
+    "counterfeit money",
+    "fake news screenshot"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "伪造证件、印章、新闻与冒充身份，属于欺诈和虚假有害信息；道具、剧情中的提及按上下文判断。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.1.7",
+    "A.1.8"
+   ]
+  },
+  {
+   "id": "likeness",
+   "category": "真人肖像",
+   "label": "真人或明星形象",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "明星脸",
+    "撞脸",
+    "酷似明星",
+    "神似明星",
+    "长得像明星",
+    "明星本人",
+    "网红本人",
+    "真人明星",
+    "某明星"
+   ],
+   "en": [
+    "celebrity lookalike",
+    "lookalike of",
+    "deepfake",
+    "face swap"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "要求生成与真实名人相似的面孔，或换脸，上游普遍按肖像权拒绝；人物姓名本身由运营另行补充。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.4.2"
+   ]
+  },
+  {
+   "id": "copyright-characters",
+   "category": "版权角色",
+   "label": "受版权保护的角色",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "米老鼠",
+    "米奇",
+    "唐老鸭",
+    "迪士尼公主",
+    "艾莎公主",
+    "皮卡丘",
+    "宝可梦",
+    "哆啦A梦",
+    "机器猫",
+    "奥特曼",
+    "钢铁侠",
+    "蜘蛛侠",
+    "蝙蝠侠",
+    "超人",
+    "美国队长",
+    "雷神",
+    "绿巨人",
+    "灭霸",
+    "小黄人",
+    "海绵宝宝",
+    "凯蒂猫",
+    "喜羊羊",
+    "灰太狼",
+    "熊出没",
+    "光头强",
+    "小猪佩奇",
+    "汪汪队",
+    "蜡笔小新",
+    "名侦探柯南",
+    "海贼王",
+    "路飞",
+    "火影忍者",
+    "鸣人",
+    "初音未来",
+    "马里奥",
+    "塞尔达",
+    "原神",
+    "王者荣耀",
+    "黑神话"
+   ],
+   "en": [
+    "mickey mouse",
+    "donald duck",
+    "pikachu",
+    "pokemon",
+    "doraemon",
+    "ultraman",
+    "iron man",
+    "spider-man",
+    "spiderman",
+    "batman",
+    "superman",
+    "captain america",
+    "hulk",
+    "thanos",
+    "minions",
+    "spongebob",
+    "hello kitty",
+    "peppa pig",
+    "naruto",
+    "dragon ball",
+    "super mario",
+    "zelda",
+    "harry potter",
+    "darth vader",
+    "star wars"
+   ],
+   "overrides": {
+    "超人": "off",
+    "雷神": "off",
+    "米奇": "off",
+    "路飞": "off",
+    "鸣人": "off"
+   },
+   "allow": [
+    "超人气",
+    "超人类",
+    "超人力"
+   ],
+   "modelCaps": {},
+   "context": "线上记录有“由于版权相关限制，暂时无法创作”的拒绝。复刻知名动漫、影视、游戏角色的外形与名称容易被拒；同名普通词（超人、雷神）只供参考。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.3.1"
+   ]
+  },
+  {
+   "id": "appearance-shaming",
+   "category": "外貌与地域羞辱",
+   "label": "羞辱或歧视性描写",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "胖女人",
+    "死胖子",
+    "肥婆",
+    "肥猪",
+    "丑八怪",
+    "双下巴",
+    "照照镜子",
+    "矮冬瓜",
+    "穷鬼",
+    "乡巴佬",
+    "土包子",
+    "地域黑"
+   ],
+   "en": [],
+   "overrides": {
+    "双下巴": "off",
+    "照照镜子": "off",
+    "穷鬼": "off",
+    "乡巴佬": "off",
+    "土包子": "off"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "以外貌、身材、地域贬低他人。线上一条“扇巴掌 + 嘲笑胖女人外貌 + 地域对比”的短剧被 Seedance 2.0 以提示词问题拒绝。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.2.9",
+    "A.2.4",
+    "A.4.3"
+   ]
+  },
+  {
+   "id": "minor",
+   "category": "未成年人",
+   "label": "未成年人",
+   "precheck": "off",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "未成年",
+    "儿童",
+    "小孩",
+    "幼儿",
+    "幼童",
+    "婴儿",
+    "小女孩",
+    "小男孩",
+    "萝莉",
+    "正太",
+    "幼女",
+    "女童",
+    "男童",
+    "小学生",
+    "初中生",
+    "高中生",
+    "中学生",
+    "女高中生",
+    "JK"
+   ],
+   "en": [
+    "child",
+    "children",
+    "kid",
+    "kids",
+    "minor",
+    "minors",
+    "underage",
+    "teen",
+    "teens",
+    "teenager",
+    "schoolgirl",
+    "schoolboy",
+    "loli",
+    "toddler"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "未成年人本身不是风险词，只用于组合规则：同一句同时出现性暗示或露骨内容时标红。少女、少年、女孩子在中文提示词里常指年轻成人，不列入。",
+   "sourceIds": [
+    "gugu",
+    "emily"
+   ],
+   "risk": [
+    "A.1.6",
+    "A.4.1"
+   ]
+  },
+  {
+   "id": "political-figures",
+   "category": "涉政人物",
+   "label": "涉及国家领导人",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "习近平",
+    "赵乐际",
+    "王沪宁",
+    "蔡奇",
+    "丁薛祥",
+    "李希",
+    "彭丽媛",
+    "毛泽东",
+    "周恩来",
+    "刘少奇",
+    "朱德",
+    "邓小平",
+    "华国锋",
+    "胡耀邦",
+    "赵紫阳",
+    "江泽民",
+    "胡锦涛",
+    "温家宝",
+    "李鹏",
+    "朱镕基",
+    "李克强",
+    "王岐山",
+    "薄熙来",
+    "周永康",
+    "令计划",
+    "徐才厚",
+    "郭伯雄",
+    "李强"
+   ],
+   "en": [
+    "xi jinping",
+    "mao zedong",
+    "deng xiaoping",
+    "jiang zemin",
+    "hu jintao",
+    "li keqiang",
+    "wen jiabao"
+   ],
+   "overrides": {
+    "李强": "suspect",
+    "李希": "suspect",
+    "朱德": "suspect"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "现任及历任国家领导人姓名，国内上游普遍拒绝生成其形象或相关内容。李强、李希、朱德与常见人名重名，只标黄。",
+   "sourceIds": [
+    "gugu",
+    "konsheng"
+   ],
+   "risk": [
+    "A.1.2"
+   ]
+  },
+  {
+   "id": "political-events",
+   "category": "涉政事件与组织",
+   "label": "敏感政治内容",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "六四事件",
+    "八九民运",
+    "天安门事件",
+    "坦克人",
+    "法轮功",
+    "法轮大法",
+    "李洪志",
+    "全能神",
+    "台独",
+    "藏独",
+    "疆独",
+    "港独",
+    "东突",
+    "达赖喇嘛",
+    "达赖",
+    "推翻共产党",
+    "共匪",
+    "反共",
+    "刘晓波",
+    "文化大革命",
+    "红卫兵"
+   ],
+   "en": [
+    "tiananmen massacre",
+    "tank man",
+    "falun gong",
+    "falun dafa",
+    "dalai lama",
+    "free tibet"
+   ],
+   "overrides": {
+    "文化大革命": "suspect",
+    "红卫兵": "suspect"
+   },
+   "allow": [
+    "东突然",
+    "东突破",
+    "东突围",
+    "东突出",
+    "台独白",
+    "台独舞",
+    "台独唱",
+    "台独奏",
+    "台独自",
+    "台独特",
+    "港独特",
+    "港独家",
+    "港独自",
+    "藏独特",
+    "藏独家",
+    "藏独一",
+    "藏独自",
+    "疆独特",
+    "疆独有",
+    "疆独家"
+   ],
+   "modelCaps": {},
+   "context": "政治事件、组织和分裂主张。文化大革命、红卫兵在历史题材中可能出现，只标黄。",
+   "sourceIds": [
+    "gugu",
+    "konsheng"
+   ],
+   "risk": [
+    "A.1.1",
+    "A.1.3"
+   ]
+  },
+  {
+   "id": "political-symbols",
+   "category": "政治符号与场所",
+   "label": "政治相关内容",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "国旗",
+    "国徽",
+    "党旗",
+    "党徽",
+    "天安门",
+    "人民大会堂",
+    "中南海",
+    "中共",
+    "共产党",
+    "国家主席",
+    "总书记",
+    "游行示威",
+    "示威游行",
+    "抗议游行",
+    "暴动",
+    "政变",
+    "特朗普",
+    "拜登",
+    "普京",
+    "泽连斯基",
+    "金正恩"
+   ],
+   "en": [
+    "trump",
+    "biden",
+    "putin",
+    "zelensky",
+    "kim jong un",
+    "communist party"
+   ],
+   "overrides": {},
+   "allow": [
+    "中共同",
+    "中共享",
+    "中共有",
+    "中共计",
+    "中共存",
+    "trump card"
+   ],
+   "modelCaps": {},
+   "context": "政治符号、场所与在任外国政要。普通旅游、历史和新闻语境可能通过，按上下文判断。",
+   "sourceIds": [
+    "gugu",
+    "konsheng"
+   ],
+   "risk": [
+    "A.1.2"
+   ]
+  },
+  {
+   "id": "terrorism",
+   "category": "暴恐",
+   "label": "暴力恐怖内容",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "恐怖袭击",
+    "恐袭",
+    "自杀式袭击",
+    "人体炸弹",
+    "伊斯兰国",
+    "基地组织",
+    "塔利班",
+    "圣战分子",
+    "劫机",
+    "校园枪击",
+    "枪击案",
+    "爆炸案",
+    "制造炸弹",
+    "炸弹制作",
+    "自制炸药",
+    "炸药配方",
+    "毒气袭击",
+    "种族灭绝"
+   ],
+   "en": [
+    "terrorist attack",
+    "suicide bomber",
+    "suicide bombing",
+    "isis",
+    "al-qaeda",
+    "taliban",
+    "jihadist",
+    "school shooting",
+    "mass shooting",
+    "bomb making",
+    "genocide"
+   ],
+   "overrides": {
+    "塔利班": "suspect",
+    "taliban": "suspect",
+    "isis": "suspect"
+   },
+   "allow": [
+    "goddess isis"
+   ],
+   "modelCaps": {},
+   "context": "恐怖组织、袭击与爆炸物制作。战争、新闻题材也可能被拒。",
+   "sourceIds": [
+    "gugu",
+    "konsheng"
+   ],
+   "risk": [
+    "A.1.4"
+   ]
+  },
+  {
+   "id": "gore",
+   "category": "血腥残忍",
+   "label": "血腥残忍画面",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "斩首",
+    "砍头",
+    "肢解",
+    "碎尸",
+    "分尸",
+    "开膛破肚",
+    "开膛",
+    "内脏外露",
+    "肠子流出",
+    "爆头",
+    "脑浆",
+    "血肉模糊",
+    "断肢",
+    "剥人皮",
+    "活剥",
+    "挖眼",
+    "虐杀",
+    "虐尸",
+    "割喉",
+    "残肢"
+   ],
+   "en": [
+    "gore",
+    "gory",
+    "dismember",
+    "dismembered",
+    "dismemberment",
+    "decapitate",
+    "decapitated",
+    "decapitation",
+    "beheading",
+    "beheaded",
+    "disembowel",
+    "disemboweled",
+    "mutilated",
+    "mutilation",
+    "entrails"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "残忍伤害与尸体细节，几乎都会被拒。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "violence",
+   "category": "暴力伤害",
+   "label": "暴力血腥",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "杀人",
+    "谋杀",
+    "刺杀",
+    "捅刀",
+    "枪杀",
+    "射杀",
+    "开枪射击",
+    "中弹",
+    "枪伤",
+    "血泊",
+    "鲜血四溅",
+    "满身是血",
+    "血迹斑斑",
+    "虐待",
+    "殴打致死",
+    "屠杀",
+    "大屠杀",
+    "绑架",
+    "人质",
+    "抢劫",
+    "血腥"
+   ],
+   "en": [
+    "murder",
+    "massacre",
+    "bloodbath",
+    "blood splatter",
+    "stabbing",
+    "gunshot wound",
+    "kidnapping",
+    "hostage",
+    "torture"
+   ],
+   "overrides": {
+    "刺杀": "off"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "暴力情节常见于剧情，结合镜头是否直接呈现伤害判断。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "emily"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "self-harm",
+   "category": "自伤自杀",
+   "label": "自伤自杀",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "自杀",
+    "自残",
+    "割腕",
+    "上吊自杀",
+    "悬梁自尽",
+    "跳楼自杀",
+    "服毒自杀",
+    "轻生",
+    "自杀方法"
+   ],
+   "en": [
+    "suicide",
+    "self-harm",
+    "self harm",
+    "slit wrists",
+    "slitting wrists"
+   ],
+   "overrides": {
+    "自杀方法": "banned"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "剧情中的自杀情节可能被拒；具体方法描述标红。",
+   "sourceIds": [
+    "gugu",
+    "konsheng"
+   ],
+   "risk": [
+    "A.4.1"
+   ]
+  },
+  {
+   "id": "drugs",
+   "category": "毒品",
+   "label": "毒品相关",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "吸毒",
+    "注射毒品",
+    "冰毒",
+    "海洛因",
+    "可卡因",
+    "摇头丸",
+    "K粉",
+    "大麻",
+    "鸦片",
+    "贩毒",
+    "制毒",
+    "毒品"
+   ],
+   "en": [
+    "cocaine",
+    "heroin",
+    "meth",
+    "methamphetamine",
+    "ecstasy pill",
+    "marijuana",
+    "drug dealing"
+   ],
+   "overrides": {},
+   "allow": [
+    "大麻花",
+    "大麻绳",
+    "大麻袋",
+    "大麻雀",
+    "鸦片战争"
+   ],
+   "modelCaps": {},
+   "context": "毒品使用、交易与制作。禁毒宣传等语境也可能被拒。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "emily"
+   ],
+   "risk": [
+    "A.1.8"
+   ]
+  },
+  {
+   "id": "hate",
+   "category": "仇恨歧视",
+   "label": "侮辱歧视用语",
+   "precheck": "banned",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "支那",
+    "黑鬼",
+    "尼哥",
+    "白皮猪",
+    "阿三",
+    "小日本",
+    "倭寇"
+   ],
+   "en": [
+    "nigger",
+    "nigga",
+    "chink",
+    "faggot",
+    "kike",
+    "spic",
+    "wetback"
+   ],
+   "overrides": {
+    "小日本": "suspect",
+    "倭寇": "suspect",
+    "阿三": "suspect"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "针对民族、种族、性取向的侮辱词。抗战、明代抗倭等历史题材里的称呼只标黄。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "ldnoobw"
+   ],
+   "risk": [
+    "A.1.5",
+    "A.2.1"
+   ]
+  },
+  {
+   "id": "voyeurism",
+   "category": "偷拍偷窥",
+   "label": "偷拍偷窥",
+   "precheck": "suspect",
+   "models": [
+    "*"
+   ],
+   "zh": [
+    "偷拍",
+    "偷窥",
+    "裙底",
+    "偷拍裙底",
+    "偷拍美女",
+    "偷拍视角",
+    "不察觉被拍",
+    "针孔摄像"
+   ],
+   "en": [
+    "upskirt",
+    "voyeur",
+    "hidden camera"
+   ],
+   "overrides": {
+    "偷拍裙底": "banned",
+    "裙底": "banned",
+    "upskirt": "banned"
+   },
+   "allow": [
+    "裙底摆",
+    "裙底边"
+   ],
+   "modelCaps": {},
+   "context": "非法偷拍与窥视视角。",
+   "sourceIds": [
+    "gugu",
+    "konsheng",
+    "ldnoobw",
+    "maple"
+   ],
+   "risk": [
+    "A.4.5"
+   ]
+  },
+  {
+   "id": "sd-weapons",
+   "category": "武器与攻击动作",
+   "label": "武器",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "刀",
+    "剑",
+    "枪",
+    "匕首",
+    "子弹",
+    "砍",
+    "防弹玻璃",
+    "防弹"
+   ],
+   "en": [
+    "knife",
+    "gun",
+    "sword",
+    "bullet",
+    "bulletproof"
+   ],
+   "overrides": {},
+   "allow": [
+    "刀工",
+    "剪刀",
+    "菜刀切菜",
+    "水枪",
+    "枪版",
+    "剑桥",
+    "剑眉"
+   ],
+   "modelCaps": {},
+   "context": "判断对象与动作，厨房切菜、剪刀、玩具水枪等不能凭字面认定违规；不能将真实武器改成道具。线上“防弹玻璃”在一条被拒、一条通过的枪战戏中都出现过，不能单独当成触发词。",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-injury",
+   "category": "伤害与遗体",
+   "label": "暴力血腥",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "血",
+    "流血",
+    "伤口",
+    "受伤",
+    "淤青",
+    "尸体"
+   ],
+   "en": [
+    "blood",
+    "wound",
+    "bruise",
+    "corpse"
+   ],
+   "overrides": {
+    "流血": "suspect",
+    "尸体": "suspect",
+    "corpse": "suspect"
+   },
+   "allow": [
+    "血橙",
+    "血型",
+    "热血",
+    "血缘",
+    "血统",
+    "献血",
+    "血压",
+    "血糖",
+    "冷血",
+    "混血",
+    "心血"
+   ],
+   "modelCaps": {},
+   "context": "区分血色光线、医学说明、非血腥情节与实际残酷伤害；不将伤口改为疲惫伪装为等价表达",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-crime",
+   "category": "犯罪与威胁",
+   "label": "犯罪情节",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "闯入",
+    "入室",
+    "绑架",
+    "人质",
+    "抢劫",
+    "杀",
+    "袭击",
+    "威胁",
+    "小偷"
+   ],
+   "en": [
+    "hostage",
+    "kidnap",
+    "robbery",
+    "murder"
+   ],
+   "overrides": {},
+   "allow": [
+    "杀青",
+    "秒杀",
+    "杀毒",
+    "抹杀",
+    "杀价"
+   ],
+   "modelCaps": {},
+   "context": "区分剧情、新闻与实施指导；不能把绑架改成普通会面并声称保留原意",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-minor",
+   "category": "未成年人组合场景",
+   "label": "未成年人",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "未成年",
+    "孩子",
+    "小孩",
+    "儿童",
+    "少女",
+    "少年",
+    "女孩",
+    "男孩",
+    "学生"
+   ],
+   "en": [
+    "teenager",
+    "child",
+    "minor"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "普通儿童场景不因词命中而修改；结合性化、伤害或危险动作评估；不得自动改变年龄",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.4.1"
+   ]
+  },
+  {
+   "id": "sd-slap",
+   "category": "掌掴与羞辱动作",
+   "label": "打人与羞辱",
+   "precheck": "suspect",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "扇巴掌",
+    "扇耳光",
+    "打耳光",
+    "掌掴",
+    "一巴掌",
+    "第二巴掌",
+    "扇向",
+    "被扇",
+    "打懵",
+    "反手扇"
+   ],
+   "en": [
+    "slap",
+    "slapping",
+    "slapped"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "短剧常见冲突动作。线上一条连续掌掴并嘲笑外貌的戏被 Seedance 2.0 拒绝，只有一例证据；结合是否在羞辱、是否特写受伤反应判断。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.1.6",
+    "A.4.1"
+   ]
+  },
+  {
+   "id": "sd-institutions",
+   "category": "机构与法律文书",
+   "label": "机构场景",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "离婚",
+    "律师",
+    "法院",
+    "警察",
+    "审讯",
+    "医院",
+    "病床",
+    "手术",
+    "监狱",
+    "合同",
+    "制服",
+    "警服"
+   ],
+   "en": [
+    "divorce",
+    "lawyer",
+    "court",
+    "hospital"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "这些普通名词不是已确认禁词。明确法律、医疗、职业场景保留；只有原文真实含义存在歧义时澄清",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": []
+  },
+  {
+   "id": "sd-substances",
+   "category": "烟酒毒品与赌博",
+   "label": "烟酒赌博",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "香烟",
+    "抽烟",
+    "喝醉",
+    "毒品",
+    "赌"
+   ],
+   "en": [
+    "smoking",
+    "drunk",
+    "drugs",
+    "gambling"
+   ],
+   "overrides": {},
+   "allow": [
+    "赌气",
+    "打赌",
+    "赌约"
+   ],
+   "modelCaps": {},
+   "context": "结合行为、宣传意图和年龄判断；不得将毒品藏成粉末或将赌博藏成游戏来规避审核",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.8"
+   ]
+  },
+  {
+   "id": "sd-horror",
+   "category": "恐怖与超自然",
+   "label": "恐怖题材",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "鬼",
+    "恶魔",
+    "附身",
+    "血腥",
+    "僵尸",
+    "闹鬼"
+   ],
+   "en": [
+    "ghost",
+    "demon",
+    "gore",
+    "zombie"
+   ],
+   "overrides": {
+    "血腥": "suspect"
+   },
+   "allow": [
+    "鬼斧神工",
+    "鬼脸",
+    "机灵鬼",
+    "小气鬼",
+    "胆小鬼",
+    "调皮鬼"
+   ],
+   "modelCaps": {},
+   "context": "奇幻角色本身不证明违规；区分抽象气氛与血腥描写；不擅自删除用户指定角色或题材",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-symbols",
+   "category": "身份与符号",
+   "label": "身份与符号",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "国旗",
+    "军装",
+    "警服",
+    "人民币",
+    "商标"
+   ],
+   "en": [
+    "logo",
+    "flag",
+    "banknote"
+   ],
+   "overrides": {
+    "人民币": "suspect",
+    "banknote": "suspect"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "结合真实人物、受保护标识、素材许可和官方反馈判断；不能自动删除品牌、换人或补造授权",
+   "sourceIds": [
+    "emily"
+   ],
+   "risk": [
+    "A.1.2"
+   ]
+  },
+  {
+   "id": "sd-brands",
+   "category": "品牌与平台名称",
+   "label": "品牌名称",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "抖音",
+    "小红书",
+    "快手",
+    "微博"
+   ],
+   "en": [
+    "iPhone",
+    "iPad",
+    "Mac",
+    "Apple",
+    "Sony",
+    "Canon",
+    "Nikon",
+    "Leica",
+    "TikTok",
+    "Instagram",
+    "YouTube",
+    "ESPN",
+    "NBA TV",
+    "NBA",
+    "FIFA",
+    "Netflix",
+    "HBO",
+    "Disney+"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "只标记可能关联版权或品牌的上下文；真实产品描述、已指定品牌不能默认删掉或泛化。",
+   "sourceIds": [
+    "maple"
+   ],
+   "risk": [
+    "A.3.1"
+   ]
+  },
+  {
+   "id": "sd-engines",
+   "category": "引擎与制作商标",
+   "label": "制作商标",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "工业光魔",
+    "皮克斯",
+    "迪士尼",
+    "漫威"
+   ],
+   "en": [
+    "UE5",
+    "UnrealEngine5",
+    "Unreal Engine",
+    "Unity",
+    "Maya",
+    "Houdini",
+    "ILM",
+    "Pixar",
+    "Weta",
+    "Marvel",
+    "CGI"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "个人规则有冲突，技术名词并非官方确定禁词；只在不改变指定风格或事实时澄清，不隐去受保护内容复制要求。",
+   "sourceIds": [
+    "maple",
+    "ningning"
+   ],
+   "risk": [
+    "A.3.1"
+   ]
+  },
+  {
+   "id": "sd-styles",
+   "category": "人物与作品风格引用",
+   "label": "作品风格引用",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "王家卫",
+    "杜可风",
+    "诺兰",
+    "库布里克",
+    "哈利波特",
+    "小丑",
+    "钢铁侠",
+    "蜘蛛侠",
+    "黑神话",
+    "原神",
+    "赛博朋克 2077",
+    "鬼灭之刃"
+   ],
+   "en": [],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "姓名、作品、角色需要结合版权反馈与实际要求；不能用外形暗示继续复制同一角色。",
+   "sourceIds": [
+    "maple"
+   ],
+   "risk": [
+    "A.3.1"
+   ]
+  },
+  {
+   "id": "sd-regions",
+   "category": "地域上下文",
+   "label": "地域",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "台湾",
+    "香港",
+    "西藏",
+    "新疆"
+   ],
+   "en": [],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "仅在具体政治或仇恨语境中评估；正常地名和旅游场景保留，不将地名当成违禁词。",
+   "sourceIds": [
+    "maple"
+   ],
+   "risk": [
+    "A.1.3"
+   ]
+  },
+  {
+   "id": "sd-venues",
+   "category": "场所与服务角色组合",
+   "label": "场所与陪侍",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "高级会所",
+    "会所",
+    "包间",
+    "夜店",
+    "酒吧包厢",
+    "沙龙厅",
+    "公关",
+    "公关经理",
+    "陪侍",
+    "陪酒",
+    "服务员",
+    "妈妈桑",
+    "介绍美女",
+    "挑选",
+    "排队选",
+    "验货",
+    "美女群像",
+    "美女介绍",
+    "一排美女",
+    "偷拍视角",
+    "偷拍美女",
+    "偷偷拍",
+    "不察觉被拍",
+    "装作没看见"
+   ],
+   "en": [
+    "KTV"
+   ],
+   "overrides": {
+    "陪侍": "suspect",
+    "陪酒": "suspect",
+    "妈妈桑": "suspect",
+    "验货": "suspect"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "来源属于特定女性室内场景试验；一般服务业、公关与场所词保留；禁止通过改名掩盖性剥削或非法偷拍。",
+   "sourceIds": [
+    "maple"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-ambience",
+   "category": "音乐与室内氛围组合",
+   "label": "室内氛围",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "爵士钢琴",
+    "萨克斯独奏",
+    "钢琴酒吧",
+    "夜店电子乐",
+    "爵士乐",
+    "暖橘吊灯",
+    "大屏柔光",
+    "深色大理石",
+    "红木",
+    "包房灯光"
+   ],
+   "en": [
+    "Jazz Piano",
+    "Lounge",
+    "Bossa Nova",
+    "Smooth Jazz",
+    "hip-hop",
+    "trap"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "作者报告特定室内女性场景的拦截，不代表音乐、材质或灯光单词单独违禁；不能任意更换用户指定乐种或删掉场景。",
+   "sourceIds": [
+    "maple"
+   ],
+   "risk": []
+  },
+  {
+   "id": "sd-bathing",
+   "category": "洗浴与接触上下文",
+   "label": "洗浴与身体接触",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "洗浴",
+    "未着装",
+    "身体接触"
+   ],
+   "en": [],
+   "overrides": {
+    "未着装": "suspect"
+   },
+   "allow": [],
+   "modelCaps": {},
+   "context": "个人场景总结；宠物洗澡不等于性内容；结合主体、年龄、动作及镜头判断，不能靠遮挡掩盖禁止内容。",
+   "sourceIds": [
+    "pov"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
+   "id": "sd-wuxia",
+   "category": "武侠角色称谓",
+   "label": "武侠称谓",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "江湖人士"
+   ],
+   "en": [],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "作者仅称可能导致失败，普通武侠身份不是已确认禁词；清晰且合法的称谓保留。",
+   "sourceIds": [
+    "storyboard"
+   ],
+   "risk": []
+  }
+ ],
+ "combos": [
+  {
+   "id": "minor-sexual-suggestive",
+   "label": "未成年人与性暗示",
+   "precheck": "banned",
+   "all": [
+    "minor",
+    "sexual-suggestive"
+   ],
+   "window": "sentence",
+   "context": "未成年人与身体、服装、亲密动作描写同句出现，上游按儿童安全从严处理。"
+  },
+  {
+   "id": "minor-sexual-explicit",
+   "label": "未成年人与性内容",
+   "precheck": "banned",
+   "all": [
+    "minor",
+    "sexual-explicit"
+   ],
+   "window": "sentence",
+   "context": "未成年人与性内容同句出现。"
+  },
+  {
+   "id": "undressing-body",
+   "label": "脱衣与身体特写",
+   "precheck": "banned",
+   "all": [
+    "undressing",
+    "sexual-suggestive"
+   ],
+   "window": "sentence",
+   "context": "同一句既有脱衣、衣物滑落，又有聚焦身体的写法。"
+  },
+  {
+   "id": "slap-shaming",
+   "label": "打人与外貌羞辱",
+   "precheck": "banned",
+   "all": [
+    "sd-slap",
+    "appearance-shaming"
+   ],
+   "window": "sentence",
+   "context": "同一句既有掌掴等打人动作，又有贬低外貌或身份的描写。"
+  },
+  {
+   "id": "minor-bathing",
+   "label": "未成年人与洗浴裸露",
+   "precheck": "suspect",
+   "all": [
+    "minor",
+    "sd-bathing"
+   ],
+   "window": "sentence",
+   "context": "未成年人洗浴、未着装场景，结合镜头与动作判断。"
+  },
+  {
+   "id": "venue-voyeurism",
+   "label": "场所与偷拍",
+   "precheck": "banned",
+   "all": [
+    "sd-venues",
+    "voyeurism"
+   ],
+   "window": "sentence",
+   "context": "娱乐场所与偷拍视角组合。"
+  }
+ ],
+ "sources": [
+  {
+   "id": "gugu",
+   "url": "",
+   "license": "",
+   "scope": "所有模型",
+   "evidence": "GuGu 按国内上游公开审核类别人工整理，参考下列开源词库挑选高精度条目；待用真实生成结果校准"
+  },
+  {
+   "id": "konsheng",
+   "url": "https://github.com/Konsheng/Sensitive-lexicon",
+   "license": "MIT",
+   "scope": "通用中文内容审核",
+   "evidence": "通用聊天与社区过滤词库，噪声较大；只选取与创作提示词相关且含义明确的条目"
+  },
+  {
+   "id": "ldnoobw",
+   "url": "https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words",
+   "license": "CC-BY-4.0",
+   "scope": "英文不雅词",
+   "evidence": "英文不雅词列表，只选取性内容与侮辱用语中含义明确的条目"
+  },
+  {
+   "id": "emily",
+   "url": "https://github.com/Emily2040/seedance-2.0/blob/main/data/moderation-cues.json",
+   "license": "MIT",
+   "scope": "Seedance 2.0 即梦",
+   "evidence": "两份示例拒绝记录与启发式词项混合，非逐词验证"
+  },
+  {
+   "id": "maple",
+   "url": "https://github.com/MapleShaw/seedance2.0-prompt-skill/blob/main/references/image-to-prompt.md",
+   "license": "",
+   "scope": "Seedance 2.0 即梦",
+   "evidence": "作者 case-12/13/17 场景试验及经验扩展，非独立复现"
+  },
+  {
+   "id": "ningning",
+   "url": "https://github.com/ningning-happy/seedance2.0-prompt-skill/blob/master/SKILL.md",
+   "license": "",
+   "scope": "Seedance 2.0 即梦",
+   "evidence": "个人规则，缺少逐词结果；正文自身对引擎词有矛盾示例"
+  },
+  {
+   "id": "pov",
+   "url": "https://github.com/kuronzzhan-droid/seedance-pov-series-skill/blob/main/references/seedance-constraints.md",
+   "license": "",
+   "scope": "Seedance 2.0 连载",
+   "evidence": "个人场景总结，未给独立词级审核结果"
+  },
+  {
+   "id": "storyboard",
+   "url": "https://github.com/liangdabiao/Seedance2-Storyboard-Generator/blob/main/README.md",
+   "license": "",
+   "scope": "Seedance 2.0 水墨短剧",
+   "evidence": "个人可能项，未给逐词结果"
+  }
+ ]
+}

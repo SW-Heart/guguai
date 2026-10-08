@@ -30,7 +30,7 @@ test('a failed drama initialization can retry and concurrent callers share one a
     .replace(/import\('\.\/drama-studio\.js\?v=\d+'\)/,"importStudio()");
   let attempts = 0;
   const controller = {load(){}};
-  const context = Object.fromEntries(['api','esc','toast','setCreditBalance','creditText','loadTasks','scheduleTaskPoll','loadCredits','loadFiles','pickAndUploadDramaImage','pickAndUploadDramaAsset','pickAndImportDramaCanvasAsset','confirmDelete','taskFailure','isDesktopAssetSyncing','desktopSyncMarkup','showDesktopAssetInFolder','removeDesktopCloudAssets','syncDesktopDeliveries'].map(name => [name,() => {}]));
+  const context = Object.fromEntries(['api','promptPrecheck','esc','toast','setCreditBalance','creditText','loadTasks','scheduleTaskPoll','loadCredits','loadFiles','pickAndUploadDramaImage','pickAndUploadDramaAsset','pickAndImportDramaCanvasAsset','confirmDelete','taskFailure','isDesktopAssetSyncing','desktopSyncMarkup','showDesktopAssetInFolder','removeDesktopCloudAssets','syncDesktopDeliveries'].map(name => [name,() => {}]));
   Object.assign(context,{state:{},mediaController:{},accountScope:{},desktopSyncInfo:{},
     importStudio:async () => ({createDramaStudio:() => {if (++attempts === 1) throw new ReferenceError('controller initialization failed');return controller;}})});
   vm.createContext(context);vm.runInContext(code,context);

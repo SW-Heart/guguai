@@ -63,6 +63,9 @@ import { createAccountRouteHandler } from './server/routes/account.mjs';
 import { createDramaRouteHandler } from './server/routes/drama.mjs';
 import { createFilesRouteHandler } from './server/routes/files.mjs';
 import { createGenerationRouteHandler } from './server/routes/generations.mjs';
+import { createPromptPrecheckRouteHandler } from './server/routes/prompt-precheck.mjs';
+import { recordPromptPrecheckEvent } from './repositories/prompt-precheck.mjs';
+import { scanPromptRisk } from './lib/prompt-precheck.mjs';
 import { createSystemRouteHandler } from './server/routes/system.mjs';
 import { createOpenAiCompatRoute } from './server/routes/openai-compat.mjs';
 import { createApiConsoleRoute } from './server/routes/api-console.mjs';
@@ -2773,6 +2776,11 @@ const videoUpscale = createVideoUpscaleService({
   safeId,
   now,
 });
+// enforce (default) shows the check dialog and asks for confirmation on red
+// marks; shadow only records matches; off skips the check entirely.
+const promptPrecheckMode = ['off', 'shadow', 'enforce'].includes(process.env.PROMPT_PRECHECK_MODE) ? process.env.PROMPT_PRECHECK_MODE : 'enforce';
+const promptPrecheck = { mode:() => promptPrecheckMode, scan:(prompt, { modelId }) => scanPromptRisk(prompt, { modelId }), record:recordPromptPrecheckEvent };
+const promptPrecheckRoute = createPromptPrecheckRouteHandler({ bodyJson, sendJson, requireUser, promptPrecheck });
 const generationRoute = createGenerationRouteHandler({
   prepareViralGeneration: viralLab.prepareGeneration,
   videoUpscale,
@@ -2842,6 +2850,7 @@ const generationRoute = createGenerationRouteHandler({
   },
   runtimeMetrics,
   activeGenerations,
+  promptPrecheck,
 });
 
 // OpenAI-compatible API and its console (api.guguai.xyz). Same accounts,
@@ -3124,6 +3133,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoute(req, res, url)) return;
     if (await dramaRoute(req, res, url)) return;
 
+    if (await promptPrecheckRoute(req, res, url)) return;
     if (await generationRoute(req, res, url)) return;
     if (await filesRoute(req, res, url)) return;
 

@@ -1270,7 +1270,7 @@ export function createDirectorWorkspace(host, bridge) {
         if(quote.priceVersion)payload.expectedPriceVersion=quote.priceVersion;
       }
       const requestId=crypto.randomUUID();
-      const result=await bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':requestId},body:JSON.stringify({...payload,requestId})});
+      const result=await bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':requestId},body:JSON.stringify({...payload,precheckSource:'agent',requestId})});
       if(token!==epoch)return;
       const tasks=result.tasks||[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');

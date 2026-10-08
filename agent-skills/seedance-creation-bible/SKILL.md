@@ -22,7 +22,7 @@ description: Seedance 2.0/2.5 创作圣经：用户指定 Seedance、see dance �
 - 换脸、重复人物、风格、文字、衔接、画质或输入报错：[画面与素材排查](references/visual-troubleshooting.md)。
 - 字幕、台词、音色、背景音乐、翻译或杂音：[声音与字幕排查](references/audio-troubleshooting.md)。
 - 准备实际生成或需要来源边界：[GuGu 能力与文档来源](references/platform-and-sources.md)。
-- 描述或生成结果被拒、需要合规表达：[生成被拒与表达调整](references/rejection-and-clarification.md)、[Seedance 审核词句排查](references/moderation-vocabulary.md)和[具体候选词表](references/moderation-cues.json)。两版均按上下文逐项检查；词表含社区观察和推测，2.5 未经实际生成验证，不能当成确定禁词规则。
+- 描述或生成结果被拒、需要合规表达：[生成被拒与表达调整](references/rejection-and-clarification.md)、[Seedance 审核词句排查](references/moderation-vocabulary.md)，并用 `prompt_risk_scan` 定位风险词。两版均按上下文逐项检查；Seedance 社区候选词含观察和推测，2.5 未经实际生成验证，不能当成确定禁词规则。
 
 导演处理、人物表演、动作、运镜、光线、声音、特效和连续制作等视频技巧统一用 `skills_read` 读取 `video-production`，按问题读取其 `references/directing-and-performance.md`、`references/continuation-and-state.md` 或现有运镜与声音专题。本技能保留 Seedance 版本写法、素材绑定和模式排查；不要把 2.0 的制作策略变成 2.5 的参数限制。
 

@@ -22,7 +22,7 @@ description: 优化、改写或精简文本、图像、视频创作提示词与�
 
 重复形容词可以精简；“温暖、纪录片、复古”等有效风格保留，再用当前场景需要的具体信息消除歧义。不要把“有动感”一律改成运动摄影，也不要为了短而丢掉用户指定内容。
 
-需要完整改稿方法或实例时读 [改写与交付](references/rewrite-and-delivery.md)。提示词被拒或生成报错建议修改提示词时，读 [拒绝信息与合规表达](references/rejection-and-clarification.md) 和 [内容风险与候选表达](references/content-risk-reference.md)；Seedance 任务再读取 `seedance-creation-bible` 的 `references/rejection-and-clarification.md`、`references/moderation-vocabulary.md` 和 `references/moderation-cues.json`，实际对照专用词表检查上下文。候选项仅供检查上下文，不能作为确定的上游禁词库。使用 `skills_read(name: prompt-optimization, resource: 对应路径)`；有 `nextOffset` 时继续读完。
+需要完整改稿方法或实例时读 [改写与交付](references/rewrite-and-delivery.md)。提示词被拒或生成报错建议修改提示词时，读 [拒绝信息与合规表达](references/rejection-and-clarification.md) 和 [内容风险与候选表达](references/content-risk-reference.md)，并用 `prompt_risk_scan` 扫描原文得到风险词的位置、级别与核对要点；Seedance 任务再读取 `seedance-creation-bible` 的 `references/rejection-and-clarification.md` 和 `references/moderation-vocabulary.md`。风险词表 `references/prompt-risk-lexicon.json` 由系统匹配使用，不要整份读取；命中只是定位，不是确定的上游禁词结论。使用 `skills_read(name: prompt-optimization, resource: 对应路径)`；有 `nextOffset` 时继续读完。
 
 ## 交付
 

@@ -15,30 +15,28 @@ test('any Chinese prompt mention triggers repair alongside existing explicit rej
 
 test('real rejection skill documents are fully loaded, including Seedance guidance', async () => {
   const docs = await loadPromptRepairGuidance({ videoModelId: 'seedance-2.5' });
-  assert.deepEqual(docs.map(doc => doc.resource), ['SKILL.md', 'references/rejection-and-clarification.md', 'references/content-risk-reference.md', 'references/rejection-and-clarification.md', 'references/moderation-vocabulary.md', 'references/moderation-cues.json']);
+  assert.deepEqual(docs.map(doc => doc.resource), ['SKILL.md', 'references/rejection-and-clarification.md', 'references/content-risk-reference.md', 'references/rejection-and-clarification.md', 'references/moderation-vocabulary.md']);
   assert.ok(docs.every(doc => doc.text.length > 100));
   assert.match(docs[1].text, /不要用拼写/);
 });
 
-test('Seedance 2.0 and 2.5 load vocabulary even behind a logical model alias', async () => {
+test('Seedance community cues apply behind a logical model alias and stay out of the optimizer context', async () => {
   for (const model of ['doubao-seedance-2-0-260128', 'doubao-seedance-2-5-260628']) {
     const docs = await loadPromptRepairGuidance({ videoModelId: 'logical-video-model', model });
-    const vocabulary = JSON.parse(docs.find(doc => doc.resource === 'references/moderation-cues.json').text);
-    assert.equal(vocabulary.sources.length, 5);
-    const sourceIds = new Set(vocabulary.sources.map(source => source.id));
-    assert.ok(vocabulary.classes.every(group => group.sourceIds.every(id => sourceIds.has(id))));
+    assert.ok(docs.every(doc => !/prompt-risk-lexicon|moderation-cues/.test(doc.resource)));
     const text = '律师查看合同，爵士钢琴音乐，江湖人士在远处，UE5 渲染。';
-    const matches = collectPromptRepairCues(text, docs);
+    const matches = collectPromptRepairCues(text, { modelId: `logical-video-model ${model}` });
     for (const term of ['律师', '合同', '爵士钢琴', '江湖人士', 'UE5']) {
       const hit = matches.find(match => match.term === term);
       assert.ok(hit, term);
       assert.equal(text.slice(hit.start, hit.start + term.length), term);
+      assert.equal(hit.level, 'off');
       assert.ok(hit.sourceIds.length);
     }
-    assert.equal(collectPromptRepairCues('screenshot drugstore bloodless flagpole', docs).length, 0);
+    assert.equal(collectPromptRepairCues('screenshot drugstore bloodless flagpole', { modelId: model }).length, 0);
   }
-  const docs = await loadPromptRepairGuidance({ videoModelId: 'other-video-model' });
-  assert.equal(collectPromptRepairCues('律师查看合同', docs).length, 0);
+  assert.equal(collectPromptRepairCues('律师查看合同', { modelId: 'other-video-model' }).length, 0);
+  assert.deepEqual(collectPromptRepairCues('一丝不挂的人物', { modelId: 'seedance-2.5' }).map(hit => [hit.term, hit.level]), [['一丝不挂', 'banned']]);
 });
 
 test('Seedance vocabulary and actual cue locations reach the optimizer in both rounds', async () => {
@@ -48,7 +46,7 @@ test('Seedance vocabulary and actual cue locations reach the optimizer in both r
     const input = JSON.parse(args.prompt);
     calls++;
     assert.equal(input.attempt, calls);
-    assert.ok(input.guidance.some(doc => doc.resource === 'references/moderation-cues.json'));
+    assert.ok(input.guidance.some(doc => doc.resource === 'references/moderation-vocabulary.md'));
     for (const term of ['律师', '合同', '爵士钢琴']) assert.ok(input.candidateCueMatches.some(match => match.term === term));
     // Matching ordinary words must not force a content change.
     return { text: '{"meaningPreserved":false,"replacements":[]}' };

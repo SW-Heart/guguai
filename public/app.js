@@ -21,6 +21,7 @@ import { createMediaController } from './features/media/controller.js?v=12';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createConversationRail } from './features/agent/conversation-rail.js?v=5';
+import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -73,6 +74,7 @@ const desktopScope = createDesktopScope({ getWindow: () => window, getSyncInfo: 
 const desktopScopeHeaders = desktopScope.headers;
 const apiResponseShape = url => /\/api\/generations\?/.test(String(url)) && /(?:^|[?&])(?:ids|view)=/.test(String(url)) ? 'array' : 'object';
 const { request: api, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
+const promptPrecheck = createPromptPrecheck({ api });
 const conversationRail = createConversationRail({
   root: document.querySelector('#agentHistory'),
   api,
@@ -2148,7 +2150,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=89').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=90').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2159,8 +2161,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=225').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
+    dramaControllerPromise = import('./drama-studio.js?v=226').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -2464,15 +2466,17 @@ async function bindShotTask(shotId, kind, task) {
 }
 async function startShotKeyframe(shotId, button) {
   const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); if (!shot) return;
+  const checked = await promptPrecheck.check({ prompts:[shot.keyframePrompt], source:'drama', scopeNote:true }); if (checked.action === 'cancel') return;
   button.disabled = true; button.textContent = '正在生成关键帧…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'image', prompt:shot.keyframePrompt, size:'9:16', quality:'medium', referenceAssetIds:[] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'keyframe',task); toast(`关键帧已开始生成，预计消耗 ${task.creditCost} 积分`); }
+  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'image', prompt:checked.prompts[0], size:'9:16', quality:'medium', referenceAssetIds:[], ...checked.fields }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'keyframe',task); toast(`关键帧已开始生成，预计消耗 ${task.creditCost} 积分`); }
   catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
 }
 async function startShotVideo(shotId, button) {
   const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); const keyframeTask = shotTask(shot,'keyframe');
   if (!shot || keyframeTask?.status !== 'completed' || !keyframeTask.assetId) return toast('关键帧完成后才能生成视频');
+  const checked = await promptPrecheck.check({ prompts:[shot.videoPrompt], source:'drama', scopeNote:true }); if (checked.action === 'cancel') return;
   button.disabled = true; button.textContent = '正在生成视频…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'video', prompt:shot.videoPrompt, aspectRatio:'9:16', duration:6, referenceAssetIds:[keyframeTask.assetId] }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'video',task); toast(`6 秒视频已开始生成，预计消耗 ${task.creditCost} 积分`); }
+  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'video', prompt:checked.prompts[0], aspectRatio:'9:16', duration:6, referenceAssetIds:[keyframeTask.assetId], ...checked.fields }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'video',task); toast(`6 秒视频已开始生成，预计消耗 ${task.creditCost} 积分`); }
   catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
 }
 
@@ -4358,8 +4362,10 @@ async function submitGeneration(type, form, payload) {
 }
 $('#imageModel').addEventListener('change', () => syncImageModelParameters());
 ['imageMjStylize', 'imageMjChaos', 'imageMjWeird'].forEach(id => $(`#${id}`)?.addEventListener('input', syncMidjourneyRangeLabels));
-$('#imageForm').onsubmit = event => {
+$('#imageForm').onsubmit = async event => {
   event.preventDefault();
+  const form = event.currentTarget;
+  if (generationSubmissionForms.has(form)) return;
   syncImagePromptInput();
   const prompt = imagePromptText();
   if (!prompt.trim()) return toast('请填写创作描述');
@@ -4368,9 +4374,13 @@ $('#imageForm').onsubmit = event => {
   const midjourneyOptions = modelId === 'midjourney' ? currentMidjourneyOptions() : null;
   const tuziQuality = modelId === 'gpt-image-2.5' ? ($('#imageTuziQuality').value || '1k') : '';
   const quantity = commitImageQuantity($('#imageQuantity').value);
-  submitGeneration('image', event.currentTarget, {
+  // Edits made in the check dialog apply to this submission only; @mentions in the text still resolve.
+  const checked = await promptPrecheck.check({ prompts:[prompt], modelId, source:'image' });
+  if (checked.action === 'cancel') return;
+  submitGeneration('image', form, {
     modelId,
-    prompt:replaceAssetMentions(prompt, state.imagePromptMentions),
+    prompt:replaceAssetMentions(checked.prompts[0], state.imagePromptMentions),
+    ...checked.fields,
     size:modelId === 'midjourney' ? midjourneyOptions.aspectRatio : modelId === 'gpt-image-2.5' ? tuziImageSize() : $('#imageSize').value,
     quality:modelId === 'midjourney' ? midjourneyOptions.quality : modelId === 'gpt-image-2.5' ? tuziQuality : $('#imageQuality').value,
     quantity,
@@ -4381,8 +4391,10 @@ $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const v
 $('#imageQuantity').onchange = () => commitImageQuantity($('#imageQuantity').value);
 $('#imageQuantityDecrease').onclick = () => changeImageQuantity(-1);
 $('#imageQuantityIncrease').onclick = () => changeImageQuantity(1);
-$('#videoForm').onsubmit = event => {
+$('#videoForm').onsubmit = async event => {
   event.preventDefault();
+  const form = event.currentTarget;
+  if (generationSubmissionForms.has(form)) return;
   syncVideoPromptState();
   const prompt = videoPromptText();
   if (!$('#videoModel').value) return toast('请先选择视频模型');
@@ -4392,7 +4404,9 @@ $('#videoForm').onsubmit = event => {
   const input = currentVideoFormInput();
   if (!input) return toast('创作参数已变化，请重新选择时长、画幅和清晰度');
   const referenceAssetIds = input.generationType === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video;
-  submitGeneration('video', event.currentTarget, { prompt:replaceAssetMentions(prompt, state.videoPromptMentions), ...input, referenceAssetIds });
+  const checked = await promptPrecheck.check({ prompts:[prompt], modelId:input.modelId, source:'video' });
+  if (checked.action === 'cancel') return;
+  submitGeneration('video', form, { prompt:replaceAssetMentions(checked.prompts[0], state.videoPromptMentions), ...input, referenceAssetIds, ...checked.fields });
 };
 const imageQuantityMin = 1;
 const imageQuantityMax = 10;

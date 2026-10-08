@@ -1,5 +1,6 @@
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice } from '../../lib/pricing.mjs';
+import { publicPrecheckHits } from './prompt-precheck.mjs';
 
 export function createGenerationRouteHandler({
   prepareViralGeneration,
@@ -60,6 +61,7 @@ export function createGenerationRouteHandler({
   providerAvailability,
   runtimeMetrics,
   activeGenerations,
+  promptPrecheck,
 }) {
   function providerReady(provider, type, videoRequest) {
     if (provider === 'duomi') return providerAvailability.duomi;
@@ -234,7 +236,16 @@ export function createGenerationRouteHandler({
     return false;
   }
 
-  async function submitGeneration({ user, scope, input, headerRequestId = '', previewOnly = false, maxCostMicro = Infinity, taskExtras = {} }) {
+  const precheckOutcomes = new Set(['edited', 'submitted_as_is', 'confirmed_banned']);
+  const precheckSources = new Set(['image', 'video', 'drama', 'agent']);
+  function recordPrecheck(event) {
+    // Recording is evidence for the lexicon, never a reason to fail a paid submission.
+    try { promptPrecheck.record(event); } catch (error) { console.error('[prompt-precheck] record failed', error.message); }
+  }
+
+  // precheck is set only by the HTTP submit route; Agent and API callers reach
+  // submitGeneration directly and are never checked here.
+  async function submitGeneration({ user, scope, input, headerRequestId = '', previewOnly = false, maxCostMicro = Infinity, taskExtras = {}, precheck = false }) {
     const res = {};
     const sendJson = (_res, status, data) => { res.result = { status, data }; };
     input = structuredClone(input);
@@ -248,6 +259,9 @@ export function createGenerationRouteHandler({
     const requestInput = { ...input };
     delete requestInput.requestId;
     delete requestInput.expectedPriceVersion;
+    delete requestInput.precheckConfirmed;
+    delete requestInput.precheckOutcome;
+    delete requestInput.precheckSource;
     const requestFingerprint = generationRequestId ? generationRequestFingerprint({ version:2, input:requestInput, scope:{ deviceId:scope.deviceId, workspaceId:scope.workspaceId } }) : '';
     const storedRequest = generationRequestId ? findGenerationRequest(user.id, generationRequestId) : null;
     if (storedRequest) {
@@ -323,6 +337,15 @@ export function createGenerationRouteHandler({
     if (referenceCounts.image && !r2ReferenceConfigured) return sendJson(res, 503, { error:`${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` }), true;
     const modelId = type === 'image' ? requestedImageModelId : videoRequest.modelId;
     if (!isModelEnabled(modelId)) return sendJson(res, 503, { error:'当前模型暂不可用' }), true;
+    const precheckSource = precheckSources.has(input.precheckSource) ? input.precheckSource : dramaProjectId ? 'drama' : type;
+    const precheckMode = precheck && !previewOnly && promptPrecheck && precheckSource !== 'agent' ? promptPrecheck.mode() : 'off';
+    const precheckResult = precheckMode === 'off' ? null : promptPrecheck.scan(prompt, { modelId });
+    const precheckEvent = precheckResult?.hits.length ? { userId:user.id, source:precheckSource, modelId, lexiconVersion:precheckResult.lexiconVersion, mode:precheckMode, hits:precheckResult.hits } : null;
+    if (precheckMode === 'enforce' && precheckResult.counts.banned && input.precheckConfirmed !== true) {
+      recordPrecheck({ ...precheckEvent, outcome:'blocked' });
+      return sendJson(res, 409, { error:'描述中有内容很可能导致生成失败，请确认后再提交', code:'PROMPT_PRECHECK_REQUIRED',
+        precheck:{ counts:precheckResult.counts, hits:publicPrecheckHits(precheckResult.hits) } }), true;
+    }
     const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, availableOnly:true, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
@@ -402,6 +425,8 @@ export function createGenerationRouteHandler({
     const effectiveTasks = tasks.map(task => findGeneration(user.id, task.id, scope) || task);
     if (bindDramaTasks) { for (const task of effectiveTasks) if (!dramaShot.videoVersions.includes(task.id)) dramaShot.videoVersions.push(task.id); dramaShot.selectedVideoTaskId = effectiveTasks.at(-1).id; await saveDramaProject(user.id, dramaProject); }
     effectiveTasks.forEach(task => { if (task.status === 'queued' && !task.awaitingReferences && !isMidjourneyOutputChild(task)) enqueueGenerationJob({ userId:user.id, generationId:task.id }); });
+    if (precheckEvent) recordPrecheck({ ...precheckEvent, generationIds:effectiveTasks.map(task => task.id),
+      outcome:precheckOutcomes.has(input.precheckOutcome) ? input.precheckOutcome : precheckMode === 'shadow' ? 'shadow' : 'not_prompted' });
     const boundProject = bindDramaTasks ? { project:publicDramaProject(dramaProject) } : {};
     if (quantity === 1) return sendJson(res, 202, { ...publicGeneration(effectiveTasks[0]), balance:charged.balance, ...boundProject }), true;
     return sendJson(res, 202, { tasks:effectiveTasks.map(publicGeneration), quantity, balance:charged.balance, ...boundProject }), true;
@@ -415,7 +440,7 @@ export function createGenerationRouteHandler({
     const user = await requireUser(req, res); if (!user) return true;
     const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
     const input = await bodyJson(req);
-    const result = await submitGeneration({ user, scope, input, headerRequestId:String(req.headers['idempotency-key'] || '').trim() });
+    const result = await submitGeneration({ user, scope, input, headerRequestId:String(req.headers['idempotency-key'] || '').trim(), precheck:true });
     sendJson(res, result.status, result.data);
     return true;
   }

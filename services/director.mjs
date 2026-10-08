@@ -558,7 +558,7 @@ export function createDirectorService({
     const input = buildPromptOptimizationInput({ originalPrompt, prompt, direction, mentionLabels, shot, project, references, model, maxLength });
     const guidance = await loadPromptOptimizationGuidance({ skills, modelId:shot.generation?.modelId, mode:shot.generation?.type,
       dialogue:Boolean(input.projectContext.scene?.beats.some(item => item.kind === 'dialogue') || /台词|对白|[“「]|说[：:]/.test(prompt)) });
-    input.riskCueMatches = collectPromptRepairCues(prompt, guidance).map(({ category, term, start, context, review }) => ({ category, term, start, context, review }));
+    input.riskCueMatches = collectPromptRepairCues(prompt, { modelId:shot.generation?.modelId }).map(({ category, term, start, level, context, review }) => ({ category, term, start, level, context, review }));
     const system = `${promptOptimizationSystem}\n\n以下是当前任务的创作资料。只取与本镜有关的写作方法，保持上面的输出格式、@引用和平台能力约束：\n${JSON.stringify(guidance)}`;
     const requestId = randomId();
     const maxOutputTokens = Math.min(16000, maxLength * 2 + 1200);
