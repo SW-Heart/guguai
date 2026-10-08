@@ -50,11 +50,60 @@ test('a second check while one is running is ignored', async () => {
   assert.equal((await first).action, 'submit');
 });
 
+test('editing and Chinese composition update marks immediately and submit the edited text', async () => {
+  // Minimal DOM double exercises the dialog's actual input listeners without opening a client.
+  const elements = [];
+  const createElement = () => {
+    const children = new Map(), listeners = new Map();
+    const element = {
+      hidden:false, open:false, scrollTop:0, classList:{ toggle() {} },
+      setAttribute() {}, append() {}, focus() {}, setSelectionRange() {},
+      querySelector(selector) {
+        if (!children.has(selector)) children.set(selector, createElement());
+        return children.get(selector);
+      },
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      removeEventListener(name) { listeners.delete(name); },
+      emit(name, event = {}) { listeners.get(name)?.(event); },
+      showModal() { this.open = true; }, close() { this.open = false; },
+    };
+    elements.push(element);
+    return element;
+  };
+  let scans = 0;
+  const guard = createPromptPrecheck({
+    documentRef:{ createElement, body:{ append() {} } }, delay:60_000,
+    api:async () => {
+      scans++;
+      return { mode:'enforce', results:[{ hits:[{ start:0, end:3, level:'suspect', label:'未成年人' }] }] };
+    },
+  });
+  const result = guard.check({ prompts:['16岁的角色'], source:'image' });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = elements[0];
+  const section = elements.find(element => element.className === 'prompt-precheck-item');
+  const textarea = section.querySelector('textarea'), mirror = section.querySelector('.prompt-precheck-mirror');
+  textarea.value = '成年角色';
+  textarea.scrollTop = 24;
+  textarea.emit('input');
+  assert.equal(mirror.innerHTML, '成年角色​');
+  assert.equal(mirror.scrollTop, 24);
+  textarea.emit('compositionstart');
+  textarea.value = '成年角色站在街头';
+  textarea.emit('input');
+  assert.equal(mirror.innerHTML, '成年角色站在街头​');
+  assert.equal(scans, 1);
+  textarea.emit('compositionend');
+  root.emit('click', { target:{ closest:selector => selector === '[data-precheck-submit]' } });
+  assert.deepEqual(await result, { action:'submit', prompts:['成年角色站在街头'], fields:{ precheckSource:'image', precheckOutcome:'edited' } });
+  assert.equal(root.open, false);
+});
+
 test('every submit entry passes through the check and versioned URLs are bumped together', () => {
   const app = read('app.js'), drama = read('drama-studio.js'), director = read('features/drama/director-workspace.js'), html = read('index.html');
-  assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=1'/);
-  assert.match(html, /\/app\.js\?v=489"/);
-  assert.match(html, /\/styles\.css\?v=364"/);
+  assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=2'/);
+  assert.match(html, /\/app\.js\?v=490"/);
+  assert.match(html, /\/styles\.css\?v=365"/);
   assert.match(app, /\.\/drama-studio\.js\?v=226'/);
   assert.match(app, /\.\/features\/agent\/workspace\.js\?v=90'/);
   assert.match(drama, /director-workspace\.js\?v=126'/);

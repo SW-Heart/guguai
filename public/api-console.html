@@ -7,7 +7,7 @@
   <meta name="robots" content="index,follow">
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/marketing.css?v=15">
-  <link rel="stylesheet" href="/api-console.css?v=1">
+  <link rel="stylesheet" href="/api-console.css?v=2">
   <title>GuGu AI API</title>
 </head>
 <body class="api-console">
@@ -205,7 +205,7 @@
   <dialog class="console-dialog" id="secretDialog" aria-labelledby="secretDialogTitle">
     <h2 id="secretDialogTitle">密钥已创建</h2>
     <p class="panel-note">请立即复制并妥善保存。关闭后将无法再次查看完整密钥。</p>
-    <div class="endpoint-row"><code id="newSecret"></code><button class="primary-button compact" type="button" data-copy-target="newSecret">复制</button></div>
+    <div class="endpoint-row"><code id="newSecret" tabindex="0" aria-label="API 密钥"></code><button class="primary-button compact" type="button" data-copy-target="newSecret">复制</button></div>
     <div class="dialog-actions"><button class="secondary-button" type="button" data-action="close-dialog">我已保存</button></div>
   </dialog>
 

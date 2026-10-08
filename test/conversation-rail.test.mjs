@@ -109,7 +109,7 @@ test('sidebar replaces the project page and the agent is the default route', () 
 
 test('sidebar cache chain is connected through the HTML entry', () => {
   for (const [path, urls] of [
-    ['index.html', ['/app.js?v=489', '/styles.css?v=364']],
+    ['index.html', ['/app.js?v=490', '/styles.css?v=365']],
     ['app.js', ['./features/agent/conversation-rail.js?v=5', './features/agent/workspace.js?v=90']],
     ['features/agent/workspace.js', ['./default-title.js?v=1']],
   ]) for (const url of urls) assert.ok(read(path).includes(url), `${path}: ${url}`);

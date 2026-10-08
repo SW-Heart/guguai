@@ -112,9 +112,9 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
       view.textarea.value = item.text;
       paint(view);
       view.textarea.addEventListener('scroll', () => { view.mirror.scrollTop = view.textarea.scrollTop; });
-      view.textarea.addEventListener('compositionstart', () => { view.composing = true; });
+      view.textarea.addEventListener('compositionstart', () => { view.composing = true; clearTimeout(view.timer); });
       view.textarea.addEventListener('compositionend', () => { view.composing = false; onInput(view); });
-      view.textarea.addEventListener('input', () => { if (!view.composing) onInput(view); });
+      view.textarea.addEventListener('input', () => onInput(view));
       view.list.addEventListener('click', event => {
         const button = event.target.closest('button[data-start]');
         if (!button) return;
@@ -126,6 +126,7 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
 
     function paint(view) {
       view.mirror.innerHTML = markedHtml(view.text, view.hits);
+      view.mirror.scrollTop = view.textarea.scrollTop;
       view.status.textContent = statusText(countMarks(view.hits));
       view.status.classList.toggle('is-clear', !view.hits.length);
       view.list.innerHTML = view.hits.map(hit => `<li><button type="button" class="is-${hit.level === 'banned' ? 'banned' : 'suspect'}" data-start="${hit.start}" data-end="${hit.end}">${escapeHtml(view.text.slice(hit.start, hit.end))}<span>${escapeHtml(hit.label)}</span></button></li>`).join('');
@@ -137,6 +138,7 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
       view.text = next;
       paint(view);
       clearTimeout(view.timer);
+      if (view.composing) return;
       view.timer = setTimeout(async () => {
         const current = ++sequence; const text = view.text;
         try {
