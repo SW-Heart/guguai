@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GuGu AI API：使用 OpenAI 兼容接口调用图片与视频模型，管理密钥、查看调用日志和充值。">
+  <meta name="robots" content="index,follow">
+  <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
+  <link rel="stylesheet" href="/marketing.css?v=15">
+  <link rel="stylesheet" href="/api-console.css?v=1">
+  <title>GuGu AI API</title>
+</head>
+<body class="api-console">
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header" id="site-header"><div class="nav-shell wrap">
+    <a class="wordmark" href="/" data-route="/" aria-label="GuGu AI API 首页"><img src="/favicon.svg?v=2" alt="">GuGu <span>API</span></a>
+    <button class="menu-toggle" type="button" aria-label="展开导航" aria-expanded="false" aria-controls="site-navigation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <nav class="site-nav" id="site-navigation" aria-label="API 导航">
+      <a data-route="/" href="/">概览</a>
+      <a data-route="/models" href="/models">模型</a>
+      <a data-route="/keys" href="/keys">API 密钥</a>
+      <a data-route="/logs" href="/logs">调用日志</a>
+      <a data-route="/docs" href="/docs">接口文档</a>
+      <a data-route="/billing" href="/billing">充值</a>
+      <span class="account-slot" id="accountSlot">
+        <button class="secondary-button" type="button" data-action="login" hidden>登录</button>
+        <span class="account-chip" id="accountChip" hidden>
+          <span class="account-balance"><b id="headerBalance">—</b> 积分</span>
+          <span class="account-name" id="accountName"></span>
+          <button class="ghost-button" type="button" data-action="logout">退出</button>
+        </span>
+      </span>
+    </nav>
+  </div></header>
+
+  <main class="console-main wrap" id="main" tabindex="-1">
+    <section class="view" data-view="/" aria-labelledby="overview-title" hidden>
+      <div class="view-head">
+        <h1 id="overview-title">API 概览</h1>
+        <p>与 GuGu AI 客户端共用账号和积分，价格与官网一致。</p>
+      </div>
+      <div class="stat-strip" id="overviewStats" aria-live="polite"></div>
+      <div class="panel">
+        <div class="panel-head"><h2>接口地址</h2></div>
+        <div class="endpoint-row">
+          <code id="baseUrl">—</code>
+          <button class="secondary-button compact" type="button" data-copy-target="baseUrl">复制</button>
+        </div>
+        <p class="panel-note">接口路径与 OpenAI 一致：把 OpenAI SDK 的 base_url 换成上面的地址，再使用 GuGu AI 的 API 密钥即可。</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>快速开始</h2>
+          <div class="segmented" role="tablist" aria-label="示例语言" data-sample-tabs="overview"></div>
+        </div>
+        <pre class="code-block" data-sample-output="overview"></pre>
+        <div class="page-actions">
+          <a class="primary-button" href="/keys" data-route="/keys">创建 API 密钥</a>
+          <a class="secondary-button" href="/docs" data-route="/docs">阅读接口文档</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="/models" aria-labelledby="models-title" hidden>
+      <div class="view-head split">
+        <div>
+          <h1 id="models-title">模型</h1>
+          <p>当前可调用的模型、模型 ID、参数和价格，随服务状态实时更新。</p>
+        </div>
+        <div class="segmented" role="group" aria-label="按类型筛选" id="modelFilter">
+          <button type="button" data-filter="all" aria-pressed="true">全部</button>
+          <button type="button" data-filter="image" aria-pressed="false">图片</button>
+          <button type="button" data-filter="video" aria-pressed="false">视频</button>
+        </div>
+      </div>
+      <div id="modelList" class="model-list" aria-live="polite" aria-busy="true"><p class="empty-state">正在读取模型…</p></div>
+    </section>
+
+    <section class="view" data-view="/keys" aria-labelledby="keys-title" hidden>
+      <div class="view-head split">
+        <div>
+          <h1 id="keys-title">API 密钥</h1>
+          <p>每个密钥都可以单独设置额度上限和有效期。请妥善保管密钥，不要放在前端页面或公开仓库里。</p>
+        </div>
+        <button class="primary-button" type="button" data-action="create-key" data-auth-required>创建密钥</button>
+      </div>
+      <div class="table-wrap"><table class="data-table" id="keyTable">
+        <thead><tr><th scope="col">名称</th><th scope="col">密钥</th><th scope="col">状态</th><th scope="col">已用 / 额度</th><th scope="col">有效期至</th><th scope="col">最近使用</th><th scope="col"><span class="visually-hidden">操作</span></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+
+    <section class="view" data-view="/logs" aria-labelledby="logs-title" hidden>
+      <div class="view-head">
+        <h1 id="logs-title">调用日志</h1>
+        <p>记录创建任务、删除任务和所有失败的请求，保留 30 天。查询成功的请求不会记录。</p>
+      </div>
+      <form class="filter-bar" id="logFilters">
+        <label>密钥<select name="key"><option value="">全部密钥</option></select></label>
+        <label>模型<select name="model"><option value="">全部模型</option></select></label>
+        <label>结果<select name="outcome"><option value="">全部</option><option value="success">成功</option><option value="error">失败</option></select></label>
+        <label>开始日期<input type="date" name="from"></label>
+        <label>结束日期<input type="date" name="to"></label>
+        <button class="secondary-button compact" type="submit">筛选</button>
+      </form>
+      <div class="table-wrap"><table class="data-table" id="logTable">
+        <thead><tr><th scope="col">时间</th><th scope="col">密钥</th><th scope="col">请求</th><th scope="col">模型</th><th scope="col">结果</th><th scope="col" class="num">扣费（积分）</th><th scope="col" class="num">耗时</th><th scope="col">请求 ID</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div class="table-footer"><button class="secondary-button compact" type="button" id="moreLogs" hidden>加载更多</button></div>
+    </section>
+
+    <section class="view docs-view" data-view="/docs" aria-labelledby="docs-title" hidden>
+      <nav class="docs-toc" aria-label="文档目录" id="docsToc"></nav>
+      <article class="docs-body" id="docsBody">
+        <h1 id="docs-title">接口文档</h1>
+        <p class="empty-state">正在读取最新模型参数…</p>
+      </article>
+    </section>
+
+    <section class="view" data-view="/billing" aria-labelledby="billing-title" hidden>
+      <div class="view-head">
+        <h1 id="billing-title">充值</h1>
+        <p>使用微信支付购买积分，1 元 = 10 积分。积分与 GuGu AI 客户端通用。</p>
+      </div>
+      <div class="billing-layout">
+        <form class="panel" id="rechargeForm">
+          <div class="panel-head"><h2>选择金额</h2><span class="balance-inline">当前可用 <b id="billingBalance">—</b> 积分</span></div>
+          <div class="amount-grid" id="amountPresets" role="radiogroup" aria-label="充值金额"></div>
+          <label class="field">其他金额（元）<input type="number" name="amount" min="1" max="10000" step="1" inputmode="numeric" placeholder="1–10000 的整数"></label>
+          <p class="form-error" id="rechargeError" role="alert" hidden></p>
+          <button class="primary-button" type="submit" id="rechargeSubmit">微信支付</button>
+        </form>
+        <div class="panel pay-panel" id="payPanel" hidden aria-live="polite">
+          <div class="panel-head"><h2 id="payTitle">微信扫码支付</h2></div>
+          <img class="pay-qr" id="payQr" alt="微信支付二维码" width="200" height="200">
+          <p class="pay-amount" id="payAmount"></p>
+          <p class="panel-note" id="payStatus">支付完成后积分会自动到账。</p>
+          <div class="page-actions">
+            <a class="secondary-button compact" id="payLink" target="_blank" rel="noopener" hidden>在微信中打开</a>
+            <button class="secondary-button compact" type="button" id="payCheck">我已支付</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>积分明细</h2></div>
+        <div class="table-wrap"><table class="data-table" id="ledgerTable">
+          <thead><tr><th scope="col">时间</th><th scope="col">类型</th><th scope="col" class="num">积分</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="view login-view" data-view="login" aria-labelledby="login-title" hidden>
+      <form class="panel login-panel" id="loginForm" novalidate>
+        <h1 id="login-title">登录 GuGu AI</h1>
+        <p class="panel-note">使用 GuGu AI 客户端的账号登录，积分与客户端通用。</p>
+        <div class="segmented full" role="tablist" aria-label="登录方式">
+          <button type="button" role="tab" data-login-mode="sms" aria-selected="true">验证码登录</button>
+          <button type="button" role="tab" data-login-mode="password" aria-selected="false">密码登录</button>
+        </div>
+        <div data-login-fields="sms">
+          <label class="field">手机号<input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="请输入手机号"></label>
+          <div class="captcha-row">
+            <label class="field">图形验证码<input name="captchaCode" autocomplete="off" placeholder="请输入右侧字符"></label>
+            <button type="button" class="captcha-image" data-action="refresh-captcha" aria-label="换一张图形验证码"><img id="captchaImage" alt="图形验证码"></button>
+          </div>
+          <div class="code-row">
+            <label class="field">短信验证码<input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="请输入短信验证码"></label>
+            <button type="button" class="secondary-button" data-action="send-sms">获取验证码</button>
+          </div>
+        </div>
+        <div data-login-fields="password" hidden>
+          <label class="field">账号或手机号<input name="identifier" autocomplete="username" placeholder="请输入账号或手机号"></label>
+          <label class="field">密码<input name="password" type="password" autocomplete="current-password" placeholder="请输入密码"></label>
+        </div>
+        <p class="form-error" id="loginError" role="alert" hidden></p>
+        <button class="primary-button" type="submit">登录</button>
+        <p class="panel-note">还没有账号？使用手机号验证码登录会自动创建账号。</p>
+      </form>
+    </section>
+  </main>
+
+  <dialog class="console-dialog" id="keyDialog" aria-labelledby="keyDialogTitle">
+    <form method="dialog" id="keyForm" novalidate>
+      <h2 id="keyDialogTitle">创建 API 密钥</h2>
+      <label class="field">名称<input name="name" maxlength="40" required placeholder="例如：生产环境"></label>
+      <label class="field">额度上限（积分）<input name="creditLimit" type="number" min="0" step="0.01" inputmode="decimal" placeholder="不填则不限制"></label>
+      <label class="field">有效期<select name="expires">
+        <option value="">永久有效</option>
+        <option value="7">7 天</option>
+        <option value="30">30 天</option>
+        <option value="90">90 天</option>
+        <option value="365">1 年</option>
+        <option value="keep" hidden>保持不变</option>
+      </select></label>
+      <p class="form-error" id="keyFormError" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button class="secondary-button" type="button" data-action="close-dialog">取消</button>
+        <button class="primary-button" type="submit" id="keySubmit">创建</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="console-dialog" id="secretDialog" aria-labelledby="secretDialogTitle">
+    <h2 id="secretDialogTitle">密钥已创建</h2>
+    <p class="panel-note">请立即复制并妥善保存。关闭后将无法再次查看完整密钥。</p>
+    <div class="endpoint-row"><code id="newSecret"></code><button class="primary-button compact" type="button" data-copy-target="newSecret">复制</button></div>
+    <div class="dialog-actions"><button class="secondary-button" type="button" data-action="close-dialog">我已保存</button></div>
+  </dialog>
+
+  <dialog class="console-dialog" id="confirmDialog" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle">删除密钥</h2>
+    <p class="panel-note" id="confirmText"></p>
+    <div class="dialog-actions">
+      <button class="secondary-button" type="button" data-action="close-dialog">取消</button>
+      <button class="danger-button" type="button" id="confirmAccept">删除</button>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/api-console.js?v=1"></script>
+</body>
+</html>

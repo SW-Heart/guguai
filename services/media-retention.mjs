@@ -1,6 +1,8 @@
 // Cloud copies of media are transfer buffers, not storage. Users keep their
 // files locally, so a cloud copy is deleted a few days after any device has
 // saved it. Diagnostic logs and desktop installers live outside these rules.
+import { API_DEVICE_ID } from '../repositories/api-platform.mjs';
+
 const dayMs = 24 * 3600_000;
 
 export const MEDIA_RETENTION_DEFAULTS = Object.freeze({
@@ -24,7 +26,9 @@ export function cloudCopyExpiresAt(asset, { localCopyMs = MEDIA_RETENTION_DEFAUL
   if (savedLocally !== null) return savedLocally + localCopyMs;
   const uploadedAt = timestamp(asset.objectUploadedAt) ?? timestamp(asset.createdAt);
   if (uploadedAt === null) return null;
-  return uploadedAt + (asset.source === 'upload' ? localCopyMs : undeliveredMs);
+  // API callers download results themselves; nothing waits for a device.
+  const shortLived = asset.source === 'upload' || asset.originDeviceId === API_DEVICE_ID;
+  return uploadedAt + (shortLived ? localCopyMs : undeliveredMs);
 }
 
 export function createMediaRetentionService({

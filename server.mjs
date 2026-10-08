@@ -64,6 +64,10 @@ import { createDramaRouteHandler } from './server/routes/drama.mjs';
 import { createFilesRouteHandler } from './server/routes/files.mjs';
 import { createGenerationRouteHandler } from './server/routes/generations.mjs';
 import { createSystemRouteHandler } from './server/routes/system.mjs';
+import { createOpenAiCompatRoute } from './server/routes/openai-compat.mjs';
+import { createApiConsoleRoute } from './server/routes/api-console.mjs';
+import { createApiPlatformRepository, API_LOG_RETENTION_DAYS } from './repositories/api-platform.mjs';
+import { buildApiModelCatalog } from './lib/api-catalog.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
@@ -2840,6 +2844,90 @@ const generationRoute = createGenerationRouteHandler({
   activeGenerations,
 });
 
+// OpenAI-compatible API and its console (api.guguai.xyz). Same accounts,
+// balance, pricing and generation pipeline as the desktop client.
+const apiPlatform = createApiPlatformRepository({ sql, tx, now });
+const apiSiteHosts = new Set(String(process.env.API_SITE_HOSTS || 'api.guguai.xyz').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+const apiConsolePages = new Set(['/', '/models', '/keys', '/logs', '/docs', '/billing']);
+function isApiSiteRequest(req) {
+  const host = String(req.headers.host || '').trim().toLowerCase();
+  return apiSiteHosts.has(host) || apiSiteHosts.has(host.replace(/:\d+$/, ''));
+}
+function apiSiteApiAllowed(pathname) {
+  return pathname.startsWith('/api/auth/')
+    || pathname.startsWith('/api/console/')
+    || pathname.startsWith('/api/public/')
+    || pathname === '/api/credits'
+    || pathname === '/api/payments/wechat/orders'
+    || /^\/api\/payments\/wechat\/orders\/[A-Za-z0-9_-]+(?:\/query)?$/.test(pathname);
+}
+let apiCatalogCache = { at:0, value:[] };
+function apiModelCatalog() {
+  if (Date.now() - apiCatalogCache.at < 5_000) return apiCatalogCache.value;
+  const pricing = currentPricing();
+  const videoCapabilities = publicVideoCapabilitiesWithControls();
+  const value = buildApiModelCatalog({
+    imageModels:imageModelCatalog.filter(model => isImageModelAvailable(model.id)),
+    videoModels:videoCapabilities.models || [],
+    prices:publicPlatformPrices(pricing, videoCapabilities),
+    imageAspectRatios:[...imageSizes],
+  });
+  apiCatalogCache = { at:Date.now(), value };
+  return value;
+}
+const openAiRoute = createOpenAiCompatRoute({
+  repo:apiPlatform,
+  apiCatalog:apiModelCatalog,
+  submitGeneration:generationRoute.submit,
+  findGeneration,
+  publicGeneration,
+  findAsset,
+  saveAsset,
+  deleteAssetRecord,
+  hideGenerationForUser,
+  activeGenerations,
+  findUserById,
+  ensureUserDirs,
+  assetFilesDir,
+  serveFile,
+  signedAssetUrl,
+  servePendingGenerationSource,
+  bodyBuffer,
+  clientIp,
+  now,
+});
+const apiConsoleRoute = createApiConsoleRoute({
+  repo:apiPlatform,
+  apiCatalog:apiModelCatalog,
+  requireUser,
+  bodyJson,
+  sendJson,
+  walletOf,
+  taskStatus:openAiRoute.taskStatus,
+  now,
+});
+let apiPlatformSweeper = null;
+function startApiPlatformSweeper() {
+  let running = false;
+  const run = async () => {
+    if (running) return;
+    running = true;
+    try {
+      apiPlatform.pruneLogs(new Date(Date.now() - API_LOG_RETENTION_DAYS * 86400_000).toISOString());
+      const removed = await openAiRoute.sweepReferences({
+        activeAssetIds:() => listPendingGenerations().flatMap(({ task }) => task.referenceAssetIds || []),
+      });
+      if (removed) console.log(`[api] 过期参考素材删除 ${removed} 个`);
+    } catch (error) {
+      console.error('[api] 定时清理失败', error.message);
+    } finally { running = false; }
+  };
+  const timer = setInterval(run, 3600_000);
+  timer.unref();
+  setTimeout(run, 60_000).unref();
+  return timer;
+}
+
 
 const agentGateway = createAgentGateway();
 const agentRepository = createAgentSessionRepository({ sql, tx });
@@ -2978,7 +3066,14 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (await systemRoute(req, res, url)) return;
+    // API-key requests carry no cookies, so cross-origin calls are allowed.
+    if (await openAiRoute(req, res, url)) return;
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
+    if (isApiSiteRequest(req)) {
+      if (url.pathname.startsWith('/api/') && !apiSiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '接口不存在' });
+      if (await apiConsoleRoute(req, res, url)) return;
+      if (apiConsolePages.has(url.pathname.replace(/(.)\/+$/, '$1')) && req.method === 'GET') return await serveStatic(res, '/api-console.html', req, { publicDir, appOnly:false, sendJson });
+    }
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
     if (await accountRoute(req, res, url, { publicOnly:true })) return;
@@ -2986,6 +3081,7 @@ const server = http.createServer(async (req, res) => {
     // guard so website visitors can inspect prices before signing in.
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
+    if (url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
     if (await authRoute(req, res, url)) return;
     if (await accountRoute(req, res, url)) return;
@@ -3035,6 +3131,7 @@ async function shutdownServer() {
   clearInterval(uploadSweeper);
   if (generationRecoverySweeper) clearInterval(generationRecoverySweeper);
   if (generationJobPoller) clearInterval(generationJobPoller);
+  if (apiPlatformSweeper) clearInterval(apiPlatformSweeper);
   for (const timer of generationRetryTimers.values()) clearTimeout(timer);
   for (const timer of providerTaskIdTimeoutTimers.values()) clearTimeout(timer);
   for (const timer of r2ReferenceImageCleanupTimers.values()) clearTimeout(timer);
@@ -3073,6 +3170,7 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
     generationJobPoller = startGenerationJobPoller();
     startVideoUpscaleSourceSweeper();
     startMediaRetentionSweeper();
+    apiPlatformSweeper = startApiPlatformSweeper();
     startModelRouteMonitor();
     agentRuntime.start();
   });

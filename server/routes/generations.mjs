@@ -234,7 +234,7 @@ export function createGenerationRouteHandler({
     return false;
   }
 
-  async function submitGeneration({ user, scope, input, headerRequestId = '', previewOnly = false, maxCostMicro = Infinity }) {
+  async function submitGeneration({ user, scope, input, headerRequestId = '', previewOnly = false, maxCostMicro = Infinity, taskExtras = {} }) {
     const res = {};
     const sendJson = (_res, status, data) => { res.result = { status, data }; };
     input = structuredClone(input);
@@ -364,6 +364,7 @@ export function createGenerationRouteHandler({
         : [];
       const isIncludedOutput = isMidjourney && outputIndex > 0;
       return {
+        ...taskExtras,
         ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
         id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
         model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
