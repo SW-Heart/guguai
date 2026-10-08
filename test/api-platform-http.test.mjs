@@ -74,6 +74,7 @@ test('OpenAI-compatible API: keys, async image tasks, billing, logs and isolatio
   });
   const upstreamBase = await listen(upstream);
   const port = await freePort();
+  const apiSitePort = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const createdAt = new Date().toISOString();
 
@@ -93,6 +94,7 @@ test('OpenAI-compatible API: keys, async image tasks, billing, logs and isolatio
       DUOMI_API_BASE:upstreamBase,
       API_SITE_HOSTS:'127.0.0.1',
       API_PUBLIC_BASE_URL:'',
+      API_SITE_PORT:String(apiSitePort),
       MEDIA_RETENTION_ENABLED:'0',
     },
     stdio:['ignore', 'pipe', 'pipe'],
@@ -123,6 +125,17 @@ test('OpenAI-compatible API: keys, async image tasks, billing, logs and isolatio
     try { data = JSON.parse(text); } catch { /* not JSON */ }
     return { status:response.status, body:data, headers:response.headers };
   };
+
+  const links = await rawRequest(base, '/api/public/site-links', { host:`localhost:${port}` });
+  assert.deepEqual(JSON.parse(links.body), { apiSiteUrl:`http://localhost:${apiSitePort}` }, 'the website links to this environment\'s API site');
+  let localSite = null;
+  for (let attempt = 0; attempt < 20 && !localSite; attempt++) {
+    localSite = await rawRequest(`http://127.0.0.1:${apiSitePort}`, '/keys', { host:`localhost:${apiSitePort}` }).catch(() => null);
+    if (!localSite) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.match(localSite.body, /<title>GuGu AI API<\/title>/, 'the local API port serves the console without a domain');
+  const mainHome = await rawRequest(base, '/', { host:`localhost:${port}` });
+  assert.doesNotMatch(mainHome.body, /<title>GuGu AI API<\/title>/);
 
   const page = await call('GET', '/');
   assert.equal(page.status, 200);

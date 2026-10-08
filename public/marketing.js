@@ -13,6 +13,14 @@ initSiteInteractions();
       if (href === '#download' || href === '/#download') link.setAttribute('href', `/downloads/${preferredDownloadPlatform}`);
     });
   }
+  // The static link targets production; other environments get their own
+  // API site address from the server.
+  const apiLinks = document.querySelectorAll('.nav-api');
+  if (apiLinks.length) {
+    api('/api/public/site-links', { cache:'no-store', responseShape: data => typeof data?.apiSiteUrl === 'string' && /^https?:\/\//.test(data.apiSiteUrl) })
+      .then(data => apiLinks.forEach(link => link.setAttribute('href', data.apiSiteUrl)))
+      .catch(() => {});
+  }
   {
     const page = document.body.dataset.page;
     document.querySelectorAll('[data-page-link]').forEach(link => {

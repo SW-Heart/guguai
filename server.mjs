@@ -2848,10 +2848,28 @@ const generationRoute = createGenerationRouteHandler({
 // balance, pricing and generation pipeline as the desktop client.
 const apiPlatform = createApiPlatformRepository({ sql, tx, now });
 const apiSiteHosts = new Set(String(process.env.API_SITE_HOSTS || 'api.guguai.xyz').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+// Outside production there is no separate domain, so the API site also
+// listens on its own local port (PORT + 1 unless API_SITE_PORT says otherwise;
+// 0 turns it off). Production routes by Host behind nginx.
+const apiSitePort = process.env.API_SITE_PORT !== undefined && process.env.API_SITE_PORT !== ''
+  ? Number(process.env.API_SITE_PORT) || 0
+  : process.env.NODE_ENV === 'production' ? 0 : port + 1;
 const apiConsolePages = new Set(['/', '/models', '/keys', '/logs', '/docs', '/billing']);
 function isApiSiteRequest(req) {
+  if (apiSitePort && req.socket?.localPort === apiSitePort) return true;
   const host = String(req.headers.host || '').trim().toLowerCase();
   return apiSiteHosts.has(host) || apiSiteHosts.has(host.replace(/:\d+$/, ''));
+}
+// Where the website's "使用 API" button points in the current environment.
+function apiSiteUrl(req) {
+  const configured = String(process.env.API_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (configured) return configured;
+  if (apiSitePort) {
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || 'http';
+    const hostname = String(req.headers.host || '127.0.0.1').replace(/:\d+$/, '');
+    return `${proto}://${hostname}:${apiSitePort}`;
+  }
+  return `https://${[...apiSiteHosts][0] || 'api.guguai.xyz'}`;
 }
 function apiSiteApiAllowed(pathname) {
   return pathname.startsWith('/api/auth/')
@@ -2907,6 +2925,7 @@ const apiConsoleRoute = createApiConsoleRoute({
   now,
 });
 let apiPlatformSweeper = null;
+let apiSiteServer = null;
 function startApiPlatformSweeper() {
   let running = false;
   const run = async () => {
@@ -3082,6 +3101,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
     if (url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
+    if (url.pathname === '/api/public/site-links' && req.method === 'GET') return sendJson(res, 200, { apiSiteUrl:apiSiteUrl(req) });
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
     if (await authRoute(req, res, url)) return;
     if (await accountRoute(req, res, url)) return;
@@ -3138,6 +3158,7 @@ async function shutdownServer() {
   generationRetryTimers.clear();
   providerTaskIdTimeoutTimers.clear();
   r2ReferenceImageCleanupTimers.clear();
+  if (apiSiteServer?.listening) apiSiteServer.close();
   const serverClosed = new Promise(resolve => {
     if (!server.listening) return resolve();
     server.close(() => resolve());
@@ -3163,6 +3184,11 @@ async function shutdownServer() {
 if (isMainModule && process.env.NODE_ENV !== 'test') {
   process.once('SIGINT', shutdownServer);
   process.once('SIGTERM', shutdownServer);
+  if (apiSitePort) {
+    apiSiteServer = http.createServer((req, res) => server.emit('request', req, res));
+    apiSiteServer.on('error', error => console.warn(`[api] API 站点端口 ${apiSitePort} 未启用：${error.message}`));
+    apiSiteServer.listen(apiSitePort, '127.0.0.1', () => console.log(`GuGu AI API: http://127.0.0.1:${apiSitePort}`));
+  }
   server.listen(port, '127.0.0.1', () => {
     console.log(`GuGu AI: http://127.0.0.1:${port}`);
     // Recovery runs after the port is open so a backlog never delays startup.

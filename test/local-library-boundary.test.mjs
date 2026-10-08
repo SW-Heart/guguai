@@ -98,7 +98,7 @@ test('account-scoped loaders ignore responses from an older session', () => {
   assert.match(app, /sessionStorage\.setItem\(alipayOrderStorageKey\(state\.user\)/);
   assert.doesNotMatch(app, /sessionStorage\.setItem\('gugu_alipay_order'/);
   assert.doesNotMatch(marketing, /sessionStorage|paymentOrderStorageKey|purchaseUser/);
-  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=20/));
+  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=21/));
   assert.match(app, /const requestAccount = accountScope\.snapshot\(\);\n  const button = \$\('#alipayTopupButton'\)/);
   const refreshPaymentSource = app.slice(app.indexOf('async function refreshAlipayPayment'), app.indexOf('async function startAlipayTopup'));
   assert.ok(refreshPaymentSource.includes('orderPaymentProvider(state.alipayOrderNo)'));
