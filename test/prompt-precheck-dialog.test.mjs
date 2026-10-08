@@ -99,11 +99,53 @@ test('editing and Chinese composition update marks immediately and submit the ed
   assert.equal(root.open, false);
 });
 
+test('confirming red marks opens a separate dialog above the editor', async () => {
+  const elements = [];
+  const createElement = () => {
+    const children = new Map(), listeners = new Map();
+    const element = {
+      hidden:false, open:false, scrollTop:0, classList:{ toggle() {} },
+      setAttribute() {}, append() {}, focus() {}, setSelectionRange() {},
+      querySelector(selector) {
+        if (!children.has(selector)) children.set(selector, createElement());
+        return children.get(selector);
+      },
+      addEventListener(name, listener) { listeners.set(name, listener); },
+      removeEventListener(name) { listeners.delete(name); },
+      emit(name, event = {}) { listeners.get(name)?.(event); },
+      showModal() { this.open = true; }, close() { this.open = false; },
+    };
+    elements.push(element);
+    return element;
+  };
+  const guard = createPromptPrecheck({
+    documentRef:{ createElement, body:{ append() {} } }, delay:60_000,
+    api:async () => ({ mode:'enforce', results:[{ hits:[{ start:0, end:2, level:'banned', label:'暴力' }] }] }),
+  });
+  const result = guard.check({ prompts:['斩首场景'], source:'image' });
+  await new Promise(resolve => setImmediate(resolve));
+  const root = elements.find(element => element.className === 'desktop-restart-dialog prompt-precheck-dialog');
+  const confirm = elements.find(element => element.className === 'desktop-restart-dialog prompt-precheck-confirm-dialog');
+  const click = (target, selector) => target.emit('click', { target:{ closest:match => match === selector } });
+  click(root, '[data-precheck-submit]');
+  assert.equal(confirm.open, true);
+  assert.equal(root.open, true);
+  assert.match(confirm.querySelector('#promptPrecheckConfirmText').textContent, /1 处内容很可能导致生成失败/);
+  click(confirm, '[data-precheck-back]');
+  assert.equal(confirm.open, false);
+  assert.equal(root.open, true);
+  click(root, '[data-precheck-submit]');
+  click(confirm, '[data-precheck-anyway]');
+  assert.deepEqual(await result, { action:'submit', prompts:['斩首场景'], fields:{ precheckSource:'image', precheckOutcome:'confirmed_banned', precheckConfirmed:true } });
+  assert.equal(root.open, false);
+  assert.equal(confirm.open, false);
+});
+
 test('every submit entry passes through the check and versioned URLs are bumped together', () => {
   const app = read('app.js'), drama = read('drama-studio.js'), director = read('features/drama/director-workspace.js'), html = read('index.html');
-  assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=2'/);
-  assert.match(html, /\/app\.js\?v=490"/);
-  assert.match(html, /\/styles\.css\?v=365"/);
+  assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=3'/);
+  assert.match(html, /\/app\.js\?v=491"/);
+  assert.match(html, /\/styles\.css\?v=366"/);
   assert.match(app, /\.\/drama-studio\.js\?v=226'/);
   assert.match(app, /\.\/features\/agent\/workspace\.js\?v=90'/);
   assert.match(drama, /director-workspace\.js\?v=126'/);

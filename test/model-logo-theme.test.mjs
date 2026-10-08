@@ -77,7 +77,7 @@ test('generator hover and selection override local light tokens and remain disti
 
 test('logo and parameter fixes reach all current versioned frontend entries', () => {
   const entries = [
-    ['index.html', ['/app.js?v=490', '/styles/theme.css?v=3']],
+    ['index.html', ['/app.js?v=491', '/styles/theme.css?v=3']],
     ['app.js', ['./components/model-logo.js?v=3', './drama-studio.js?v=226', './features/agent/workspace.js?v=90']],
     ['drama-studio.js', ['./components/model-logo.js?v=3', './features/drama/director-workspace.js?v=126']],
     ['features/agent/workspace.js', ['../drama/director-workspace.js?v=126', './model-preference-picker.js?v=10']],

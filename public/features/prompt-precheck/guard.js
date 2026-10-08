@@ -52,6 +52,7 @@ export function submissionFields({ source, edited, confirmed, hadMarks }) {
 
 export function createPromptPrecheck({ api, documentRef = globalThis.document, timeoutMs = 1500, delay = recheckDelayMs } = {}) {
   let dialog = null;
+  let confirmDialog = null;
   let busy = false;
 
   function ensureDialog() {
@@ -70,16 +71,31 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
         <button class="desktop-restart-later" type="button" data-precheck-cancel>取消</button>
         <button class="gradient-button" type="button" data-precheck-submit>提交</button>
       </footer>
-      <div class="prompt-precheck-confirm" role="alertdialog" aria-labelledby="promptPrecheckConfirmText" hidden>
-        <p id="promptPrecheckConfirmText"></p>
-        <div class="prompt-precheck-confirm-actions">
-          <button class="desktop-restart-later prompt-precheck-anyway" type="button" data-precheck-anyway>仍然提交</button>
-          <button class="gradient-button" type="button" data-precheck-back>返回修改</button>
-        </div>
-      </div>
     </div>`;
     documentRef.body.append(dialog);
     return dialog;
+  }
+
+  // Confirming red marks opens its own dialog above the editor instead of
+  // growing the editor dialog.
+  function ensureConfirmDialog() {
+    if (confirmDialog) return confirmDialog;
+    confirmDialog = documentRef.createElement('dialog');
+    confirmDialog.className = 'desktop-restart-dialog prompt-precheck-confirm-dialog';
+    confirmDialog.setAttribute('role', 'alertdialog');
+    confirmDialog.setAttribute('aria-labelledby', 'promptPrecheckConfirmTitle');
+    confirmDialog.setAttribute('aria-describedby', 'promptPrecheckConfirmText');
+    confirmDialog.innerHTML = `<div class="desktop-restart-card">
+      <span class="desktop-restart-icon prompt-precheck-confirm-icon" aria-hidden="true">${circleAlertIcon}</span>
+      <h2 id="promptPrecheckConfirmTitle">确定仍然提交吗？</h2>
+      <p id="promptPrecheckConfirmText"></p>
+      <footer class="desktop-restart-actions prompt-precheck-actions">
+        <button class="desktop-restart-later prompt-precheck-anyway" type="button" data-precheck-anyway>仍然提交</button>
+        <button class="gradient-button" type="button" data-precheck-back>返回修改</button>
+      </footer>
+    </div>`;
+    documentRef.body.append(confirmDialog);
+    return confirmDialog;
   }
 
   async function scan(prompts, modelId, signal) {
@@ -95,9 +111,7 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
     root.querySelector('.prompt-precheck-scope').hidden = !scopeNote;
     const list = root.querySelector('.prompt-precheck-items');
     list.innerHTML = '';
-    const confirm = root.querySelector('.prompt-precheck-confirm');
-    const actions = root.querySelector('.prompt-precheck-actions');
-    confirm.hidden = true; actions.hidden = false;
+    const confirm = ensureConfirmDialog();
     let sequence = 0;
 
     const views = items.map((item, index) => {
@@ -156,26 +170,35 @@ export function createPromptPrecheck({ api, documentRef = globalThis.document, t
         views.forEach(view => clearTimeout(view.timer));
         root.removeEventListener('cancel', onEscape);
         root.removeEventListener('click', onClick);
+        confirm.removeEventListener('cancel', onConfirmEscape);
+        confirm.removeEventListener('click', onConfirmClick);
+        if (confirm.open) confirm.close();
         if (root.open) root.close();
         resolve(result);
       };
       const submit = confirmed => finish({ action:'submit', confirmed, prompts:views.map(view => view.text), edited:views.some(view => view.text !== view.item.text) });
-      const onEscape = event => { event.preventDefault(); if (!confirm.hidden) { confirm.hidden = true; actions.hidden = false; return; } finish({ action:'cancel' }); };
+      const backToEdit = () => { if (confirm.open) confirm.close(); views[0].textarea.focus(); };
+      const onEscape = event => { event.preventDefault(); finish({ action:'cancel' }); };
+      const onConfirmEscape = event => { event.preventDefault(); backToEdit(); };
+      const onConfirmClick = event => {
+        if (event.target.closest('[data-precheck-back]')) return backToEdit();
+        if (event.target.closest('[data-precheck-anyway]')) return submit(true);
+      };
       const onClick = event => {
         if (event.target.closest('[data-precheck-cancel]')) return finish({ action:'cancel' });
-        if (event.target.closest('[data-precheck-back]')) { confirm.hidden = true; actions.hidden = false; views[0].textarea.focus(); return; }
-        if (event.target.closest('[data-precheck-anyway]')) return submit(true);
         if (event.target.closest('[data-precheck-submit]')) {
           if (views.some(view => !view.text.trim())) { views.find(view => !view.text.trim()).textarea.focus(); return; }
           const { banned } = totals();
           if (!banned) return submit(false);
-          root.querySelector('#promptPrecheckConfirmText').textContent = `仍有 ${banned} 处内容很可能导致生成失败。失败后积分会退回，确定提交吗？`;
-          actions.hidden = true; confirm.hidden = false;
-          root.querySelector('[data-precheck-back]').focus();
+          confirm.querySelector('#promptPrecheckConfirmText').textContent = `还有 ${banned} 处内容很可能导致生成失败，失败后积分会退回。`;
+          confirm.showModal();
+          confirm.querySelector('[data-precheck-back]').focus();
         }
       };
       root.addEventListener('cancel', onEscape);
       root.addEventListener('click', onClick);
+      confirm.addEventListener('cancel', onConfirmEscape);
+      confirm.addEventListener('click', onConfirmClick);
       root.showModal();
       views[0].textarea.focus();
       views[0].textarea.setSelectionRange(0, 0);

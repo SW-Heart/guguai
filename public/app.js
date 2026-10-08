@@ -21,7 +21,7 @@ import { createMediaController } from './features/media/controller.js?v=12';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createConversationRail } from './features/agent/conversation-rail.js?v=5';
-import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=2';
+import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
