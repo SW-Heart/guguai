@@ -142,3 +142,15 @@ test('standard risk codes, copyright characters and slap scenes', () => {
   assert.deepEqual(marks('她一巴掌扇向他', { modelId:'gpt-image-2' }), []);
   assert.deepEqual(marks('伪造身份证的特写'), [['伪造身份证', 'suspect']]);
 });
+
+test('minors are marked on their own, and strictly when combined, on every model', () => {
+  // Reported case: GPT Image 2.5 refused this prompt and nothing was marked.
+  assert.deepEqual(marks('16岁的萝莉可爱少女', { modelId:'gpt-image-2.5' }), [['16岁', 'suspect'], ['萝莉', 'banned']]);
+  assert.deepEqual(marks('一个十六岁的女孩', { modelId:'gpt-image-2.5' }), [['十六岁', 'suspect']]);
+  assert.deepEqual(marks('a 16-year-old girl'), [['16-year-old', 'suspect']]);
+  assert.deepEqual(marks('16岁少女穿着比基尼', { modelId:'gpt-image-2.5' }), [['16岁', 'banned'], ['比基尼', 'banned']]);
+  assert.deepEqual(marks('小学生穿着比基尼', { modelId:'minimax-h3' }), [['小学生', 'banned'], ['比基尼', 'banned']]);
+  // Adult ages and family roles stay quiet.
+  for (const prompt of ['二十六岁的女白领', '26岁的女白领', '我十八岁时卖过果干', '四十五岁的男人', '右侧幼女（粉色亮片短裙）', '小学生在操场跑步'])
+    assert.deepEqual(marks(prompt, { modelId:'seedance-2.0' }), [], prompt);
+});
