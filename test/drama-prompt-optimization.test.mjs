@@ -17,7 +17,7 @@ test('the optimization button precedes generation and every changed frontend ent
   assert.ok(read('features/drama/prompt-optimization.js').includes('./prompt-optimization-loading.js?v=1'));
   assert.ok(read('app.js').includes('./drama-studio.js?v=239'));
   assert.ok(read('index.html').includes('/app.js?v=504'));
-  assert.ok(read('index.html').includes('/styles.css?v=370'));
+  assert.ok(read('index.html').includes('/styles.css?v=371'));
   const css = read('styles.css');
   assert.match(css,/prompt-optimization-comparison\{[^}]*grid-template-columns:1fr 1fr/);
   assert.match(css,/@media\(max-width:640px\)[\s\S]*prompt-optimization-comparison\{grid-template-columns:1fr/);

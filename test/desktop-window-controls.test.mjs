@@ -65,6 +65,6 @@ test('untrusted caption commands cannot act on the window', () => {
 
 test('Windows caption styles ship through the updated stylesheet entry', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/styles/base.css?v=4'));
-  assert.ok(!html.includes('/styles/base.css?v=3'));
+  assert.ok(html.includes('/styles/base.css?v=5'));
+  assert.ok(!html.includes('/styles/base.css?v=4'));
 });

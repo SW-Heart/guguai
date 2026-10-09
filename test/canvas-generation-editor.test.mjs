@@ -1,11 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {generationPromptMarkup,generationPromptSegments,generationPromptCodec,generationSegmentsText,generationSelection,restoreGenerationSelection} from '../public/features/drama/canvas-generation-editor.js';
+import {readFileSync} from 'node:fs';
+import {bindGenerationRichPrompt,generationPromptMarkup,generationPromptSegments,generationPromptCodec,generationSegmentsText,generationSelection,restoreGenerationSelection} from '../public/features/drama/canvas-generation-editor.js';
 import {normalizeDirectorWorkspace} from '../public/features/drama/director-actions.js';
 import {canvasGenerationPayload} from '../public/features/drama/canvas-generation.js';
 
 const text=value=>({nodeType:3,nodeValue:value});
 const element=(nodeName,children=[],dataset={},mention=false)=>({nodeType:1,nodeName,childNodes:children,dataset,classList:{contains:name=>mention&&name==='video-prompt-mention'}});
+
+test('canvas placeholder styling excludes active IME composition even while the draft is empty',()=>{
+  const css=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
+  const rules=[...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([,selector,body])=>selector.includes('.dw-gen-rich-prompt')&&body.includes('content:attr(data-placeholder)'));
+  assert.ok(rules.length,'the empty editor keeps its placeholder');
+  for(const [,selector] of rules){
+    assert.match(selector,/\[data-empty="true"\]:not\(\[data-composing="true"\]\)::before/);
+  }
+});
+
+for(const committed of ['地方干活','']){
+  test(`canvas IME ${committed?'confirmation':'cancellation'} restores the correct placeholder state without disrupting preedit text`,()=>{
+    const editor=Object.assign(new EventTarget(),element('DIV'));
+    editor.ownerDocument={defaultView:{getSelection:()=>({rangeCount:0})}};
+    editor.replaceChildren=()=>{editor.childNodes=[];};
+    bindGenerationRichPrompt(editor,{signal:new AbortController().signal,pick:assert.fail,getInput:()=>editor});
+    const saved=[];
+    editor.addEventListener('input',event=>{
+      if(event.isComposing||editor.dataset.composing==='true')return;
+      saved.push(generationPromptCodec.serialize(editor));
+      generationPromptCodec.normalizeEmpty(editor);
+    });
+    assert.equal(editor.dataset.empty,'true');
+    editor.dispatchEvent(new Event('compositionstart'));
+    assert.equal(editor.dataset.composing,'true');
+    const preedit=text('difang');editor.childNodes=[preedit];
+    const composingInput=new Event('input');Object.defineProperty(composingInput,'isComposing',{value:true});
+    editor.dispatchEvent(composingInput);
+    assert.equal(editor.childNodes[0],preedit);
+    assert.equal(editor.dataset.empty,'true');
+    assert.deepEqual(saved,[]);
+    editor.childNodes=committed?[text(committed)]:[element('BR')];
+    editor.dispatchEvent(new Event('compositionend'));
+    assert.equal(editor.dataset.composing,'false');
+    assert.equal(editor.dataset.empty,committed?'false':'true');
+    assert.equal(saved.length,1);
+    assert.equal(generationPromptCodec.serialize(editor),committed);
+    editor.childNodes=[element('BR')];editor.dispatchEvent(new Event('input'));
+    assert.equal(editor.dataset.empty,'true');
+    assert.equal(generationPromptCodec.serialize(editor),'');
+  });
+}
 
 test('legacy references render image/video thumbnails using the existing inline label classes',()=>{
   const draft={prompt:'参考 @猫.png 与 @动作.mp4',attachments:[{id:'cat',name:'猫.png',kind:'image',url:'/cat.png'},{id:'motion',name:'动作.mp4',kind:'video',url:'/motion.mp4'}]};

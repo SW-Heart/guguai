@@ -47,7 +47,7 @@
 
 .video-route-card{margin-top:12px;padding:10px 11px;border:1px solid #d8d9eb;border-radius:7px;background:#f1f1ff;display:grid;grid-template-columns:1fr auto;align-items:center;gap:3px 8px}.video-route-card span{color:#6f7180;font:7px var(--mono);letter-spacing:.08em}.video-route-card b{grid-row:1/3;grid-column:2;color:#484bac;font-size:10px}.video-route-card small{color:#777987;font-size:7px}.video-parameter-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.generation-config select:disabled{color:#777986;background:#f1f1f3;cursor:not-allowed}
 .compiled-video-prompt{max-height:310px;padding:11px;border:1px solid #d9dae3;border-radius:7px;color:#333540!important;background:#fbfbfc;overflow:auto;white-space:pre-wrap;font:8px/1.7 var(--mono)!important}
-.editable-video-prompt{display:block;width:100%;min-height:310px;max-height:none;resize:vertical;outline:none}.editable-video-prompt:focus{border-color:#7375df;background:white;box-shadow:0 0 0 2px rgba(98,101,223,.09)}.prompt-edit-hint{display:block;margin-top:6px;color:var(--muted);font-size:8px;line-height:1.5}
+.editable-video-prompt{display:block;width:100%;min-height:310px;max-height:none;resize:vertical;outline:none}.editable-video-prompt:focus{border-color:#7375df;background:white;box-shadow:none}.prompt-edit-hint{display:block;margin-top:6px;color:var(--muted);font-size:8px;line-height:1.5}
 
 * { box-sizing: border-box; }
 html { color: var(--ink); background: var(--canvas); font-family: var(--sans); }
@@ -108,4 +108,15 @@ body.desktop-runtime.desktop-win32 .desktop-window-controls .window-close:hover 
 body.desktop-runtime.desktop-win32 .desktop-window-controls .window-close:active { color: var(--theme-danger, #b63d46); }
 body.desktop-runtime.desktop-win32 .desktop-window-controls button:focus-visible { outline-offset: -4px; }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 1px solid var(--brand); outline-offset: 2px; }
+/* Chromium may report pointer/programmatic focus as focus-visible, especially
+   on text editors and after restoring a desktop window. Use the existing input
+   modality tracker for outlines across the workbench. Keep object selection
+   independent from focus, and let editors use their containing field border. */
+body:not(.keyboard-nav) :focus:not(.dw-node.is-selected),
+body:not(.keyboard-nav) .model-preference-auto input:focus-visible + .model-preference-switch,
+body:not(.keyboard-nav) .settings-switch-row:has(input:focus-visible) { outline: none !important; }
+body.keyboard-nav :focus-visible,
+body.keyboard-nav .model-preference-auto input:focus-visible + .model-preference-switch,
+body.keyboard-nav .settings-switch-row:has(input:focus-visible) { outline-width: 1px !important; }
+body :is(textarea, [contenteditable]:not([contenteditable="false"])):focus { outline: none !important; }
