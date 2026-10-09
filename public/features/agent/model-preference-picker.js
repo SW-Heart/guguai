@@ -1,6 +1,6 @@
 import { modelLogoMarkup } from '../../components/model-logo.js?v=3';
 import { normalizeModelPreferences, modelPreferenceError } from './model-preferences.js?v=1';
-import { canvasGenerationModelIcon } from '../drama/canvas-generation.js?v=11';
+import { canvasGenerationModelIcon } from '../drama/canvas-generation.js?v=13';
 
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const icon = '<span class="gugu-lucide gugu-lucide-layers-2" aria-hidden="true"></span>';

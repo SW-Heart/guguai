@@ -63,8 +63,8 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   assert.match(css,/\.dw-frame-caption\{position:absolute;left:0;right:0;top:auto;bottom:calc\(100% \+ 6px\)/);
   assert.ok(Number(read('index.html').match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
   assert.ok(Number(read('index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('app.js').includes("./drama-studio.js?v=228"));
-  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=90"));
-  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=126"));
-  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=126"));
+  assert.ok(read('app.js').includes("./drama-studio.js?v=239"));
+  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=99"));
+  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=134"));
+  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=134"));
 });

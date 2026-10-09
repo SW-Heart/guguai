@@ -4,7 +4,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=126';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=134';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -24,7 +24,7 @@ import {
   shotPreviewRenderSignature,
   videoPreviewVersionState as resolveVideoPreviewVersionState,
   videoTaskProgress,
-} from './features/drama/pure.js?v=3';
+} from './features/drama/pure.js?v=4';
 import { mergeProjectThreeWay, projectConflictChoiceMap } from './features/drama/merge.js?v=2';
 import { createPromptOptimizationDialog, promptOptimizationButton } from './features/drama/prompt-optimization.js?v=4';
 import { createVideoGenerationLoadingController, renderVideoGenerationLoading, updateVideoGenerationProgress } from './features/drama/video-generation-loading.js?v=1';
@@ -78,7 +78,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -206,6 +206,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   let projectLoadToken = 0;
   let projectMutationChain = Promise.resolve();
   const projectKeyVersions = new Map();
+  const projectAcknowledgedVersions = new Map();
   const projectRequest = () => ({ account:accountSnapshot(), epoch:projectEpoch, projectId:String(project?.id || '') });
   const isProjectRequestCurrent = request => Boolean(request)
     && request.epoch === projectEpoch
@@ -238,43 +239,6 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     const failure = taskFailure(generation) || { message:'生成失败，服务未返回具体原因', suggestion:'请调整创作描述或参考图片后重试。' };
     return `<div class="wb-preview-failure" role="alert" aria-live="polite"><span class="wb-preview-failure-icon" aria-hidden="true">${generationFailureIcon}</span><div class="wb-preview-failure-copy"><b>生成失败</b><strong>${esc(failure.message)}</strong><p>${esc(failure.suggestion)}</p></div></div>`;
   };
-  let projectConflictResolver = null;
-  let projectConflictRestoreFocus = null;
-  function styleConflictValue(value){return value ? `${value.name || '自定义风格'}\n${value.description || ''}` : '未选择风格';}
-  function conflictValue(value) {
-    if (typeof value === 'string') return value || '（空）';
-    if (value === undefined) return '（未设置）';
-    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-  }
-  function settleProjectConflict(choices) {
-    const resolver = projectConflictResolver;
-    const restoreFocus = projectConflictRestoreFocus;
-    projectConflictResolver = null;
-    projectConflictRestoreFocus = null;
-    const dialog = document.querySelector('#projectConflictDialog');
-    if (dialog?.open) dialog.close();
-    resolver?.(choices);
-    requestAnimationFrame(() => { if (restoreFocus?.isConnected && !restoreFocus.disabled) restoreFocus.focus(); });
-  }
-  function chooseProjectConflict(conflicts) {
-    const dialog = document.querySelector('#projectConflictDialog');
-    const list = document.querySelector('#projectConflictList');
-    if (!dialog || !list) return Promise.resolve(null);
-    if (projectConflictResolver) settleProjectConflict(null);
-    projectConflictRestoreFocus = document.activeElement;
-    list.innerHTML = conflicts.map((conflict, index) => `<article class="project-conflict-item"><header><strong>${esc(conflict.path==='style'?'画面风格':conflict.path)}</strong><label>保留<select data-conflict-path="${esc(conflict.path)}"><option value="local">我的修改</option><option value="remote">最新修改</option></select></label></header><div class="project-conflict-values"><pre><b>我的修改</b>${esc(conflict.path==='style'?styleConflictValue(conflict.localValue):conflictValue(conflict.localValue))}</pre><pre><b>最新修改</b>${esc(conflict.path==='style'?styleConflictValue(conflict.remoteValue):conflictValue(conflict.remoteValue))}</pre></div></article>`).join('');
-    return new Promise(resolve => {
-      projectConflictResolver = resolve;
-      dialog.showModal();
-      requestAnimationFrame(() => list.querySelector('select')?.focus());
-    });
-  }
-  document.querySelector('#applyProjectConflict')?.addEventListener('click', () => {
-    const choices = Object.fromEntries([...document.querySelectorAll('#projectConflictList [data-conflict-path]')].map(select => [select.dataset.conflictPath, select.value]));
-    settleProjectConflict(choices);
-  });
-  document.querySelector('#cancelProjectConflict')?.addEventListener('click', () => settleProjectConflict(null));
-  document.querySelector('#projectConflictDialog')?.addEventListener('cancel', event => { event.preventDefault(); settleProjectConflict(null); });
   const assetMissing = id => recordIndexes.fileById(id)?.localStatus === 'missing';
   const asset = id => {const file=recordIndexes.fileById(id);return file?.localStatus==='missing'?undefined:file;};
   const videoPreviewVersionState = (generation, options = {}) => {
@@ -637,13 +601,20 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   async function flushSave(){
     clearTimeout(saveTimer);
     const targetProjectId=project?.id||'';
-    if(!pendingKeys.size){await projectMutationChain.catch(()=>{});return project;}
-    const keys=[...pendingKeys];
-    const changes=Object.fromEntries(keys.map(key=>[key,project?.[key]]));
-    keys.forEach(key=>pendingKeys.delete(key));
-    if(!project)return null;
-    try{return await patch(changes,{quiet:true,keysAlreadyMarked:true});}
-    catch(error){if(project?.id===targetProjectId)keys.forEach(key=>pendingKeys.add(key));throw error;}
+    const targetEpoch=projectEpoch;
+    while(project?.id===targetProjectId&&projectEpoch===targetEpoch){
+      if(!pendingKeys.size){
+        const waiting=projectMutationChain;
+        await waiting;
+        if(project?.id===targetProjectId&&projectEpoch===targetEpoch&&waiting!==projectMutationChain)continue;
+        if(project?.id!==targetProjectId||projectEpoch!==targetEpoch||!pendingKeys.size)return project;
+      }
+      const keys=[...pendingKeys];
+      const changes=Object.fromEntries(keys.map(key=>[key,project?.[key]]));
+      try{await patch(changes,{quiet:true,keysAlreadyMarked:true});}
+      catch(error){if(project?.id===targetProjectId&&projectEpoch===targetEpoch)keys.forEach(key=>pendingKeys.add(key));throw error;}
+    }
+    return project;
   }
   function normalizeProjectData(value){
     if(!value||typeof value!=='object')return value;
@@ -863,7 +834,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       projects=result.projects;
       if(project&&!force&&project.id===activeProjectId){
         const fresh=projects.find(item=>item.id===project.id);
-        if(fresh){project=restoreLocalProjectOutputs(normalizeProjectData(fresh));projectBaseSnapshot=cloneProjectValue(project);cacheProject(project,requestAccount);}
+        if(fresh)acceptProjectResponse(fresh);
         state.dramaProject=project;
         if(loadToken!==projectLoadToken||project?.id!==activeProjectId)return;
         render();
@@ -883,7 +854,8 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     const activate=value=>{
       if(!shownCached){
         projectEpoch+=1;
-        pendingKeys.clear();projectKeyVersions.clear();professionalPreviewTaskIds.clear();professionalGenerationPending.clear();
+        pendingKeys.clear();projectKeyVersions.clear();projectAcknowledgedVersions.clear();professionalPreviewTaskIds.clear();professionalGenerationPending.clear();
+        projectMutationChain=Promise.resolve();
       }
       project=restoreLocalProjectOutputs(normalizeProjectData(value));
       projectTitleEditing=false;projectTitleDraft='';projectBaseSnapshot=cloneProjectValue(project);
@@ -936,7 +908,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     }
     projectLoadToken+=1;projectEpoch+=1;
     document.querySelector('#professionalAssemblyDialog')?.close();document.querySelector('#professionalAssemblyLibraryDialog')?.close();
-    resetWorkbenchVideoObserver();resetVirtualShotWindow();virtualShotHeights.clear();virtualShotProjectId='';professionalPreviewTaskIds.clear();professionalGenerationPending.clear();deferredProfessionalRender=false;pendingKeys.clear();projectKeyVersions.clear();projectTitleEditing=false;projectTitleDraft='';document.querySelector('#dramaProjectTitle')?.classList.add('hidden');document.querySelector('#dramaProjectTitleDisplay')?.classList.remove('hidden');directorWorkspaceView?.dispose();project=null;projectBaseSnapshot=null;viewStep=null;scriptDraft=null;assetPickerShotId='';state.dramaProject=null;syncProjectHeader();renderProjects();
+    resetWorkbenchVideoObserver();resetVirtualShotWindow();virtualShotHeights.clear();virtualShotProjectId='';professionalPreviewTaskIds.clear();professionalGenerationPending.clear();deferredProfessionalRender=false;pendingKeys.clear();projectKeyVersions.clear();projectAcknowledgedVersions.clear();projectTitleEditing=false;projectTitleDraft='';document.querySelector('#dramaProjectTitle')?.classList.add('hidden');document.querySelector('#dramaProjectTitleDisplay')?.classList.remove('hidden');directorWorkspaceView?.dispose();project=null;projectBaseSnapshot=null;viewStep=null;scriptDraft=null;assetPickerShotId='';state.dramaProject=null;syncProjectHeader();renderProjects();
   }
   async function patch(changes,{quiet=false,keysAlreadyMarked=false}={}) {
     if(!project)return null;
@@ -948,65 +920,103 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     keys.forEach(key=>pendingKeys.delete(key));
     const payload=cloneProjectValue(changes);
     const requestVersions=new Map(projectKeyVersions);
+    const submittedVersions=new Map(keys.map(key=>[key,requestVersions.get(key)||0]));
+    // Include queued field changes in the live draft before an earlier request
+    // can reconcile and acknowledge them as part of a whole-project save.
+    project={...project,...changes};
+    state.dramaProject=project;
+    const current=()=>projectEpoch===targetEpoch&&project?.id===targetProjectId&&isAccountCurrent(requestAccount);
     saveLabel('保存中…');
     const run=async()=>{
-      if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return null;
-      const send=(revision,changes=payload)=>api(`/api/drama/projects/${targetProjectId}`,{method:'PATCH',body:JSON.stringify({...changes,revision})});
-      try {
-        const result=await send(project.revision);
-        if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return null;
-        const localProject=project;
-        const serverProject=restoreLocalProjectOutputs(normalizeProjectData(result.project));
-        projectBaseSnapshot=cloneProjectValue(serverProject);
-        project=mergeProjectResponseWithNewerKeys(serverProject,localProject,requestVersions,projectKeyVersions);
-        cacheProject(project,requestAccount);
-        projects=mergeDramaProjectList(projects,project);state.dramaProject=project;saveLabel('已保存');if(!quiet)render(true);return project;
-      }catch(error){
-        const currentRequest=projectEpoch===targetEpoch&&project?.id===targetProjectId&&isAccountCurrent(requestAccount);
-        if(error.code==='PROJECT_VERSION_CONFLICT'&&error.project&&!currentRequest)return null;
-        if(currentRequest){
-          if(error.code==='PROJECT_VERSION_CONFLICT'&&error.project){
-            const localProject=cloneProjectValue(mergeProjectResponseWithNewerKeys({...project,...payload},project,requestVersions,projectKeyVersions));
-            const mergedVersions=new Map(projectKeyVersions);
-            const serverProject=restoreLocalProjectOutputs(normalizeProjectData(error.project));
-            const baseProject=projectBaseSnapshot || serverProject;
-            const preview=mergeProjectThreeWay({ base:baseProject, local:localProject, remote:serverProject });
-            const choices=preview.conflicts.length ? await chooseProjectConflict(preview.conflicts) : {};
-            if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return null;
-            if(choices){
-              const merged=mergeProjectThreeWay({ base:baseProject, local:localProject, remote:serverProject, choices });
-              let mergedResult;
-              try { mergedResult=await send(serverProject.revision, merged.project); }
-              catch(mergeError){
-                if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return null;
-                keys.forEach(key=>pendingKeys.add(key));
-                saveLabel('保存失败');toast(mergeError.message);throw mergeError;
-              }
-              if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return null;
-              const savedProject=restoreLocalProjectOutputs(normalizeProjectData(mergedResult.project));
-              projectBaseSnapshot=cloneProjectValue(savedProject);
-              project=mergeProjectResponseWithNewerKeys(savedProject,project,mergedVersions,projectKeyVersions);
-              cacheProject(project,requestAccount);
-              for(const key of pendingKeys)if(Number(projectKeyVersions.get(key)||0)<=Number(mergedVersions.get(key)||0))pendingKeys.delete(key);
-              projects=mergeDramaProjectList(projects,project);state.dramaProject=project;saveLabel(pendingKeys.size?'未保存…':'已合并保存');if(!quiet)render(true);return project;
-            }
-            keys.forEach(key=>pendingKeys.add(key));
-            error.localProject=localProject;
-            error.serverProject=serverProject;
-            error.baseProject=cloneProjectValue(baseProject);
-            saveLabel('存在冲突');
-            toast('项目已被其他编辑更新，当前修改已保留，请选择合并方式');
-          }else{
-            saveLabel('保存失败');
-            toast(error.message);
+      if(!current())return null;
+      // An earlier automatic reconciliation may have saved this queued draft.
+      const unsavedKeys=keys.filter(key=>!submittedVersions.get(key)||Number(projectAcknowledgedVersions.get(key)||0)<Number(submittedVersions.get(key)));
+      if(!unsavedKeys.length)return project;
+      let sending=Object.fromEntries(unsavedKeys.map(key=>[key,payload[key]]));
+      let savingVersions=submittedVersions;
+      let base=cloneProjectValue(projectBaseSnapshot||project);
+      project=mergeProjectResponseWithNewerKeys({...project,...sending},project,requestVersions,projectKeyVersions);
+      state.dramaProject=project;
+      let revision=project.revision;
+      try{
+        for(let attempt=0;attempt<4;attempt++){
+          let result;
+          try{
+            result=await api(`/api/drama/projects/${targetProjectId}`,{method:'PATCH',body:JSON.stringify({...sending,revision})});
+          }catch(error){
+            if(!current())return null;
+            if(error.code!=='PROJECT_VERSION_CONFLICT'||!error.project)throw error;
+            const remote=Number(error.project.revision)<Number(projectBaseSnapshot?.revision)?cloneProjectValue(projectBaseSnapshot):restoreLocalProjectOutputs(normalizeProjectData(error.project));
+            // One editor owns the draft. Background saves and generation results
+            // must be reconciled here without interrupting their editing.
+            project=mergeProjectDraft(base,project,remote);
+            projectBaseSnapshot=cloneProjectValue(remote);
+            state.dramaProject=project;
+            cacheProject(project,requestAccount);
+            savingVersions=new Map(projectKeyVersions);
+            if(attempt===3)throw new Error('暂时未能保存，当前修改已保留，请稍后重试');
+            sending=cloneProjectValue(project);
+            base=cloneProjectValue(remote);
+            revision=remote.revision;
+            continue;
           }
+          if(!current())return null;
+          const serverProject=Number(result.project.revision)<Number(projectBaseSnapshot?.revision)?cloneProjectValue(projectBaseSnapshot):restoreLocalProjectOutputs(normalizeProjectData(result.project));
+          projectBaseSnapshot=cloneProjectValue(serverProject);
+          project=mergeProjectResponseWithNewerKeys(serverProject,project,savingVersions,projectKeyVersions,projectAcknowledgedVersions);
+          for(const [key,version] of savingVersions){
+            projectAcknowledgedVersions.set(key,Math.max(version,projectAcknowledgedVersions.get(key)||0));
+            if(Number(projectKeyVersions.get(key)||0)<=version)pendingKeys.delete(key);
+          }
+          cacheProject(project,requestAccount);
+          projects=mergeDramaProjectList(projects,project);state.dramaProject=project;
+          saveLabel(pendingKeys.size?'未保存…':'已保存');if(!quiet)render(true);return project;
         }
-        throw error;
+      }catch(error){
+        if(!current())return null;
+        for(const key of new Set([...keys,...savingVersions.keys()])){
+          if(keys.includes(key)||Number(projectKeyVersions.get(key)||0)>Number(projectAcknowledgedVersions.get(key)||0))pendingKeys.add(key);
+        }
+        saveLabel('保存失败');toast(error.message);throw error;
       }
     };
     const request=projectMutationChain.catch(()=>{}).then(run);
-    projectMutationChain=request.catch(()=>{});
+    projectMutationChain=request;
+    void request.catch(()=>{});
     return request;
+  }
+  function mergeProjectDraft(base,local,remote){
+    const preview=mergeProjectThreeWay({base,local,remote});
+    const merged=preview.conflicts.length?mergeProjectThreeWay({base,local,remote,choices:projectConflictChoiceMap(preview.conflicts,'local')}):preview;
+    // Text and its mentions are one edit. An older background response must
+    // not detach a reference just because its label was unchanged locally.
+    for(const shot of merged.project.shots||[]){
+      const localShot=local.shots?.find(item=>item.id===shot.id);
+      const baseShot=base.shots?.find(item=>item.id===shot.id);
+      if(!localShot||localShot.script===baseShot?.script&&JSON.stringify(localShot.assetMentions||[])===JSON.stringify(baseShot?.assetMentions||[]))continue;
+      for(const key of ['script','assetMentions','promptOverride','action','visualDirection'])if(Object.hasOwn(localShot,key))shot[key]=cloneProjectValue(localShot[key]);
+      const mentionIds=(localShot.assetMentions||[]).map(item=>item.id);
+      shot.referenceAssetIds=[...new Set([...(shot.referenceAssetIds||[]),...mentionIds])];
+      if(shot.generation?.type==='REFERENCE')shot.generation.referenceAssetIds=[...new Set([...(shot.generation.referenceAssetIds||[]),...mentionIds])];
+    }
+    // Keep independent additions from in-flight generations. Respect an
+    // explicit removal instead of resurrecting a deleted version.
+    for(const conflict of preview.conflicts){
+      const match=/^shots\[([^\]]+)\]\.videoVersions$/.exec(conflict.path);
+      if(!match||![conflict.baseValue,conflict.localValue,conflict.remoteValue].every(Array.isArray))continue;
+      if(!conflict.baseValue.every(id=>conflict.localValue.includes(id)&&conflict.remoteValue.includes(id)))continue;
+      const shot=merged.project.shots?.find(item=>String(item.id)===match[1]);
+      if(shot)shot.videoVersions=[...new Set([...conflict.remoteValue,...conflict.localValue])];
+    }
+    return merged.project;
+  }
+  function acceptProjectResponse(value,{base=projectBaseSnapshot||project}={}){
+    if(!value||value.id!==project?.id||Number(value.revision)<Number(projectBaseSnapshot?.revision))return project;
+    const remote=restoreLocalProjectOutputs(normalizeProjectData(value));
+    project=mergeProjectDraft(base,project,remote);
+    projectBaseSnapshot=cloneProjectValue(remote);
+    projects=mergeDramaProjectList(projects,project);state.dramaProject=project;cacheProject(project);
+    return project;
   }
   async function navigateStep(step,request=projectRequest()){
     try {
@@ -1100,6 +1110,8 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
         }
         return prepared;
       },
+      canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
+      registerCanvasFile,
       uploadGenerationFile:async()=>{
         const request=projectRequest();
         const file=await importCanvasAsset({generation:true});assertProjectRequest(request);
@@ -1592,10 +1604,13 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   function mentionKindLabel(kind){return ({image:'图片',video:'视频',audio:'音频'}[kind]||'素材');}
   function mentionLabel(mention,file){return String(mention?.label||file?.name||'未命名素材').replace(/^@/,'').trim()||'未命名素材';}
   function mentionChipMarkup(mention){
-    const file=asset(mention.id); if(!file)return esc(`@${mentionLabel(mention)}`);
+    const file=asset(mention.id);
     const label=mentionLabel(mention,file);
-    const preview=file.kind==='image'?assetImageMarkup(file, label):file.kind==='video'?workbenchVideoMarkup(file):'<b>♫</b>';
-    return `<span class="wb-mention-chip" data-mention-id="${esc(file.id)}" data-mention-label="${esc(label)}" data-mention-kind="${esc(file.kind)}" contenteditable="false" aria-label="引用${esc(label)}，${mentionKindLabel(file.kind)}"><span class="wb-mention-thumb">${preview}</span><span class="wb-mention-name">${esc(label)}</span></span>`;
+    const kind=file?.kind||mention.kind||'image';
+    const preview=!file?'':kind==='image'?assetImageMarkup(file, label):kind==='video'?workbenchVideoMarkup(file):'<b>♫</b>';
+    // A temporarily unloaded asset must not turn an existing reference into
+    // plain text: the next input would then remove its saved identity.
+    return `<span class="wb-mention-chip" data-mention-id="${esc(mention.id)}" data-mention-label="${esc(label)}" data-mention-kind="${esc(kind)}" contenteditable="false" aria-label="引用${esc(label)}，${mentionKindLabel(kind)}">${preview?`<span class="wb-mention-thumb">${preview}</span>`:''}<span class="wb-mention-name">${esc(label)}</span></span>`;
   }
   function renderMentionEditorContent(shot){
     let html=esc(shot.script||'');
@@ -2134,10 +2149,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return project;
       const result=await api(`/api/drama/projects/${encodeURIComponent(targetProjectId)}`);
       if(projectEpoch!==targetEpoch||project?.id!==targetProjectId||!isAccountCurrent(requestAccount))return project;
-      project=restoreLocalProjectOutputs(normalizeProjectData(result.project));
-      projectBaseSnapshot=cloneProjectValue(project);
-      projects=mergeDramaProjectList(projects,project);
-      state.dramaProject=project;
+      acceptProjectResponse(result.project);
       if(!quiet)render(true,{focus:false});
       return project;
     }catch(error){
@@ -2502,7 +2514,24 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     dialog.querySelectorAll('[data-project-asset-close]').forEach(button=>button.onclick=closeProjectAssetDialog);
     dialog.querySelector('#projectAssetSearch')?.addEventListener('input',event=>{projectAssetQuery=event.target.value;clearTimeout(projectAssetSearchTimer);projectAssetSearchTimer=window.setTimeout(()=>{projectAssetSearchTimer=0;if(dialog.open)paintProjectAssetDialog({restoreSearchFocus:true});},120);});
     dialog.querySelectorAll('[data-project-asset-option]').forEach(button=>button.onclick=()=>{const id=button.dataset.projectAssetOption;const selected=projectAssetSelection.includes(id);projectAssetSelection=selected?projectAssetSelection.filter(value=>value!==id):[...projectAssetSelection,id];button.classList.toggle('selected',!selected);button.setAttribute('aria-pressed',String(!selected));const confirm=dialog.querySelector('[data-project-asset-confirm]');if(confirm)confirm.disabled=projectAssetSelection.length===0;});
-    dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async()=>{const request=projectRequest();try{const file=uploadAsset?await uploadAsset({context:'professional-project'}):await uploadImage?.({context:'professional-project'});assertProjectRequest(request);if(file){projectAssetSelection=[...new Set([...projectAssetSelection,file.id])];projectAssetCategories.set(file.id,projectAssetCategory);state.files=[file,...state.files.filter(item=>item.id!==file.id)];paintProjectAssetDialog();}}catch(error){if(error.stale)return;toast(error.message);}});
+    dialog.querySelector('[data-project-asset-upload]')?.addEventListener('click',async event=>{
+      const button=event.currentTarget;
+      if(button.disabled)return;
+      const request=projectRequest();
+      button.disabled=true;
+      try{
+        const result=uploadAsset?await uploadAsset({context:'professional-project',multiple:true}):await uploadImage?.({context:'professional-project'});
+        assertProjectRequest(request);
+        const files=(Array.isArray(result)?result:[result]).filter(file=>file?.id);
+        if(!files.length)return;
+        const ids=new Set(files.map(file=>file.id));
+        projectAssetSelection=[...new Set([...projectAssetSelection,...ids])];
+        ids.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));
+        state.files=[...new Map(files.map(file=>[file.id,file])).values(),...state.files.filter(item=>!ids.has(item.id))];
+        paintProjectAssetDialog();
+      }catch(error){if(error.stale)return;toast(error.message);}
+      finally{button.disabled=false;}
+    });
     dialog.querySelector('[data-project-asset-confirm]')?.addEventListener('click',()=>{const selected=[...projectAssetSelection];const targetShot=projectAssetTargetShotId?project.shots.find(item=>item.id===projectAssetTargetShotId):null;selected.forEach(id=>projectAssetCategories.set(id,projectAssetCategory));projectAssetIds=[...new Set([...projectAssetIds,...selected])];project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);if(targetShot){selected.forEach(id=>addReferenceAssetToShot(targetShot,id));ensureProfessionalVideoSettings(targetShot);invalidateProfessionalShot(targetShot,'参考素材已添加到本镜');queueProfessionalSave();professionalPreviewShotId=targetShot.id;}projectAssetTargetShotId='';queueSave('projectAssetIds','projectAssetCategories');closeProjectAssetDialog();render(true,{focus:false});toast(targetShot?`已添加 ${selected.length} 个分镜参考`:`已添加 ${selected.length} 个项目素材`);});
     if(restoreSearchFocus)requestAnimationFrame(()=>{if(!dialog.open)return;const search=dialog.querySelector('#projectAssetSearch');search?.focus({preventScroll:true});search?.setSelectionRange(projectAssetQuery.length,projectAssetQuery.length);});
   }
@@ -2876,13 +2905,14 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       const cloudRefs=await ensureCloudReferenceIds(refs);
       if(!isProjectRequestCurrent(request)){clearPending();return;}
       const payload={...checked.fields,type:'video',quantity:count,prompt:finalPrompt,dramaProjectId:targetProjectId,dramaShotId:targetShotId,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs};
+      const generationBase=cloneProjectValue(projectBaseSnapshot||project);
       const response=await api('/api/generations',{method:'POST',body:JSON.stringify(payload)});
       if(!isProjectRequestCurrent(request)){clearPending();return;}
       const results=Array.isArray(response.tasks)?response.tasks:[response];
       setCreditBalance(response.balance);
       state.tasks=[...results,...state.tasks.filter(item=>!results.some(result=>result.id===item.id))];scheduleTaskPoll();
       if(!isProjectRequestCurrent(request)){clearPending();return;}
-      if(response.project){project=restoreLocalProjectOutputs(normalizeProjectData(response.project));projects=mergeDramaProjectList(projects,project);state.dramaProject=project;professionalPreviewTaskIds.set(targetShotId,results[0].id);}
+      if(response.project){acceptProjectResponse(response.project,{base:generationBase});professionalPreviewTaskIds.set(targetShotId,results[0].id);}
       // The response already contains the tasks; show them without another network wait.
       clearPending();
       render(true);toast(`已开始生成 ${results.length} 个分镜视频`);
@@ -3470,6 +3500,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     projectEpoch+=1;
     pendingKeys.clear();
     projectKeyVersions.clear();
+    projectAcknowledgedVersions.clear();
     projectMutationChain=Promise.resolve();
     projects=[];
     projectQuery='';

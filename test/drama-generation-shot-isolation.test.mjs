@@ -12,7 +12,7 @@ for (const modelId of ['seedance-2.0', 'minimax-h3-15s']) {
     let selected = shots[1];
     let submitted;
     const context = {
-      promptPrecheck:{check:async({prompts})=>({action:'submit',prompts,fields:{}})}, project:{ id:'project', shots }, professionalGenerationPending:new Set(),refreshProfessionalPrices:()=>Promise.resolve(),
+      projectBaseSnapshot:null, promptPrecheck:{check:async({prompts})=>({action:'submit',prompts,fields:{}})}, project:{ id:'project', shots }, professionalGenerationPending:new Set(),refreshProfessionalPrices:()=>Promise.resolve(),
       currentProfessionalShot:() => selected, projectRequest:() => ({}),
       ensureProfessionalVideoSettings:() => {}, professionalProductionWarning:() => '', shotGenerationReady:() => true,
       render:() => {}, flushSave:async () => { selected = shots[0]; },

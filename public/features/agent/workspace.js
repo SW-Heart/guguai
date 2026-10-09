@@ -1,15 +1,15 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=126';
-import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=11';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=134';
+import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=13';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=6';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
-import { mountModelPreferencePicker } from './model-preference-picker.js?v=10';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=11';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
-export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
+export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
   let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,screen='',navigationEpoch=0,creating=false;
@@ -296,13 +296,15 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         if(prepared.length){project.assetIds=[...new Set([...project.assetIds,...prepared.map(file=>file.id)])];await saveCanvas({assetIds:project.assetIds});}
         return prepared;
       },
+      canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
+      registerCanvasFile,
       uploadGenerationFile:async()=>{
+        const token=navigationEpoch,target=project;
         const file=await importCanvasAsset({generation:true});
-        if(!current()||!file)return null;
+        if(token!==navigationEpoch||project!==target||!current()||!file)return null;
         state.files=[file,...state.files.filter(item=>item.id!==file.id)];
         const ready=await cloudFile(file);
-        if(ready){project.assetIds=[...new Set([...project.assetIds,ready.id])];await saveCanvas({assetIds:project.assetIds});}
-        return ready;
+        return token===navigationEpoch&&project===target&&current()?ready:null;
       },
       media:id=>{
         const file=taskAsset(id);

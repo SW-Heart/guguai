@@ -97,12 +97,12 @@ test('canvas catalogs and restored selections contain only available models', ()
 
 test('model list changes have refreshed cache keys through every importing entry', () => {
   const entries = [
-    ['index.html', ['/app.js?v=492']],
-    ['app.js', ['./drama-studio.js?v=228', './features/agent/workspace.js?v=90']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=126']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=126', './model-preference-picker.js?v=10']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=11', '../agent/model-preference-picker.js?v=10']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=11']],
+    ['index.html', ['/app.js?v=504']],
+    ['app.js', ['./drama-studio.js?v=239', './features/agent/workspace.js?v=99']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=134']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=134', './model-preference-picker.js?v=11']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=13', '../agent/model-preference-picker.js?v=11']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=13']],
   ];
   for (const [file, urls] of entries) {
     const source = read(file);

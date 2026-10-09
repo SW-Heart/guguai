@@ -15,7 +15,7 @@ function dialogFixture(options = {chat:true,multiple:true,maxFiles:30}) {
     return nodes.get(selector);
   };
   const state = {files,uploadJobs:[],referenceTarget:'canvas',referenceKind:'all',dialogSelection:[]};
-  const context = vm.createContext({
+  const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     state,canvasAssetRequest:null,referenceDialogCommitted:false,$:node,
     $$:selector => selector === '.reference-option' ? buttons : [],
     window:{guguDesktop:{}},toast:value => notices.push(value),esc:value => value,
@@ -90,7 +90,7 @@ test('generation and canvas pickers keep their single-file return contract', asy
 
 function conversationFixture() {
   const button = {},notices = [],calls = [];
-  const context = vm.createContext({
+  const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     attachments:[],documentAttachments:[],uploading:false,switchingConversation:false,epoch:1,agentState:{id:'session'},
     host:{querySelector:() => button},drawPanels(){},
     bridge:{toast:value => notices.push(value),uploadChatFile:async options => { calls.push(options);return images(31); }},
@@ -126,7 +126,7 @@ test('switching conversations during a batch does not add old files', async () =
 test('desktop batch upload stops at 30 successful files before syncing the 31st', async () => {
   const synced = [],notices = [],items = images(31).map(file => ({...file,mimeType:'image/png',size:100}));
   let pickerOptions;
-  const context = vm.createContext({
+  const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     window:{guguDesktop:{media:{chooseAndImport:async options => { pickerOptions = options;return items; },url:async id => `gugu-media://${id}`,syncLocal:async ({assetId}) => { synced.push(assetId);return {cloudAsset:{id:assetId}}; }}}},
     state:{},desktopMediaKind:() => 'image',verifyImportedImagePreview:async () => {},desktopScope:{localAsset:item => item},
     mediaController:{mergeLocalAssets(){}},createUploadJob:() => ({}),updateUploadJob(){},finishUploadJob(){},
@@ -141,7 +141,7 @@ test('desktop batch upload stops at 30 successful files before syncing the 31st'
 
 function agentBridgeFixture() {
   const saves = [], notices = [], files = images(30);
-  const context = vm.createContext({
+  const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     navigationEpoch:1,current:() => true,project:{assetIds:[]},state:{files:[]},
     importCanvasAsset:async () => files,cloudFile:async file => file,
     toast:value => notices.push(value),saveCanvas:async value => saves.push(value),
@@ -176,7 +176,7 @@ test('leaving a project during preparation cannot save old files to its replacem
 });
 
 test('the short-drama conversation prepares all 30 selected files too', async () => {
-  const context = vm.createContext({
+  const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     projectRequest:() => ({}),assertProjectRequest(){},importCanvasAsset:async () => images(30),
     state:{files:[]},ensureCloudReferenceIds:async ids => ids,assetPreviewUrl:() => '',toast(){},
   });

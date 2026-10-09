@@ -113,11 +113,12 @@ export function videoTaskProgress(task) {
   const progress = Number(task.progress);
   return Number.isFinite(progress) && progress >= 0 && progress <= 100 ? Math.round(progress) : null;
 }
-export function mergeProjectResponseWithNewerKeys(serverProject, localProject, requestVersions, currentVersions) {
+export function mergeProjectResponseWithNewerKeys(serverProject, localProject, requestVersions, currentVersions, acknowledgedVersions = new Map()) {
   const merged = { ...(serverProject || {}) };
   if (!localProject) return merged;
   for (const [key, version] of currentVersions || []) {
-    if (Number(version) > Number(requestVersions?.get?.(key) || 0)) merged[key] = localProject[key];
+    const savedVersion = Math.max(Number(requestVersions?.get?.(key) || 0), Number(acknowledgedVersions.get(key) || 0));
+    if (Number(version) > savedVersion) merged[key] = localProject[key];
   }
   return merged;
 }

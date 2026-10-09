@@ -4,7 +4,7 @@ function isMeaningfulRichText(node) {
  return html.replace(/<br\s*\/?>/gi,'').replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;|&#xA0;/gi,' ').replace(/[\u200b-\u200d\ufeff]/g,'').trim().length>0;
 }
 export function normalizeCanvasNodes(nodes) {
- const allowed=new Set(['image','rect','rectangle','ellipse','circle','line','arrow','star','triangle','diamond','text','rich-text','path','brush','polygon']);
+ const allowed=new Set(['image','video','rect','rectangle','ellipse','circle','line','arrow','star','triangle','diamond','text','rich-text','path','brush','polygon']);
  const numeric=['x','y','width','height','scaleX','scaleY','rotation','strokeWidth','fontSize','opacity','radius','numPoints','innerRadius','outerRadius'];
  return (Array.isArray(nodes)?nodes:[]).slice(0,300).filter(n=>n&&typeof n.id==='string'&&n.id.length<200&&allowed.has(n.$_type)&&(n.$_type!=='rich-text'||isMeaningfulRichText(n))).map(n=>{
   const out={id:n.id,$_type:n.$_type};
@@ -16,6 +16,8 @@ export function normalizeCanvasNodes(nodes) {
   }).join('');
   if(Array.isArray(n.points))out.points=n.points.filter(Number.isFinite).slice(0,10000);
   if(typeof n.$_imageUrl==='string'&&/^(https?:|blob:|data:image\/|\/|gugu-media:)/i.test(n.$_imageUrl))out.$_imageUrl=n.$_imageUrl.slice(0,2000000);
+  for(const key of ['$_videoUrl','$_coverUrl'])if(typeof n[key]==='string'&&/^(https?:|blob:|data:(?:image|video)\/|\/|gugu-media:)/i.test(n[key]))out[key]=n[key].slice(0,2000000);
+  if(typeof n.$_assetId==='string'&&/^[\w-]{1,200}$/.test(n.$_assetId))out.$_assetId=n.$_assetId;
   if(n.$_type==='image'){out.brightness=0;out.$_applyBrightnessFilter=false;}
   return out;
  });
@@ -50,6 +52,7 @@ export function normalizeDirectorWorkspace(value = {}) {
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
     generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,100).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
       id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),
+      promptSegments:(Array.isArray(item.promptSegments)?item.promptSegments:[]).slice(0,1000).flatMap(segment=>typeof segment==='string'?[segment.slice(0,10000)]:segment&&typeof segment.id==='string'&&typeof segment.label==='string'?[{id:segment.id.slice(0,200),label:segment.label.slice(0,200)}]:[]),
       aspect:String(item.aspect||'').slice(0,20),quality:String(item.quality||'').slice(0,20),mode:String(item.mode||'').slice(0,20),
       duration:Number.isFinite(Number(item.duration))?Number(item.duration):0,quantity:Number.isFinite(Number(item.quantity))?Number(item.quantity):1,
       attachments:(Array.isArray(item.attachments)?item.attachments:[]).slice(0,50).filter(file=>file&&typeof file.id==='string').map(file=>({id:String(file.id).slice(0,200),kind:String(file.kind||'').slice(0,20),name:String(file.name||'').slice(0,200),url:String(file.url||'').slice(0,2000)})),

@@ -1,5 +1,6 @@
 import { modelLogoUrl } from '../../components/model-logo.js?v=3';
 import { defaultVideoDuration } from '../generation/video-defaults.js?v=2';
+import { replaceAssetMentions } from '../../video-prompt.js?v=6';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
 const tuziDimensions={
   '1:1':['1024x1024','2048x2048','2880x2880'],'2:3':['816x1232','1360x2048','2352x3520'],
@@ -71,7 +72,12 @@ export function reconcileCanvasGenerationDraft(draft,config={}, {resetDuration=f
 
 export function canvasGenerationPayload(draft,config={}){
   reconcileCanvasGenerationDraft(draft,config);
-  const prompt=String(draft.prompt||'').trim();
+  let prompt=draft.type==='video'?replaceAssetMentions(draft.prompt,draft.attachments.map(file=>({id:file.id,label:file.name,kind:file.kind}))):String(draft.prompt||'').trim();
+  if(draft.type==='video'&&Array.isArray(draft.promptSegments)&&draft.promptSegments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('')===draft.prompt){
+    const counts={image:0,video:0,audio:0},tokens=new Map();
+    draft.attachments.forEach(file=>{counts[file.kind]++;tokens.set(file.id,`${({image:'Image',video:'Video',audio:'Audio'})[file.kind]}${counts[file.kind]}`);});
+    prompt=draft.promptSegments.map(segment=>typeof segment==='string'?segment:tokens.get(segment.id)||`@${segment.label}`).join('').trim();
+  }
   if(!prompt)throw new Error('请填写画面描述');
   const limit=draft.type==='image'?5000:draft.modelId==='minimax-h3-15s'?10000:4096;
   if(Array.from(prompt).length>limit)throw new Error(`画面描述不能超过 ${limit} 个字符`);

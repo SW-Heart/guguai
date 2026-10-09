@@ -15,7 +15,7 @@ function fixture(){
     updateViewport(value){views.push(value);},
     getNodeConfigById:id=>nodes.find(node=>node.id===id),
   };
-  const context=vm.createContext({canvas,bridge:{agentMode:true,media:()=>null},epoch:1,chatMode:'side',agentReady:true,syncing:false,canvasContentReady:false,
+  const context=vm.createContext({canvas,canvasLibrary:null,bridge:{agentMode:true,media:()=>null},epoch:1,chatMode:'side',agentReady:true,syncing:false,canvasContentReady:false,
     seenCanvasNodeIds:new Set(),pendingCanvasFocus:new Set(),automaticImageSizing:new Set(),canvasFocusFrame:0,saveTimer:0,
     placeCanvasNodes,focusCanvasViewport,workspace:()=>saved,liveCanvasNodes:()=>nodes,canvasItems:()=>items,position:node=>saved.positions[node.id]||{},
     canvasItemSize:node=>({width:node.width||280,height:node.height||228}),nodeContent:node=>node.text||'',edgeLinks:()=>[],renderEdges(){},alignCard(){},alignCards(){},paintAssetImage(){},drawPanels(){},positionGenerationComposer(){},

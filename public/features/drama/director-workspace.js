@@ -1,7 +1,7 @@
 import { modelLogoMarkup } from '../../components/model-logo.js?v=3';
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
-import { bindDirectorMentions } from './director-mentions.js?v=1';
+import { bindDirectorMentions } from './director-mentions.js?v=5';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
 import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=3';
 import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=1';
@@ -13,13 +13,16 @@ import { placeCanvasNodes, focusCanvasViewport } from './canvas-layout.js?v=1';
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=32';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=11';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=11';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=33';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=13';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=13';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
+import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=1';
 import { canvasIcon } from './canvas-icons.js?v=1';
+import { addGenerationReference } from './canvas-generation-references.js?v=3';
+import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=2';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=10';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -210,6 +213,8 @@ export function createDirectorWorkspace(host, bridge) {
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
   let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
   const autoOpenedGenerations=new Set();
+  let canvasLibrary=null,lastCanvasMediaSignature='';
+  let generationMentionEvents=null;
   const seenCanvasNodeIds=new Set(),pendingCanvasFocus=new Set(),automaticImageSizing=new Set();
   let canvasContentReady=false,canvasFocusFrame=0,mountedWorkspace=null,workspaceActive=false;
   const workspaceFrames=new Set();
@@ -604,6 +609,37 @@ export function createDirectorWorkspace(host, bridge) {
     try{Object.entries(placements).forEach(([id,position])=>canvas.updateNodes([id],position));}
     finally{syncing=false;}
     persistLiveCanvasState();scheduleCanvasSave();focusNewCanvasContent(fresh.map(node=>node.id));
+    queueCanvasMediaLibrary();
+  }
+  function canvasLibraryMedia(){
+    return canvasMediaFiles(canvas?.getState(),nodes().map(item=>({...item,media:item.media||bridge.media(item.taskId)})),hiddenIds());
+  }
+  function queueCanvasMediaLibrary(){
+    if(!canvasLibrary)return;
+    const signature=canvasLibraryMedia().map(item=>`${item.id}:${item.url}:${item.assetId||''}`).join('|');
+    if(signature===lastCanvasMediaSignature)return;
+    lastCanvasMediaSignature=signature;
+    void syncCanvasMediaLibrary().catch(error=>{if(signature===lastCanvasMediaSignature)lastCanvasMediaSignature='';if(!error.stale)bridge.toast(error.message);});
+  }
+  async function syncCanvasMediaLibrary(){
+    if(!canvasLibrary)return;
+    const token=epoch,library=canvasLibrary;
+    for(const media of canvasLibraryMedia()){
+      const file=await library.add(media);
+      if(token!==epoch||canvasLibrary!==library||!canvas)return;
+      const current=canvas.getNodeConfigById(media.id);
+      const urlKey=media.kind==='video'?'$_videoUrl':'$_imageUrl';
+      if(!current||hiddenIds().has(media.id)||(current[urlKey]&&current[urlKey]!==media.url))continue;
+      // Managed HTML cards already point at their library files. Only native
+      // media needs its temporary source replaced with a durable library URL.
+      if(!['image','video'].includes(current.$_type))continue;
+      const url=file.url||media.url;
+      if(current.$_assetId===file.id&&current[urlKey]===url)continue;
+      const previousSyncing=syncing;syncing=true;
+      try{canvas.updateNodes([media.id],{$_assetId:file.id,[urlKey]:url});}
+      finally{syncing=previousSyncing;}
+      persistLiveCanvasState();scheduleCanvasSave();
+    }
   }
   function canvasItemSize(node){
     if(node.kind==='generation')return mediaFrameSize(node.item);
@@ -1020,11 +1056,9 @@ export function createDirectorWorkspace(host, bridge) {
   };
   const genModelIcon=model=>{
     const src=canvasGenerationModelIcon(model?.id,model?.iconKey);
-    const initial=Array.from(String(model?.label||model?.id||'').trim())[0]||'';
-    return `<span class="dw-gen-model-icon" aria-hidden="true"><span>${escape(initial.toUpperCase())}</span>${src?modelLogoMarkup(src,{generation:true}):''}</span>`;
+    return `<span class="dw-gen-model-icon" aria-hidden="true">${src?modelLogoMarkup(src,{generation:true}):''}</span>`;
   };
   const bindGenModelIcons=root=>root?.querySelectorAll('img[data-gen-model-icon]').forEach(img=>{
-    // Keep the letter badge when the brand icon cannot load (for example offline).
     if(img.complete&&!img.naturalWidth){img.remove();return;}
     img.addEventListener('error',()=>img.remove(),{once:true});
   });
@@ -1064,6 +1098,19 @@ export function createDirectorWorkspace(host, bridge) {
     positionGenerationMenu();
   }
   function generationQualityChoice(draft,value){return draft.type==='image'&&draft.modelId==='midjourney'?String(value):canvasGenerationQualityLabel(draft,value).replace(/画质$/,'');}
+  async function attachGenerationReference(draft,loadFile){
+    if(generationUploading||generationSubmitting||draft.taskId)return;
+    const token=epoch,id=draft.id;generationUploading=true;closeGenerationMenu();renderGenerationComposer();
+    try{
+      const file=await loadFile(()=>token===epoch&&generationDraft(id)===draft&&!draft.taskId);
+      if(token!==epoch||!file||generationDraft(id)!==draft||draft.taskId)return;
+      addGenerationReference(draft,file,generationConfig());
+      reconcileCanvasGenerationDraft(draft,generationConfig());resizeGenerationArea(draft);
+      scheduleCanvasSave();
+      return file;
+    }catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
+    finally{if(token===epoch){generationUploading=false;renderGenerationComposer();}}
+  }
   function generationMenuMarkup(draft){
     const config=generationConfig(),options=canvasGenerationOptions(draft,config);
     const choice=(field,value,label,current,extra='')=>`<button type="button" class="dw-gen-choice" role="radio" aria-checked="${String(value)===String(current)}" data-gen-set="${field}" data-value="${escape(value)}" data-focus-key="${field}:${escape(value)}">${extra}<span>${escape(label)}</span></button>`;
@@ -1176,6 +1223,7 @@ export function createDirectorWorkspace(host, bridge) {
     scheduleCanvasSave();renderGenerationComposer();
   }
   function renderGenerationComposer(){
+    generationMentionEvents?.abort();generationMentionEvents=null;
     const panel=host.querySelector('.dw-generation-composer');
     if(!panel)return;
     const draft=generationDraft(activeGenerationId);
@@ -1184,7 +1232,7 @@ export function createDirectorWorkspace(host, bridge) {
     const options=canvasGenerationOptions(draft,generationConfig()),models=canvasGenerationModels(draft.type,generationConfig());
     const currentModel=models.find(item=>item.id===draft.modelId);
     const video=draft.type==='video',firstLast=video&&draft.mode==='FIRST&LAST';
-    const prompt=panel.querySelector('[data-gen-prompt]'),promptFocus=prompt&&document.activeElement===prompt?[prompt.selectionStart,prompt.selectionEnd]:null;
+    const prompt=panel.querySelector('[data-gen-prompt]'),promptFocus=prompt&&document.activeElement===prompt?(video?generationSelection(prompt):[prompt.selectionStart,prompt.selectionEnd]):null;
     const busy=generationSubmitting||generationUploading;
     const references=draft.attachments.map((file,index)=>{
       const label=firstLast?index===0?'首帧':'尾帧':file.name;
@@ -1205,14 +1253,35 @@ export function createDirectorWorkspace(host, bridge) {
     panel.dataset.genType=draft.type;
     panel.setAttribute('role','group');
     panel.setAttribute('aria-label',video?'视频生成':'图像生成');
-    panel.innerHTML=`<div class="dw-gen-input">${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label><textarea id="canvasGenerationPrompt" data-gen-prompt rows="3" placeholder="${video?'描述视频中的画面、动作与镜头…':'描述想要的画面、风格与细节…'}">${escape(draft.prompt)}</textarea></div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="${generationSubmitting?'正在开始生成':'开始生成'}" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''} ${generationSubmitting?'aria-busy="true"':''}>${generationSubmitting?genIcons.loader:genIcons.sparkles}<span class="dw-gen-submit-label">${generationSubmitting?'正在开始':'生成'}</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
+    panel.innerHTML=`<div class="dw-gen-input">${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label>${video?`<div id="canvasGenerationPrompt" class="dw-gen-rich-prompt" data-gen-prompt contenteditable="true" role="textbox" aria-multiline="true" aria-label="画面描述">${generationPromptMarkup(draft)}</div>`:`<textarea id="canvasGenerationPrompt" data-gen-prompt rows="3" placeholder="描述想要的画面、风格与细节…">${escape(draft.prompt)}</textarea>`}</div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="${generationSubmitting?'正在开始生成':'开始生成'}" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''} ${generationSubmitting?'aria-busy="true"':''}>${generationSubmitting?genIcons.loader:genIcons.sparkles}<span class="dw-gen-submit-label">${generationSubmitting?'正在开始':'生成'}</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
     panel.classList.toggle('is-uploading',generationUploading);
     panel.classList.toggle('is-submitting',generationSubmitting);
     bindGenModelIcons(panel);
     panel.hidden=false;
     const input=panel.querySelector('[data-gen-prompt]');
+    if(video){
+      draft.promptSegments=generationPromptSegments(input);
+      generationMentionEvents=new AbortController();
+      const token=epoch;
+      const current=()=>token===epoch&&activeGenerationId===draft.id&&generationDraft(draft.id)===draft&&!draft.taskId;
+      bindGenerationRichPrompt(input,{
+        signal:generationMentionEvents.signal,
+        getInput:()=>current()?panel.querySelector('[data-gen-prompt]'):null,
+        pick:async()=>{
+          if(!current())return null;
+          const file=await attachGenerationReference(draft,async isCurrent=>{
+            await syncCanvasMediaLibrary();
+            if(!current()||!isCurrent())return null;
+            const file=await bridge.uploadGenerationFile();
+            return current()&&isCurrent()?file:null;
+          });
+          const reference=file&&draft.attachments.find(reference=>reference.id===file.id);
+          return reference&&current()?{label:reference.name,file:reference}:null;
+        },
+      });
+    }
     fitGenerationPrompt(input);
-    if(promptFocus){input.focus({preventScroll:true});input.setSelectionRange(...promptFocus);}
+    if(promptFocus){if(video)restoreGenerationSelection(input,promptFocus);else{input.focus({preventScroll:true});input.setSelectionRange(...promptFocus);}}
     positionGenerationComposer();
     renderGenerationMenu();
     updateGenerationCost(draft);
@@ -1338,10 +1407,18 @@ export function createDirectorWorkspace(host, bridge) {
     generationPanel.addEventListener('input',event=>{
       const draft=generationDraft(activeGenerationId);if(!draft)return;
       if(event.target.matches('[data-gen-prompt]')){
-        draft.prompt=event.target.value;fitGenerationPrompt(event.target);
+        if(event.isComposing||event.target.dataset.composing==='true')return;
+        const previousMentions=new Set((draft.promptSegments||[]).filter(segment=>typeof segment!=='string').map(segment=>segment.id));
+        draft.prompt=draft.type==='video'?generationPromptCodec.serialize(event.target):event.target.value;
+        if(draft.type==='video'){draft.promptSegments=generationPromptSegments(event.target);generationPromptCodec.normalizeEmpty(event.target);}
+        const mentions=new Set((draft.promptSegments||[]).filter(segment=>typeof segment!=='string').map(segment=>segment.id));
+        const previousCount=draft.attachments.length;
+        draft.attachments=draft.attachments.filter(file=>!previousMentions.has(file.id)||mentions.has(file.id));
+        fitGenerationPrompt(event.target);
         const submit=generationPanel.querySelector('[data-gen-submit]'),empty=!draft.prompt.trim();
         if(submit){submit.disabled=empty||generationSubmitting||generationUploading;submit.title=empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）';}
         positionGenerationComposer();scheduleCanvasSave();
+        if(previousCount!==draft.attachments.length)renderGenerationComposer();
       }
     });
     generationMenuLayer=document.createElement('div');
@@ -1386,27 +1463,17 @@ export function createDirectorWorkspace(host, bridge) {
       const menuTrigger=event.target.closest('[data-gen-menu]');
       if(menuTrigger){openGenerationMenu(menuTrigger.dataset.genMenu);return;}
       const remove=event.target.closest('[data-gen-remove]');
-      if(remove){draft.attachments=draft.attachments.filter(file=>file.id!==remove.dataset.genRemove);scheduleCanvasSave();renderGenerationComposer();return;}
+      if(remove){
+        const id=remove.dataset.genRemove;
+        if(draft.type==='video'&&Array.isArray(draft.promptSegments)){
+          draft.promptSegments=draft.promptSegments.filter(segment=>typeof segment==='string'||segment.id!==id);
+          draft.prompt=draft.promptSegments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('');
+        }
+        draft.attachments=draft.attachments.filter(file=>file.id!==id);scheduleCanvasSave();renderGenerationComposer();return;
+      }
       if(event.target.closest('[data-gen-submit]')){void submitGenerationArea();return;}
       if(!event.target.closest('[data-gen-upload]')||generationUploading)return;
-      const token=epoch,id=draft.id;generationUploading=true;renderGenerationComposer();
-      try{
-        const file=await bridge.uploadGenerationFile();
-        if(token!==epoch||!file||!generationDraft(id))return;
-        if(draft.type==='image'&&file.kind!=='image')throw new Error('图像生成只能添加图片参考');
-        if(draft.type==='image'&&draft.attachments.length>=7)throw new Error('参考图片最多添加 7 张');
-        if(draft.mode==='FIRST&LAST'&&file.kind!=='image')throw new Error('首尾帧只能添加图片');
-        if(draft.type==='video'&&draft.mode==='TEXT'){
-          const modes=canvasGenerationOptions(draft,generationConfig()).modes;
-          if(!modes.some(mode=>mode.generationType==='REFERENCE'))throw new Error('当前模型不支持参考素材');
-          draft.mode='REFERENCE';
-        }
-        if(draft.mode==='FIRST&LAST'&&draft.attachments.length>=2)throw new Error('首尾帧最多添加两张图片');
-        if(!draft.attachments.some(item=>item.id===file.id))draft.attachments.push({id:file.id,name:file.name,kind:file.kind,url:file.previewUrl||file.url||''});
-        reconcileCanvasGenerationDraft(draft,generationConfig());resizeGenerationArea(draft);
-        scheduleCanvasSave();
-      }catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
-      finally{if(token===epoch){generationUploading=false;renderGenerationComposer();}}
+      await attachGenerationReference(draft,async isCurrent=>{await syncCanvasMediaLibrary();if(isCurrent())return bridge.uploadGenerationFile();});
     });
     generationPanel.addEventListener('keydown',event=>{
       if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();void submitGenerationArea();return;}
@@ -1432,6 +1499,8 @@ export function createDirectorWorkspace(host, bridge) {
     const bindCanvas=api=>{
       if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
+      canvasLibrary=createCanvasMediaLibrary({api:bridge.agentApi,findFile:bridge.canvasFile,registerFile:bridge.registerCanvasFile,
+        isCurrent:()=>mountEpoch===epoch&&Boolean(canvas)});
       canvas.on('nodes:created',handleCreatedCanvasNodes);
       mainLayer=canvas.getMainLayer?.();
       nativeTransformer=canvas.getTransformer?.();
@@ -1451,7 +1520,7 @@ export function createDirectorWorkspace(host, bridge) {
       const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
-      canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();});
+      canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();queueCanvasMediaLibrary();});
       canvas.on('viewport:change',v=>{if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();queueWorkspaceFrame(()=>{alignCards();positionGenerationComposer();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
       // Konva owns live geometry during both drag and resize. The public
       // state event arrives only after the gesture, so align HTML cards and
@@ -1493,6 +1562,7 @@ export function createDirectorWorkspace(host, bridge) {
       syncCanvas();
       queueWorkspaceFrame(()=>{if(canvas){syncCanvas();alignCards();}});
       drawPanels();
+      queueCanvasMediaLibrary();
     };
     canvasMount=mountReferenceCanvas(host.querySelector('.dw-canvas'),{sessionKey:projectId,toolbarHost:host.querySelector('.dw-project-tools'),adapter:{
       workspaceToolbar:false,
@@ -1766,13 +1836,14 @@ export function createDirectorWorkspace(host, bridge) {
     return promise;
   }
   function dispose(){
+    generationMentionEvents?.abort();generationMentionEvents=null;
     generationApproval?.destroy();generationApproval=null;
     // Invalidate callbacks before disconnecting clients or unmounting React.
     epoch++;workspaceActive=false;
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

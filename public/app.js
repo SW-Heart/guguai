@@ -17,7 +17,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=7';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=12';
+import { createMediaController } from './features/media/controller.js?v=13';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createConversationRail } from './features/agent/conversation-rail.js?v=5';
@@ -33,6 +33,7 @@ const alipayOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(St
 let referenceDialogCommitted = false;
 let referenceDialogOriginal = null;
 let canvasAssetRequest = null;
+let referenceLibraryRequest=0;
 const recordIndexes = createRecordIndexes({ getFiles: () => state.files, getTasks: () => state.tasks, getHistory: () => state.generationHistory });
 const fileById = recordIndexes.fileById;
 const taskById = recordIndexes.taskById;
@@ -139,6 +140,7 @@ const desktopLocalClientAsset = mediaController.desktopLocalClientAsset;
 const mergeStateFiles = mediaController.mergeStateFiles;
 const syncDesktopDeliveries = mediaController.syncDesktopDeliveries;
 const loadFiles = mediaController.loadFiles;
+const loadReferenceFiles = mediaController.loadReferenceFiles;
 const removeDesktopCloudAssets = mediaController.removeDesktopCloudAssets;
 const claimLegacyWorkspace = mediaController.claimLegacyWorkspace;
 const showDesktopAssetInFolder = mediaController.showAssetInFolder;
@@ -2150,8 +2152,8 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=90').then(({createAgentWorkspace}) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=99').then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2161,8 +2163,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=228').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
+    dramaControllerPromise = import('./drama-studio.js?v=239').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -3621,9 +3623,25 @@ async function pickAndUploadDramaImage({ context='professional' } = {}) {
   const files = await desktopImportToContext(context, { multiple:false });
   return files.find(file => file?.kind === 'image') || null;
 }
-async function pickAndUploadDramaAsset({ context='professional-project' } = {}) {
-  const files = await desktopImportToContext(context, { multiple:false });
-  return files[0] || null;
+async function pickAndUploadDramaAsset({ context='professional-project', multiple=false } = {}) {
+  const files = await desktopImportToContext(context, { multiple });
+  return multiple ? files : files[0] || null;
+}
+async function registerCanvasFile(file) {
+  const requestAccount=accountScope.snapshot();
+  const existing=fileById(file.id);
+  if(existing?.localStatus==='saved')return existing;
+  mediaController.mergeStateFiles([file]);
+  notifyUploadSurfaceChanged();
+  if(window.guguDesktop&&!file.localOnly&&file.localStatus!=='saved'){
+    await mediaController.hydrateDesktopAsset(file);
+    if(!accountScope.isCurrent(requestAccount))return null;
+  }
+  if(!accountScope.isCurrent(requestAccount))return null;
+  await loadFiles({background:true});
+  if(!accountScope.isCurrent(requestAccount))return null;
+  notifyUploadSurfaceChanged();
+  return fileById(file.id)||file;
 }
 function pickAndImportDramaCanvasAsset({ chat = false, generation = false, multiple = false, maxFiles = 30 } = {}) {
   return new Promise(resolve => {
@@ -3763,6 +3781,14 @@ function restoreReferenceDialogOriginal() {
   if (referenceDialogOriginal.target === 'video-frame') state.videoFrames[referenceDialogOriginal.frame] = referenceDialogOriginal.value || '';
   else if (['image','video'].includes(referenceDialogOriginal.target)) state.refs[referenceDialogOriginal.target] = [...referenceDialogOriginal.value];
 }
+function refreshReferenceLibrary() {
+  const version=++referenceLibraryRequest,requestAccount=accountScope.snapshot();
+  void loadReferenceFiles().then(()=>{
+    if(version===referenceLibraryRequest&&accountScope.isCurrent(requestAccount)&&$('#referenceDialog')?.open)renderReferenceDialog();
+  }).catch(error=>{
+    if(version===referenceLibraryRequest&&accountScope.isCurrent(requestAccount)&&$('#referenceDialog')?.open)toast(error.message||'素材加载失败，请重试');
+  });
+}
 function openReferenceDialog(target, { mentionRequest = null } = {}) {
   const isCanvas = target === 'canvas';
   if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型');
@@ -3774,6 +3800,7 @@ function openReferenceDialog(target, { mentionRequest = null } = {}) {
   videoPromptMentionRequest = target === 'video' ? mentionRequest : null;
   const promptMentionMode = ['image', 'video'].includes(target) && Boolean(mentionRequest);
   state.referenceTarget = target; state.videoFrameTarget = ''; state.referenceKind = 'all'; state.dialogSelection = isCanvas || promptMentionMode ? [] : [...state.refs[target]]; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
+  refreshReferenceLibrary();
 }
 function openVideoFrameDialog(frame) {
   if (!supportsVideoFirstLast()) return;
@@ -3782,6 +3809,7 @@ function openVideoFrameDialog(frame) {
   imagePromptMentionRequest = null;
   videoPromptMentionRequest = null;
   state.referenceTarget = 'video-frame'; state.videoFrameTarget = frame; state.referenceKind = 'all'; state.dialogSelection = state.videoFrames[frame] ? [state.videoFrames[frame]] : []; renderReferenceDialog(); $('#referenceDialog').showModal(); resetReferenceDialogScroll();
+  refreshReferenceLibrary();
 }
 function closeReferenceDialog() { imagePromptMentionRequest = null; videoPromptMentionRequest = null; $('#referenceDialog').close(); }
 $('#closeReference').onclick = $('#cancelReference').onclick = closeReferenceDialog;
@@ -3888,7 +3916,7 @@ function renderReferenceDialog() {
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
   const files = sortFilesByRecency(pickerFiles.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id))));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
-  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用画布素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传可用的图片、视频或音频。'));
+  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传可用的图片、视频或音频。'));
   $$('.reference-option').forEach(button => button.onclick = () => {
     let id = button.dataset.id;
     let file = referenceFileById(id);

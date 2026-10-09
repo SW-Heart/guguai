@@ -589,6 +589,23 @@ export function createMediaController({
     return result;
   }
 
+  async function loadReferenceFiles() {
+    const requestAccount=accountSnapshot(),requestEpoch=getAccountEpoch();
+    const files=new Map();
+    let cursor='';
+    const cursors=new Set();
+    do {
+      const page=await listDesktopFiles({limit:200,cursor});
+      if(!requestIsCurrent(requestAccount,requestEpoch))return [];
+      mergeStateFiles(page.items);
+      for(const file of page.items)if(file.localStatus!=='missing')files.set(file.id,fileById(file.id)||file);
+      cursor=String(page.nextCursor||'');
+      if(cursor&&cursors.has(cursor))throw new Error('素材加载失败，请重试');
+      cursors.add(cursor);
+    }while(cursor);
+    return [...files.values()];
+  }
+
   async function loadFiles({ background = false, loadMore = false } = {}) {
     const requestAccount = accountSnapshot();
     const search = String(getFileSearch() || '').trim();
@@ -702,6 +719,7 @@ export function createMediaController({
     syncDesktopDeliveries,
     claimLegacyWorkspace,
     loadFiles,
+    loadReferenceFiles,
     refreshLocalAvailability: async () => {
       try { await reconcileLocalFiles(); notifyChanged(); }
       catch (error) { console.warn('[desktop] 本地文件检查暂不可用', error.message); }

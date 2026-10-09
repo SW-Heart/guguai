@@ -50,6 +50,7 @@ import { BrushSelectionEnhancer } from './control/BrushSelectionEnhancer'
 import { TextColorPicker } from './control/TextColorPicker'
 import { toast } from 'sonner'
 import { configureImageResizeBehavior } from './imageResizeBehavior'
+import { insertDroppedImagesAtCanvasPosition } from './canvasImageDrop'
 import { RichTextDefaultFontAdapter } from './control/RichTextDefaultFontAdapter'
 import { RichTextFontSizeAdapter } from './control/RichTextFontSizeAdapter'
 import { loadCanvasDefaultFont } from './canvasFonts'
@@ -540,7 +541,7 @@ const CanvasPreview = forwardRef<any, CanvasPrevewProps>((props) => {
       if (imageUrls.length === 0) return
 
       try {
-        await insertImagesAtCanvasPosition(whiteboardApi, imageUrls, dropPoint)
+        await insertDroppedImagesAtCanvasPosition(whiteboardApi, imageUrls, dropPoint)
       } catch (error) {
         console.error('Failed to insert dropped images into canvas:', error)
         toast.error(i18n.t('legacy:ui_47bb3e7c4bb5'))
