@@ -1,3 +1,4 @@
+import { visibleGenerationPrompt } from '../lib/drama-style.mjs';
 import {
   VIDEO_UPSCALE_CREDITS_PER_SECOND,
   VIDEO_UPSCALE_LIMITS,
@@ -102,7 +103,7 @@ export function createVideoUpscaleService({
     const createdAt = now();
     const task = {
       id:requestId, ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId,
-      type:'video', prompt:String(source.prompt || ''), referenceAssetIds:[],
+      type:'video', prompt:String(visibleGenerationPrompt(source) || ''), referenceAssetIds:[],
       provider:VIDEO_UPSCALE_PROVIDER, model:'SuperResolveVideo', modelId:VIDEO_UPSCALE_MODEL_ID, videoModelId:VIDEO_UPSCALE_MODEL_ID,
       size:`${plan.outputWidth}x${plan.outputHeight}`, quality:plan.label, aspectRatio:source.aspectRatio || '', duration:plan.billedSeconds,
       upscale:{

@@ -1,3 +1,4 @@
+import { normalizeDramaStyle, dramaStyleSnapshot, applyDramaStyle } from '../lib/drama-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -194,4 +195,21 @@ test('generation retry wires repair into the shared failure path without custome
   assert.match(server.slice(start, end), /if \(autoPromptRepairEnabled\(findUserById\(userId\)\)\) await repairGenerationPrompt\(task, error/);
   assert.match(server, /autoPromptRepairEnabled = user => user\?\.preferences\?\.autoPromptRepair !== false/);
   assert.doesNotMatch(server.slice(start, end), /reserveLlmCredits|settleLlmCredits/);
+});
+
+
+test('styled prompt repair edits only story text and reapplies its frozen style exactly once', async()=>{
+  const snapshot=dramaStyleSnapshot(normalizeDramaStyle({id:'youth-anime'}));
+  const task={type:'image',prompt:applyDramaStyle(prompt,snapshot),userPrompt:prompt,dramaStyleSnapshot:snapshot,stylePromptMaxLength:5000,generationRetryCount:1};
+  const deps={save:async()=>{},guidance:async()=>[],callLlm:async args=>{
+    const input=JSON.parse(args.prompt);
+    assert.equal(input.prompt,prompt);
+    assert.ok(!JSON.stringify(input).includes(snapshot.instruction));
+    return result;
+  }};
+  assert.equal(await repairGenerationPrompt(task,rejection,deps),true);
+  assert.equal(task.prompt,applyDramaStyle(prompt.replace('拍摄','用相机记录'),snapshot));
+  assert.equal(task.userPrompt,prompt);
+  assert.equal(task.dramaStyleSnapshot.instruction,snapshot.instruction);
+  assert.equal(task.prompt.split(snapshot.instruction).length-1,1);
 });

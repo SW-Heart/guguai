@@ -1,3 +1,4 @@
+import { normalizeDramaStyle, visibleGenerationPrompt } from '../lib/drama-style.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGenerationRouteHandler } from '../server/routes/generations.mjs';
@@ -9,7 +10,7 @@ function precheckFixture(mode = 'shadow') {
   return { events, promptPrecheck:{ mode:() => mode, scan:(prompt, { modelId }) => scanPromptRisk(prompt, { modelId }), record:event => events.push(event) } };
 }
 
-function generationFixture({ mode = 'shadow', input, fingerprintInputs = [] }) {
+function generationFixture({ mode = 'shadow', input, fingerprintInputs = [], project = null }) {
   const { events, promptPrecheck } = precheckFixture(mode);
   const records = new Map();
   let charges = 0, id = 0;
@@ -19,8 +20,8 @@ function generationFixture({ mode = 'shadow', input, fingerprintInputs = [] }) {
     requireUser:() => ({ id:'user-1' }),
     requireDesktopWorkspaceScope:() => ({ deviceId:'device-1', workspaceId:'workspace-1' }),
     findGeneration:(_userId, generationId) => records.get(generationId) || null,
-    safeId:value => String(value || ''), publicGeneration:task => task, publicDramaProject:project => project, loadDramaProject:async () => null,
-    validateReferenceAssets:async () => [], referenceAssetCounts:() => ({}), normalizeQuoteReferenceCounts:() => ({}),
+    safeId:value => String(value || ''), publicGeneration:task => ({id:task.id,prompt:visibleGenerationPrompt(task)}), publicDramaProject:project => project, loadDramaProject:async (_user,id) => project?.id===id?project:null,
+    validateReferenceAssets:async (_user,ids) => ids || [], referenceAssetCounts:() => ({}), normalizeQuoteReferenceCounts:() => ({}),
     assertReferenceCountsWithinLimits:() => {}, selectModelRoute:() => null, publicRoutePriceVersion:() => '',
     currentPricing:() => ({ imagePerRequestMicro:3_000_000 }), pricingSnapshot:pricing => ({ version:'price-1', total:3, totalMicro:pricing.imagePerRequestMicro }),
     creditsToMicro:value => Number(value) * 1_000_000, charLength:value => Array.from(value).length,
@@ -211,4 +212,43 @@ test('admin stats read events and generations from the database', async () => {
     assert.deepEqual(stats.accuracy.redRejectedRate, 0);
     assert.deepEqual(stats.misses.map(item => [item.id, item.prompt]), [['g-miss', '普通描述']]);
   } finally { closeDatabase({ checkpoint:false }); }
+});
+
+
+test('project style reaches the provider prompt without adding cover references or exposing its recipe', async () => {
+  const project={id:'drama-1',style:normalizeDramaStyle({id:'youth-anime'})};
+  const input={...image('一名黑发女生拿着白色杯子，办公室窗边'),dramaProjectId:project.id,dramaStyleRevision:1,referenceAssetIds:['actual-character']};
+  const fixture=generationFixture({input,project});
+  const response=await fixture.submit();
+  assert.equal(response.statusCode,202);
+  assert.equal(response.body.prompt,input.prompt);
+  const record=fixture.records.get(response.body.id);
+  assert.match(record.prompt,/二维赛璐璐动画/);
+  assert.ok(record.prompt.endsWith(input.prompt));
+  assert.deepEqual(record.referenceAssetIds,['actual-character']);
+  assert.equal(record.dramaStyleSnapshot.revision,1);
+  assert.equal(record.stylePromptMaxLength,5000);
+  assert.ok(!JSON.stringify(response.body).includes(record.dramaStyleSnapshot.instruction));
+  project.style=normalizeDramaStyle({id:'live-action'},{previous:project.style,update:true});
+  assert.match(record.prompt,/二维赛璐璐动画/);
+  assert.equal(record.dramaStyleSnapshot.revision,1);
+});
+
+test('stale project style is rejected before billing and project ownership is required', async () => {
+  const project={id:'drama-1',style:normalizeDramaStyle({id:'live-action',revision:2})};
+  const input={...image('一间办公室'),dramaProjectId:project.id,dramaStyleRevision:1};
+  const fixture=generationFixture({input,project});
+  assert.equal((await fixture.submit()).body.code,'DRAMA_STYLE_CHANGED');
+  assert.equal(fixture.charges(),0);
+  input.dramaProjectId='another-owner';
+  assert.equal((await fixture.submit()).statusCode,404);
+  assert.equal(fixture.charges(),0);
+});
+
+test('style application keeps precheck hit positions relative to visible content', async () => {
+  const project={id:'drama-1',style:normalizeDramaStyle({id:'live-action'})};
+  const fixture=generationFixture({mode:'enforce',project,input:{...image('习近平出席会议'),dramaProjectId:project.id}});
+  const response=await fixture.submit();
+  assert.equal(response.body.code,'PROMPT_PRECHECK_REQUIRED');
+  assert.deepEqual(response.body.precheck.hits,[{start:0,end:3,level:'banned',label:'涉及国家领导人'}]);
 });

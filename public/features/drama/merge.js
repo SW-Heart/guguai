@@ -38,6 +38,12 @@ function mergeArray(base, local, remote, path, conflicts, choices) {
 function mergeNode(base, local, remote, path, conflicts, choices) {
   if (equal(local, base)) return clone(remote);
   if (equal(remote, base) || equal(local, remote)) return clone(local);
+  // A visual style is one selection. Combining its fields can silently create
+  // a third style that neither editor chose.
+  if (path === 'style') {
+    conflicts.push(conflictRecord(path, base, local, remote));
+    return clone(choices[path] === 'local' ? local : remote);
+  }
   if (Array.isArray(local) && Array.isArray(remote)) return mergeArray(Array.isArray(base) ? base : [], local, remote, path, conflicts, choices);
   if (local && remote && typeof local === 'object' && typeof remote === 'object' && !Array.isArray(local) && !Array.isArray(remote)) {
     const merged = {};

@@ -1,3 +1,4 @@
+import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=2';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createRecordIndexes } from './state/records.js?v=2';
@@ -5,7 +6,7 @@ import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
 import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=126';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
-import { buildResourceImagePrompt } from './resource-prompt.js?v=3';
+import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
 import {
   buildDramaVideoQuoteInput,
@@ -24,7 +25,7 @@ import {
   videoPreviewVersionState as resolveVideoPreviewVersionState,
   videoTaskProgress,
 } from './features/drama/pure.js?v=3';
-import { mergeProjectThreeWay, projectConflictChoiceMap } from './features/drama/merge.js?v=1';
+import { mergeProjectThreeWay, projectConflictChoiceMap } from './features/drama/merge.js?v=2';
 import { createPromptOptimizationDialog, promptOptimizationButton } from './features/drama/prompt-optimization.js?v=4';
 import { createVideoGenerationLoadingController, renderVideoGenerationLoading, updateVideoGenerationProgress } from './features/drama/video-generation-loading.js?v=1';
 
@@ -77,7 +78,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -87,6 +88,17 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
   let renameProjectRestoreFocus = null;
   const deletingProjectIds = new Set();
   let project = null;
+  // Bind every image/video submission made by this short-drama controller,
+  // including its embedded canvas. Other creation modules keep their own API.
+  const api = (url, options = {}) => {
+    if(url === '/api/generations' && options.method === 'POST' && project){
+      const body=JSON.parse(options.body || '{}');
+      if(!body.dramaProjectId)body.dramaProjectId=project.id;
+      if(body.dramaProjectId===project.id && body.dramaStyleRevision===undefined)body.dramaStyleRevision=project.style?.revision || 0;
+      return requestApi(url,{...options,body:JSON.stringify(body)});
+    }
+    return requestApi(url,options);
+  };
   let projectBaseSnapshot = null;
   let canvasChangeVersion=0;
   const snapshotKey = (id, kind='project', account=accountSnapshot()) => canvasSnapshotKey({ userId:account?.userId, deviceId:getDesktopSyncInfo()?.deviceId, workspaceId:getDesktopSyncInfo()?.workspaceId, projectId:id, kind });
@@ -203,6 +215,17 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     if (isProjectRequestCurrent(request)) return;
     throw Object.assign(new Error('账号已切换，已取消旧操作'), { stale:true });
   };
+  const styleDialog=createDramaStyleDialog({api,esc,toast,isCurrent:isProjectRequestCurrent,
+    onCreate:async(style,request)=>{assertProjectRequest(request);return createProject('professional',style);},
+    onChange:async(style,request)=>{
+      await flushSave();assertProjectRequest(request);
+      const saved=await patch({style});
+      if(!saved)return false;
+      assertProjectRequest(request);syncProjectHeader();toast('画面风格已更新');return true;
+    },
+  });
+  const styleButton=document.querySelector('#dramaProjectStyle');
+  if(styleButton)styleButton.onclick=()=>{if(project)void styleDialog.open({style:project.style,edit:true,request:projectRequest()});};
   const recordIndexes=createRecordIndexes({getFiles:()=>state.files,getTasks:()=>state.tasks});
   const task = id => recordIndexes.taskById(id);
   const generationFailureMarkup = generation => {
@@ -217,6 +240,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
   };
   let projectConflictResolver = null;
   let projectConflictRestoreFocus = null;
+  function styleConflictValue(value){return value ? `${value.name || '自定义风格'}\n${value.description || ''}` : '未选择风格';}
   function conflictValue(value) {
     if (typeof value === 'string') return value || '（空）';
     if (value === undefined) return '（未设置）';
@@ -238,7 +262,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     if (!dialog || !list) return Promise.resolve(null);
     if (projectConflictResolver) settleProjectConflict(null);
     projectConflictRestoreFocus = document.activeElement;
-    list.innerHTML = conflicts.map((conflict, index) => `<article class="project-conflict-item"><header><strong>${esc(conflict.path)}</strong><label>保留<select data-conflict-path="${esc(conflict.path)}"><option value="local">我的修改</option><option value="remote">最新修改</option></select></label></header><div class="project-conflict-values"><pre><b>我的修改</b>${esc(conflictValue(conflict.localValue))}</pre><pre><b>最新修改</b>${esc(conflictValue(conflict.remoteValue))}</pre></div></article>`).join('');
+    list.innerHTML = conflicts.map((conflict, index) => `<article class="project-conflict-item"><header><strong>${esc(conflict.path==='style'?'画面风格':conflict.path)}</strong><label>保留<select data-conflict-path="${esc(conflict.path)}"><option value="local">我的修改</option><option value="remote">最新修改</option></select></label></header><div class="project-conflict-values"><pre><b>我的修改</b>${esc(conflict.path==='style'?styleConflictValue(conflict.localValue):conflictValue(conflict.localValue))}</pre><pre><b>最新修改</b>${esc(conflict.path==='style'?styleConflictValue(conflict.remoteValue):conflictValue(conflict.remoteValue))}</pre></div></article>`).join('');
     return new Promise(resolve => {
       projectConflictResolver = resolve;
       dialog.showModal();
@@ -657,6 +681,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     document.querySelector('#appView')?.classList.toggle('drama-project-open',open&&routeActive);
     document.querySelector('#appView')?.classList.toggle('drama-director-open',open&&routeActive&&project?.mode==='smart');
     document.querySelector('#appView')?.classList.toggle('drama-professional-open',open&&routeActive&&project?.mode==='professional');
+    if(styleButton){styleButton.classList.toggle('hidden',!open||!routeActive);styleButton.textContent=project?.style?.name||'选择风格';styleButton.setAttribute('aria-label',`修改画面风格：${project?.style?.name||'未选择'}`);styleButton.title=`修改画面风格：${project?.style?.name||'未选择'}`;}
     if(!routeActive)return;
     const routeTitle=document.querySelector('#routeTitle');
     const titleDisplay=document.querySelector('#dramaProjectTitleDisplay');
@@ -817,8 +842,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
       if (isAccountCurrent(requestAccount)) { setRenameProjectError(error.message); button.disabled = false; button.textContent = '保存名称'; input.focus(); input.select(); }
     }
   });
-  let creatingProject=false;
-  async function openCreateProjectDialog(){if(creatingProject)return;creatingProject=true;try{await createProject('professional');}finally{creatingProject=false;}}
+  async function openCreateProjectDialog(){await styleDialog.open({request:projectRequest()});}
   async function load(force=false) {
     const requestAccount=accountSnapshot();
     if(busy){
@@ -848,7 +872,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     }catch(error){if(loadToken===projectLoadToken&&isAccountCurrent(requestAccount))toast(error.message);}
     finally{if(loadToken===projectLoadToken){busy=false;busyAccount=null;}}
   }
-  async function createProject(mode) { const request=projectRequest(); try { const result=await api('/api/drama/projects',{method:'POST',body:JSON.stringify({title:mode==='smart'?'未命名智能短剧':'未命名剧本',mode,settings:{shotCount:5,totalDuration:100,shotDuration:20,aspectRatio:'9:16'}})}); assertProjectRequest(request); projects=[result.project,...projects]; return await openProject(result.project.id); }catch(error){if(error.stale)return false;toast(error.message);return false;} }
+  async function createProject(mode, style) { const request=projectRequest(); try { const result=await api('/api/drama/projects',{method:'POST',body:JSON.stringify({title:mode==='smart'?'未命名智能短剧':'未命名剧本',mode,style,settings:{shotCount:5,totalDuration:100,shotDuration:20,aspectRatio:'9:16'}})}); assertProjectRequest(request); projects=[result.project,...projects]; return await openProject(result.project.id); }catch(error){if(error.stale)return false;toast(error.message);return false;} }
   async function openProject(id) {
     const loadToken=++projectLoadToken;
     const requestAccount=accountSnapshot();
@@ -1142,7 +1166,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
       let body;
       if(action.type==='generate_resource'){
         if(!resource)throw new Error('素材不存在');
-        body={type:'image',prompt:buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio}),size:project.settings.aspectRatio,quality:'medium',referenceAssetIds:[]};
+        body={type:'image',prompt:buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio,styled:Boolean(project.style)}),size:project.settings.aspectRatio,quality:'medium',referenceAssetIds:[]};
       }else if(action.type==='generate_video'){
         if(!shot)throw new Error('镜头不存在');ensureProfessionalVideoSettings(shot);
         const warning=professionalProductionWarning(shot);if(warning)throw new Error(warning);
@@ -1151,7 +1175,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
         const requestShot=videoRequestShot(shot,refs);
         body={type:'video',prompt:shotVideoPrompt(requestShot),dramaProjectId:project.id,dramaShotId:shot.id,modelId:shot.generation.modelId,aspectRatio:shot.aspectRatio,duration:shot.duration,quality:shot.generation.quality,generationType:requestShot.generation.type,referenceAssetIds:cloudRefs};
       }else throw new Error('不支持的制作操作');
-      action.requestBody ||= {...body,precheckSource:'agent',requestId:`${project.directorWorkspace.plan.id}-${action.id}-${action.previousTaskIds?.length||0}`};
+      action.requestBody ||= {...body,precheckSource:'agent',dramaProjectId:project.id,dramaStyleRevision:project.style?.revision || 0,requestId:`${project.directorWorkspace.plan.id}-${action.id}-${action.previousTaskIds?.length||0}`};
       project.directorWorkspace.plan.actions=project.directorWorkspace.plan.actions.map(a=>a.id===action.id?{...action}:a);
       await patch({directorWorkspace:project.directorWorkspace},{quiet:true});ensure();
       const generation=await api('/api/generations',{method:'POST',body:JSON.stringify(action.requestBody)});assertProjectRequest(request);
@@ -3091,7 +3115,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
   function resourceVersionCard(resource,taskId){ const generation=task(taskId); const file=taskAsset(taskId); const selected=resource.selectedTaskId===taskId; const syncing=taskSyncing(taskId); const ready=taskLocallyReady(taskId); const missing=generation?.status==='completed'&&Boolean(generation.assetId)&&!file; const status=generation?.status==='failed'?generationFailureMarkup(generation):syncing?'保存中…':missing?'成品文件未找到':generation?({queued:'排队中',running:'生成中'}[generation.status]||generation.status):'记录缺失'; return `<button class="resource-version ${selected?'selected':''}" data-select-resource="${resource.id}" data-task-id="${taskId}" ${ready?'':'disabled'}>${ready?`<img src="${file.url}" alt="${esc(resource.name)}">`:`<span class="version-state">${status}</span>`}<i>${selected&&ready?'✓ 已选':ready?'选择此版':syncing?'保存中…':missing?'文件尚未准备好':'等待完成'}</i></button>`; }
   function renderResources(){
     const groups=['character','location','prop']; const missing=project.resources.filter(item=>!item.selectedTaskId||!taskLocallyReady(item.selectedTaskId)).length;
-    root.innerHTML=`<section class="stage-head"><div><span>第 2 步</span><h2>素材生成</h2><p>页面设定会用于生成图片。修改身份、外观、服装或标准视图后，下方生成内容会更新。</p></div><div class="stage-head-actions"><span class="readiness-badge">${project.resources.length-missing}/${project.resources.length} 已定稿</span><button id="addResource" class="secondary-button">＋ 添加素材</button><button id="generateAllResources" class="gradient-button" ${!project.resources.length?'disabled':''}>一键生成${missing?` · ${missing} 项`:''}</button></div></section><div class="resource-tabs">${groups.map(type=>`<button data-resource-filter="${type}">${typeNames[type]} ${project.resources.filter(x=>x.type===type).length}</button>`).join('')}</div><div class="resource-board">${groups.map(type=>`<section class="resource-group" data-resource-group="${type}"><header><b>${typeNames[type]}素材</b><span>${project.resources.filter(x=>x.type===type).length} 项</span><button data-add-resource-type="${type}" class="text-button" type="button">＋ 添加${typeNames[type]}</button></header>${project.resources.filter(x=>x.type===type).map(resource=>`<article class="resource-editor professional" data-resource-id="${resource.id}"><div class="resource-definition"><div class="resource-card-status"><span class="lifecycle-chip ${resource.lifecycle.status}">${resource.selectedTaskId?(taskLocallyReady(resource.selectedTaskId)?'已选定':'生成中'):'待定稿'}</span><small>第 ${resource.lifecycle.revision} 版</small></div><div class="resource-name-row"><label>类型<select data-resource-field="type">${Object.entries(typeNames).map(([value,label])=>`<option value="${value}" ${resource.type===value?'selected':''}>${label}</option>`).join('')}</select></label><label>素材名称<input data-resource-field="name" value="${esc(resource.name)}"></label></div><label>素材说明<textarea data-resource-field="description">${esc(resource.description)}</textarea></label><div class="bible-grid"><label>身份 / 空间锚点<textarea data-bible-field="identity">${esc(resource.bible.identity)}</textarea></label><label>外观 / 固定陈设<textarea data-bible-field="appearance">${esc(resource.bible.appearance)}</textarea></label><label>服装 / 材质状态<textarea data-bible-field="costume">${esc(resource.bible.costume)}</textarea></label><label>标准视图 / 标准机位<textarea data-bible-field="canonicalViews">${esc(resource.bible.canonicalViews)}</textarea></label></div><label>连续性补充备注<textarea data-bible-field="stateNotes">${esc(resource.bible.stateNotes)}</textarea></label><section class="compiled-resource-prompt"><header><b>生成内容</b><span>根据上方设置生成</span></header><textarea data-compiled-resource-prompt readonly>${esc(buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio}))}</textarea></section><div><span><button data-delete-resource="${resource.id}" class="text-button danger-link">删除</button><button data-save-resource="${resource.id}" class="text-button">保存说明</button></span><button data-generate-resource="${resource.id}" class="resource-generate">${resource.versions.length?'生成候选版本':'生成素材图'} · ${state.pricing.image} 积分</button></div></div><div class="resource-versions"><header><b>视觉候选</b><span>可多次生成，选择一版作为后续一致性参考图片</span></header><div>${resource.versions.length?resource.versions.map(id=>resourceVersionCard(resource,id)).join(''):'<div class="version-empty">尚未生成视觉版本</div>'}</div></div></article>`).join('')||'<div class="resource-group-empty">还没有这类素材，点上方「添加」新建一个。</div>'}</section>`).join('')}</div><footer class="stage-action-bar"><div><button id="resourceBack" class="secondary-button">← 剧本设计</button></div><div><button id="resourceNext" class="stage-next">确认素材，进入分镜设计 →</button></div></footer>`;
+    root.innerHTML=`<section class="stage-head"><div><span>第 2 步</span><h2>素材生成</h2><p>页面设定会用于生成图片。修改身份、外观、服装或标准视图后，下方生成内容会更新。</p></div><div class="stage-head-actions"><span class="readiness-badge">${project.resources.length-missing}/${project.resources.length} 已定稿</span><button id="addResource" class="secondary-button">＋ 添加素材</button><button id="generateAllResources" class="gradient-button" ${!project.resources.length?'disabled':''}>一键生成${missing?` · ${missing} 项`:''}</button></div></section><div class="resource-tabs">${groups.map(type=>`<button data-resource-filter="${type}">${typeNames[type]} ${project.resources.filter(x=>x.type===type).length}</button>`).join('')}</div><div class="resource-board">${groups.map(type=>`<section class="resource-group" data-resource-group="${type}"><header><b>${typeNames[type]}素材</b><span>${project.resources.filter(x=>x.type===type).length} 项</span><button data-add-resource-type="${type}" class="text-button" type="button">＋ 添加${typeNames[type]}</button></header>${project.resources.filter(x=>x.type===type).map(resource=>`<article class="resource-editor professional" data-resource-id="${resource.id}"><div class="resource-definition"><div class="resource-card-status"><span class="lifecycle-chip ${resource.lifecycle.status}">${resource.selectedTaskId?(taskLocallyReady(resource.selectedTaskId)?'已选定':'生成中'):'待定稿'}</span><small>第 ${resource.lifecycle.revision} 版</small></div><div class="resource-name-row"><label>类型<select data-resource-field="type">${Object.entries(typeNames).map(([value,label])=>`<option value="${value}" ${resource.type===value?'selected':''}>${label}</option>`).join('')}</select></label><label>素材名称<input data-resource-field="name" value="${esc(resource.name)}"></label></div><label>素材说明<textarea data-resource-field="description">${esc(resource.description)}</textarea></label><div class="bible-grid"><label>身份 / 空间锚点<textarea data-bible-field="identity">${esc(resource.bible.identity)}</textarea></label><label>外观 / 固定陈设<textarea data-bible-field="appearance">${esc(resource.bible.appearance)}</textarea></label><label>服装 / 材质状态<textarea data-bible-field="costume">${esc(resource.bible.costume)}</textarea></label><label>标准视图 / 标准机位<textarea data-bible-field="canonicalViews">${esc(resource.bible.canonicalViews)}</textarea></label></div><label>连续性补充备注<textarea data-bible-field="stateNotes">${esc(resource.bible.stateNotes)}</textarea></label><section class="compiled-resource-prompt"><header><b>生成内容</b><span>根据上方设置生成</span></header><textarea data-compiled-resource-prompt readonly>${esc(buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio,styled:Boolean(project.style)}))}</textarea></section><div><span><button data-delete-resource="${resource.id}" class="text-button danger-link">删除</button><button data-save-resource="${resource.id}" class="text-button">保存说明</button></span><button data-generate-resource="${resource.id}" class="resource-generate">${resource.versions.length?'生成候选版本':'生成素材图'} · ${state.pricing.image} 积分</button></div></div><div class="resource-versions"><header><b>视觉候选</b><span>可多次生成，选择一版作为后续一致性参考图片</span></header><div>${resource.versions.length?resource.versions.map(id=>resourceVersionCard(resource,id)).join(''):'<div class="version-empty">尚未生成视觉版本</div>'}</div></div></article>`).join('')||'<div class="resource-group-empty">还没有这类素材，点上方「添加」新建一个。</div>'}</section>`).join('')}</div><footer class="stage-action-bar"><div><button id="resourceBack" class="secondary-button">← 剧本设计</button></div><div><button id="resourceNext" class="stage-next">确认素材，进入分镜设计 →</button></div></footer>`;
     document.querySelector('#addResource').onclick=()=>addResource('character');
     document.querySelectorAll('[data-add-resource-type]').forEach(button=>button.onclick=()=>addResource(button.dataset.addResourceType));
     document.querySelector('#generateAllResources').onclick=generateAllResources;
@@ -3108,14 +3132,14 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     try{
       assertProjectRequest(request);
       const label={character:'新角色',location:'新场景',prop:'新物品'}[type]||'新素材';const id=crypto.randomUUID();
-      project.resources.push({id,type,name:label,description:'',prompt:'真人短剧角色定妆照，9:16，正面、侧面与全身标准视图，保持身份特征一致',bible:{identity:'',dramaticGoal:'',appearance:'',costume:'',canonicalViews:'正面、左右侧面、全身标准视图',stateNotes:''},lifecycle:{status:'draft',revision:1,approvedAt:''},versions:[],selectedTaskId:''});
+      project.resources.push({id,type,name:label,description:'',prompt:`${project.style?'角色参考图':'真人短剧角色定妆照'}，9:16，正面、侧面与全身标准视图，保持身份特征一致`,bible:{identity:'',dramaticGoal:'',appearance:'',costume:'',canonicalViews:'正面、左右侧面、全身标准视图',stateNotes:''},lifecycle:{status:'draft',revision:1,approvedAt:''},versions:[],selectedTaskId:''});
       await patch({resources:project.resources});
       assertProjectRequest(request);
       const field=document.querySelector(`[data-resource-id="${id}"] [data-resource-field="name"]`);if(field){field.focus();field.select();}
     }catch(error){if(error.stale)return;throw error;}
   }
   function collectResourceCard(id){const card=document.querySelector(`[data-resource-id="${id}"]`);const item=project.resources.find(x=>x.id===id);if(!card||!item)return item;card.querySelectorAll('[data-resource-field]').forEach(field=>item[field.dataset.resourceField]=field.value);card.querySelectorAll('[data-bible-field]').forEach(field=>item.bible[field.dataset.bibleField]=field.value);return item;}
-  function refreshCompiledResourcePrompt(id){const card=document.querySelector(`[data-resource-id="${id}"]`);const item=collectResourceCard(id);const output=card?.querySelector('[data-compiled-resource-prompt]');if(output&&item)output.value=buildResourceImagePrompt(item,{aspectRatio:project.settings.aspectRatio});}
+  function refreshCompiledResourcePrompt(id){const card=document.querySelector(`[data-resource-id="${id}"]`);const item=collectResourceCard(id);const output=card?.querySelector('[data-compiled-resource-prompt]');if(output&&item)output.value=buildResourceImagePrompt(item,{aspectRatio:project.settings.aspectRatio,styled:Boolean(project.style)});}
   async function saveResource(id,{quiet=false,notify=true}={},request=projectRequest()){
     try{
       assertProjectRequest(request);
@@ -3143,7 +3167,7 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
     const request=projectRequest();
     if(!await saveResource(id,{quiet:true,notify:false},request))return;
     if(!isProjectRequestCurrent(request))return;
-    const resource=project.resources.find(x=>x.id===id);const checked=await promptPrecheck.check({prompts:[buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio})],source:'drama',scopeNote:true});if(checked.action==='cancel'||!isProjectRequestCurrent(request))return;const finalPrompt=checked.prompts[0];button=document.querySelector(`[data-generate-resource="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';
+    const resource=project.resources.find(x=>x.id===id);const checked=await promptPrecheck.check({prompts:[buildResourceImagePrompt(resource,{aspectRatio:project.settings.aspectRatio,styled:Boolean(project.style)})],source:'drama',scopeNote:true});if(checked.action==='cancel'||!isProjectRequestCurrent(request))return;const finalPrompt=checked.prompts[0];button=document.querySelector(`[data-generate-resource="${id}"]`)||button;button.disabled=true;button.textContent='正在准备…';
     try{
       const generation=await api('/api/generations',{method:'POST',body:JSON.stringify({type:'image',prompt:finalPrompt,size:project.settings.aspectRatio,quality:'medium',referenceAssetIds:[],...checked.fields})});
       assertProjectRequest(request);setCreditBalance(generation.balance);state.tasks=[generation,...state.tasks.filter(x=>x.id!==generation.id)];scheduleTaskPoll();
@@ -3421,6 +3445,8 @@ export function createDramaStudio({ api, promptPrecheck = { check:async ({ promp
   projectTitleInput?.addEventListener('blur',()=>{if(projectTitleEditing)void saveProjectTitle(projectTitleInput);});
   projectTitleInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();leaveProjectTitleEdit({focusDisplay:true});return;}if(event.key==='Enter'){event.preventDefault();event.stopPropagation();void saveProjectTitle(projectTitleInput);}});
   function suspend(){
+    styleDialog.close();
+    styleButton?.classList.add('hidden');
     promptOptimization.close();
     directorWorkspaceView?.dispose();
     clearInterval(priceRefreshTimer);priceRefreshTimer=0;

@@ -1,3 +1,4 @@
+import { applyDramaStyle } from '../lib/drama-style.mjs';
 import { createAgentSkills } from '../lib/agent/skills.mjs';
 import { parseJsonObject } from '../lib/drama-analysis.mjs';
 import { scanPromptRisk } from '../lib/prompt-precheck.mjs';
@@ -89,23 +90,26 @@ export async function repairGenerationPrompt(task, error, { callLlm, config, sav
   const generationRetryCount = Number(task.generationRetryCount) || 0;
   // A new upstream failure must advance the generation attempt before round two.
   if (attemptCount >= 2 || (attempts.length && generationRetryCount <= attempts.at(-1).generationRetryCount)) return false;
+  const repairPrompt=task.dramaStyleSnapshot ? task.styleContentPrompt || task.userPrompt : task.prompt;
   const attempt = { status: 'attempted', attemptedAt: now(), payer: 'platform', generationRetryCount,
-    prompt: task.prompt, rejection: String(error.message).slice(0, 4000) };
+    prompt: repairPrompt, rejection: String(error.message).slice(0, 4000) };
   task.promptRepair = { ...attempt, attemptCount: attemptCount + 1, attempts: [...attempts, attempt] };
   await save(task);
   try {
     const documents = await guidance(task);
-    const result = await callLlm({ system: promptRepairSystem, prompt: JSON.stringify({ prompt: task.prompt, originalPrompt: task.originalPrompt || task.prompt,
+    const result = await callLlm({ system: promptRepairSystem, prompt: JSON.stringify({ prompt: repairPrompt, originalPrompt: task.userPrompt || task.originalPrompt || task.prompt,
       rejection: attempt.rejection, type: task.type, model: task.videoModelId || task.modelId || task.model,
-      attempt: attemptCount + 1, previousAttempts: attempts, candidateCueMatches: collectPromptRepairCues(task.prompt, { modelId: [task.videoModelId, task.modelId, task.model].filter(Boolean).join(' ') }),
+      attempt: attemptCount + 1, previousAttempts: attempts, candidateCueMatches: collectPromptRepairCues(repairPrompt, { modelId: [task.videoModelId, task.modelId, task.model].filter(Boolean).join(' ') }),
       guidance: documents }), config, maxOutputTokens: 1024, jsonMode: true });
     attempt.usage = result.usage;
     attempt.model = result.model;
     attempt.providerRequestId = result.providerRequestId;
-    const repaired = applyPromptRepair(task.prompt, result.text);
+    const repaired = applyPromptRepair(repairPrompt, result.text);
     if (repaired) {
+      const styled=applyDramaStyle(repaired,task.dramaStyleSnapshot,{type:task.type,generationType:task.generationType,maxLength:task.stylePromptMaxLength || (task.type==='image'?5000:4096)});
       task.originalPrompt ||= task.prompt;
-      task.prompt = repaired;
+      task.prompt = styled;
+      if(task.dramaStyleSnapshot)task.styleContentPrompt=repaired;
       attempt.repairedPrompt = repaired;
       attempt.status = 'applied';
     } else attempt.status = 'unchanged';

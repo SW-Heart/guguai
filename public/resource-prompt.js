@@ -1,6 +1,6 @@
 const clean = value => String(value || '').trim();
 
-export function buildResourceImagePrompt(resource, { aspectRatio = '9:16' } = {}) {
+export function buildResourceImagePrompt(resource, { aspectRatio = '9:16', styled = false } = {}) {
   const bible = resource?.bible || {};
   const common = [
     `素材名称：${clean(resource?.name) || '未命名素材'}`,
@@ -30,5 +30,5 @@ export function buildResourceImagePrompt(resource, { aspectRatio = '9:16' } = {}
     ],
   }[resource?.type] || [];
 
-  return [...instructions, ...common, `画面比例：${aspectRatio}；真人影视级写实质感，真实材质，清晰稳定，适合作为后续创作的参考图片。`].join('\n');
+  return [...instructions, ...common, `画面比例：${aspectRatio}；${styled ? '形体清楚，画面清晰稳定' : '真人影视级写实质感，真实材质，清晰稳定'}，适合作为后续创作的参考图片。`].join('\n');
 }

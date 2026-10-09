@@ -110,7 +110,7 @@ export function createDirectorService({
     project.settings = { ...project.settings, ...(input.settings || {}) };
     normalizeDramaProject(project);
     const inputIsScript = project.input.length >= 200 || /(?:^|\n)\s*(?:#{1,3}\s*)?(?:\d+[-–—]\d+秒|场景|第[一二三四五六七八九十\d]+场|[A-Z]+\s*[：:])/m.test(project.input);
-    const prompt = `制作参数：${JSON.stringify(project.settings)}\n生产协议版本：${storyboardEngineVersion}\n输入类型：${inputIsScript ? '完整剧本，必须保留原稿，不需要在结果中重复 script' : '故事创意，需要生成完整 script'}\n用户输入：\n${project.input}`;
+    const prompt = `${project.style ? '画面表现由项目设置另行控制。只规划故事与镜头内容，不固定真人、动漫或三维媒介，不因画风修改人物、年代、服装、陈设与情节。\n' : ''}制作参数：${JSON.stringify(project.settings)}\n生产协议版本：${storyboardEngineVersion}\n输入类型：${inputIsScript ? '完整剧本，必须保留原稿，不需要在结果中重复 script' : '故事创意，需要生成完整 script'}\n用户输入：\n${project.input}`;
     const maxOutputTokens = 12_000;
     const state = {
       maxDirectorAttempts: 4,
@@ -505,7 +505,7 @@ export function createDirectorService({
     const baseRevision = Number(project.revision);
     const maxOutputTokens = 8_000;
     const requestId = randomId();
-    const prompt = `原始剧本：\n${project.script}\n\n已确认分析：\n${JSON.stringify(project.analysis)}`;
+    const prompt = `${project.style ? '画面表现由项目设置另行控制。只规划故事与镜头内容，不固定真人、动漫或三维媒介，不因画风修改人物、年代、服装、陈设与情节。\n' : ''}原始剧本：\n${project.script}\n\n已确认分析：\n${JSON.stringify(project.analysis)}`;
     const inputTokenUpperBound = conservativeInputTokenUpperBound(storyboardSystemPrompt, prompt);
     const reservedMicro = llmReservationMicro(inputTokenUpperBound, maxOutputTokens, llmRates);
     const reserved = await reserveLlmCredits(userId, requestId, reservedMicro, { projectId: project.id, skillName: 'shot-director', skillVersion: '1.0.0' });
@@ -539,7 +539,7 @@ export function createDirectorService({
 允许操作：design_story(data.input 创作目标，data.settings 包含 shotCount,totalDuration,shotDuration,aspectRatio；按用户要求设置总长与镜头数量，shotDuration 使用8/10/15/20秒，仅在空项目使用)，add_resource/update_resource(data: name,type character/location/prop,description,prompt,bible)，add_shot/update_shot(data: title,script,prompt,duration,resourceIds,generation)，generate_resource，generate_video，read_tail(读取目标镜头尾帧用于下一镜)，check_continuity，assemble。
 更新或生成必须引用已有 targetId。新增内容与生成分两轮计划，不能编造 ID。尊重 lockedIds；保留已有台词、已选版本和用户指定首尾帧。修改只提交变化字段。没有必要操作时 actions 可为空。
 用户委托剩余制作时：先补齐故事，再为缺失素材生成角色与场景图，然后生成未完成镜头，检查并拼接；不要重复生成已完成内容。单次最多 80 个操作。所有模型调用与生成会按项目现有积分规则计费。画布项目数据是唯一事实来源。`;
-    const prompt = JSON.stringify({message,project});
+    const prompt = JSON.stringify({message,project:publicDramaProject(project)});
     const requestId=randomId(); const maxOutputTokens=6000;
     const reserved=await reserveLlmCredits(userId,requestId,llmReservationMicro(conservativeInputTokenUpperBound(system,prompt),maxOutputTokens,llmRates),{projectId:project.id,skillName:'director-agent',skillVersion:'1.0.0'});
     if(reserved.error)throwReservationError(reserved,true);

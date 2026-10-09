@@ -176,9 +176,12 @@ try {
   r = await call('GET', '/api/drama/projects/latest');
   check('无项目时 latest 返回 404', () => assert.equal(r.status, 404));
 
+  r=await call('GET','/api/drama/styles');
+  check('风格目录仅返回公开展示信息',()=>{assert.equal(r.status,200);assert.equal(r.body.styles.length,26);for(const style of r.body.styles)assert.deepEqual(Object.keys(style).sort(),['coverUrl','description','id','name']);});
+
   const created = [];
   for (let i = 0; i < 7; i++) {
-    r = await call('POST', '/api/drama/projects', { title: `项目 ${i}`, mode: 'smart' });
+    r = await call('POST', '/api/drama/projects', { title: `项目 ${i}`, mode: 'smart', ...(i===0?{style:{id:'youth-anime',instruction:'injected-private-rule'}}:{}) });
     if (r.status !== 201) { failures.push(`创建项目 ${i} 失败: ${JSON.stringify(r.body)}`); break; }
     created.push(r.body.project.id);
   }
@@ -187,6 +190,14 @@ try {
     assert.equal(r.body.project.shots.length, 0);
     assert.equal(r.body.project.directorWorkspace.autonomy, 'director');
   });
+  r=await call('GET',`/api/drama/projects/${created[0]}`);
+  check('项目风格往返保存并排除外来私有字段',()=>{assert.equal(r.body.project.style.id,'youth-anime');assert.equal(r.body.project.style.revision,1);assert.equal(r.body.project.style.instruction,undefined);assert.equal(r.body.project.dramaStyleSnapshot,undefined);});
+  r=await call('PATCH',`/api/drama/projects/${created[0]}`,{style:{id:'custom',name:'温柔水彩',description:'暖色水彩，细腻纸张质感'}});
+  check('修改为自定义风格',()=>{assert.equal(r.status,200);assert.equal(r.body.project.style.id,'custom');assert.equal(r.body.project.style.revision,2);});
+  r=await call('PATCH',`/api/drama/projects/${created[0]}`,{style:{id:'missing-style'}});
+  check('无效风格不会保存',()=>assert.equal(r.status,400));
+  r=await call('GET',`/api/drama/projects/${created[0]}`);
+  check('拒绝后保留已保存风格',()=>assert.equal(r.body.project.style.name,'温柔水彩'));
   await new Promise(resolve => setTimeout(resolve, 5));
   r = await call('PATCH', `/api/drama/projects/${created.at(-1)}`, { title: '最近更新项目' });
   check('更新最后一个项目', () => assert.equal(r.status, 200));

@@ -26,3 +26,14 @@ test('three-way project merge preserves additions from either editor', () => {
   assert.deepEqual(result.conflicts, []);
   assert.deepEqual(result.project.shots.map(shot => shot.id).sort(), ['local-shot', 'remote-shot']);
 });
+
+
+test('concurrent visual styles merge as whole selections instead of mixed fields',()=>{
+  const base={revision:1,style:{id:'live-action',name:'真人影视',revision:1}};
+  const local={...base,style:{id:'custom',name:'水彩',description:'暖色笔触',revision:1}};
+  const remote={...base,revision:2,style:{id:'youth-anime',name:'青春动漫',revision:2}};
+  const merged=mergeProjectThreeWay({base,local,remote});
+  assert.deepEqual(merged.conflicts.map(item=>item.path),['style']);
+  assert.deepEqual(merged.project.style,remote.style);
+  assert.deepEqual(mergeProjectThreeWay({base,local,remote,choices:{style:'local'}}).project.style,local.style);
+});

@@ -265,8 +265,8 @@ test('changed frontend modules are reachable through current cache keys', () => 
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(controller, /'\.\/upscale\.js\?v=1'/);
-  assert.match(html, /\/app\.js\?v=491"/);
-  assert.match(html, /\/styles\.css\?v=366"/);
+  assert.match(html, /\/app\.js\?v=492"/);
+  assert.match(html, /\/styles\.css\?v=367"/);
   assert.match(html, /id="videoUpscaleDialog"/);
 });
 
@@ -280,4 +280,14 @@ test('a source the client cannot read points users to a client update', () => {
   assert.equal(failure.message, '无法读取本地视频');
   assert.match(failure.suggestion, /更新到最新版本/);
   assert.equal(__test.generationFailure({ modelId:'video-upscale', error:'视频文件无法读取，请确认文件完整后重试' }).message, '视频文件无法处理');
+});
+
+
+test('upscaling styled video stores only visible content and never exposes its private recipe',async()=>{
+  const {service,tasks}=serviceHarness({source:{prompt:'PRIVATE_STYLE_RECIPE\n城市夜景',userPrompt:'城市夜景',dramaStyleSnapshot:{instruction:'PRIVATE_STYLE_RECIPE'}}});
+  const result=await service.create({user,scope,input:{...input,requestId:'req-upscale-style'}});
+  const task=tasks.get('req-upscale-style');
+  assert.equal(task.prompt,'城市夜景');
+  assert.equal(__test.publicGeneration(task).prompt,'城市夜景');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE_STYLE_RECIPE'));
 });

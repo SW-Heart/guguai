@@ -1,6 +1,7 @@
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice } from '../../lib/pricing.mjs';
 import { publicPrecheckHits } from './prompt-precheck.mjs';
+import { applyDramaStyle, projectDramaStyleSnapshot } from '../../lib/drama-style.mjs';
 
 export function createGenerationRouteHandler({
   prepareViralGeneration,
@@ -282,9 +283,14 @@ export function createGenerationRouteHandler({
     let prompt = String(input.prompt ?? '');
     await ensureUserDirs(user.id);
     let dramaProjectId = ''; let dramaShotId = ''; let dramaProject = null; let dramaShot = null;
-    if (type === 'video' && input.dramaProjectId && input.dramaShotId) {
-      dramaProjectId = safeId(input.dramaProjectId); dramaShotId = safeId(input.dramaShotId);
+    if (input.dramaProjectId) {
+      dramaProjectId = safeId(input.dramaProjectId);
       dramaProject = await loadDramaProject(user.id, dramaProjectId, scope);
+      if (!dramaProject) return sendJson(res,404,{error:'短剧项目不存在'}),true;
+      if (input.dramaStyleRevision !== undefined && Number(input.dramaStyleRevision)!==Number(dramaProject.style?.revision || 0)) return sendJson(res,409,{error:'项目风格已更换，请刷新后重新生成',code:'DRAMA_STYLE_CHANGED'}),true;
+    }
+    if (type === 'video' && dramaProject && input.dramaShotId) {
+      dramaShotId = safeId(input.dramaShotId);
       dramaShot = dramaProject?.shots.find(shot => shot.id === dramaShotId);
       if (!dramaProject || !dramaShot) return sendJson(res, 404, { error:'短剧项目或分镜不存在' }), true;
       if (dramaProject.workflowVersion >= storyboardEngineVersion && !dramaProject.productionQuality?.passed) {
@@ -306,6 +312,9 @@ export function createGenerationRouteHandler({
     const midjourneyOptions = isMidjourney ? normalizeMidjourneyOptions(input.midjourneyOptions) : null;
     const promptMaxLength = type === 'image' ? 5000 : [videoModelIds.MINIMAX_H3_15S, legacyVideoModelIds.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
     if (charLength(prompt) > promptMaxLength) return sendJson(res, 400, { error:`${type === 'image' ? '图片' : '视频'}提示词不能超过 ${promptMaxLength} 个字符` }), true;
+    const userPrompt = prompt;
+    const styleSnapshot = projectDramaStyleSnapshot(dramaProject);
+    prompt = applyDramaStyle(prompt,styleSnapshot,{type,generationType:input.generationType || dramaShot?.generation?.type,maxLength:promptMaxLength});
     if (type === 'video' && !dramaProjectId && !String(input.modelId ?? input.videoModel ?? '').trim()) return sendJson(res, 400, { error:'请选择视频模型' }), true;
     if (type === 'video' && dramaShot) {
       const requestedDuration = Number(input.duration ?? dramaShot.duration);
@@ -339,7 +348,7 @@ export function createGenerationRouteHandler({
     if (!isModelEnabled(modelId)) return sendJson(res, 503, { error:'当前模型暂不可用' }), true;
     const precheckSource = precheckSources.has(input.precheckSource) ? input.precheckSource : dramaProjectId ? 'drama' : type;
     const precheckMode = precheck && !previewOnly && promptPrecheck && precheckSource !== 'agent' ? promptPrecheck.mode() : 'off';
-    const precheckResult = precheckMode === 'off' ? null : promptPrecheck.scan(prompt, { modelId });
+    const precheckResult = precheckMode === 'off' ? null : promptPrecheck.scan(userPrompt, { modelId });
     const precheckEvent = precheckResult?.hits.length ? { userId:user.id, source:precheckSource, modelId, lexiconVersion:precheckResult.lexiconVersion, mode:precheckMode, hits:precheckResult.hits } : null;
     if (precheckMode === 'enforce' && precheckResult.counts.banned && input.precheckConfirmed !== true) {
       recordPrecheck({ ...precheckEvent, outcome:'blocked' });
@@ -390,6 +399,8 @@ export function createGenerationRouteHandler({
         ...taskExtras,
         ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
         id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
+        ...(dramaProjectId ? {dramaProjectId}:{}),
+        ...(styleSnapshot ? {userPrompt,dramaStyleSnapshot:styleSnapshot,stylePromptMaxLength:promptMaxLength}:{}),
         model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
         quality:type === 'image' ? (isMidjourney ? midjourneyOptions.quality : imageQuality) : videoRequest.quality, aspectRatio, duration,
         ...(isMidjourney ? {

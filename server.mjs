@@ -33,6 +33,7 @@ import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO
 import { createProviderAdapterRegistry } from './lib/provider-adapters.mjs';
 import { generationRequestFingerprint } from './lib/generation-service.mjs';
 import { createProjectService } from './services/projects.mjs';
+import { visibleGenerationPrompt } from './lib/drama-style.mjs';
 import { createDirectorService } from './services/director.mjs';
 import { createDuomiProvider } from './providers/duomi.mjs';
 import { createTuziProvider } from './providers/tuzi.mjs';
@@ -511,7 +512,7 @@ function publicGeneration(task) {
   // diagnostics that must never cross the customer API boundary.
   const value = Object.fromEntries(publicGenerationFields
     .filter(field => Object.hasOwn(task, field))
-    .map(field => [field, task[field]]));
+    .map(field => [field, field === 'prompt' ? visibleGenerationPrompt(task) : task[field]]));
   const failure = task.status === 'failed' ? generationFailure(task) : null;
   const progressStage = task.awaitingReferences ? 'preparing_references'
     : task.status !== 'running' ? task.status

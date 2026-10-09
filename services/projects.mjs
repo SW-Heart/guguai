@@ -2,11 +2,12 @@ import { normalizeDirectorWorkspace } from '../public/features/drama/director-ac
 import { videoPromptMaxLength } from '../public/video-prompt.js';
 
 import { randomUUID } from 'node:crypto';
+import { normalizeDramaStyle, projectDramaStyleSnapshot } from '../lib/drama-style.mjs';
 
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary } from '../lib/storyboard-engine.mjs';
 
 const publicDramaProjectFields = Object.freeze([
-  'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings',
+  'id', 'title', 'mode', 'step', 'maxStep', 'status', 'input', 'synopsis', 'script', 'settings', 'style',
   'analysis', 'analysisUsage', 'storyboard', 'storyboardUsage', 'resources', 'scenes', 'shots',
   'projectAssetIds', 'projectAssetCategories', 'productionQuality', 'finalAssetId', 'assemblyVideos', 'workflowVersion',
   'directorWorkspace', 'schemaVersion', 'revision', 'episodes', 'createdAt', 'updatedAt',
@@ -29,7 +30,7 @@ export function createProjectService({
   function publicDramaProject(project) {
     return Object.fromEntries(publicDramaProjectFields
       .filter(field => Object.hasOwn(project, field))
-      .map(field => [field, ['analysisUsage', 'storyboardUsage'].includes(field) ? publicLlmUsage(project[field]) : project[field]]));
+      .map(field => [field, field === 'style' ? normalizeDramaStyle(project.style) : ['analysisUsage', 'storyboardUsage'].includes(field) ? publicLlmUsage(project[field]) : project[field]]));
   }
 
   function createDefaultDramaShot() {
@@ -66,6 +67,10 @@ export function createProjectService({
     if (project.mode === 'professional' && project.workflowVersion < 2) project.workflowVersion = 2;
     project.step ||= project.storyboard ? 'storyboard' : 'script';
     project.input ||= project.script || '';
+    if (project.style) {
+      project.style = normalizeDramaStyle(project.style);
+      project.dramaStyleSnapshot = projectDramaStyleSnapshot(project);
+    }
     project.synopsis ||= project.analysis?.logline || '';
     project.settings = {
       shotCount: Math.max(1, Math.min(120, Number(project.settings?.shotCount) || project.storyboard?.shots?.length || 5)),
@@ -94,7 +99,7 @@ export function createProjectService({
       project.resources = Object.entries(mapping).flatMap(([key, type]) => (project.analysis?.assets?.[key] || []).map(item => ({
         id: randomUUID(), type, name: typeof item === 'string' ? item : item.name,
         description: typeof item === 'string' ? '' : item.description || '',
-        prompt: `${typeof item === 'string' ? item : item.name}，${typeof item === 'string' ? '' : item.description || ''}，真人短剧设定图，9:16`,
+        prompt: `${typeof item === 'string' ? item : item.name}，${typeof item === 'string' ? '' : item.description || ''}，${project.style ? '短剧设定图' : '真人短剧设定图'}，9:16`,
         versions: [], selectedTaskId: '',
       })));
     }

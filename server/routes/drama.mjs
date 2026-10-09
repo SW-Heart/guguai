@@ -1,5 +1,6 @@
 import { buildPromptOptimizationReferences, promptOptimizationReferenceIds } from '../../lib/prompt-optimization.mjs';
 import { videoPromptMaxLength } from '../../public/video-prompt.js';
+import { dramaStyleCatalog, normalizeDramaStyle, dramaStyleSnapshot } from '../../lib/drama-style.mjs';
 
 export function createDramaRouteHandler({
   bodyJson,
@@ -37,6 +38,12 @@ export function createDramaRouteHandler({
   findAsset,
 } = {}) {
   return async function handleDramaRoute(req, res, url) {
+    if (url.pathname === '/api/drama/styles' && req.method === 'GET') {
+      const user = await requireUser(req,res); if (!user) return true;
+      if (!requireDesktopWorkspaceScope(req,res)) return true;
+      sendJson(res,200,{styles:dramaStyleCatalog()});
+      return true;
+    }
     const optimizeMatch = url.pathname.match(/^\/api\/drama\/projects\/([\w-]+)\/shots\/([\w-]+)\/optimize-prompt$/);
     if (optimizeMatch && req.method === 'POST') {
       const user = await requireUser(req, res); if (!user) return true;
@@ -97,7 +104,9 @@ export function createDramaRouteHandler({
       const input = await bodyJson(req);
       const mode = input.mode === 'professional' ? 'professional' : 'smart';
       const title = String(input.title || '未命名短剧').trim().slice(0, 80);
-      const project = normalizeDramaProject({ id:randomId(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, resources:[], shots:mode==='smart'?[]:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
+      const style = input.style === undefined ? null : normalizeDramaStyle(input.style);
+      if(style)style.revision=1;
+      const project = normalizeDramaProject({ id:randomId(), ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, title, mode, step:'script', status:'draft', input:'', synopsis:'', script:'', settings:input.settings || {}, ...(style ? {style}:{}), resources:[], shots:mode==='smart'?[]:[createDefaultDramaShot()], finalAssetId:'', createdAt:now(), updatedAt:now() });
       await saveDramaProject(user.id, project, { create:true });
       sendJson(res, 201, { project:publicDramaProject(project) });
       return true;
@@ -134,6 +143,12 @@ export function createDramaRouteHandler({
         return true;
       }
       if (input.title !== undefined) project.title = String(input.title).trim().slice(0, 80) || project.title;
+      if (input.style !== undefined) {
+        if(input.style===null)throw Object.assign(new Error('请选择画面风格'),{statusCode:400});
+        const next=normalizeDramaStyle(input.style,{previous:project.style,update:true});
+        if(next.revision!==project.style?.revision)project.dramaStyleSnapshot=dramaStyleSnapshot(next);
+        project.style=next;
+      }
       if (input.mode !== undefined) project.mode = input.mode === 'professional' ? 'professional' : 'smart';
       if (dramaStepOrder.includes(input.step)) {
         project.step = input.step;
