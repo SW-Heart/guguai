@@ -13,7 +13,8 @@ for(const existing of [false,true]){
     const assetIds=existing?[file.id]:[];
     const project={assetIds},requests=[];
     const context=vm.createContext({navigationEpoch:1,project,state:{files:[]},current:()=>true,
-      importCanvasAsset:async options=>{requests.push(options);return file;},cloudFile:async value=>({...value,previewUrl:'/reference.png'}),
+      importCanvasAsset:async options=>{requests.push(options);return file;},previewUrl:()=>'/reference.png',
+      cloudFile:()=>assert.fail('choosing a reference must not upload it'),
       saveCanvas:()=>assert.fail('reference selection must not add canvas assets'),
     });
     vm.runInContext(`globalThis.bridge={${handler}}`,context);
@@ -25,12 +26,11 @@ for(const existing of [false,true]){
   });
 }
 
-test('leaving the project while choosing or preparing a generation reference discards the selection',async()=>{
-  for(const stage of ['choose','prepare']){
+test('leaving the project while choosing a generation reference discards the selection',async()=>{
+  {
     let resolve;
-    const context=vm.createContext({navigationEpoch:1,project:{assetIds:[]},state:{files:[]},current:()=>true,
-      importCanvasAsset:stage==='choose'?()=>new Promise(done=>{resolve=done;}):async()=>({id:'reference'}),
-      cloudFile:stage==='prepare'?()=>new Promise(done=>{resolve=done;}):async file=>file,
+    const context=vm.createContext({navigationEpoch:1,project:{assetIds:[]},state:{files:[]},current:()=>true,previewUrl:()=>'',
+      importCanvasAsset:()=>new Promise(done=>{resolve=done;}),
       saveCanvas:()=>assert.fail('must not save canvas assets'),
     });
     vm.runInContext(`globalThis.bridge={${handler}}`,context);

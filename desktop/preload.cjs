@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   }),
   media: Object.freeze({
     chooseAndImport: options => invoke('media:choose-and-import', options || {}),
+    importBytes: payload => invoke('media:import-bytes', payload),
     listLocal: options => invoke('media:list-local', options || {}),
     listLocalByCloudIds: cloudAssetIds => invoke('media:list-local-by-cloud-ids', cloudAssetIds || []),
     listDeliveryTasks: () => invoke('media:list-delivery-tasks'),

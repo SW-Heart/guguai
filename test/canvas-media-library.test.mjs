@@ -69,3 +69,25 @@ test('a failed upload can retry and a disposed workspace cannot register a file'
   fail=false;await library.add(photo);assert.equal(registered,1);
   current=false;assert.throws(()=>library.add({...photo,url:'blob:other'}),error=>error.stale===true);
 });
+
+test('desktop saves dropped and cropped canvas media locally without uploading',async()=>{
+  const saved=[];
+  const library=createCanvasMediaLibrary({isCurrent:()=>true,findFile:()=>null,registerFile:file=>file,
+    fetchImpl:async(_,request)=>{assert.equal(request,undefined,'must not upload');return {ok:true,blob:async()=>png};},
+    api:async()=>assert.fail('must not create an upload'),
+    importLocal:async({name,blob})=>{saved.push([name,blob.type]);return {id:'local_1',kind:'image',url:'gugu-media://local_1',localOnly:true};},
+  });
+  const file=await library.add(photo);
+  assert.equal(file.id,'local_1');
+  assert.deepEqual(saved,[['图片.png','image/png']]);
+});
+
+test('clients without local saving keep uploading canvas media',async()=>{
+  let uploads=0;
+  const library=createCanvasMediaLibrary({isCurrent:()=>true,findFile:()=>null,registerFile:file=>file,
+    fetchImpl:async()=>({ok:true,blob:async()=>png}),importLocal:async()=>null,
+    api:async()=>{uploads++;return {asset:{id:'saved',kind:'image',url:'/saved.png'}};},
+  });
+  assert.equal((await library.add(photo)).id,'saved');
+  assert.equal(uploads,1);
+});

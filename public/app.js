@@ -2152,8 +2152,8 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=99').then(({createAgentWorkspace}) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=100').then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2163,8 +2163,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=239').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
+    dramaControllerPromise = import('./drama-studio.js?v=240').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -3532,13 +3532,16 @@ async function desktopImportToContext(context, { multiple = true, maxFiles = Inf
   if (!imported.length) return [];
   const inDialog = context === 'reference';
   const canvasOnly = context === 'director-canvas';
+  // Importing only copies files into the local library. Files are uploaded
+  // later, when a generation or a sent message actually needs them.
+  const localOnly = !inDialog && !canvasOnly;
   const isFrame = inDialog && state.referenceTarget === 'video-frame';
   const isVideoReference = inDialog && state.referenceTarget === 'video';
   const allowedKinds = inDialog ? (isFrame ? new Set(['image']) : referenceFileKinds()) : canvasOnly ? new Set(['image', 'video']) : new Set(['image', 'video', 'audio']);
   const limits = isFrame ? { image: 1, video: 0, audio: 0, total: 1 } : isVideoReference ? referenceLimits() : { image: 7, video: 0, audio: 0, total: 7 };
   const allowedKindText = [...allowedKinds].map(kind => kind === 'image' ? '图片' : kind === 'video' ? '视频' : '音频').join('、');
-  let synced = 0;
   let localImported = 0;
+  let localAdded = 0;
   let selected = 0;
   const processedFiles = [];
   for (const item of imported) {
@@ -3588,6 +3591,12 @@ async function desktopImportToContext(context, { multiple = true, maxFiles = Inf
       if (kind === 'image') await verifyImportedImagePreview(previewUrl);
       const localFile = desktopScope.localAsset({ ...item, url:previewUrl });
       if (localFile) mediaController.mergeLocalAssets([localFile]);
+      if (localOnly) {
+        if (!localFile) throw new Error('素材预览失败，请重新选择');
+        processedFiles.push(localFile);
+        localAdded += 1;
+        continue;
+      }
       job=createUploadJob({ name:item.name, size:item.size, type:item.mimeType }, context, { previewUrl, mimeType:item.mimeType, deferUpload:inDialog, localAssetId:item.id, removeLocalOnDiscard:!item.reused });
       if (inDialog) {
         if (!autoSelectUploadedReference(pendingReferenceFile(job), kind, job)) throw new Error('参考素材数量已达到上限');
@@ -3595,25 +3604,17 @@ async function desktopImportToContext(context, { multiple = true, maxFiles = Inf
         processedFiles.push(pendingReferenceFile(job));
         continue;
       }
-      updateUploadJob(job, 8, '正在上传');
-      const result = await bridge.media.syncLocal({ assetId: item.id });
-      const cloudAsset = cloudAssetFromDesktopSync(result);
-      if (!cloudAsset?.id) throw new Error('素材保存失败，请重新上传后再试');
-      const file = { ...cloudAsset, url: result.url, remoteUrl: cloudAsset.url, localStatus: 'saved', localPath: result.relativePath, sha256: item.sha256 || cloudAsset.sha256 };
-      finishUploadJob(job, file, true);
-      processedFiles.push(file);
-      synced += 1;
     } catch (error) {
-      console.warn('[desktop] 导入素材处理失败', { assetId:item.id, name:item.name, stage:job ? 'sync' : 'preview', message:error.message });
+      console.warn('[desktop] 导入素材处理失败', { assetId:item.id, name:item.name, stage:job ? 'reference' : 'preview', message:error.message });
       if (job) failUploadJob(job,error);
-      toast(`${item.name || '文件'} ${inDialog ? '添加到参考素材' : '上传'}失败：${error.message}`);
+      toast(`${item.name || '文件'} ${inDialog ? '添加到参考素材' : '添加'}失败：${error.message}`);
     }
   }
   renderReferenceDialog(); resetReferenceDialogScroll(); renderReferences();
-  await loadFiles({ background:inDialog });
+  await loadFiles({ background:inDialog || localOnly });
   if (localImported) toast(`${localImported} 个素材已添加到画布`);
-  if (synced) toast(`${synced} 个素材上传完成`);
-  else if (selected) toast(`${selected} 个参考素材已添加`);
+  if (localAdded && context !== 'director-chat') toast(`已添加 ${localAdded} 个素材`);
+  if (selected) toast(`${selected} 个参考素材已添加`);
   return processedFiles;
 }
 function openUploadPicker(context) {
@@ -3626,6 +3627,17 @@ async function pickAndUploadDramaImage({ context='professional' } = {}) {
 async function pickAndUploadDramaAsset({ context='professional-project', multiple=false } = {}) {
   const files = await desktopImportToContext(context, { multiple });
   return multiple ? files : files[0] || null;
+}
+// Saves media held in memory (pasted or edited canvas images, files picked in
+// the browser) into the local library. Returns null on clients without this
+// ability so callers can keep their previous behaviour.
+async function importLocalMedia({ name, blob }) {
+  const media = window.guguDesktop?.media;
+  if (!media?.importBytes || !blob) return null;
+  const item = await media.importBytes({ name, bytes:new Uint8Array(await blob.arrayBuffer()) });
+  const file = desktopScope.localAsset({ ...item, url:await media.url(item.id) });
+  if (file) mediaController.mergeLocalAssets([file]);
+  return file;
 }
 async function registerCanvasFile(file) {
   const requestAccount=accountScope.snapshot();

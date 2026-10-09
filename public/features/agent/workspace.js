@@ -1,5 +1,5 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=134';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=135';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=13';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=6';
@@ -9,7 +9,7 @@ import { mountModelPreferencePicker } from './model-preference-picker.js?v=11';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
-export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
+export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
   let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,screen='',navigationEpoch=0,creating=false;
@@ -98,8 +98,10 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
           const mediaMime=file.type||({png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp',mp4:'video/mp4',webm:'video/webm',mov:'video/quicktime',mp3:'audio/mpeg',wav:'audio/wav',ogg:'audio/ogg',m4a:'audio/mp4',aac:'audio/aac',flac:'audio/flac'}[extension]||'');
           if(mediaMime.startsWith('image/')||mediaMime.startsWith('audio/')||mediaMime.startsWith('video/')){
             const mimeType=mediaMime==='image/jpg'?'image/jpeg':mediaMime;
-            const intent=await api('/api/files/uploads/init',{method:'POST',body:JSON.stringify({mimeType,name:file.name,size:file.size})});
-            let asset=intent.asset;
+            // Desktop keeps the file locally; it is uploaded when the message is sent.
+            let asset=await importLocalMedia({name:file.name,blob:file}).catch(()=>null);
+            const intent=asset?null:await api('/api/files/uploads/init',{method:'POST',body:JSON.stringify({mimeType,name:file.name,size:file.size})});
+            if(intent)asset=intent.asset;
             if(!asset){
               const uploaded=await fetch(intent.uploadUrl,{method:'PUT',headers:intent.headers||{},body:file});
               if(!uploaded.ok)throw new Error('文件上传失败，请重试');
@@ -138,17 +140,11 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         if(menuEvents.signal.aborted||!current())return;
         if(!file||attachments.some(item=>item.asset?.id===file.id&&item.status!=='error'))continue;
         if(attachments.length>=30){toast('一次最多添加 30 个文件');break;}
-        const item={key:crypto.randomUUID(),name:file.name,size:file.size,status:'loading',kind:file.kind,asset:null,text:'',previewUrl:previewUrl(file)};
-        attachments.push(item);busy++;drawAttachments();
-        try{
-          state.files=[file,...state.files.filter(entry=>entry.id!==file.id)];
-          const readyAsset=await cloudFile(file);
-          if(menuEvents.signal.aborted)return;
-          if(!readyAsset||!current())throw new Error('素材暂时无法使用，请重试');
-          item.asset={...readyAsset,previewUrl:previewUrl(readyAsset)};item.status='ready';
-        }catch(error){item.status='error';if(!menuEvents.signal.aborted)toast(`${file.name}：${error.message}`);}
-        finally{busy=Math.max(0,busy-1);drawAttachments();}
+        // Keep the local copy here; the conversation uploads it when the message is sent.
+        state.files=[file,...state.files.filter(entry=>entry.id!==file.id)];
+        attachments.push({key:crypto.randomUUID(),name:file.name,size:file.size,status:'ready',kind:file.kind,asset:{...file,previewUrl:previewUrl(file)},text:'',previewUrl:previewUrl(file)});
       }
+      drawAttachments();
     };
     addButton.onclick=()=>setMenu('files',addMenu.hidden);
     addMenu.onclick=event=>{
@@ -267,44 +263,53 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       generationPricing:()=>({config:state.config,pricing:state.pricing}),
       formatCredits:value=>Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2}),
       imported:()=>project.assetIds.map(asset).filter(Boolean).map(file=>({...file,url:previewUrl(file)})),
+      // Adding files only keeps the local copy. prepareCloudFiles uploads them
+      // when a message is sent or a generation starts.
       importAsset:async()=>{
         const file=await importCanvasAsset();
         if(!current()||!file)return null;
         state.files=[file,...state.files.filter(item=>item.id!==file.id)];
-        const ready=await cloudFile(file);
-        if(!ready)return null;
-        project.assetIds=[...new Set([...project.assetIds,ready.id])];
+        project.assetIds=[...new Set([...project.assetIds,file.id])];
         await saveCanvas({assetIds:project.assetIds});
-        return ready;
+        return {...file,previewUrl:previewUrl(file)};
       },
-      prepareChatAsset:async({assetId,taskId})=>cloudFile(assetId?asset(assetId):taskAsset(taskId)),
+      prepareChatAsset:async({assetId,taskId})=>{
+        const file=assetId?asset(assetId):taskAsset(taskId);
+        if(!file)throw new Error('素材文件尚未就绪，请稍后重试');
+        return {...file,previewUrl:previewUrl(file)};
+      },
       uploadChatFile:async({maxFiles=30}={})=>{
         const token=navigationEpoch,active=()=>token===navigationEpoch&&current();
         const selected=await importCanvasAsset({chat:true,multiple:true,maxFiles});
         if(!active()||!selected)return [];
-        const files=Array.isArray(selected)?selected:[selected],prepared=[];
-        for(const file of files){
-          if(!active())return [];
-          if(!file)continue;
-          try{
-            state.files=[file,...state.files.filter(item=>item.id!==file.id)];
-            const ready=await cloudFile(file);
-            if(!active())return [];
-            if(ready)prepared.push(ready);
-          }catch(error){if(!active())return [];toast(`${file.name}：${error.message}`);}
-        }
-        if(prepared.length){project.assetIds=[...new Set([...project.assetIds,...prepared.map(file=>file.id)])];await saveCanvas({assetIds:project.assetIds});}
-        return prepared;
+        const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
+        state.files=[...files,...state.files.filter(item=>!files.some(file=>file.id===item.id))];
+        if(files.length){project.assetIds=[...new Set([...project.assetIds,...files.map(file=>file.id)])];await saveCanvas({assetIds:project.assetIds});}
+        return active()?files.map(file=>({...file,previewUrl:previewUrl(file)})):[];
+      },
+      prepareCloudFiles:async files=>{
+        const list=Array.isArray(files)?files:[],results=new Array(list.length);
+        // Two uploads at a time: the server allows only a few unfinished uploads per account.
+        let next=0;
+        await Promise.all(Array.from({length:Math.min(2,list.length)},async()=>{
+          while(next<list.length){
+            const index=next++,file=list[index];
+            const ready=await cloudFile(asset(file.id)||file);
+            if(!ready)throw Object.assign(new Error('账号已切换，请重新添加文件'),{stale:true});
+            results[index]=ready;
+          }
+        }));
+        return results;
       },
       canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
       registerCanvasFile,
+      importLocalMedia,
       uploadGenerationFile:async()=>{
         const token=navigationEpoch,target=project;
         const file=await importCanvasAsset({generation:true});
         if(token!==navigationEpoch||project!==target||!current()||!file)return null;
         state.files=[file,...state.files.filter(item=>item.id!==file.id)];
-        const ready=await cloudFile(file);
-        return token===navigationEpoch&&project===target&&current()?ready:null;
+        return {...file,previewUrl:previewUrl(file)};
       },
       media:id=>{
         const file=taskAsset(id);

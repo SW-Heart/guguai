@@ -4,7 +4,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=134';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=135';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -78,7 +78,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}) }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -313,30 +313,46 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     if (!id) throw new Error('该视频暂时无法处理，请先保存后再试');
     return { file, id };
   };
+  // Local files upload when a generation first needs them. Recent results are
+  // remembered briefly so repeated generations skip the round trip, while
+  // cloud copies that later expire are checked again.
+  const cloudReferenceCache = new Map();
+  const cloudReferenceCacheMs = 30 * 60 * 1000;
+  async function mapWithLimit(items, limit, run) {
+    const results = new Array(items.length);
+    let next = 0;
+    await Promise.all(Array.from({ length:Math.min(limit, items.length) }, async () => {
+      while (next < items.length) { const index = next++; results[index] = await run(items[index], index); }
+    }));
+    return results;
+  }
   async function ensureCloudReferenceIds(ids) {
     const request = projectRequest();
     const unique = [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))];
-    const media = requireDesktopMedia('syncLocal');
-    const resolved = [];
-    for (const id of unique) {
+    const files = unique.map(id => {
       if (assetMissing(id)) throw new Error('参考素材不存在，请重新选择');
       const file = asset(id);
       if (!file) throw new Error('参考素材不存在，请重新选择');
-      if (isRemoteReferenceReady(file)) {
-        resolved.push(id);
-        continue;
-      }
+      return file;
+    });
+    const media = files.some(file => !isRemoteReferenceReady(file)) ? requireDesktopMedia('syncLocal') : null;
+    // At most two uploads at once: the server allows only a few unfinished uploads per account.
+    return mapWithLimit(files, 2, async file => {
+      if (isRemoteReferenceReady(file)) return file.id;
       const sourceId = localAssetId(file);
       if (!sourceId) throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
+      const cacheKey = `${sourceId}:${file.sha256 || ''}`;
+      const cached = cloudReferenceCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < cloudReferenceCacheMs && asset(cached.id)) return cached.id;
       const result = await media.syncLocal({ assetId:sourceId, uploadForReference:true });
       assertProjectRequest(request);
       const cloudAsset = result?.cloudAsset;
       if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材上传失败，请重新上传后再试');
       const syncedFile = { ...cloudAsset, id:cloudAsset.id, url:result.url || cloudAsset.url, remoteUrl:cloudAsset.url, localId:sourceId, localStatus:'saved', localPath:result.relativePath || file.localPath, sha256:cloudAsset.sha256 || file.sha256 };
       state.files = [syncedFile, ...state.files.filter(item => item.id !== syncedFile.id)];
-      resolved.push(syncedFile.id);
-    }
-    return resolved;
+      cloudReferenceCache.set(cacheKey, { id:syncedFile.id, at:Date.now() });
+      return syncedFile.id;
+    });
   }
   async function addLocalDramaAsset(result, request = projectRequest()) {
     assertProjectRequest(request);
@@ -1087,38 +1103,38 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       formatCredits:creditText,
       imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
       importAsset:async()=>{const request=projectRequest();const file=importCanvasAsset?await importCanvasAsset():null;assertProjectRequest(request);if(!file)return null;state.files=[file,...state.files.filter(f=>f.id!==file.id)];await patch({projectAssetIds:[...new Set([...project.projectAssetIds,file.id])]},{quiet:true});assertProjectRequest(request);return file;},
+      // Adding files only keeps the local copy. prepareCloudFiles uploads them
+      // when a message is sent or a generation starts.
       prepareChatAsset:async({assetId,taskId})=>{
-        const request=projectRequest();
         const file=assetId?asset(assetId):taskAsset(taskId);
         if(!file)throw new Error('素材文件尚未就绪，请稍后重试');
-        const [id]=await ensureCloudReferenceIds([file.id]);assertProjectRequest(request);
-        return {...file,id,previewUrl:assetPreviewUrl(file)};
+        return {...file,previewUrl:assetPreviewUrl(file)};
       },
       uploadChatFile:async({maxFiles=30}={})=>{
         const request=projectRequest();
         const selected=await importCanvasAsset({chat:true,multiple:true,maxFiles});assertProjectRequest(request);
         if(!selected)return [];
-        const files=Array.isArray(selected)?selected:[selected];
-        const prepared=[];
-        for(const file of files){
-          if(!file)continue;
-          try{
-            state.files=[file,...state.files.filter(f=>f.id!==file.id)];
-            const [id]=await ensureCloudReferenceIds([file.id]);assertProjectRequest(request);
-            prepared.push({...file,id,previewUrl:assetPreviewUrl(file)});
-          }catch(error){assertProjectRequest(request);toast(`${file.name}：${error.message}`);}
-        }
-        return prepared;
+        const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
+        state.files=[...files,...state.files.filter(f=>!files.some(file=>file.id===f.id))];
+        return files.map(file=>({...file,previewUrl:assetPreviewUrl(file)}));
+      },
+      prepareCloudFiles:async files=>{
+        const request=projectRequest();
+        const list=Array.isArray(files)?files:[];
+        const unique=[...new Set(list.map(file=>file.id))];
+        const cloudIds=await ensureCloudReferenceIds(unique);assertProjectRequest(request);
+        const byId=new Map(unique.map((id,index)=>[id,cloudIds[index]]));
+        return list.map(file=>{const id=byId.get(file.id);return {...file,...(asset(id)||{}),id,previewUrl:file.previewUrl||assetPreviewUrl(file)};});
       },
       canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
       registerCanvasFile,
+      importLocalMedia,
       uploadGenerationFile:async()=>{
         const request=projectRequest();
         const file=await importCanvasAsset({generation:true});assertProjectRequest(request);
         if(!file)return null;
         state.files=[file,...state.files.filter(f=>f.id!==file.id)];
-        const [id]=await ensureCloudReferenceIds([file.id]);assertProjectRequest(request);
-        return {...file,id,previewUrl:assetPreviewUrl(file)};
+        return {...file,previewUrl:assetPreviewUrl(file)};
       },
       media:id=>{const f=taskAsset(id);return f?{kind:f.kind,url:assetPreviewUrl(f),width:f.width,height:f.height}:null;},
       patch:changes=>patch(changes,{quiet:true}),

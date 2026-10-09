@@ -118,10 +118,10 @@ test('account choices survive new projects, fresh conversations, another workspa
 test('all changed frontend entry points use the new cache keys', () => {
   const read = name => readFileSync(new URL(`../public/${name}`,import.meta.url),'utf8');
   for (const [file,urls] of [
-    ['index.html',['/app.js?v=504','/styles.css?v=371']],
-    ['app.js',['./features/agent/workspace.js?v=99','./drama-studio.js?v=239']],
-    ['drama-studio.js',['./features/drama/director-workspace.js?v=134']],
-    ['features/agent/workspace.js',['../drama/director-workspace.js?v=134','./model-preference-picker.js?v=11']],
+    ['index.html',['/app.js?v=505','/styles.css?v=371']],
+    ['app.js',['./features/agent/workspace.js?v=100','./drama-studio.js?v=240']],
+    ['drama-studio.js',['./features/drama/director-workspace.js?v=135']],
+    ['features/agent/workspace.js',['../drama/director-workspace.js?v=135','./model-preference-picker.js?v=11']],
     ['features/drama/director-workspace.js',['../agent/client.js?v=13','../agent/model-preference-picker.js?v=11','../agent/model-preferences.js?v=1']],
     ['features/agent/client.js',['./model-preferences.js?v=1']],
     ['features/agent/model-preference-picker.js',['./model-preferences.js?v=1']],

@@ -143,8 +143,6 @@ export function createFilesRouteHandler({
       const user = await requireUser(req, res); if (!user) return true;
       const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
       if (!directUploadEnabled || !r2Configured) { sendJson(res, 503, { error:'直传暂未启用' }); return true; }
-      if (!uploadInitRateAllowed(user.id)) { sendJson(res, 429, { error:'上传请求过于频繁，请稍后再试' }); return true; }
-      if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) { sendJson(res, 429, { error:'未完成上传数量过多，请先完成或稍后重试' }); return true; }
       const input = await bodyJson(req, 32_000);
       const mimeType = normalizeUploadMime(input.mimeType, input.name);
       if (![...imageTypes, ...videoTypes, ...audioTypes].includes(mimeType)) { sendJson(res, 415, { error:'只支持 PNG、JPEG、WebP、MP4、WebM、MOV 或音频文件' }); return true; }
@@ -159,6 +157,9 @@ export function createFilesRouteHandler({
         const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true, deviceId:scope.deviceId, workspaceId:scope.workspaceId });
         if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) { sendJson(res, 200, { mode:'reuse', asset:publicAsset(existingAsset), sha256:suppliedHash }); return true; }
       }
+      // Reusing an existing file creates no upload, so only new uploads count toward the limits.
+      if (!uploadInitRateAllowed(user.id)) { sendJson(res, 429, { error:'上传请求过于频繁，请稍后再试' }); return true; }
+      if (countActiveUploadIntents(user.id) >= uploadMaxPendingPerUser) { sendJson(res, 429, { error:'未完成上传数量过多，请先完成或稍后重试' }); return true; }
       const uploadId = randomId();
       const assetId = randomId();
       const createdAt = now();

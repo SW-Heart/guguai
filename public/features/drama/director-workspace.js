@@ -20,7 +20,7 @@ import { generationFrameState, renderGenerationPlaceholder } from './generation-
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=1';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference } from './canvas-generation-references.js?v=3';
-import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=2';
+import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
@@ -1333,6 +1333,12 @@ export function createDirectorWorkspace(host, bridge) {
     catch(error){bridge.toast(error.message);return;}
     const token=epoch;generationSubmitting=true;draft.status='submitting';renderGenerationComposer();syncCanvas();
     try{
+      // References stay local until now; upload them only for this generation.
+      if(draft.attachments.length&&bridge.prepareCloudFiles){
+        const ready=await bridge.prepareCloudFiles(draft.attachments);
+        if(token!==epoch)return;
+        payload.referenceAssetIds=ready.map(file=>file.id);
+      }
       if(payload.type==='video'){
         const counts={image:0,video:0,audio:0};draft.attachments.forEach(file=>{if(Object.hasOwn(counts,file.kind))counts[file.kind]++;});
         const quote=await bridge.agentApi('/api/model-quote',{method:'POST',body:JSON.stringify({...payload,referenceCounts:counts})});
@@ -1499,7 +1505,7 @@ export function createDirectorWorkspace(host, bridge) {
     const bindCanvas=api=>{
       if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
-      canvasLibrary=createCanvasMediaLibrary({api:bridge.agentApi,findFile:bridge.canvasFile,registerFile:bridge.registerCanvasFile,
+      canvasLibrary=createCanvasMediaLibrary({api:bridge.agentApi,findFile:bridge.canvasFile,registerFile:bridge.registerCanvasFile,importLocal:bridge.importLocalMedia,
         isCurrent:()=>mountEpoch===epoch&&Boolean(canvas)});
       canvas.on('nodes:created',handleCreatedCanvasNodes);
       mainLayer=canvas.getMainLayer?.();
@@ -1793,10 +1799,13 @@ export function createDirectorWorkspace(host, bridge) {
         redrawComposer();
         await save();
         if(!current()){request.resolve?.();continue;}
-        const mediaText=request.files.length?'\n\n附件：\n'+request.files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'';
+        // Attachments stay local until the message is actually sent.
+        const files=request.files.length&&bridge.prepareCloudFiles?await bridge.prepareCloudFiles(request.files):request.files;
+        if(!current()){request.resolve?.();continue;}
+        const mediaText=files.length?'\n\n附件：\n'+files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'';
         const documentText=request.documents.length?'\n\n附带文件：\n'+request.documents.map(file=>file.title).join('\n'):'';
         const content=request.text+mediaText+documentText;
-        await client.send(content,[...new Set([...request.selectionIds,...request.files.map(f=>f.id)])],request.documents,request.modelPreferences);
+        await client.send(content,[...new Set([...request.selectionIds,...files.map(f=>f.id)])],request.documents,request.modelPreferences);
         if(!current()){request.resolve?.();continue;}
         connectionError='';
         request.resolve?.();

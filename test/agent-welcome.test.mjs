@@ -50,10 +50,10 @@ test('shortcuts cannot change a locked, disabled, unrelated or disposed composer
 test('the welcome changes reach every versioned entry and both workspaces share the same module', () => {
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
   const entries = [
-    ['index.html', ['/app.js?v=504', '/styles.css?v=371']],
-    ['app.js', ['./features/agent/workspace.js?v=99', './drama-studio.js?v=239']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=134']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=134', './welcome.js?v=1']],
+    ['index.html', ['/app.js?v=505', '/styles.css?v=371']],
+    ['app.js', ['./features/agent/workspace.js?v=100', './drama-studio.js?v=240']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=135']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=135', './welcome.js?v=1']],
     ['features/drama/director-workspace.js', ['../agent/welcome.js?v=1']],
     ['features/agent/welcome.js', ['../drama/canvas-icons.js?v=1']],
   ];

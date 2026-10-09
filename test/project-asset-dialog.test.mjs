@@ -103,6 +103,70 @@ test('desktop drama asset picker returns the complete batch when multiple is req
 
 test('batch upload changes reach the current versioned frontend entrypoints', async () => {
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/\/app\.js\?v=504\b/);
-  assert.match(app,/\.\/drama-studio\.js\?v=239\b/);
+  assert.match(html,/\/app\.js\?v=505\b/);
+  assert.match(app,/\.\/drama-studio\.js\?v=240\b/);
+});
+
+test('short-drama asset imports keep the local copy and skip cloud upload', async () => {
+  const start = app.indexOf('async function desktopImportToContext(');
+  const source = app.slice(start, app.indexOf('function openUploadPicker(', start));
+  for (const target of ['professional-project', 'professional-reference', 'professional']) {
+    const synced = [], jobs = [], notices = [];
+    const items = [{id:'local-1',kind:'image',name:'角色.png',mimeType:'image/png',size:100},{id:'local-2',kind:'image',name:'场景.png',mimeType:'image/png',size:100}];
+    const context = vm.createContext({
+      window:{guguDesktop:{media:{chooseAndImport:async () => items,url:async id => `gugu-media://${id}`,syncLocal:async ({assetId}) => { synced.push(assetId); return {cloudAsset:{id:assetId}}; }}}},
+      state:{},desktopMediaKind:item => item.kind,verifyImportedImagePreview:async () => {},
+      desktopScope:{localAsset:item => ({...item,localId:item.id,localOnly:true,localStatus:'saved'})},
+      mediaController:{mergeLocalAssets(){}},createUploadJob:() => { jobs.push(1); return {}; },
+      renderReferenceDialog(){},resetReferenceDialogScroll(){},renderReferences(){},loadFiles:async () => {},toast:value => notices.push(value),console,
+    });
+    vm.runInContext(source, context);
+    const files = await context.desktopImportToContext(target, {multiple:true});
+    assert.deepEqual(Array.from(files, file => file.id), ['local-1','local-2']);
+    assert.ok(files.every(file => file.localOnly && file.url.startsWith('gugu-media://')));
+    assert.equal(synced.length, 0);
+    assert.equal(jobs.length, 0);
+    assert.ok(notices.includes('已添加 2 个素材'));
+  }
+});
+
+test('generation uploads local references two at a time and reuses recent results', async () => {
+  const start = studio.indexOf('  const cloudReferenceCache = new Map();');
+  const source = studio.slice(start, studio.indexOf('  async function addLocalDramaAsset(', start));
+  const files = Array.from({length:5}, (_, index) => ({id:`local-${index}`,kind:'image',localOnly:true,sha256:`hash-${index}`}));
+  let active = 0, peak = 0;
+  const synced = [];
+  const context = vm.createContext({
+    state:{files:[...files]},
+    projectRequest:() => ({}),assertProjectRequest(){},assetMissing:() => false,
+    asset:id => context.state.files.find(file => file.id === id),
+    isRemoteReferenceReady:file => !file.localOnly,
+    localAssetId:file => file.localOnly ? file.id : '',
+    requireDesktopMedia:() => ({syncLocal:async ({assetId}) => {
+      synced.push(assetId);active += 1;peak = Math.max(peak, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active -= 1;
+      return {url:`gugu-media://${assetId}`,cloudAsset:{id:`cloud-${assetId}`,url:`/api/files/cloud-${assetId}/content`,remoteStatus:'ready'}};
+    }}),
+    Date,Promise,Array,Map,
+  });
+  vm.runInContext(source, context);
+  const ids = files.map(file => file.id);
+  assert.deepEqual(Array.from(await context.ensureCloudReferenceIds(ids)), ids.map(id => `cloud-${id}`));
+  assert.equal(peak, 2);
+  assert.equal(synced.length, 5);
+  assert.deepEqual(Array.from(await context.ensureCloudReferenceIds(ids)), ids.map(id => `cloud-${id}`));
+  assert.equal(synced.length, 5);
+});
+
+test('canvas generations and sent messages upload local files only at that moment', async () => {
+  const director = await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
+  const generate = director.slice(director.indexOf('  async function submitGenerationArea(){'), director.indexOf('  function mount() {'));
+  assert.match(generate, /bridge\.prepareCloudFiles\(draft\.attachments\)[\s\S]*payload\.referenceAssetIds=ready\.map/);
+  const send = director.slice(director.indexOf('  async function drainSubmissions(){'), director.indexOf('  function submit('));
+  assert.match(send, /bridge\.prepareCloudFiles\(request\.files\)[\s\S]*client\.send\(content,\[\.\.\.new Set\(\[\.\.\.request\.selectionIds,\.\.\.files\.map/);
+  for (const bridge of [studio, await readFile(new URL('../public/features/agent/workspace.js', import.meta.url), 'utf8')]) {
+    const pick = bridge.slice(bridge.indexOf('      uploadGenerationFile:'), bridge.indexOf('      media:', bridge.indexOf('      uploadGenerationFile:')));
+    assert.doesNotMatch(pick, /ensureCloudReferenceIds|cloudFile\(/);
+  }
 });

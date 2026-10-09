@@ -12,7 +12,7 @@ function fixture() {
   const context = vm.createContext({
     attachments:[], busy:0, state:{files:[]}, crypto:{randomUUID}, attachmentKind,
     menuEvents:new AbortController(),localPreviewUrls:new Set(),URL:{createObjectURL:()=>`blob:${randomUUID()}`},
-    toast:text => notices.push(text), current:() => true, drawAttachments() {}, previewUrl:() => '',
+    toast:text => notices.push(text), current:() => true, drawAttachments() {}, previewUrl:() => '', importLocalMedia:async () => null,
     api:async () => ({ asset:{ id:`uploaded-${++uploaded}`, kind:'image' } }),
     importCanvasAsset:async () => ({ id:`library-${++picked}`, kind:'image', name:'图片' }),
     cloudFile:async file => file,
@@ -64,16 +64,14 @@ test('library batches skip duplicates and receive only the remaining allowance',
   assert.equal(new Set(Array.from(f.context.attachments, item => item.asset.id)).size, 30);
 });
 
-test('leaving the entry while preparing a library batch stops remaining files', async () => {
-  const f = fixture();let complete,markStarted;
-  const started = new Promise(resolve => { markStarted = resolve; });
-  f.context.importCanvasAsset = async () => [{id:'one',kind:'image'},{id:'two',kind:'image'}];
-  f.context.cloudFile = () => new Promise(resolve => { complete = resolve;markStarted(); });
-  const pending = f.context.addLibraryAsset();
-  await started;
-  f.context.menuEvents.abort();complete({id:'one',kind:'image'});
-  await pending;
-  assert.equal(f.context.attachments.length, 1);
+test('library selection keeps local copies and leaves uploading to the sent message', async () => {
+  const f = fixture();let uploads = 0;
+  f.context.importCanvasAsset = async () => [{id:'one',kind:'image',localOnly:true},{id:'two',kind:'image',localOnly:true}];
+  f.context.cloudFile = async file => { uploads++;return file; };
+  await f.context.addLibraryAsset();
+  assert.deepEqual(Array.from(f.context.attachments, item => item.asset.id), ['one','two']);
+  assert.ok(f.context.attachments.every(item => item.status === 'ready'));
+  assert.equal(uploads, 0);
   assert.equal(f.context.busy, 0);
 });
 
@@ -92,6 +90,7 @@ test('a local media preview is available while upload is pending and never sent 
   assert.equal(item.status, 'loading');
   assert.match(item.previewUrl, /^blob:/);
   assert.ok(f.context.localPreviewUrls.has(item.previewUrl));
+  await new Promise(resolve => setImmediate(resolve));
   complete({asset:{id:'cloud',kind:'video',url:'https://example.com/video.mp4'}});
   await pending;
   assert.equal(item.status, 'ready');
@@ -103,9 +102,19 @@ test('leaving the entry during upload prevents remaining files and stale assets 
   f.context.api = () => new Promise(resolve => { complete = resolve; });
   const pending = f.context.addSelectedFiles(['one','two'].map(name=>({name:`${name}.png`,type:'image/png',size:100})));
   f.context.menuEvents.abort();
+  await new Promise(resolve => setImmediate(resolve));
   complete({asset:{id:'old',kind:'image'}});
   await pending;
   assert.equal(f.context.attachments.length, 1);
   assert.equal(f.context.state.files.length, 0);
   assert.equal(f.context.busy, 0);
+});
+
+test('desktop keeps locally picked media in the local library without uploading', async () => {
+  const f = fixture();
+  f.context.api = async () => assert.fail('must not upload while adding');
+  f.context.importLocalMedia = async ({name}) => ({id:`local-${name}`,kind:'image',url:'gugu-media://local',localOnly:true});
+  await f.context.addSelectedFiles([{name:'photo.png',type:'image/png',size:100}]);
+  assert.equal(f.context.attachments[0].status, 'ready');
+  assert.equal(f.context.attachments[0].asset.id, 'local-photo.png');
 });

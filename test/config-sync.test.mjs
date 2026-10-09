@@ -61,5 +61,5 @@ test('live configuration and its app entry have matching cache versions', async 
   const app=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   assert.ok(app.includes("'./state/config-sync.js?v=1'"));
-  assert.ok(html.includes('/app.js?v=504'));
+  assert.ok(html.includes('/app.js?v=505'));
 });

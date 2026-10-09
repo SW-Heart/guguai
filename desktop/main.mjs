@@ -472,7 +472,7 @@ async function assembleLocalVideos({ assetIds = [], name = '完整成片', proje
   }
 }
 
-async function importFile(filePath, { dedupe = true } = {}) {
+async function importFile(filePath, { dedupe = true, sourcePath = filePath, name = '' } = {}) {
   if (!workspace) throw new Error('工作区尚未初始化');
   const targetWorkspace = workspace;
   const targetEpoch = workspaceEpoch;
@@ -496,13 +496,13 @@ async function importFile(filePath, { dedupe = true } = {}) {
         console.info('[media] 恢复本地素材副本', { assetId:existing.id, relativePath:existing.relativePath });
       }
       assertActiveWorkspace(targetWorkspace, targetEpoch);
-      const restored = { ...existing, localStatus:'saved', sourcePath:filePath, updatedAt:new Date().toISOString() };
+      const restored = { ...existing, localStatus:'saved', sourcePath, updatedAt:new Date().toISOString() };
       upsertLocalAsset(restored);
       return { ...restored, reused:true };
     }
   }
 
-  const originalName = safeName(path.basename(filePath));
+  const originalName = safeName(name || path.basename(filePath));
   const extension = path.extname(originalName).toLowerCase();
   const mimeType = mimeFromName(originalName);
   const kind = mimeType.startsWith('video/') ? 'video' : mimeType.startsWith('audio/') ? 'audio' : 'image';
@@ -523,11 +523,30 @@ async function importFile(filePath, { dedupe = true } = {}) {
     size: digest.size,
     sha256: digest.sha256,
     createdAt: new Date().toISOString(),
-    sourcePath: filePath,
+    sourcePath,
     remoteStatus: 'pending',
   };
   upsertLocalAsset(asset);
   return { ...asset, reused: false };
+}
+
+// Saves media the page already holds in memory (pasted or edited canvas images,
+// files picked in the browser) straight into the local library without uploading.
+async function importMediaBytes({ name, bytes }) {
+  const fileName = safeName(name);
+  const mimeType = mimeFromName(fileName);
+  if (!/^(image|video|audio)\//.test(mimeType)) throw new Error('只支持图片、视频或音频文件');
+  if (!(bytes instanceof Uint8Array) || !bytes.length) throw new Error('文件内容为空');
+  const limit = mimeType.startsWith('image/') ? 20 * 1024 * 1024 : 25 * 1024 * 1024;
+  if (bytes.length > limit) throw new Error(`文件超过 ${mimeType.startsWith('image/') ? 20 : 25} MB`);
+  const directory = await fs.mkdtemp(path.join(app.getPath('temp'), 'gugu-import-'));
+  try {
+    const temporary = path.join(directory, `${randomUUID()}${path.extname(fileName).toLowerCase()}`);
+    await fs.writeFile(temporary, bytes);
+    return await importFile(temporary, { sourcePath:'', name:fileName });
+  } finally {
+    await fs.rm(directory, { recursive:true, force:true }).catch(() => {});
+  }
 }
 
 async function chooseAndImportFiles({ multiple = true } = {}) {
@@ -1634,6 +1653,10 @@ function registerIpc() {
     return true;
   });
   handle('media:choose-and-import', (_event, options) => chooseAndImportFiles(options));
+  handle('media:import-bytes', (_event, payload) => importMediaBytes(payload), { validateArgs: ([value]) => {
+    const record = ipcRecord(value || {}, '素材内容');
+    return [{ name:ipcText(record.name, 200, '文件名'), bytes:record.bytes }];
+  } });
   handle('media:list-local', (_event, options) => listLocalAssets(options || {}));
   handle('media:list-local-by-cloud-ids', async (_event, ids) => (await listLocalAssets({ cloudAssetIds: ids })).items, { validateArgs: ([value]) => [ipcIdList(value, '云端素材标识列表')] });
   handle('media:list-delivery-tasks', () => listLocalDeliveryTasks({ limit:500 }));

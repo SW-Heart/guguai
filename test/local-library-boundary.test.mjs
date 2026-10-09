@@ -68,18 +68,18 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(admin.includes('/guguadmin.css?v=20'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=504\b/);
+  assert.match(index, /\/app\.js\?v=505\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=370/);
+  assert.match(index, /\/styles\.css\?v=371/);
   assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
-  assert.match(index, /\/styles\/base\.css\?v=4/);
+  assert.match(index, /\/styles\/base\.css\?v=5/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=15/);
-  assert.match(app, /\.\/drama-studio\.js\?v=239/);
+  assert.match(app, /\.\/drama-studio\.js\?v=240/);
   assert.match(app, /\.\/features\/generation\/polling\.js\?v=4/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
   assert.match(app, /\.\/features\/media\/controller\.js\?v=13/);
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=4/);
-  assert.match(dramaStudio, /director-workspace\.js\?v=134\b/);
+  assert.match(dramaStudio, /director-workspace\.js\?v=135\b/);
   assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=13\b/);
   assert.match(app, /\.\/state\/account-state\.js\?v=1/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
@@ -381,7 +381,7 @@ test('short-drama task refresh deferred during editing is replayed after blur', 
 });
 
 test('repeated storyboard assembly keeps independent outputs and protects footer clicks', () => {
-  assert.match(desktopMain, /async function importFile\(filePath, \{ dedupe = true \} = \{\}\)/);
+  assert.match(desktopMain, /async function importFile\(filePath, \{ dedupe = true, sourcePath = filePath, name = '' \} = \{\}\)/);
   assert.match(desktopMain, /const imported = await importFile\(output, \{ dedupe: false \}\);/);
   assert.match(dramaStudio, /id:`assembly_\$\{crypto\.randomUUID\(\)\}`, assetId:result\.id/);
   assert.doesNotMatch(dramaStudio, /project\.assemblyVideos = \[record, \.\.\.\(project\.assemblyVideos \|\| \[\]\)\.filter\(item => item\.assetId !== result\.id\)\]/);

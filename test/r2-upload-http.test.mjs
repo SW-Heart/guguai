@@ -165,6 +165,7 @@ test('R2-only HTTP upload verifies, promotes, cleans up, and completes idempoten
       R2_ENDPOINT: r2Stub.endpoint,
       R2_BUCKET: 'test-private-media',
       R2_REGION: 'auto',
+      UPLOAD_INIT_LIMIT_PER_MINUTE: '2',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -254,6 +255,22 @@ test('R2-only HTTP upload verifies, promotes, cleans up, and completes idempoten
   const downloaded = await fetch(signedContentUrl);
   assert.equal(downloaded.status, 200);
   assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), png);
+
+  // Reusing an uploaded file creates no upload, so it must not use up the per-minute limit.
+  const init = sha256 => fetch(`${base}/api/files/uploads/init`, {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'sample.png', mimeType: 'image/png', size: png.length, sha256 }),
+  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const reused = await init('a'.repeat(64));
+    assert.equal(reused.status, 200);
+    const body = await reused.json();
+    assert.equal(body.mode, 'reuse');
+    assert.equal(body.asset.id, asset.id);
+  }
+  assert.equal((await init('b'.repeat(64))).status, 201);
+  assert.equal((await init('c'.repeat(64))).status, 429);
 
   const deletion = await fetch(`${base}/api/files/${asset.id}`, {
     method: 'DELETE',

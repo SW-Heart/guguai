@@ -123,7 +123,7 @@ test('switching conversations during a batch does not add old files', async () =
   assert.equal(f.context.uploading,false);
 });
 
-test('desktop batch upload stops at 30 successful files before syncing the 31st', async () => {
+test('desktop chat import stops at 30 files and leaves uploading to the conversation', async () => {
   const synced = [],notices = [],items = images(31).map(file => ({...file,mimeType:'image/png',size:100}));
   let pickerOptions;
   const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
@@ -135,7 +135,7 @@ test('desktop batch upload stops at 30 successful files before syncing the 31st'
   vm.runInContext(extract(app,'async function desktopImportToContext(','function openUploadPicker('),context);
   const files = await context.desktopImportToContext('director-chat',{multiple:true,maxFiles:30});
   assert.equal(pickerOptions.multiple,true);
-  assert.equal(files.length,30);assert.equal(synced.length,30);
+  assert.equal(files.length,30);assert.equal(synced.length,0);
   assert.ok(notices.some(value => /最多添加 30/.test(value)));
 });
 
@@ -143,7 +143,8 @@ function agentBridgeFixture() {
   const saves = [], notices = [], files = images(30);
   const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     navigationEpoch:1,current:() => true,project:{assetIds:[]},state:{files:[]},
-    importCanvasAsset:async () => files,cloudFile:async file => file,
+    importCanvasAsset:async () => files,cloudFile:async file => file,previewUrl:file => `gugu-media://${file.id}`,
+    asset:id => context.state.files.find(file => file.id === id),importLocalMedia:async () => null,
     toast:value => notices.push(value),saveCanvas:async value => saves.push(value),
   });
   const source = extract(read('features/agent/workspace.js'),'      uploadChatFile:','      uploadGenerationFile:').trim().replace(/,$/,'');
@@ -151,36 +152,39 @@ function agentBridgeFixture() {
   return {context,saves,notices};
 }
 
-test('agent prepares every selected file and saves all 30 IDs together', async () => {
-  const f = agentBridgeFixture();const files = await f.context.bridge.uploadChatFile();
+test('agent keeps all 30 selected files local and saves their IDs together', async () => {
+  const f = agentBridgeFixture();let uploads = 0;
+  f.context.cloudFile = async file => { uploads++;return file; };
+  const files = await f.context.bridge.uploadChatFile();
   assert.deepEqual(Array.from(files,file => file.id),images(30).map(file => file.id));
+  assert.equal(uploads,0);
   assert.equal(f.saves.length,1);
   assert.deepEqual(Array.from(f.saves[0].assetIds),images(30).map(file => file.id));
 });
 
-test('one failed image does not discard the rest of an agent batch', async () => {
-  const f = agentBridgeFixture();
-  f.context.cloudFile = async file => { if(file.id === 'image-1')throw new Error('读取失败');return file; };
-  const files = await f.context.bridge.uploadChatFile();
-  assert.equal(files.length,29);assert.equal(f.saves[0].assetIds.length,29);
-  assert.match(f.notices[0],/读取失败/);
+test('sending uploads agent attachments two at a time and keeps their order', async () => {
+  const f = agentBridgeFixture();let active = 0,peak = 0;
+  f.context.cloudFile = async file => { active++;peak = Math.max(peak,active);await new Promise(resolve => setTimeout(resolve,2));active--;return {...file,id:`cloud-${file.id}`}; };
+  const ready = await f.context.bridge.prepareCloudFiles(images(5));
+  assert.deepEqual(Array.from(ready,file => file.id),images(5).map(file => `cloud-${file.id}`));
+  assert.equal(peak,2);
 });
 
-test('leaving a project during preparation cannot save old files to its replacement', async () => {
-  const f = agentBridgeFixture();let complete,markStarted;
-  const started = new Promise(resolve => { markStarted = resolve; });
-  f.context.cloudFile = () => new Promise(resolve => { complete = resolve;markStarted(); });
-  const pending = f.context.bridge.uploadChatFile();await started;
-  f.context.navigationEpoch++;complete(images(1)[0]);
+test('leaving a project while choosing files cannot save old files to its replacement', async () => {
+  const f = agentBridgeFixture();let complete;
+  f.context.importCanvasAsset = () => new Promise(resolve => { complete = resolve; });
+  const pending = f.context.bridge.uploadChatFile();
+  f.context.navigationEpoch++;complete(images(2));
   assert.equal((await pending).length,0);assert.equal(f.saves.length,0);
 });
 
 test('the short-drama conversation prepares all 30 selected files too', async () => {
   const context = vm.createContext({registerCanvasFile:async file=>file,loadReferenceFiles:async()=>[],
     projectRequest:() => ({}),assertProjectRequest(){},importCanvasAsset:async () => images(30),
-    state:{files:[]},ensureCloudReferenceIds:async ids => ids,assetPreviewUrl:() => '',toast(){},
+    state:{files:[]},ensureCloudReferenceIds:async ids => ids,assetPreviewUrl:() => '',toast(){},importLocalMedia:async () => null,
   });
-  const source = extract(read('drama-studio.js'),'      uploadChatFile:','      uploadGenerationFile:').trim().replace(/,$/,'');
+  const drama = read('drama-studio.js');
+  const source = extract(drama,'      uploadChatFile:','      uploadGenerationFile:').trim().replace(/,$/,'');
   vm.runInContext(`globalThis.bridge={${source}};`,context);
   const files = await context.bridge.uploadChatFile();
   assert.deepEqual(Array.from(files,file => file.id),images(30).map(file => file.id));

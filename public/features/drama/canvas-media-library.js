@@ -54,7 +54,7 @@ async function mediaBlob(media, fetchImpl) {
 
 // Serialize additions and share pending work for copied nodes with the same
 // source. Only completed library records are cached; failures can be retried.
-export function createCanvasMediaLibrary({api, findFile, registerFile, isCurrent, fetchImpl = fetch}) {
+export function createCanvasMediaLibrary({api, findFile, registerFile, isCurrent, importLocal = null, fetchImpl = fetch}) {
   const files = new Map(), pending = new Map();
   let queue = Promise.resolve();
   const ensureCurrent = () => {
@@ -75,19 +75,25 @@ export function createCanvasMediaLibrary({api, findFile, registerFile, isCurrent
       ensureCurrent();
       const extension = {'image/png':'png','image/jpeg':'jpg','image/webp':'webp','video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov'}[blob.type];
       const name = `${media.name.replace(/\.[^.]+$/, '')}.${extension}`;
-      const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-      const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+      // Desktop keeps canvas media in the local library; it is uploaded only
+      // when a generation or message needs it. Older clients upload here.
+      file = importLocal ? await importLocal({name, blob}) : null;
       ensureCurrent();
-      const intent = await api('/api/files/uploads/init', {method:'POST',body:JSON.stringify({mimeType:blob.type,name,size:blob.size,sha256})});
-      ensureCurrent();
-      file = intent.asset;
       if (!file) {
-        const uploaded = await fetchImpl(intent.uploadUrl, {method:'PUT',headers:intent.headers || {},body:blob})
-          .catch(() => {throw new Error('素材保存失败，请重试');});
+        const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+        const sha256 = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
         ensureCurrent();
-        if (!uploaded.ok) throw new Error('素材保存失败，请重试');
-        file = await api(`/api/files/uploads/${encodeURIComponent(intent.uploadId)}/complete`, {method:'POST',body:'{}'});
+        const intent = await api('/api/files/uploads/init', {method:'POST',body:JSON.stringify({mimeType:blob.type,name,size:blob.size,sha256})});
         ensureCurrent();
+        file = intent.asset;
+        if (!file) {
+          const uploaded = await fetchImpl(intent.uploadUrl, {method:'PUT',headers:intent.headers || {},body:blob})
+            .catch(() => {throw new Error('素材保存失败，请重试');});
+          ensureCurrent();
+          if (!uploaded.ok) throw new Error('素材保存失败，请重试');
+          file = await api(`/api/files/uploads/${encodeURIComponent(intent.uploadId)}/complete`, {method:'POST',body:'{}'});
+          ensureCurrent();
+        }
       }
     }
     if (!file?.id || file.kind !== media.kind) throw new Error('素材尚未就绪，请稍后重试');
