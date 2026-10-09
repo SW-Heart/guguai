@@ -113,7 +113,7 @@ import { createApiClient } from './api-client.js?v=4';
   const quickRanges = [['today', '今天'], ['7d', '近 7 天'], ['30d', '近 30 天']];
   const activeQuickRange = filters => filters.to ? '' : (quickRanges.find(([key]) => filters.from && Math.abs(new Date(filters.from) - new Date(rangeStart(key))) < 120000)?.[0] || '');
 
-  const statusLabels = { active: '正常', disabled: '已停用', auto_disabled: '已自动停用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', pending: '等待中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', configured: '已配置', draft: '草稿', published: '已发布', archived: '已归档', critical: '严重', error: '错误', warning: '警告', info: '信息', success: '成功', PAID: '已支付', PARTIALLY_REFUNDED: '部分退款', REFUNDED: '已退款' };
+  const statusLabels = { active: '正常', disabled: '已停用', auto_disabled: '已自动停用', completed: '完成', failed: '失败', queued: '排队', running: '运行中', pending: '等待中', exhausted: '已用尽', expired: '已过期', enabled: '启用', available: '可用', missing: '目录缺失', unknown: '待检查', probe_error: '检查异常', credential_error: '密钥异常', configured: '已配置', draft: '草稿', published: '已发布', archived: '已归档', critical: '严重', error: '错误', warning: '警告', info: '信息', success: '成功', PAID: '已支付', PARTIALLY_REFUNDED: '部分退款', REFUNDING: '退款中', REFUNDED: '已退款' };
   const status = value => statusLabels[value] || value || '—';
   const toneFor = value => ['active', 'completed', 'enabled', 'available', 'success', 'configured', 'published', 'PAID'].includes(value) ? 'ok'
     : ['failed', 'error', 'critical', 'credential_error', 'missing', 'auto_disabled'].includes(value) ? 'bad'
@@ -910,13 +910,14 @@ import { createApiClient } from './api-client.js?v=4';
       const summary = data.summary || {};
       const summaryMarkup = `<div class="cards" style="padding:16px 18px 0;margin-bottom:16px"><div class="stat is-compact"><span class="stat-head">成功订单</span><strong>${money(data.total)}</strong><span class="stat-sub">付费用户 ${money(summary.payingUsers)} 人</span></div><div class="stat is-compact"><span class="stat-head">支付总额</span><strong>${yuan(summary.totalAmount)}</strong><span class="stat-sub">订单原始支付金额</span></div><div class="stat is-compact"><span class="stat-head">退款金额</span><strong>${yuan(summary.refundedAmount)}</strong><span class="stat-sub">含部分与全额退款</span></div><div class="stat is-compact tone-success"><span class="stat-head">净收款</span><strong>${yuan(summary.netAmount)}</strong><span class="stat-sub">支付总额扣除退款</span></div></div>`;
       const filtered = filters.query || filters.from || filters.to;
-      table.innerHTML = summaryMarkup + (items.length ? `<div class="table-wrap" style="border-width:1px 0 0;border-radius:0"><table class="payment-table" aria-label="付费订单列表" style="min-width:1100px"><thead><tr><th>用户</th><th class="is-num">支付金额</th><th class="is-num">购买积分</th><th>状态</th><th>支付时间</th><th>商户订单号</th><th>支付宝交易号</th></tr></thead><tbody>${items.map(order => `<tr>
+      table.innerHTML = summaryMarkup + (items.length ? `<div class="table-wrap" style="border-width:1px 0 0;border-radius:0"><table class="payment-table" aria-label="付费订单列表" style="min-width:1100px"><thead><tr><th>用户</th><th class="is-num">支付金额</th><th class="is-num">购买积分</th><th>状态</th><th>支付时间</th><th>商户订单号</th><th>支付方式</th><th>交易号</th></tr></thead><tbody>${items.map(order => `<tr>
           <td><div class="cell-stack"><b>${esc(order.username || '—')}</b>${idText(order.userId, '用户 ID')}</div></td>
           <td class="is-num"><b>${yuan(order.amount)}</b>${order.refundedAmount ? `<div class="detail">已退 ${yuan(order.refundedAmount)} · 净额 ${yuan(order.netAmount)}</div>` : ''}</td>
           <td class="is-num">${money(order.credits)}</td>
           <td>${badge(order.status, order.status === 'PAID' ? 'ok' : 'warn')}</td>
           <td>${date(order.paidAt)}</td>
           <td>${idText(order.orderNo, '订单号', true)}</td>
+          <td>${order.provider === 'wechat' ? '微信支付' : '支付宝'}</td>
           <td>${idText(order.tradeNo, '交易号')}</td>
         </tr>`).join('')}</tbody></table></div>${pageControls('orders', data.total, data.nextCursor, items.length)}`
         : emptyMarkup(filtered ? '没有符合条件的订单' : '暂无支付成功的订单', filtered ? '调整关键词或支付时间范围后再试。' : '用户完成支付后会显示在这里。'));

@@ -119,11 +119,12 @@ test('admin HTTP permissions and core workflows', async t => {
   const admin = client(base);
   const unauth = await admin.call('/api/admin/auth/session');
   assert.equal(unauth.response.status, 401);
+  assert.equal((await admin.call('/api/admin/payment-orders')).response.status, 401);
   const page = await fetch(`${base}/guguadmin`);
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=36/);
+  assert.match(adminHtml, /guguadmin\.js\?v=37/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -155,6 +156,74 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(searchedPaidOrders.data.items.map(item => item.orderNo), ['ORDER-PAID-1']);
   const rangedPaidOrders = await admin.call('/api/admin/payment-orders?from=2026-08-21T00%3A00%3A00.000Z');
   assert.deepEqual(rangedPaidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1']);
+  await t.test('paid orders include both payment methods in search, summaries and pagination', async () => {
+    openDatabase({ file: path.join(workDir, 'studio.db') });
+    const insertWechat = sql(`INSERT INTO wechat_payment_orders(out_trade_no, user_id, app_id, doc_json)
+      VALUES(:id, :userId, 'test-wechat', :doc)`);
+    for (const [id, status, amountFen, paidAt, userId] of [
+      ['WX-PAID-1', 'PAID', 300, '2026-08-21T10:00:00.000Z', refundedUserId],
+      ['WX-REFUNDED-1', 'REFUNDED', 110, '2026-08-23T10:00:00.000Z', phoneUserId],
+      ['WX-REFUNDING-1', 'REFUNDING', 400, '2026-08-22T10:00:00.000Z', phoneUserId],
+      ['WX-PENDING-1', 'PENDING_PAYMENT', 500, null, phoneUserId],
+      ['WX-CLOSED-1', 'CLOSED', 500, null, phoneUserId],
+      ['WX-UNPAID-REFUND-1', 'REFUNDED', 500, null, phoneUserId],
+      // Identical order numbers and payment times in separate payment tables
+      // must not cause an order to disappear at a page boundary.
+      ['ORDER-PAID-1', 'PAID', 100, '2026-08-20T10:00:00.000Z', refundedUserId],
+    ]) {
+      insertWechat.run({ id, userId, doc: JSON.stringify({
+        outTradeNo: id, userId, appId: 'test-wechat', provider: 'wechat', status,
+        totalAmountFen: amountFen, totalAmount: (amountFen / 100).toFixed(2),
+        credits: amountFen / 10, tradeNo: `TRANSACTION-${id}`, paidAt,
+        createdAt: '2026-08-19T09:59:00.000Z',
+        ...(status === 'REFUNDED' ? { refundedAmount: (amountFen / 100).toFixed(2) } : {}),
+      }) });
+    }
+    closeDatabase({ checkpoint: false });
+
+    const all = await admin.call('/api/admin/payment-orders');
+    assert.equal(all.response.status, 200);
+    assert.equal(all.data.total, 6);
+    assert.deepEqual(all.data.summary, { payingUsers: 2, totalAmount: 16.1, refundedAmount: 3.1, netAmount: 13 });
+    assert.deepEqual(all.data.items.map(item => [item.orderNo, item.provider]), [
+      ['WX-REFUNDED-1', 'wechat'], ['WX-REFUNDING-1', 'wechat'],
+      ['ORDER-REFUNDED-1', 'alipay'], ['WX-PAID-1', 'wechat'],
+      ['ORDER-PAID-1', 'alipay'], ['ORDER-PAID-1', 'wechat'],
+    ]);
+    const refunded = all.data.items[0];
+    assert.deepEqual({ amount: refunded.amount, amountFen: refunded.amountFen, refundedAmount: refunded.refundedAmount,
+      refundedAmountFen: refunded.refundedAmountFen, netAmount: refunded.netAmount, credits: refunded.credits },
+    { amount: 1.1, amountFen: 110, refundedAmount: 1.1, refundedAmountFen: 110, netAmount: 0, credits: 11 });
+    assert.equal(all.data.items[1].refundedAmount, 0);
+    assert.equal(all.data.items[3].tradeNo, 'TRANSACTION-WX-PAID-1');
+    assert.equal(all.data.items[3].username, 'refunded_user');
+
+    for (const query of ['WX-PAID-1', 'TRANSACTION-WX-PAID-1']) {
+      const found = await admin.call(`/api/admin/payment-orders?query=${query}`);
+      assert.deepEqual(found.data.items.map(item => item.orderNo), ['WX-PAID-1']);
+      assert.deepEqual(found.data.summary, { payingUsers: 1, totalAmount: 3, refundedAmount: 0, netAmount: 3 });
+    }
+    for (const query of [phoneUserId, '13800138000']) {
+      const found = await admin.call(`/api/admin/payment-orders?query=${query}`);
+      assert.deepEqual(found.data.items.map(item => item.orderNo), ['WX-REFUNDED-1', 'WX-REFUNDING-1']);
+    }
+    const ranged = await admin.call('/api/admin/payment-orders?from=2026-08-21T00%3A00%3A00.000Z&to=2026-08-22T00%3A00%3A00.000Z');
+    assert.deepEqual(ranged.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1', 'WX-PAID-1']);
+    assert.deepEqual(ranged.data.summary, { payingUsers: 1, totalAmount: 5, refundedAmount: 2, netAmount: 3 });
+
+    const pagedItems = [];
+    let cursor = '';
+    do {
+      const page = await admin.call(`/api/admin/payment-orders?limit=1&cursor=${encodeURIComponent(cursor)}`);
+      assert.equal(page.response.status, 200);
+      assert.equal(page.data.total, all.data.total);
+      assert.deepEqual(page.data.summary, all.data.summary);
+      pagedItems.push(...page.data.items);
+      assert.ok(pagedItems.length <= all.data.total, 'pagination must terminate without repeating orders');
+      cursor = page.data.nextCursor;
+    } while (cursor);
+    assert.deepEqual(pagedItems, all.data.items);
+  });
   const refundedUser = await admin.call('/api/admin/users?query=refunded_user');
   assert.equal(refundedUser.data.items[0].totalSpent, 0);
   const phoneUser = await admin.call('/api/admin/users?query=13800138000');
