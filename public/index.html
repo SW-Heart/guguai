@@ -7,7 +7,7 @@
   <script src="/theme.js?v=1"></script>
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles/base.css?v=5">
+  <link rel="stylesheet" href="/styles/base.css?v=6">
   <link rel="stylesheet" href="/styles.css?v=371">
   <link rel="stylesheet" href="/vendor/director/reference-canvas.css?v=6">
   <link rel="stylesheet" href="/payment.css?v=3">
@@ -17,18 +17,6 @@
   <a class="skip-link" href="#workspaceMain">跳到创作区</a>
   <div id="desktopDragRegion" class="desktop-drag-region hidden" aria-hidden="true"></div>
   <div id="desktopTitlebarLogo" class="desktop-titlebar-logo" aria-hidden="true"><span class="brand-gem"></span></div>
-  <div id="desktopWindowControls" class="desktop-window-controls hidden" role="group" aria-label="窗口控制">
-    <button id="windowMinimize" type="button" aria-label="最小化窗口" title="最小化">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
-    </button>
-    <button id="windowMaximize" type="button" aria-label="最大化窗口" title="最大化">
-      <svg class="window-icon maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>
-      <svg class="window-icon restore-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v10H8z"/><path d="M6 16H5V6h10v1"/></svg>
-    </button>
-    <button id="windowClose" class="window-close" type="button" aria-label="关闭窗口" title="关闭">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
-    </button>
-  </div>
   <section id="bootView" class="app-boot" role="status" aria-live="polite">
     <div class="boot-center">
       <div class="boot-stage" aria-hidden="true">
@@ -288,6 +276,19 @@
     </div>
   </dialog>
   <div id="toast" class="toast" popover="manual" role="status" aria-live="polite"></div>
+  <!-- Keep caption exclusions after every workspace drag region. -->
+  <div id="desktopWindowControls" class="desktop-window-controls hidden" role="group" aria-label="窗口控制">
+    <button id="windowMinimize" type="button" aria-label="最小化窗口" title="最小化">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+    </button>
+    <button id="windowMaximize" type="button" aria-label="最大化窗口" title="最大化">
+      <svg class="window-icon maximize-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>
+      <svg class="window-icon restore-icon hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v10H8z"/><path d="M6 16H5V6h10v1"/></svg>
+    </button>
+    <button id="windowClose" class="window-close" type="button" aria-label="关闭窗口" title="关闭">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
   <script type="module" src="/app.js?v=505"></script>
 </body>
 </html>

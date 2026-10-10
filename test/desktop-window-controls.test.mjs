@@ -65,6 +65,24 @@ test('untrusted caption commands cannot act on the window', () => {
 
 test('Windows caption styles ship through the updated stylesheet entry', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/styles/base.css?v=5'));
-  assert.ok(!html.includes('/styles/base.css?v=4'));
+  assert.ok(html.includes('/styles/base.css?v=6'));
+  assert.ok(!html.includes('/styles/base.css?v=5'));
+});
+
+test('caption no-drag exclusions follow all workspace drag regions in each entry', async () => {
+  for (const file of ['public/index.html', 'desktop/renderer/startup.html', 'desktop/renderer/offline.html']) {
+    const html = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    const controls = html.indexOf('<div id="desktopWindowControls"');
+    const script = html.lastIndexOf('<script');
+    assert.ok(controls > html.indexOf('id="desktopDragRegion"'), file);
+    assert.ok(controls < script, file);
+    // No later workspace can add a drag rectangle over the caption exclusions.
+    const afterControls = html.slice(controls, script);
+    assert.doesNotMatch(afterControls, /<(?:main|section|header|dialog)\b|id="appView"|class="[^\"]*(?:topbar|toolbar|dw-project-chrome|dw-agent-page-header)/, file);
+    assert.equal((html.match(/id="desktopWindowControls"/g) || []).length, 1, file);
+    if (file === 'public/index.html') {
+      assert.ok(controls > html.lastIndexOf('</main>'), file);
+      assert.ok(controls > html.lastIndexOf('</dialog>'), file);
+    }
+  }
 });

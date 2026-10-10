@@ -78,7 +78,7 @@ body.desktop-runtime .skip-link { --skip-link-top: 64px; left: 16px; }
 .desktop-window-controls button { width: 46px; height: 56px; padding: 0; border: 0; color: var(--muted); background: transparent; display: grid; place-items: center; -webkit-app-region: no-drag; transition: color var(--ease), background var(--ease); }
 .desktop-window-controls button:hover { color: var(--ink); background: rgba(24,24,27,.06); }
 .desktop-window-controls button:active { background: rgba(24,24,27,.1); }
-.desktop-window-controls button svg { width: 14px; height: 14px; stroke-width: 1.55; }
+.desktop-window-controls button svg { width: 14px; height: 14px; stroke-width: 1.55; pointer-events: none; }
 .desktop-window-controls .window-close:hover { color: white; background: #d6535c; }
 .desktop-window-controls .window-close:active { background: #b63d46; }
 .desktop-window-controls .window-icon { width: 13px; height: 13px; }
