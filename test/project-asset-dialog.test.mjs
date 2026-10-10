@@ -103,7 +103,7 @@ test('desktop drama asset picker returns the complete batch when multiple is req
 
 test('batch upload changes reach the current versioned frontend entrypoints', async () => {
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/\/app\.js\?v=505\b/);
+  assert.match(html,/\/app\.js\?v=508\b/);
   assert.match(app,/\.\/drama-studio\.js\?v=240\b/);
 });
 
