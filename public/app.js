@@ -1,6 +1,7 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createConfigSync } from './state/config-sync.js?v=1';
+import { officialPriceDiscount } from './state/official-model-prices.js?v=3';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';
@@ -4589,11 +4590,12 @@ function modelPriceCard(modelId, rows, kind) {
   const label = rows[0]?.label || modelId;
   const tiers = [...rows].sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
   const active = tiers.reduce((cheapest, item) => (Number(item.yuan) < Number(cheapest.yuan) ? item : cheapest), tiers[0]);
+  const discount = officialPriceDiscount(modelId, active);
   const meta = kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · 按秒计费';
   const tierRow = tiers.length > 1
-    ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
+    ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-discount="${esc(officialPriceDiscount(modelId, item)?.label || '')}" data-discount-detail="${esc(officialPriceDiscount(modelId, item)?.detail || '')}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
     : `<div class="price-tier-row"><span class="price-tier price-tier-static">${esc(tiers[0].quality)}</span></div>`;
-  return `<article class="price-model-card"><header class="price-model-card-head">${modelIcon(modelId)}<div><h3>${esc(label)}</h3><small>${meta}</small></div></header><div class="price-model-figure"><span class="price-model-currency">¥</span><strong class="price-model-amount">${priceAmountText(active.yuan)}</strong><span class="price-model-unit">/ ${priceUnitLabel(active.unit)}</span></div><p class="price-model-credits">${priceCreditsText(active.credits, active.unit)}</p>${tierRow}</article>`;
+  return `<article class="price-model-card"><header class="price-model-card-head">${modelIcon(modelId)}<div><h3>${esc(label)}</h3><small>${meta}</small></div><span class="price-model-discount"${discount ? '' : ' hidden'} title="${esc(discount?.detail || '')}" aria-label="${esc(discount ? `${discount.label}。${discount.detail}` : '')}">${esc(discount?.label || '')}</span></header><div class="price-model-figure"><span class="price-model-currency">¥</span><strong class="price-model-amount">${priceAmountText(active.yuan)}</strong><span class="price-model-unit">/ ${priceUnitLabel(active.unit)}</span></div><p class="price-model-credits">${priceCreditsText(active.credits, active.unit)}</p>${tierRow}</article>`;
 }
 function renderModelPrices(items = state.config?.modelPrices || []) {
   const body = $('#modelPriceBody');
@@ -4681,6 +4683,13 @@ $('#modelPriceBody')?.addEventListener('click', event => {
   if (amount) amount.textContent = tier.dataset.amount || '';
   if (unit) unit.textContent = `/ ${tier.dataset.unit || '秒'}`;
   if (credits) credits.textContent = tier.dataset.credits || '';
+  const discount = card.querySelector('.price-model-discount');
+  if (discount) {
+    discount.textContent = tier.dataset.discount || '';
+    discount.title = tier.dataset.discountDetail || '';
+    discount.hidden = !tier.dataset.discount;
+    discount.setAttribute('aria-label', tier.dataset.discount ? `${tier.dataset.discount}。${tier.dataset.discountDetail || ''}` : '');
+  }
   const figure = card.querySelector('.price-model-figure');
   if (figure) { figure.classList.remove('price-figure-flash'); void figure.offsetWidth; figure.classList.add('price-figure-flash'); }
 });

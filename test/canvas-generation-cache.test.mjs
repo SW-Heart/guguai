@@ -24,8 +24,8 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=505'],
-    ['index.html', '/styles.css?v=371'],
+    ['index.html', '/app.js?v=508'],
+    ['index.html', '/styles.css?v=373'],
     ['app.js', './drama-studio.js?v=240'],
     ['app.js', './features/agent/workspace.js?v=100'],
     ['drama-studio.js', './features/drama/director-workspace.js?v=135'],

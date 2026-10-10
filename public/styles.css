@@ -2291,8 +2291,10 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .price-model-card::after { position: absolute; z-index: 0; right: -46px; top: -58px; width: 132px; height: 132px; border-radius: 50%; background: radial-gradient(circle, rgba(99,102,241,.2), rgba(99,102,241,0) 70%); pointer-events: none; content: ""; }
 .price-model-card:hover { transform: translateY(-2px); border-color: var(--brand-line); box-shadow: 0 10px 24px rgba(99,102,241,.13), 0 2px 6px rgba(24,24,27,.05); }
 .price-model-card > * { position: relative; z-index: 1; }
+.price-model-discount { flex: 0 0 auto; align-self: flex-start; margin-left: auto; white-space: nowrap; padding: 4px 8px; border: 1px solid var(--brand-line); border-radius: 999px; color: var(--brand); background: var(--brand-soft); font-size: 10px; font-weight: 650; line-height: 1.4; text-align: center; }
+.price-model-discount[hidden] { display: none; }
 .price-model-card-head { min-width: 0; display: flex; align-items: center; gap: 9px; }
-.price-model-card-head > div { min-width: 0; }
+.price-model-card-head > div { flex: 1 1 auto; min-width: 0; }
 .price-model-card-head h3 { margin: 0; overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 700; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
 .price-model-card-head small { display: block; margin-top: 3px; color: var(--faint); font: 8px var(--mono); letter-spacing: .04em; }
 .price-model-card-head .select-model-icon { box-sizing: border-box; width: 27px; height: 27px; flex: 0 0 27px; padding: 4px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
