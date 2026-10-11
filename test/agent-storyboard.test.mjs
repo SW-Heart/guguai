@@ -5,6 +5,7 @@ import { createAgentTools } from '../lib/agent/tools.mjs';
 import { mergeStoryboardDrafts, storyboardDraftId } from '../public/features/drama/storyboard-drafts.js';
 import { canvasGenerationPayload } from '../public/features/drama/canvas-generation.js';
 import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
+import { storyboardNeedsApproval } from '../lib/agent/runtime.mjs';
 
 const scope = { deviceId: 'd', workspaceId: 'w' };
 const videoModes = [
@@ -150,7 +151,24 @@ test('adaptation requests are routed to the direct storyboard method', async () 
   const method = await readFile(new URL('../agent-skills/short-drama/references/novel-to-storyboard.md', import.meta.url), 'utf8');
   assert.match(instructions, /## 小说、剧本改编为短剧分镜/);
   assert.match(instructions, /storyboard_write/);
+  assert.match(instructions, /分两步/);
+  assert.match(method, /## 计划回复/);
   assert.match(skill, /references\/novel-to-storyboard\.md/);
   assert.match(method, /storyboard_write/);
   assert.match(method, /0-4秒/);
+});
+
+test('a new storyboard waits until the user answers a shown plan', () => {
+  const novel = `改编这一章为短剧，设计分镜：\n${'外婆躺在床上。'.repeat(200)}`;
+  const request = [{ role: 'user', content: novel }];
+  assert.equal(storyboardNeedsApproval(request), true, 'the request itself is not approval');
+  const withTools = [...request, { role: 'assistant', content: '', tool_calls: [{ id: 'a' }] }, { role: 'tool', tool_call_id: 'a', content: '{}' }];
+  assert.equal(storyboardNeedsApproval(withTools), true, 'silent tool work is not a shown plan');
+  const planned = [...request, { role: 'assistant', content: '分镜计划：三集 213 秒……确认后排到画布。' }];
+  assert.equal(storyboardNeedsApproval([...planned, { role: 'user', content: '可以' }]), false);
+  assert.equal(storyboardNeedsApproval([...planned, { role: 'user', content: '第二集压到 60 秒，其他按你的来' }]), false);
+  assert.equal(storyboardNeedsApproval([...planned, { role: 'user', content: novel }]), true, 'a fresh chapter needs its own plan');
+  assert.equal(storyboardNeedsApproval([...planned, { role: 'user', content: '再改编下一章\n\n附带文件：\n第二章.txt' }]), true);
+  assert.equal(storyboardNeedsApproval([{ role: 'user', content: '把这段改编成分镜，不用确认，直接排到画布' }]), false);
+  assert.equal(storyboardNeedsApproval([{ role: 'user', content: '第一集再加一段' }], { id: 'sb-1' }, [{ id: 'sb-1' }]), false, 'revising an approved storyboard');
 });
