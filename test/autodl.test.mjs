@@ -165,11 +165,20 @@ test('resumed AutoDL polling does not reset an expired persisted deadline', asyn
   assert.equal(calls, 0);
 });
 
-test('AutoDL submission without a task id remains awaiting reconciliation', async () => {
+test('AutoDL explicit submit error without a task id is terminal', async () => {
   await assert.rejects(() => createAutodlVideo({
     prompt: '提交失败', duration: 5, quality: '768p', aspectRatio: '16:9',
   }, [], {}, {
     fetchJson: async () => ({ code: 'InternalError', data: null, msg: '工作流不可用' }),
+  }), error => error.upstreamTerminal === true && !error.submissionUncertain
+    && error.upstreamCode === 'InternalError' && /工作流不可用/.test(error.message));
+});
+
+test('AutoDL success response without a task id remains awaiting reconciliation', async () => {
+  await assert.rejects(() => createAutodlVideo({
+    prompt: '提交失败', duration: 5, quality: '768p', aspectRatio: '16:9',
+  }, [], {}, {
+    fetchJson: async () => ({ code: 'Success', data: { status: 'queued' } }),
   }), error => error.submissionUncertain === true && /没有返回任务 ID/.test(error.message));
 });
 

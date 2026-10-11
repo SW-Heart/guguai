@@ -127,7 +127,14 @@ export function createAutodlProvider({
         signal: AbortSignal.timeout(submitTimeoutMs),
       });
       providerTaskId = taskId(created);
-      if (!providerTaskId) throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });
+      if (!providerTaskId) {
+        // An explicit non-success code with null data means AutoDL rejected the
+        // request before creating a task, so it is safe to fail and retry.
+        const rejection = retryableResponseError(created);
+        if (rejection) throw Object.assign(new Error(`AutoDL 拒绝了请求：${rejection.message}`), { provider: providerName, upstreamCode: rejection.upstreamCode, upstreamMessage: rejection.upstreamMessage, upstreamTerminal: true });
+        console.error('[video] AutoDL submit response missing task id', { response: JSON.stringify(created).slice(0, 1000) });
+        throw Object.assign(new Error('AutoDL 已接受请求，但没有返回任务 ID，提交结果待核对'), { submissionUncertain: true });
+      }
       await hooks.onSubmitted?.({ provider: providerName, taskId: providerTaskId });
       const immediateUrl = videoUrl(created);
       if (immediateUrl) return { provider: providerName, taskId: providerTaskId, url: immediateUrl };
