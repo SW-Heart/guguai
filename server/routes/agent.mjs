@@ -3,6 +3,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import mammoth from 'mammoth';
 import { bodyBuffer } from '../http-protocol.mjs';
 import { normalizeModelPreferences, validateModelPreferences } from '../../lib/agent/model-preferences.mjs';
+import { publicStoryboard } from '../../lib/agent/storyboard-tools.mjs';
 
 const DOCUMENT_UPLOAD_MAX_BYTES=15*1024*1024;
 const DOCUMENT_TEXT_MAX_CHARS=300_000;
@@ -120,6 +121,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       sourceObservations:(session.agentProjectId?repo.listObservations(session):Object.values(doc.sourceObservations||{})).filter(item=>findAsset?.(session.userId,item.assetId,session.scope)).map(({assetId,assetName,overview,revision,events,updatedAt})=>({assetId,assetName,overview,revision,eventCount:events.length,updatedAt})),
       sourceTranscripts:(session.agentProjectId?repo.listTranscripts(session):doc.sourceTranscripts||[]).filter(item=>findAsset?.(session.userId,item.assetId,session.scope)?.sha256===item.sourceSha256).slice(0,20).map(({assetId,assetName,startSeconds,endSeconds,language,text,words,cues,updatedAt})=>({id:`transcript-${assetId}-${Math.round(startSeconds*1000)}-${Math.round(endSeconds*1000)}-${language}`,assetId,assetName,startSeconds,endSeconds,language,text,wordCount:words.length,cues,updatedAt})),
       generations: artifacts.generations,
+      storyboards:(artifacts.storyboards||[]).map(item=>publicStoryboard(item,id=>{const asset=findAsset?.(session.userId,id,session.scope);return asset&&publicAsset?publicAsset(asset):null;})),
       audioAssets:findAsset&&publicAsset?[...new Set(Object.values(doc.audioExtractions||{}))].map(id=>findAsset(session.userId,id,session.scope)).filter(Boolean).map(publicAsset):[],
       composedAssets:findAsset&&publicAsset?[...new Set((artifacts.compositions||[]).map(item=>item.assetId))].map(id=>findAsset(session.userId,id,session.scope)).filter(Boolean).map(publicAsset):[],
       tasks: artifacts.generations.filter(g => !g.placeholder).map(g => findGeneration(session.userId, g.id, session.scope)).filter(Boolean).map(publicGeneration),

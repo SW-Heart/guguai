@@ -14,12 +14,13 @@ import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=33';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=13';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=14';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=13';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=1';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference } from './canvas-generation-references.js?v=3';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=1';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
@@ -280,7 +281,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(Array.isArray(deleted)&&deleted.length)scheduleCanvasSave();
   }
   function nodes() {
-    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.type==='image'?'图像生成':'视频生成',text:d.prompt,taskId:d.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.synopsis||p.script}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
+    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.synopsis||p.script}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
   }
   function hasSavedCanvasContent() {
     const hidden=hiddenIds();
@@ -385,8 +386,10 @@ export function createDirectorWorkspace(host, bridge) {
       const draft=n.item,task=draft.taskId?bridge.task(draft.taskId):null,media=draft.taskId?bridge.media(draft.taskId):null;
       const status=task?.status||draft.status||'draft';
       const state=generationFrameState(status,Boolean(media));
-      const caption=String(draft.prompt||'').trim()||n.title;
-      return `<div class="dw-generation-frame dw-manual-frame" data-state="${escape(state)}" data-kind="${escape(draft.type)}" aria-label="${escape(caption)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:renderGenerationPlaceholder(state,{kind:draft.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(caption)}</span></div>`;
+      const caption=draft.title||String(draft.prompt||'').trim()||n.title;
+      // Planned storyboard cards show their script until generation starts.
+      const script=draft.source&&state==='draft'&&!media?`<div class="dw-frame-script"><span class="dw-frame-script-meta">${escape([draft.type==='video'&&draft.duration?`${draft.duration} 秒`:'',draft.aspect].filter(Boolean).join(' · '))}</span><p>${escape(draft.prompt)}</p></div>`:'';
+      return `<div class="dw-generation-frame dw-manual-frame${script?' has-script':''}" data-state="${escape(state)}" data-kind="${escape(draft.type)}" aria-label="${escape(caption)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:script||renderGenerationPlaceholder(state,{kind:draft.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(caption)}</span></div>`;
     }
     if(n.kind==='asset'&&n.media?.kind==='image')return '';
     if(n.kind==='asset'&&n.media?.kind==='video')return `<div class="dw-generation-frame dw-imported-video" data-state="completed"><video controls playsinline preload="none" data-canvas-src="${escape(n.media.url)}" aria-label="${escape(n.title)}">${captionTrack(n.media.id)}</video><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
@@ -581,6 +584,17 @@ export function createDirectorWorkspace(host, bridge) {
   function canvasView(){
     const surface=canvas.getContainer();
     return {viewport:canvas.getState().viewport,width:surface.clientWidth,height:surface.clientHeight};
+  }
+  function applyAgentStoryboards(){
+    const config=generationConfig();
+    // Without the live model catalog the cards would fall back to arbitrary models.
+    if(!agentReady||!agentState?.storyboards?.length||!config.videoCapabilities?.models?.length)return;
+    const result=mergeStoryboardDrafts(workspace(),agentState.storyboards,{config,task:id=>bridge.task(id),media:id=>bridge.media(id)});
+    if(result.skipped)bridge.toast(`画布卡片已达上限，${result.skipped} 张分镜卡片未添加`);
+    if(!result.changed)return;
+    scheduleCanvasSave();
+    if(result.added.length)focusNewCanvasContent(result.added);
+    if(activeGenerationId&&!generationDraft(activeGenerationId)?.taskId)queueWorkspaceFrame(renderGenerationComposer);
   }
   function focusNewCanvasContent(ids){
     ids.forEach(id=>pendingCanvasFocus.add(id));
@@ -789,6 +803,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!root||!messages)return;
     if(!drawConversationEntry(root))return;
     if(bridge.agentMode){
+      applyAgentStoryboards();
       const activeGenerations=(agentState?.generations||[]).filter(frame=>{
         const task=frame.placeholder?null:bridge.task(frame.id);
         return ['queued','running','processing','waiting_job'].includes(task?.status||frame.status);

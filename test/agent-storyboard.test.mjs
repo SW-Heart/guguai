@@ -1,0 +1,156 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createAgentTools } from '../lib/agent/tools.mjs';
+import { mergeStoryboardDrafts, storyboardDraftId } from '../public/features/drama/storyboard-drafts.js';
+import { canvasGenerationPayload } from '../public/features/drama/canvas-generation.js';
+import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
+
+const scope = { deviceId: 'd', workspaceId: 'w' };
+const videoModes = [
+  { generationType: 'TEXT', aspectRatios: ['9:16', '16:9'], durations: [5, 10, 15], qualityOptions: ['720p', '1080p'], maxImages: 0 },
+  { generationType: 'REFERENCE', aspectRatios: ['9:16', '16:9'], durations: [5, 10, 15], qualityOptions: ['720p', '1080p'], maxImages: 4, referenceLimits: { image: 4, video: 0, audio: 0, total: 4 } },
+];
+const catalog = async () => [
+  { id: 'img', label: 'Image', kind: 'image', qualities: ['low', 'medium', 'high'] },
+  { id: 'vid', label: 'Video', kind: 'video', modes: videoModes },
+];
+const config = {
+  imageModels: [{ id: 'img', label: 'Image' }],
+  videoCapabilities: { models: [{ id: 'vid', label: 'Video', modes: videoModes }] },
+};
+const assets = [{ id: 'room-photo', name: '卧室', kind: 'image' }];
+const tools = () => createAgentTools({ catalog, findAsset: (_user, id) => assets.find(item => item.id === id) });
+
+const plan = (overrides = {}) => ({
+  title: '苗疆蛊事 第一章',
+  video: { modelId: 'vid', aspect: '9:16', quality: '720p' },
+  image: { modelId: 'img', quality: 'medium' },
+  references: [
+    { key: 'grandma', name: '外婆', kind: 'character', prompt: '八十六岁苗族老人，白发，靛蓝土布衣' },
+    { key: 'room', name: '卧室', kind: 'location', assetId: 'room-photo' },
+  ],
+  segments: [
+    { key: 'ep1-s1', episode: '第1集', title: '初见外婆', duration: 10, prompt: '0-5秒：@外婆 卧床，@卧室 昏暗。5-10秒：近景，她睁眼。', references: ['grandma', 'room'] },
+    { key: 'ep2-s1', episode: '第2集', title: '开坛', duration: 15, prompt: '0-15秒：@外婆 揭开油纸。', references: ['grandma'] },
+  ],
+  ...overrides,
+});
+
+test('storyboard_write saves a validated plan and revisions require the current version', async () => {
+  const agent = tools();
+  const session = { userId: 'u', scope, doc: { documents: [], generations: [] } };
+  const saved = await agent.execute('storyboard_write', plan(), session, { id: 'call-1' });
+  assert.deepEqual({ ...saved, note: undefined }, { id: 'sb-call-1', revision: 1, segmentCount: 2, referenceCount: 2, totalSeconds: 25, note: undefined });
+  assert.equal((await agent.execute('storyboard_write', plan(), session, { id: 'call-1' })).revision, 1);
+  await assert.rejects(agent.execute('storyboard_write', { ...plan(), id: saved.id, expectedRevision: 9 }, session, { id: 'call-2' }), /已更新/);
+  const next = await agent.execute('storyboard_write', { ...plan({ title: '改' }), id: saved.id, expectedRevision: 1 }, session, { id: 'call-3' });
+  assert.equal(next.revision, 2);
+  assert.equal((await agent.execute('storyboard_read', { id: saved.id }, session)).title, '改');
+  assert.equal((await agent.execute('workspace_read', {}, session)).storyboards[0].segmentCount, 2);
+});
+
+test('storyboard_write appends later episodes without repeating earlier content', async () => {
+  const agent = tools();
+  const session = { userId: 'u', scope, doc: { documents: [], generations: [] } };
+  const first = plan({ segments: plan().segments.slice(0, 1) });
+  const saved = await agent.execute('storyboard_write', first, session, { id: 'call-1' });
+  await assert.rejects(agent.execute('storyboard_write', { ...plan({ segments: plan().segments.slice(0, 1) }), id: saved.id, expectedRevision: 1, append: true }, session, { id: 'dup' }), /标识重复/);
+  const next = await agent.execute('storyboard_write', { title: first.title, video: first.video, id: saved.id, expectedRevision: 1, append: true,
+    references: [{ key: 'luzuo', name: '陆左', kind: 'character', prompt: '二十一岁青年' }],
+    segments: [{ key: 'ep2-s1', episode: '第2集', title: '开坛', duration: 15, prompt: '@外婆 指向 @陆左。', references: ['grandma', 'luzuo'] }] }, session, { id: 'call-2' });
+  assert.deepEqual([next.revision, next.segmentCount, next.referenceCount], [2, 2, 3]);
+});
+
+test('storyboard_write reports every unusable setting in one error', async () => {
+  const session = { userId: 'u', scope, doc: { documents: [], generations: [] } };
+  const bad = plan({
+    video: { modelId: 'vid', aspect: '9:16', quality: '720p' },
+    segments: [
+      { key: 'a', episode: '第1集', title: '一', duration: 12, prompt: '外婆躺着', references: ['grandma'] },
+      { key: 'a', episode: '第1集', title: '二', duration: 5, prompt: '@阿婆', references: ['missing'] },
+    ],
+  });
+  await assert.rejects(tools().execute('storyboard_write', bad, session, { id: 'x' }), error => {
+    assert.match(error.message, /12 秒不受支持；可选 5、10、15 秒/);
+    assert.match(error.message, /需写 @外婆/);
+    assert.match(error.message, /标识重复/);
+    assert.match(error.message, /不存在的参考 missing/);
+    return true;
+  });
+  await assert.rejects(tools().execute('storyboard_write', plan({ video: { modelId: 'vid', aspect: '1:1', quality: '720p' } }), session, { id: 'y' }), /不支持 1:1/);
+  assert.equal(session.doc.storyboards?.length || 0, 0);
+});
+
+test('storyboard plan becomes editable canvas cards grouped by episode', async () => {
+  const session = { userId: 'u', scope, doc: { documents: [], generations: [] } };
+  await tools().execute('storyboard_write', plan(), session, { id: 'call-1' });
+  const storyboard = { ...session.doc.storyboards[0], references: session.doc.storyboards[0].references.map(item => item.assetId ? { ...item, url: '/room.png' } : item) };
+  const workspace = normalizeDirectorWorkspace({ positions: { other: { x: 100, y: 50, width: 200, height: 200 } } });
+  const result = mergeStoryboardDrafts(workspace, [storyboard], { config });
+  const segment = workspace.generationDrafts.find(item => item.id === storyboardDraftId('sb-call-1', 'segment', 'ep1-s1'));
+  const reference = workspace.generationDrafts.find(item => item.id === storyboardDraftId('sb-call-1', 'reference', 'grandma'));
+  assert.equal(result.added.length, 3, 'the existing room photo is attached instead of becoming a card');
+  assert.equal(segment.title, '第1集 · 初见外婆');
+  assert.equal(segment.duration, 10);
+  assert.equal(segment.mode, 'REFERENCE');
+  assert.deepEqual(segment.attachments.map(item => item.id), ['room-photo']);
+  assert.equal(reference.type, 'image');
+  assert.equal(reference.title, '角色 · 外婆');
+  const rows = [reference, segment, workspace.generationDrafts.at(-1)].map(item => workspace.positions[item.id].y);
+  assert.ok(rows[0] > 250 && rows[0] < rows[1] && rows[1] < rows[2], 'references, episode 1 and episode 2 sit on separate rows below existing content');
+
+  // The plan survives the canvas save round trip and stays directly generatable.
+  const restored = normalizeDirectorWorkspace(JSON.parse(JSON.stringify(workspace)));
+  assert.equal(restored.generationDrafts.find(item => item.id === segment.id).source.key, 'ep1-s1');
+  assert.equal(canvasGenerationPayload(restored.generationDrafts.find(item => item.id === segment.id), config).prompt, '0-5秒：@外婆 卧床，Image1 昏暗。5-10秒：近景，她睁眼。');
+});
+
+test('finished reference images attach automatically and revisions keep user edits', () => {
+  const storyboard = { id: 'sb-1', revision: 1, title: 't', video: { modelId: 'vid', aspect: '9:16', quality: '720p' }, references: [{ key: 'grandma', name: '外婆', kind: 'character', prompt: '老人' }],
+    segments: [{ key: 's1', episode: '第1集', title: '一', duration: 5, prompt: '@外婆 睁眼', references: ['grandma'] }, { key: 's2', episode: '第1集', title: '二', duration: 5, prompt: '@外婆 起身', references: ['grandma'] }] };
+  const workspace = normalizeDirectorWorkspace({});
+  mergeStoryboardDrafts(workspace, [storyboard], { config });
+  const ref = workspace.generationDrafts.find(item => item.source.role === 'reference');
+  const [first, second] = workspace.generationDrafts.filter(item => item.source.role === 'segment');
+  assert.equal(first.mode, 'TEXT');
+  ref.taskId = 'task-ref';
+  const tasks = { 'task-ref': { status: 'completed', assetId: 'asset-grandma' } };
+  const lookups = { config, task: id => tasks[id], media: () => ({ url: '/grandma.png' }) };
+  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], lookups).changed, true);
+  assert.deepEqual(first.attachments, [{ id: 'asset-grandma', name: '外婆', kind: 'image', url: '/grandma.png' }]);
+  assert.equal(first.mode, 'REFERENCE');
+
+  // A user who removes the reference is not overridden on the next refresh.
+  first.attachments = [];
+  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], lookups).changed, false);
+  assert.deepEqual(first.attachments, []);
+
+  first.prompt = '用户改过的描述';
+  const revised = { ...storyboard, revision: 2, segments: storyboard.segments.map(item => ({ ...item, prompt: `${item.prompt}，新版`, duration: 10 })) };
+  mergeStoryboardDrafts(workspace, [revised], lookups);
+  assert.equal(first.prompt, '用户改过的描述');
+  assert.equal(second.prompt, '@外婆 起身，新版');
+  assert.equal(second.duration, 10);
+  assert.equal(workspace.generationDrafts.length, 3);
+});
+
+test('deleted storyboard cards are not recreated', () => {
+  const storyboard = { id: 'sb-1', revision: 1, title: 't', video: { modelId: 'vid', aspect: '9:16', quality: '720p' }, references: [], segments: [{ key: 's1', episode: '第1集', title: '一', duration: 5, prompt: '画面' }] };
+  const workspace = normalizeDirectorWorkspace({});
+  mergeStoryboardDrafts(workspace, [storyboard], { config });
+  workspace.hiddenIds = [workspace.generationDrafts[0].id];
+  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], { config }).changed, false);
+  assert.equal(workspace.generationDrafts.length, 1);
+});
+
+test('adaptation requests are routed to the direct storyboard method', async () => {
+  const instructions = await readFile(new URL('../agent-skills/agent.md', import.meta.url), 'utf8');
+  const skill = await readFile(new URL('../agent-skills/short-drama/SKILL.md', import.meta.url), 'utf8');
+  const method = await readFile(new URL('../agent-skills/short-drama/references/novel-to-storyboard.md', import.meta.url), 'utf8');
+  assert.match(instructions, /## 小说、剧本改编为短剧分镜/);
+  assert.match(instructions, /storyboard_write/);
+  assert.match(skill, /references\/novel-to-storyboard\.md/);
+  assert.match(method, /storyboard_write/);
+  assert.match(method, /0-4秒/);
+});

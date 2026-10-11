@@ -1,6 +1,6 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=135';
-import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=13';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=136';
+import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=6';
 import { defaultTitleFromMessage } from './default-title.js?v=1';

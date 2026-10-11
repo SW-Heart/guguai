@@ -44,13 +44,21 @@ export function persistCanvasSnapshot(workspace, snapshot, visibleIds = []) {
  }
  return workspace;
 }
+// Cards placed by the agent remember which storyboard entry they came from, so
+// later revisions update only cards the user has not edited or generated.
+function normalizeDraftSource(source){
+  const strings=(value,max)=>(Array.isArray(value)?value:[]).filter(item=>typeof item==='string').map(item=>item.slice(0,200)).slice(0,max);
+  return {storyboardId:String(source.storyboardId||'').slice(0,80),key:String(source.key||'').slice(0,24),revision:Number.isFinite(Number(source.revision))?Number(source.revision):0,
+    role:source.role==='reference'?'reference':'segment',name:String(source.name||'').slice(0,40),prompt:String(source.prompt||'').slice(0,10000),
+    references:strings(source.references,30),autoAttached:strings(source.autoAttached,30)};
+}
 // One action contract for manual controls and the director. No generated code is executed.
 export const directorActionTypes = ['design_story','add_resource','update_resource','add_shot','update_shot','generate_resource','generate_video','read_tail','check_continuity','assemble'];
 export function normalizeDirectorWorkspace(value = {}) {
   const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return { version:1, delegated:Boolean(object.delegated), autonomy:['assist','director','auto'].includes(object.autonomy)?object.autonomy:'director',
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
-    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,100).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
+    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,200).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
       id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),
       promptSegments:(Array.isArray(item.promptSegments)?item.promptSegments:[]).slice(0,1000).flatMap(segment=>typeof segment==='string'?[segment.slice(0,10000)]:segment&&typeof segment.id==='string'&&typeof segment.label==='string'?[{id:segment.id.slice(0,200),label:segment.label.slice(0,200)}]:[]),
       aspect:String(item.aspect||'').slice(0,20),quality:String(item.quality||'').slice(0,20),mode:String(item.mode||'').slice(0,20),
@@ -58,6 +66,8 @@ export function normalizeDirectorWorkspace(value = {}) {
       attachments:(Array.isArray(item.attachments)?item.attachments:[]).slice(0,50).filter(file=>file&&typeof file.id==='string').map(file=>({id:String(file.id).slice(0,200),kind:String(file.kind||'').slice(0,20),name:String(file.name||'').slice(0,200),url:String(file.url||'').slice(0,2000)})),
       midjourney:item.midjourney&&typeof item.midjourney==='object'?Object.fromEntries(Object.entries(item.midjourney).filter(([key])=>['version','stylize','chaos','weird','seed','negativePrompt','imageWeight','raw','tile','draft'].includes(key))):{},
       taskId:String(item.taskId||'').slice(0,200),status:String(item.status||'').slice(0,30),
+      ...(typeof item.title==='string'&&item.title?{title:item.title.slice(0,160)}:{}),
+      ...(item.source&&typeof item.source==='object'?{source:normalizeDraftSource(item.source)}:{}),
     })),
     hiddenIds:[...new Set((Array.isArray(object.hiddenIds)?object.hiddenIds:[]).map(String).filter(id=>id.length>0&&id.length<200))].slice(0,500),
     positions:Object.fromEntries(Object.entries(object.positions||{}).filter(([id,p])=>id.length<200&&Number.isFinite(p?.x)&&Number.isFinite(p?.y)).slice(0,500).map(([id,p])=>[id,{x:Math.max(-100000,Math.min(100000,p.x)),y:Math.max(-100000,Math.min(100000,p.y)),...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(k=>Number.isFinite(p[k])).map(k=>[k,Math.max(-100000,Math.min(100000,p[k]))])),...(p.manualSize===true?{manualSize:true}:{})}])),
