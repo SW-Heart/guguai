@@ -13,6 +13,7 @@ test('admin offers empty 1080p groups for unified Seedance routes', () => {
     $: selector => selector === '#routePanel' ? root : null,
     esc: value => String(value),
     routeModelLabels: { 'seedance-2.0':'Seedance 2.0', 'seedance-2.5':'Seedance 2.5' },
+    routeModelQualities: { 'seedance-2.0-fast':['720p'], 'minimax-h3-15s':['480p', '768p', '1088p', '1440p'] },
   });
   for (const modelId of ['seedance-2.0', 'seedance-2.0-mini', 'seedance-2.5', 'seedance-2.0-value', 'seedance-2.5-value']) {
     assert.ok(root.innerHTML.includes(`data-add-route="${modelId}:1080p"`));
@@ -20,6 +21,8 @@ test('admin offers empty 1080p groups for unified Seedance routes', () => {
   }
   assert.ok(!root.innerHTML.includes('seedance-2.0-text'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-img'));
+  for (const quality of ['480p', '768p', '1088p', '1440p']) assert.ok(root.innerHTML.includes(`data-add-route="minimax-h3-15s:${quality}"`));
+  assert.ok(!root.innerHTML.includes('data-add-route="minimax-h3-15s:720p"'));
 });
 
 test('historical route data renders only supported Seedance models and deduplicates rows', () => {
@@ -36,10 +39,11 @@ test('historical route data renders only supported Seedance models and deduplica
   runInNewContext(`${source.slice(start, end)}\nrenderRoutePanel({items, policies:[{logicalModelId:'seedance-2.0-img',quality:'720p',forcedRouteId:'route-0'}]});`, {
     items, $: selector => selector === '#routePanel' ? root : null,
     esc: String, status:String, routeModelLabels: {'seedance-2.0':'Seedance 2.0','seedance-2.5':'Seedance 2.5','seedance-2.0-fast':'Seedance 2.0 Fast'},
+    routeModelQualities: {'seedance-2.0-fast':['720p'], 'minimax-h3-15s':['480p', '768p', '1088p', '1440p']},
     routeRowMarkup: (route, selected) => { rowIds.push([route.id, selected]); return ''; },
   });
-  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value']);
-  assert.ok(root.innerHTML.includes('全部 6'));
+  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s']);
+  assert.ok(root.innerHTML.includes('全部 7'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-img'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-text'));
   assert.deepEqual(rowIds.map(([id]) => id), ['route-2', 'route-3', 'route-4']);
@@ -58,6 +62,6 @@ test('Seedance route forms no longer require a creation type', () => {
 
 test('admin HTML loads the updated model configuration script cache key', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=37\b/);
+  assert.match(html, /\/guguadmin\.js\?v=38\b/);
   assert.doesNotMatch(html, /\/guguadmin\.js\?v=26\b/);
 });

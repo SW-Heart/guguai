@@ -35,7 +35,9 @@ import { createApiClient } from './api-client.js?v=4';
     'seedance-2.0-value': 'Seedance 2.0 特价',
     'seedance-2.5-value': 'Seedance 2.5 特价',
     'seedance-2.5': 'Seedance 2.5',
+    'minimax-h3-15s': 'Minimax H3',
   };
+  const routeModelQualities = { 'seedance-2.0-fast': ['720p'], 'minimax-h3-15s': ['480p', '768p', '1088p', '1440p'] };
   const logLabels = { generations: '生成任务', credits: '积分流水', llm: 'LLM 用量', audit: '管理员审计', system: '系统异常', client: '客户端日志' };
   // 每类日志后端实际支持的筛选项；不支持的字段不展示，避免“填了却不生效”。
   const logFilterSpec = {
@@ -47,7 +49,7 @@ import { createApiClient } from './api-client.js?v=4';
     client: { userLabel: '用户 ID' },
   };
   const taskFilterCategories = new Set(Object.entries(logFilterSpec).filter(([, spec]) => spec.taskId).map(([key]) => key));
-  const adapterLabels = { 'wj-video': 'WJ 视频协议', 'diw-video': 'DIW 视频协议', 'cntcn-video': 'CNTCN 视频协议' };
+  const adapterLabels = { 'wj-video': 'WJ 视频协议', 'diw-video': 'DIW 视频协议', 'cntcn-video': 'CNTCN 视频协议', 'autodl-comfyui': 'AutoDL 工作流协议' };
   const kindLabels = { image: '图片', video: '视频', text: '文本', llm: '文本', audio: '音频' };
 
   const ICONS = {
@@ -1624,7 +1626,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 这样空分组（例如尚未配置的 1080p 线路池）也能稳定渲染“新增线路”和选路策略。
   function renderRoutePanel(data) {
     const root = $('#routePanel'); if (!root) return;
-    const families = ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value'];
+    const families = ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
     const normalizeModelId = id => /^seedance-?2\.0(?:[-_](?:text|img))$/.test(id) ? 'seedance-2.0' : id;
     const uniqueRoutes = new Map();
     const replacements = new Map();
@@ -1636,14 +1638,14 @@ import { createApiClient } from './api-client.js?v=4';
       else uniqueRoutes.set(key, { ...route, logicalModelId });
     }
     const items = [...uniqueRoutes.values()];
-    const groups = families.flatMap(modelId => (modelId === 'seedance-2.0-fast' ? ['720p'] : ['480p', '720p', '1080p']).map(quality => `${modelId}:${quality}`));
+    const groups = families.flatMap(modelId => (routeModelQualities[modelId] || ['480p', '720p', '1080p']).map(quality => `${modelId}:${quality}`));
     const requestedFamily = normalizeModelId(root.dataset?.routeFilter || '');
     const activeFamily = families.includes(requestedFamily) ? requestedFamily : '';
     if (root.dataset) root.dataset.routeFilter = activeFamily;
     const availableTotal = items.filter(item => item.adminEnabled && item.catalogStatus === 'available').length;
     const issueTotal = items.filter(item => item.autoDisabled || ['missing', 'credential_error', 'probe_error'].includes(item.catalogStatus)).length;
     const chips = [['', `全部 ${families.length}`], ...families.map(modelId => [modelId, routeModelLabels[modelId] || modelId])];
-    root.innerHTML = `<div class="panel-head"><div><h3>Seedance 调用线路</h3><p>共 ${items.length} 条线路 · ${availableTotal} 条可用${issueTotal ? ` · <span class="danger-text">${issueTotal} 条需要处理</span>` : ''} · 每 10 分钟自动检查一次；自动模式按优先级选择可用线路。</p></div><button class="btn" id="checkAllRoutes" type="button">检查全部线路</button></div>
+    root.innerHTML = `<div class="panel-head"><div><h3>视频模型调用线路</h3><p>共 ${items.length} 条线路 · ${availableTotal} 条可用${issueTotal ? ` · <span class="danger-text">${issueTotal} 条需要处理</span>` : ''} · 每 10 分钟自动检查一次；自动模式按优先级选择可用线路。</p></div><button class="btn" id="checkAllRoutes" type="button">检查全部线路</button></div>
       <div class="route-toolbar"><div class="chips" role="group" aria-label="按模型筛选线路">${chips.map(([value, label]) => `<button class="chip" type="button" data-route-filter="${esc(value)}" aria-pressed="${String(value === activeFamily)}">${esc(label)}</button>`).join('')}</div></div>
       <div class="route-groups">${groups.map(key => {
       const [modelId, quality] = key.split(':');
@@ -1655,7 +1657,7 @@ import { createApiClient } from './api-client.js?v=4';
       const price = (data.prices || []).find(item => item.modelId === publicPriceModelId && item.quality === quality);
       const label = routeModelLabels[modelId] || modelId;
       const usable = routes.filter(route => route.adminEnabled && route.catalogStatus === 'available').length;
-      const hint = modelId === 'seedance-2.0-fast' ? '支持 9 图 / 3 视频 / 3 音频' : '';
+      const hint = modelId === 'seedance-2.0-fast' ? '支持 9 图 / 3 视频 / 3 音频' : modelId === 'minimax-h3-15s' ? '支持 9 图 / 3 音频，仅横屏和竖屏' : '';
       const priceText = price?.available ? `<span class="is-price">用户价 ¥${Number(price.yuan).toFixed(2)} / 秒 · ${money(price.credits)} 积分 / 秒</span>` : '<span class="is-unavailable">暂无可用线路</span>';
       const isSelected = route => forcedRouteId === route.id || price?.selectedRouteId === route.id;
       return `<section class="route-group${activeFamily && activeFamily !== modelId ? ' route-group-hidden' : ''}" data-route-group="${esc(modelId)}">
@@ -1713,9 +1715,9 @@ import { createApiClient } from './api-client.js?v=4';
     const selectedModelId = route?.logicalModelId || logicalModelId;
     return [
       { name: 'credentialId', label: '渠道 / API Key', type: 'select', value: selectedChannel, options: channelDialogOptions(channels), required: true, help: '未配置 Key 的渠道保存后会显示“密钥异常”。', span: 'full' },
-      { name: 'upstreamModelId', label: '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: '例如 seedance2.0-select-full-720p', required: true, help: '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
+      { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
       { name: 'priority', label: '优先级', type: 'number', value: String(route?.priority || nextPriority), min: 1, max: 1000, step: 1, inputmode: 'numeric', required: true, help: '数字越小越优先；与已有线路相同时，原线路依次后移。' },
-      { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15]).join(', '), placeholder: '例如 5, 10, 15', required: true, help: '填写整数秒，多个用逗号分隔。' },
+      { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || (selectedModelId === 'minimax-h3-15s' ? Array.from({ length: 15 }, (_, index) => index + 1) : [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15])).join(', '), placeholder: '例如 5, 10, 15', required: true, help: '填写整数秒，多个用逗号分隔。' },
       { name: 'costYuan', label: '成本（元 / 秒）', type: 'number', value: route ? Number(Number(route.costYuan).toFixed(8)) : '', placeholder: '例如 2.50', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true },
       { name: 'salePriceYuan', label: '用户价格（元 / 秒）', type: 'number', value: route ? Number(Number(route.salePriceYuan).toFixed(8)) : '', placeholder: '例如 3.00', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true, help: '1 元 = 10 积分。' },
       { name: 'adminEnabled', type: 'checkbox', label: '启用线路', checked: route ? route.adminEnabled : true, help: '关闭后，自动和固定选路都会跳过该线路。' },

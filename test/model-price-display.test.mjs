@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { closeDatabase, openDatabase, sql } from '../lib/db.mjs';
 import { ensureDefaultModelRoutes } from '../lib/model-routes.mjs';
 import { publicVideoCapabilities, validateVideoRequest } from '../lib/video-capabilities.mjs';
-import { modelPriceFields, pricingSnapshot } from '../lib/pricing.mjs';
-import { creditsToMicro } from '../lib/billing.mjs';
+import { modelPriceFields } from '../lib/pricing.mjs';
+import { modelRouteCharge, selectModelRoute } from '../lib/model-routes.mjs';
 import vm from 'node:vm';
 
 process.env.DUOMI_API_KEY = 'test-duomi';
@@ -13,6 +13,7 @@ process.env.DIW_KEY = 'test-diw-key';
 process.env.WJ_TJWD_KEY = 'test-wj-key';
 process.env.WJ_SD_PY_900_KEY = 'test-wj-py-key';
 process.env.CNTCN_KEY = 'test-cntcn-key';
+process.env.AUTODL_COMFYUI_KEY = 'test-autodl-key';
 const { __test } = await import('../server.mjs');
 openDatabase({ file: ':memory:' });
 ensureDefaultModelRoutes();
@@ -21,24 +22,26 @@ after(() => closeDatabase({ checkpoint:false }));
 
 const app = await (await import('node:fs/promises')).readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 
-test('Minimax H3 catalog, admin defaults and billing snapshots use resolution prices', () => {
+test('Minimax H3 catalog and billing use the seeded AutoDL route prices', () => {
   const pricing = { imagePerRequest:1, videoPerSecond:1, version:1 };
   const catalog = __test.publicPlatformPrices(pricing, publicVideoCapabilities());
   const fields = modelPriceFields(pricing);
+  assert.equal(fields.some(item => item.modelId === 'minimax-h3-15s'), false, 'Minimax 价格改由调用线路管理');
   for (const [quality, credits, yuan] of [['480p', 0.5, 0.05], ['768p', 0.6, 0.06]]) {
     const item = catalog.find(item => item.modelId === 'minimax-h3-15s' && item.quality === quality);
     assert.equal(item.credits, credits);
     assert.ok(Math.abs(item.yuan - yuan) < 1e-9);
     assert.equal(item.unit, 'second');
-    assert.equal(fields.find(item => item.key === `minimax-h3-15s:${quality}`).amount, credits);
     const request = validateVideoRequest({ modelId:'minimax-h3-15s', quality, duration:5 });
-    const snapshot = pricingSnapshot({ ...pricing, videoPerSecondMicro:creditsToMicro(request.pricing.amount) }, 'video', request.duration);
-    assert.equal(snapshot.totalMicro, quality === '480p' ? 2_500_000 : 3_000_000);
+    const route = selectModelRoute({ logicalModelId:request.modelId, quality, duration:request.duration, aspectRatio:request.aspectRatio, availableOnly:true });
+    assert.equal(modelRouteCharge(route, request.duration).totalMicro, quality === '480p' ? 2_500_000 : 3_000_000);
   }
+  assert.equal(catalog.some(item => item.modelId === 'minimax-h3-15s' && ['1088p', '1440p'].includes(item.quality)), false);
 });
 
-test('Minimax H3 fallback estimates follow the selected resolution', () => {
-  const context = vm.createContext({ state:{ config:{videoCapabilities:publicVideoCapabilities()} } });
+test('Minimax H3 estimates follow the route price of the selected resolution', () => {
+  const modelPrices = __test.publicPlatformPrices({ imagePerRequest:1, videoPerSecond:1, version:1 }, publicVideoCapabilities());
+  const context = vm.createContext({ state:{ config:{videoCapabilities:publicVideoCapabilities(), modelPrices} } });
   vm.runInContext(app.slice(app.indexOf('const fallbackVideoModels ='), app.indexOf('const modelIconUrls =')), context);
   vm.runInContext(app.slice(app.indexOf('function videoPricingFor('), app.indexOf('let videoQuoteTimer =')), context);
   for (const generationType of ['TEXT', 'REFERENCE']) {
@@ -51,8 +54,6 @@ test('Minimax H3 fallback estimates follow the selected resolution', () => {
   const parameters = context.videoModelParameters('minimax-h3-15s', 'TEXT');
   context.state.config.modelPrices = [{ modelId:'minimax-h3-15s', quality:'768p', credits:0.8, unit:'second' }];
   assert.equal(context.videoPricingFor('minimax-h3-15s', parameters, '768p').amount * 5, 4);
-  context.state.config.modelPrices[0].credits = 0.6;
-  assert.equal(context.videoPricingFor('minimax-h3-15s', parameters, '768p').amount * 5, 3);
 });
 
 test('Minimax price changes refresh both versioned frontend entries', async () => {
@@ -97,7 +98,7 @@ test('Seedance price catalog displays normalized per-second amounts', () => {
   assert.equal(seedance20Fast.totalYuan, 1.8);
   assert.equal(seedance20Fast.totalCredits, 18);
   assert.ok(Math.abs(seedance20Fast.yuan - 0.12) < 1e-9);
-  assert.deepEqual(catalog.slice(0, 4).map(item => item.label), ['GuGu 2.0', 'GuGu 1.5', 'Seedance 2.0', 'Seedance 2.0']);
+  assert.deepEqual(catalog.slice(0, 4).map(item => item.label), ['Minimax H3', 'Minimax H3', 'GuGu 1.5', 'Seedance 2.0']);
   assert.ok(catalog.some(item => item.label === 'Seedance 2.0 Fast'));
   assert.equal(Object.hasOwn(seedance20Fast, 'selectedRouteId'), false);
   assert.equal(Object.hasOwn(seedance20Fast, 'selectedRouteName'), false);

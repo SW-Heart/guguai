@@ -12,9 +12,20 @@ export function createRoutedProvider({
   upstreamRequestErrorDetail,
   isDefinitiveSubmitRejection,
   errorMessage,
+  createAutodlRouteProvider,
 } = {}) {
   for (const [name, dependency] of Object.entries({ fetchJson, sleep, routeCredential, videoPollRemainingMs, videoPollRequestSignal, videoPollTimeoutError, videoPollStartedAt, videoMaxPollDurationMs, notifyVideoProgress, upstreamRequestErrorDetail, isDefinitiveSubmitRejection, errorMessage })) {
     if (typeof dependency !== 'function' && name !== 'videoMaxPollDurationMs') throw new TypeError(`动态线路适配器缺少 ${name} 依赖`);
+  }
+
+  // AutoDL routes speak the ComfyUI workflow protocol: the route's upstream
+  // model ID is the workflow ID, and submit/poll are delegated per task.
+  function autodlRouteProvider(task) {
+    if (task.routeAdapter !== 'autodl-comfyui') return null;
+    if (typeof createAutodlRouteProvider !== 'function') throw Object.assign(new Error('AutoDL 线路尚未接入'), { upstreamTerminal: true });
+    const apiKey = routeCredential(task.routeCredentialId);
+    if (!apiKey) throw Object.assign(new Error('当前调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
+    return createAutodlRouteProvider({ baseUrl: String(task.routeBaseUrl || '').replace(/\/$/, ''), workflowId: task.model, apiKey, providerName: task.provider || 'autodl' });
   }
 
   function videoUrl(value) {
@@ -53,6 +64,8 @@ export function createRoutedProvider({
   }
 
   async function pollVideo(task, hooks = {}, { immediate = false, pollOnce = false } = {}) {
+    const autodl = autodlRouteProvider(task);
+    if (autodl) return autodl.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task), pollOnce });
     const key = routeCredential(task.routeCredentialId);
     if (!key) throw Object.assign(new Error('任务原调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
     const base = String(task.routeBaseUrl || '').replace(/\/$/, '');
@@ -98,6 +111,8 @@ export function createRoutedProvider({
   }
 
   async function createVideo(task, refs, hooks = {}) {
+    const autodl = autodlRouteProvider(task);
+    if (autodl) return autodl.createVideo(task, refs, hooks);
     const key = routeCredential(task.routeCredentialId);
     if (!key) throw Object.assign(new Error('当前调用线路的 API Key 尚未配置'), { upstreamTerminal: true });
     const base = String(task.routeBaseUrl || '').replace(/\/$/, '');

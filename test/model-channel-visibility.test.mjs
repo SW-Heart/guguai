@@ -38,8 +38,28 @@ test('all Seedance models disappear without a healthy channel and return after r
   }
 });
 
+test('Minimax H3 visibility follows its AutoDL routes like Seedance', () => {
+  const key = process.env.AUTODL_COMFYUI_KEY;
+  resetForTests();
+  openDatabase({file:':memory:'});
+  delete process.env.AUTODL_COMFYUI_KEY;
+  try {
+    ensureDefaultModelRoutes();
+    sql("UPDATE model_routes SET catalog_status='available' WHERE logical_model_id='minimax-h3-15s'").run();
+    const visible = () => publicVideoCapabilitiesWithControls().models.some(model => model.id === 'minimax-h3-15s');
+    assert.equal(visible(), false);
+    process.env.AUTODL_COMFYUI_KEY = 'visibility-test-key';
+    assert.equal(visible(), true);
+    sql("UPDATE model_routes SET admin_enabled=0 WHERE logical_model_id='minimax-h3-15s'").run();
+    assert.equal(visible(), false);
+  } finally {
+    closeDatabase({checkpoint:false}); resetForTests();
+    if (key === undefined) delete process.env.AUTODL_COMFYUI_KEY; else process.env.AUTODL_COMFYUI_KEY = key;
+  }
+});
+
 test('fixed video and image models require their own provider credential', () => {
-  for (const [modelId, key] of [['grok','TTAPI_API_KEY'],['minimax-h3-15s','AUTODL_COMFYUI_KEY'],['oai','OAIAPI_GEMINI_KEY'],['veo-31','OAIAPI_VEO_KEY'],['veo','DUOMI_API_KEY']]) {
+  for (const [modelId, key] of [['grok','TTAPI_API_KEY'],['oai','OAIAPI_GEMINI_KEY'],['veo-31','OAIAPI_VEO_KEY'],['veo','DUOMI_API_KEY']]) {
     assert.equal(videoModelProviderConfigured(modelId, {}), false);
     assert.equal(videoModelProviderConfigured(modelId, {[key]:'   '}), false);
     assert.equal(videoModelProviderConfigured(modelId, {[key]:'configured'}), true);

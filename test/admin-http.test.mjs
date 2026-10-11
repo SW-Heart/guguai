@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=37/);
+  assert.match(adminHtml, /guguadmin\.js\?v=38/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -137,7 +137,7 @@ test('admin HTTP permissions and core workflows', async t => {
   const routes = await admin.call('/api/admin/model-routes');
   assert.equal(routes.response.status, 200);
   assert.ok(routes.data.channels.some(item => item.id === 'diw-main'));
-  const deletingRoute = routes.data.items[0];
+  const deletingRoute = routes.data.items.find(item => item.logicalModelId.startsWith('seedance'));
   const deletePath = `/api/admin/model-routes/${deletingRoute.id}`;
   assert.equal((await admin.call(deletePath, { method: 'DELETE', body: { expectedVersion: deletingRoute.version } })).response.status, 403);
   assert.equal((await admin.call(deletePath, { method: 'DELETE', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { expectedVersion: deletingRoute.version + 1 } })).response.status, 409);
@@ -263,7 +263,7 @@ test('admin HTTP permissions and core workflows', async t => {
   });
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);
-  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'llm:cache-read':0, 'llm:cache-creation':2.5, 'minimax-h3-15s:768p':0.8, 'minimax-h3-15s:480p':0.5 }, expectedVersion: 1 } });
+  const pricing = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', modelPrices:{ 'grok:720p':2.75, 'gpt-image-2.5:2k':0.125, 'llm:input':1.2, 'llm:cache-read':0, 'llm:cache-creation':2.5 }, expectedVersion: 1 } });
   assert.equal(pricing.response.status, 201);
   assert.equal(pricing.data.pricing.videoPerSecond, 0.8);
   const priceFields = await admin.call('/api/admin/pricing');
@@ -297,37 +297,44 @@ test('admin HTTP permissions and core workflows', async t => {
   const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote.response.status, 200);
   assert.equal(quote.data.credits, 27.5);
-  await t.test('saved MiniMax prices override defaults until a new version updates config, catalog and quotes', async () => {
+  await t.test('MiniMax prices, workflows and resolutions are managed through AutoDL routes', async () => {
     const modelId = 'minimax-h3-15s';
-    const oldConfig = await userClient.call('/api/config');
-    assert.equal(oldConfig.data.modelPrices.find(item => item.modelId === modelId && item.quality === '768p').credits, 0.8);
-    const oldQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'768p', duration:5 } });
-    assert.equal(oldQuote.response.status, 200);
-    assert.equal(oldQuote.data.credits, 4);
-    const updated = await admin.call('/api/admin/pricing', {
-      method:'POST', headers:{ Origin:base, 'X-CSRF-Token':csrf },
-      body:{ imagePerRequest:pricing.data.pricing.imagePerRequest, videoPerSecond:pricing.data.pricing.videoPerSecond,
-        expectedVersion:pricing.data.pricing.version, modelPrices:{ [`${modelId}:480p`]:0.5, [`${modelId}:768p`]:0.6 } },
-    });
-    assert.equal(updated.response.status, 201);
-    assert.equal(updated.data.pricing.modelPrices['grok:720p'], 2.75);
-    assert.equal(updated.data.pricing.imagePerRequest, 1.5);
-    assert.equal(updated.data.pricing.videoPerSecond, 0.8);
+    const headers = { Origin:base, 'X-CSRF-Token':csrf };
+    assert.equal(priceFields.data.fields.some(item => item.modelId === modelId), false);
+    const routeData = await admin.call('/api/admin/model-routes');
+    assert.ok(routeData.data.channels.some(item => item.id === 'autodl-main' && item.adapterType === 'autodl-comfyui' && item.configured));
+    const seeded = routeData.data.items.find(item => item.id === 'mmh3-768-autodl');
+    assert.equal(seeded.logicalModelId, modelId);
+    assert.equal(seeded.salePriceCredits, 0.6);
+    const checked = await admin.call('/api/admin/model-routes/check', { method:'POST', headers, body:{ routeIds:['mmh3-768-autodl', 'mmh3-480-autodl'] } });
+    assert.deepEqual(checked.data.items.map(item => item.catalogStatus), ['available', 'available']);
+    const defaultQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'768p', duration:5, aspectRatio:'16:9' } });
+    assert.equal(defaultQuote.data.credits, 3);
+
+    const repriced = await admin.call('/api/admin/model-routes/mmh3-768-autodl', { method:'PATCH', headers, body:{ salePriceYuan:0.08, upstreamModelId:'minimax_h3_new_workflow', expectedVersion:seeded.version } });
+    assert.equal(repriced.response.status, 200);
+    assert.equal(repriced.data.route.upstreamModelId, 'minimax_h3_new_workflow');
+    markRouteAvailable('mmh3-768-autodl');
     const config = await userClient.call('/api/config');
     const catalog = await userClient.call('/api/public/model-prices');
-    assert.equal(config.data.pricing.version, updated.data.pricing.version);
-    assert.equal(catalog.data.pricingVersion, updated.data.pricing.version);
-    for (const [quality, amount] of [['480p', 0.5], ['768p', 0.6]]) {
-      assert.equal(config.data.modelPrices.find(item => item.modelId === modelId && item.quality === quality).credits, amount);
-      assert.equal(catalog.data.items.find(item => item.modelId === modelId && item.quality === quality).credits, amount);
-      const model = config.data.videoCapabilities.models.find(item => item.id === modelId);
-      for (const mode of model.modes) {
-        assert.equal(mode.pricingByQuality[quality].amount, amount);
-        const result = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:mode.generationType, quality, duration:5 } });
-        assert.equal(result.response.status, 200);
-        assert.equal(result.data.credits, amount * 5);
-      }
-    }
+    assert.equal(config.data.modelPrices.find(item => item.modelId === modelId && item.quality === '768p').credits, 0.8);
+    assert.equal(catalog.data.items.find(item => item.modelId === modelId && item.quality === '768p').credits, 0.8);
+    assert.doesNotMatch(JSON.stringify(catalog.data), /minimax_h3_new_workflow|autodl-main/);
+    const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'768p', duration:5, aspectRatio:'16:9' } });
+    assert.equal(quote.data.credits, 4);
+
+    const textMode = data => data.videoCapabilities.models.find(item => item.id === modelId).modes.find(mode => mode.generationType === 'TEXT');
+    assert.deepEqual(textMode(config.data).qualityOptions, ['480p', '768p']);
+    const route1440 = await admin.call('/api/admin/model-routes', { method:'POST', headers, body:{ logicalModelId:modelId, quality:'1440p', credentialId:'autodl-main', upstreamModelId:'minimax_h3_1440', durations:[5,10], priority:1, costYuan:0.1, salePriceYuan:0.15 } });
+    assert.equal(route1440.response.status, 201);
+    markRouteAvailable(route1440.data.route.id);
+    const withHighRes = await userClient.call('/api/config');
+    assert.deepEqual(textMode(withHighRes.data).qualityOptions, ['480p', '768p', '1440p']);
+    assert.deepEqual(textMode(withHighRes.data).durationsByQuality['1440p']['9:16'], [5, 10]);
+    const highResQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'1440p', duration:10, aspectRatio:'9:16' } });
+    assert.equal(highResQuote.data.credits, 15);
+    const unsupported = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'1088p', duration:5, aspectRatio:'16:9' } });
+    assert.equal(unsupported.response.status, 503);
   });
   const activeRoute = await admin.call('/api/admin/model-routes/' + createdRoute.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ durations:[5,7,30], adminEnabled:true, priority:1 } });
   assert.equal(activeRoute.response.status, 200);

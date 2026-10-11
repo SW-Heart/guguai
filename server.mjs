@@ -29,7 +29,7 @@ import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, co
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
-import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS } from './lib/video-capabilities.mjs';
+import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS, MINIMAX_H3_15S_DEFAULT_PRICING_BY_QUALITY } from './lib/video-capabilities.mjs';
 import { createProviderAdapterRegistry } from './lib/provider-adapters.mjs';
 import { generationRequestFingerprint } from './lib/generation-service.mjs';
 import { createProjectService } from './services/projects.mjs';
@@ -77,7 +77,7 @@ import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendL
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
 import { isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
-import { ensureDefaultModelRoutes, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
+import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
@@ -305,7 +305,12 @@ if (runtimeBootstrapEnabled) {
 // Metadata lives in SQLite; media binaries use local caches and private R2 objects.
 if (runtimeBootstrapEnabled) {
   openDatabase({ verbose: true, file: isMainModule ? null : ':memory:' });
-  ensureDefaultModelRoutes();
+  // Seeded Minimax routes start at the price users paid before routing,
+  // including any admin price override stored in the pricing table.
+  ensureDefaultModelRoutes({ defaultSalePriceYuan: route => {
+    const fallback = route.logicalModelId === VIDEO_MODEL_IDS.MINIMAX_H3_15S ? MINIMAX_H3_15S_DEFAULT_PRICING_BY_QUALITY[route.quality]?.amount : undefined;
+    return fallback === undefined ? null : modelPrice(currentPricing(), route.logicalModelId, route.quality, fallback) / 10;
+  } });
   configureLedger({ llmRates, llmProtocol: llmConfig.protocol, llmModel: llmConfig.model });
   // Signing key for opaque list cursors. Derived from the session secret material
   // so it survives restarts without adding another env var to manage.
@@ -631,7 +636,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
   const items = [];
   for (const model of models) {
     if (model.enabled === false || model.availability === 'coming-soon') continue;
-    if (seedanceIds.includes(model.id)) {
+    if (seedanceIds.includes(model.id) || isRouteModel(model.id)) {
       const routeItems = dynamicByModel.get(model.id) || [];
       for (const item of routeItems) {
         if (!item.available || item.credits === null || item.yuan === null) continue;
@@ -798,6 +803,18 @@ const routedProvider = createRoutedProvider({
   videoMaxPollDurationMs,
   submitTimeoutMs: routedVideoSubmitTimeoutMs,
   errorMessage,
+  createAutodlRouteProvider: ({ baseUrl, workflowId, apiKey, providerName }) => createAutodlProvider({
+    submitTimeoutMs: providerTaskIdTimeoutMs,
+    baseUrl, workflowId, apiKey, providerName,
+    ...providerTransport,
+    sleep,
+    errorMessage,
+    videoPollTimeoutError,
+    pollIntervalMs: autodlPollIntervalMs,
+    requestTimeoutMs: autodlRequestTimeoutMs,
+    maxPollDurationMs: autodlMaxPollDurationMs,
+    maxPolls: autodlMaxPolls,
+  }),
 });
 const autodlProvider = createAutodlProvider({
   submitTimeoutMs: providerTaskIdTimeoutMs,

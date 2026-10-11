@@ -47,12 +47,19 @@ export function createAutodlProvider({
       retryableBusinessResponse: true,
     });
   }
+  // High-resolution workflows also need the exact frame size in the label.
+  function autodlResolution(task) {
+    const quality = task.quality || '768p';
+    const portrait = task.aspectRatio === '9:16';
+    const size = { '1088p': ['1088*1920', '1920*1088'], '1440p': ['1440*2560', '2560*1440'] }[quality];
+    return `${quality}${portrait ? '竖' : '横'}${size ? `(${portrait ? size[0] : size[1]})` : ''}`;
+  }
   function defaultPayload(task, refs) {
     const groups = Array.isArray(refs) ? { images: refs, audios: [] } : (refs || { images: [], audios: [] });
     const value = {
       prompt: task.prompt,
       duration: task.duration,
-      resolution: `${task.quality || '768p'}${task.aspectRatio === '9:16' ? '竖' : '横'}`,
+      resolution: autodlResolution(task),
     };
     groups.images?.slice(0, task.referenceLimits?.image || task.maxReferenceImages || 9).forEach((url, index) => { value[`ref_image_${index}`] = url; });
     groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { value[`ref_audio_${index}`] = url; });

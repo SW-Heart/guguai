@@ -27,7 +27,7 @@ import { canvasGenerationOptions, canvasGenerationPayload, reconcileCanvasGenera
 import { normalizeShotVideoParameters } from '../public/features/drama/pure.js';
 
 const originalKeys = {};
-for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
+for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'AUTODL_COMFYUI_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
 
 function freshDb() {
   resetForTests();
@@ -36,6 +36,7 @@ function freshDb() {
   process.env.WJ_TJWD_KEY = 'wj-test';
   process.env.WJ_SD_PY_900_KEY = 'wj-py-test';
   process.env.CNTCN_KEY = 'cntcn-test';
+  process.env.AUTODL_COMFYUI_KEY = 'autodl-test';
   process.env.MODEL_ROUTE_CREDENTIAL_SECRET = 'model-route-test-secret';
   ensureDefaultModelRoutes();
   sql("UPDATE model_routes SET catalog_status='available'").run();
@@ -60,7 +61,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
   t.afterEach(cleanupDb);
 
   await t.test('deleting a route resets forced selection and survives default initialization', () => {
-    const route = listModelRoutes()[0];
+    const route = listModelRoutes().find(item => item.logicalModelId.startsWith('seedance'));
     updateRoutePolicy(route.logicalModelId, route.quality, route.id);
     assert.throws(() => deleteModelRoute(route.id, { expectedVersion: route.version + 1 }), { statusCode: 409 });
     assert.ok(listModelRoutes().some(item => item.id === route.id));
@@ -74,7 +75,7 @@ test('Seedance route selection, pricing and catalog health', async t => {
   });
 
   await t.test('seeds all priority routes and calculates the exact 20% markup', () => {
-    assert.equal(listModelRoutes().length, 25);
+    assert.equal(listModelRoutes().length, 27);
     assert.equal(routeTest.saleMicroFromCostFen(215), 25_800_000);
     const selected = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', duration: 15, aspectRatio: '16:9' });
     assert.equal(selected.id, 'sd20-480-diw-nd');
@@ -361,4 +362,66 @@ test('channel durations are editable for historical routes and drive selected ca
     assert.equal(created.salePriceMicro * 5, 10_000_000);
     assert.ok(availableModelRouteQualities('seedance-2.5').includes('720p'));
   } finally { cleanupDb(); }
+});
+
+test('Minimax H3 uses AutoDL routes with configurable workflows, resolutions and prices', async t => {
+  t.beforeEach(freshDb);
+  t.afterEach(cleanupDb);
+
+  await t.test('seeded AutoDL routes keep the previous per-second prices and 1-15 second durations', () => {
+    const route768 = selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', duration: 9, aspectRatio: '9:16' });
+    assert.equal(route768.id, 'mmh3-768-autodl');
+    assert.equal(route768.adapterType, 'autodl-comfyui');
+    assert.equal(route768.credentialId, 'autodl-main');
+    assert.deepEqual(route768.durations, Array.from({ length: 15 }, (_, index) => index + 1));
+    assert.equal(route768.salePriceCredits, 0.6);
+    assert.equal(modelRouteCharge(route768, 9).total, 5.4);
+    assert.equal(selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '480p', duration: 5, aspectRatio: '16:9' }).salePriceCredits, 0.5);
+    assert.equal(selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', duration: 5, aspectRatio: '1:1' }), null);
+    assert.equal(routeCredential('autodl-main'), 'autodl-test');
+  });
+
+  await t.test('caller supplied default prices override the seeded price on first initialization only', () => {
+    resetForTests();
+    openDatabase({ file: ':memory:' });
+    ensureDefaultModelRoutes({ defaultSalePriceYuan: route => route.logicalModelId === 'minimax-h3-15s' ? 0.08 : null });
+    assert.equal(listModelRoutes().find(item => item.id === 'mmh3-768-autodl').salePriceCredits, 0.8);
+    assert.equal(listModelRoutes().find(item => item.id === 'sd20-480-diw-nd').salePriceConfigured, false);
+    ensureDefaultModelRoutes({ defaultSalePriceYuan: () => 0.01 });
+    assert.equal(listModelRoutes().find(item => item.id === 'mmh3-768-autodl').salePriceCredits, 0.8);
+  });
+
+  await t.test('1088p and 1440p appear only after an available route is configured', () => {
+    const minimaxModes = () => publicVideoCapabilitiesWithControls().models.find(model => model.id === 'minimax-h3-15s')?.modes || [];
+    assert.deepEqual(minimaxModes().find(mode => mode.generationType === 'TEXT').qualityOptions, ['480p', '768p']);
+    assert.equal(publicModelPrices().find(item => item.modelId === 'minimax-h3-15s' && item.quality === '1440p').available, false);
+    assert.throws(() => createModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '720p', credentialId: 'autodl-main', upstreamModelId: 'wf', priority: 1, costYuan: 0, salePriceYuan: 0.1 }), { statusCode: 400 });
+    const route = createAvailableRoute({ logicalModelId: 'minimax-h3-15s', quality: '1440p', credentialId: 'autodl-main', upstreamModelId: 'minimax_h3_1440', priority: 1, costYuan: 0.05, salePriceYuan: 0.12, durations: '5, 10' });
+    assert.deepEqual(route.durations, [5, 10]);
+    const text = minimaxModes().find(mode => mode.generationType === 'TEXT');
+    assert.deepEqual(text.qualityOptions, ['480p', '768p', '1440p']);
+    assert.deepEqual(text.durationsByQuality['1440p']['16:9'], [5, 10]);
+    assert.equal(text.pricingByQuality, undefined);
+    assert.equal(publicModelPrices().find(item => item.modelId === 'minimax-h3-15s' && item.quality === '1440p').credits, 1.2);
+    assert.equal(selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '1440p', duration: 15, aspectRatio: '16:9' }), null);
+  });
+
+  await t.test('priority order and fallback stay inside one Minimax resolution pool', () => {
+    const backup = createAvailableRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', credentialId: 'autodl-main', upstreamModelId: 'minimax_h3_backup', priority: 1, costYuan: 0.04, salePriceYuan: 0.07, durations: Array.from({ length: 15 }, (_, index) => index + 1) });
+    assert.equal(selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', duration: 9, aspectRatio: '16:9' }).id, backup.id);
+    assert.equal(listModelRoutes().find(item => item.id === 'mmh3-768-autodl').priority, 2);
+    const fallback = selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', duration: 9, aspectRatio: '16:9', excludeRouteIds: [backup.id], afterPriority: backup.priority });
+    assert.equal(fallback.id, 'mmh3-768-autodl');
+    assert.equal(selectModelRoute({ logicalModelId: 'minimax-h3-15s', quality: '768p', duration: 9, aspectRatio: '16:9', excludeRouteIds: [backup.id, fallback.id], afterPriority: fallback.priority }), null);
+  });
+
+  await t.test('AutoDL credentials are accepted and checked without a model catalog request', async () => {
+    const credential = createModelRouteCredential({ channelName: 'AutoDL', label: '备用 Key', provider: 'autodl', adapterType: 'autodl-comfyui', baseUrl: 'https://autodl.example', apiKey: 'autodl-backup' });
+    assert.ok(listModelRouteChannels().some(item => item.id === credential.id && item.adapterType === 'autodl-comfyui'));
+    sql("UPDATE model_routes SET catalog_status='unknown' WHERE logical_model_id='minimax-h3-15s'").run();
+    let fetched = 0;
+    const items = await checkModelRoutes({ routeIds: ['mmh3-768-autodl', 'mmh3-480-autodl'], fetchImpl: async () => { fetched++; throw new Error('unexpected'); } });
+    assert.equal(fetched, 0);
+    assert.deepEqual(items.map(item => item.catalogStatus), ['available', 'available']);
+  });
 });

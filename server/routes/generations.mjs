@@ -359,7 +359,7 @@ export function createGenerationRouteHandler({
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;
-    if (!providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:type === 'image' ? '图片生成服务尚未配置' : '视频生成服务尚未配置' }), true;
+    if (!routeSelection && !providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:type === 'image' ? '图片生成服务尚未配置' : '视频生成服务尚未配置' }), true;
     const pricing = currentPricing();
     let pricingForTask = type === 'video' && videoRequest.pricing?.unit === 'second'
       ? { ...pricing, videoPerSecondMicro:creditsToMicro(videoRequest.pricing.amount) }

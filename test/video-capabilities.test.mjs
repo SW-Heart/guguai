@@ -21,7 +21,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
   assert.equal(minimaxH315s?.description, '支持最多 9 张参考图片 + 3 段参考音频，1～15 秒视频生成');
-  assert.equal(minimaxH315s?.modes.find(mode => mode.generationType === 'TEXT')?.pricing.amount, 0.6);
+  assert.equal(minimaxH315s?.modes.find(mode => mode.generationType === 'TEXT')?.pricing, null, '价格由后台调用线路决定');
   assert.deepEqual(minimaxH315s?.modes.find(mode => mode.generationType === 'REFERENCE')?.referenceLimits, { image: 9, video: 0, audio: 3, total: 12 });
   assert.ok(capabilities.routing.length > 0);
   assert.equal(Object.hasOwn(capabilities.routing[0], 'model'), false);
@@ -29,8 +29,8 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const request = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MINIMAX_H3_15S, generationType: 'TEXT', aspectRatio: '16:9', duration: 5, quality: '768p' });
   assert.equal(request.modelId, VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(request.profileKey, 'minimax-h3-15s');
-  assert.equal(request.provider, 'autodl');
-  assert.equal(request.model, 'minimax_h3_image_audio_to_video_v2_15s');
+  assert.equal(request.provider, 'route');
+  assert.equal(request.model, '');
   assert.equal(models.some(model => model.id === VIDEO_MODEL_IDS.MOTION_RETARGETING), false, '动作迁移只在实验室展示');
   const motion = validateVideoRequest({ modelId: VIDEO_MODEL_IDS.MOTION_RETARGETING, generationType: 'REFERENCE', aspectRatio: '9:16', duration: 12, quality: '464*832px(竖版)' }, 2);
   assert.equal(motion.provider, 'autodl-motion');
@@ -45,24 +45,24 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   );
 });
 
-test('Minimax H3 prices each resolution for text, reference and legacy requests', () => {
+test('Minimax H3 requests use route pricing for every configurable resolution', () => {
   const capabilities = publicVideoCapabilities();
   const model = capabilities.models.find(item => item.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   const routing = capabilities.routing.find(item => item.modelId === model.id);
-  for (const [quality, amount] of [['480p', 0.5], ['768p', 0.6]]) {
-    const price = { currency:'credit', amount, unit:'second' };
-    assert.deepEqual(routing.pricingByQuality[quality], price);
+  assert.deepEqual(routing.qualities, ['768p', '480p', '1088p', '1440p']);
+  assert.equal(Object.hasOwn(routing, 'pricingByQuality'), false);
+  for (const quality of ['480p', '768p', '1088p', '1440p']) {
     for (const mode of model.modes) {
-      assert.deepEqual(mode.pricingByQuality[quality], price);
-      for (const duration of [1, 5, 15]) {
-        for (const modelId of [model.id, 'grok-15']) {
-          const request = validateVideoRequest({ modelId, generationType:mode.generationType, quality, duration }, mode.generationType === 'REFERENCE' ? 1 : 0);
-          assert.deepEqual(request.pricing, price);
-        }
+      for (const modelId of [model.id, 'grok-15']) {
+        const request = validateVideoRequest({ modelId, generationType:mode.generationType, quality, duration:5 }, mode.generationType === 'REFERENCE' ? 1 : 0);
+        assert.equal(request.provider, 'route');
+        assert.equal(request.quality, quality);
+        assert.equal(request.pricing, null);
       }
     }
   }
-  assert.equal(validateVideoRequest({ modelId:model.id }).pricing.amount, 0.6);
+  assert.equal(validateVideoRequest({ modelId:model.id }).quality, '768p');
+  assert.equal(validateVideoRequest({ modelId:model.id }).duration, 5);
 });
 
 test('first and last frame mode selects continuity profile and enforces eight seconds', () => {
