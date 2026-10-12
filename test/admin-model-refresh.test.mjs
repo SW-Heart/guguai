@@ -55,7 +55,7 @@ function harness({ initial = false } = {}) {
     renderPricingPanel: () => { renders.push('pricing'); panels.pricingPanel.innerHTML = 'updated pricing'; },
     toastError: error => errors.push(error.message),
     errorMarkup: message => message, bindRetry() {},
-    toast() {}, routeModelLabels: {}, routeDialogFields: () => [], validateRouteDialog() {},
+    toast() {}, routeModelLabels: {}, routeDialogFields: () => [], validateRouteDialog() {}, bindRouteBillingUnit() {},
     showAdminDialog: async dialog => dialog.onSubmit({ credentialId: 'channel', upstreamModelId: 'upstream', priority: 1, durations: '5', costYuan: 1, salePriceYuan: 2, adminEnabled: true, sortOrder: 3 }),
   });
   runInContext(extract('  const modelTabs =', '  function renderPricingPanel('), context);

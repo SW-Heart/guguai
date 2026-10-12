@@ -60,6 +60,28 @@ test('Seedance route selection, pricing and catalog health', async t => {
   t.beforeEach(freshDb);
   t.afterEach(cleanupDb);
 
+  await t.test('route video billing can switch without duration multiplying a request price', () => {
+    const original = listModelRoutes().find(item => item.id === 'mmh3-480-autodl');
+    assert.equal(original.billingUnit, 'second');
+    const fixed = updateModelRoute(original.id, { billingUnit:'request', costYuan:2, salePriceYuan:10 });
+    assert.equal(fixed.billingUnit, 'request');
+    assert.equal(modelRouteCharge(fixed, 5).costYuan, 2);
+    assert.equal(modelRouteCharge(fixed, 15).costYuan, 2);
+    assert.equal(modelRouteCharge(fixed, 5).total, 100);
+    assert.equal(modelRouteCharge(fixed, 15).total, 100);
+    assert.equal(modelRouteCharge(fixed, 15).quantity, 1);
+    assert.equal(publicModelPrices().find(item => item.modelId === original.logicalModelId && item.quality === original.quality).unit, 'request');
+    const preserved = updateModelRoute(original.id, { priority:original.priority });
+    assert.equal(preserved.billingUnit, 'request');
+    const seconds = updateModelRoute(original.id, { billingUnit:'second', salePriceYuan:0.5 });
+    assert.equal(modelRouteCharge(seconds, 5).total, 25);
+    assert.equal(modelRouteCharge(seconds, 5).costYuan, 10);
+    assert.equal(modelRouteCharge(seconds, 15).costYuan, 30);
+    assert.equal(modelRouteCharge(seconds, 15).total, 75);
+    assert.equal(modelRouteCharge(original, 15).total, 7.5);
+    assert.throws(() => updateModelRoute(original.id, { billingUnit:'invalid' }), { statusCode:400 });
+  });
+
   await t.test('deleting a route resets forced selection and survives default initialization', () => {
     const route = listModelRoutes().find(item => item.logicalModelId.startsWith('seedance'));
     updateRoutePolicy(route.logicalModelId, route.quality, route.id);

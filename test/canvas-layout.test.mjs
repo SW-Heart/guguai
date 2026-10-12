@@ -1,9 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {canvasNodeBounds,placeCanvasNodes,focusCanvasViewport} from '../public/features/drama/canvas-layout.js';
+import {canvasNodeBounds,placeCanvasNodes,placeCanvasRow,focusCanvasViewport} from '../public/features/drama/canvas-layout.js';
 
 const view={viewport:{x:0,y:0,scale:1},width:1000,height:700};
 const separate=(a,b,gap=32)=>a.right<=b.left-gap+.00001||b.right<=a.left-gap+.00001||a.bottom<=b.top-gap+.00001||b.bottom<=a.top-gap+.00001;
+
+test('imported portraits and panoramas occupy a single ordered row beside existing content',()=>{
+  const old=[{id:'image',x:0,y:0,width:280,height:220},
+    {id:'video',x:320,y:0,width:420,height:240,scaleX:-1,rotation:30},
+    {id:'document',x:-100,y:300,width:400,height:600}];
+  const original=structuredClone(old);
+  const nodes=[{id:'one',width:110,height:220},{id:'two',width:280,height:100},{id:'three',width:90,height:220}];
+  const result=placeCanvasRow(nodes,old,view);
+  const rects=nodes.map(node=>canvasNodeBounds({...node,...result[node.id]}));
+  rects.forEach((rect,i)=>{
+    assert.equal(rect.top,rects[0].top);
+    if(i)assert.equal(rect.left-rects[i-1].right,32);
+    old.forEach(node=>assert.ok(separate(rect,canvasNodeBounds(node))));
+  });
+  assert.deepEqual(old,original);
+});
+
+test('a long import row reserves its entire width and stays near distant content',()=>{
+  const old={id:'old',x:9000,y:-6000,width:280,height:220};
+  const nodes=Array.from({length:120},(_,i)=>({id:`image-${i}`,width:280,height:220}));
+  const result=placeCanvasRow(nodes,[old],view);
+  const first=canvasNodeBounds(result[nodes[0].id]);
+  const last=canvasNodeBounds(result[nodes.at(-1).id]);
+  assert.equal(last.right-first.left,120*280+119*32);
+  for(const node of nodes){
+    assert.equal(result[node.id].y,first.top);
+    assert.ok(separate(canvasNodeBounds(result[node.id]),canvasNodeBounds(old)));
+  }
+  // At least one part of the row is immediately adjacent to the old content.
+  assert.ok(Math.min(Math.abs(first.bottom-old.y),Math.abs(first.top-(old.y+old.height)),Math.abs(first.left-(old.x+old.width)),Math.abs(last.right-old.x))<=32);
+  assert.deepEqual(placeCanvasRow([],old?[old]:[],view),{});
+});
 
 test('new content stays beside existing content even when the viewport is far away',()=>{
   const old={id:'old',x:9000,y:-6000,width:280,height:220};

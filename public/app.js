@@ -2157,7 +2157,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=111').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=115').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:()=>void startProjectCreation(),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2168,7 +2168,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=251').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=256').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -3691,7 +3691,7 @@ function pickAndImportDramaCanvasAsset({ chat = false, generation = false, multi
   return new Promise(resolve => {
     if (!$('#referenceDialog')) { resolve(null); return; }
     if (canvasAssetRequest) canvasAssetRequest.resolve(null);
-    canvasAssetRequest = { resolve, chat:chat||generation, generation, multiple:chat&&!generation&&multiple, limit:chat&&!generation&&multiple?Math.max(1,Math.min(30,maxFiles)):1 };
+    canvasAssetRequest = { resolve, chat:chat||generation, generation, multiple:!generation&&multiple, limit:!generation&&multiple?(chat?Math.max(1,Math.min(30,maxFiles)):Infinity):1 };
     openReferenceDialog('canvas');
   });
 }
@@ -3938,7 +3938,7 @@ function renderReferenceDialog() {
   $('#referenceDialog h2').textContent = isCanvas ? (canvasAssetRequest?.generation?'添加参考素材':isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
   $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；${isVideo ? '图片不超过 20 MB，视频或音频不超过 25 MB' : '单张图片需小于 10 MB'}。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
-  $('#selectionCount').textContent = isCanvas ? `已选择 ${totalSelected} / ${canvasLimit}` : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
+  $('#selectionCount').textContent = isCanvas ? (Number.isFinite(canvasLimit)?`已选择 ${totalSelected} / ${canvasLimit}`:`已选择 ${totalSelected} 个`) : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
   const confirmLabel = isCanvas ? (canvasAssetRequest?.generation?'使用此素材':isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
@@ -4121,7 +4121,7 @@ function videoModelOptions() {
       : model);
 }
 function videoModelParameters(modelId, generationType) { return videoModelOptions().find(model => model.id === modelId)?.modes?.find(mode => mode.generationType === generationType) || null; }
-function videoModelPromo(modelId) { return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s 起' : ''; }
+function videoModelPromo(modelId) { if (state.config?.modelPrices?.some(item => item.modelId === modelId && item.unit === 'request')) return ''; return modelId === 'minimax-h3-15s' ? '限时特惠 ¥0.05/s 起' : ''; }
 function imageModelOptions() {
   const models = Array.isArray(state.config?.imageModels) ? state.config.imageModels : [];
   return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon' && model.availability !== 'unavailable');
@@ -4581,7 +4581,7 @@ function updateVideoCost() {
     return;
   }
   state.modelQuote = null;
-  const parameters = videoModelParameters(input.modelId, input.generationType); const selectedPricing = videoPricingFor(input.modelId, parameters, input.quality); const fixedPrice = selectedPricing?.unit === 'request' ? Number(selectedPricing.amount) / Number(state.pricing.yuanPerCredit || 0.1) : null; const perSecondPrice = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : null; cost.textContent = creditText(fixedPrice ?? input.duration * (perSecondPrice ?? state.pricing.videoPerSecond));
+  const parameters = videoModelParameters(input.modelId, input.generationType); const selectedPricing = videoPricingFor(input.modelId, parameters, input.quality); const fixedPrice = selectedPricing?.unit === 'request' ? Number(selectedPricing.amount) / (selectedPricing.currency === 'credit' ? 1 : Number(state.pricing.yuanPerCredit || 0.1)) : null; const perSecondPrice = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : null; cost.textContent = creditText(fixedPrice ?? input.duration * (perSecondPrice ?? state.pricing.videoPerSecond));
 }
 $('#videoModel').onchange = () => {
   const hadFirstLast = state.videoGenerationType === 'FIRST&LAST';
@@ -4622,7 +4622,7 @@ function modelPriceCard(modelId, rows, kind) {
   const tiers = [...rows].sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
   const active = tiers.reduce((cheapest, item) => (Number(item.yuan) < Number(cheapest.yuan) ? item : cheapest), tiers[0]);
   const discount = officialPriceDiscount(modelId, active);
-  const meta = kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · 按秒计费';
+  const meta = kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · ' + (tiers.every(item => item.unit === 'request') ? '按次计费' : tiers.every(item => item.unit === 'second') ? '按秒计费' : '按所选清晰度计费');
   const tierRow = tiers.length > 1
     ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-discount="${esc(officialPriceDiscount(modelId, item)?.label || '')}" data-discount-detail="${esc(officialPriceDiscount(modelId, item)?.detail || '')}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
     : `<div class="price-tier-row"><span class="price-tier price-tier-static">${esc(tiers[0].quality)}</span></div>`;
@@ -4639,7 +4639,7 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
     const rows = visibleItems.filter(item => item.modelId === modelId);
     return { modelId, rows, kind: videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
   });
-  const sections = [{ kind:'video', title:'视频模型', hint:'按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
+  const sections = [{ kind:'video', title:'视频模型', hint:'按次或按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
   body.innerHTML = sections.map(section => {
     const cards = groups.filter(group => group.kind === section.kind);
     if (section.kind === 'video') cards.sort((left, right) => {

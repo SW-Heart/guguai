@@ -140,8 +140,8 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=520'));assert.ok(html.includes('/styles.css?v=377'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=111'));assert.ok(app.includes('./drama-studio.js?v=251'));
-  assert.ok(agent.includes('../drama/director-workspace.js?v=145'));
-  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=145'));
+  assert.ok(html.includes('/app.js?v=525'));assert.ok(html.includes('/styles.css?v=381'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=115'));assert.ok(app.includes('./drama-studio.js?v=256'));
+  assert.ok(agent.includes('../drama/director-workspace.js?v=150'));
+  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=150'));
 });

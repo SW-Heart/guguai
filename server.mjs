@@ -29,7 +29,7 @@ import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, co
 import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
-import { buildVideoPayload, publicVideoCapabilities, validateVideoRequest, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS, MINIMAX_H3_15S_DEFAULT_PRICING_BY_QUALITY } from './lib/video-capabilities.mjs';
+import { buildVideoPayload, publicVideoCapabilities, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS, MINIMAX_H3_15S_DEFAULT_PRICING_BY_QUALITY } from './lib/video-capabilities.mjs';
 import { createProviderAdapterRegistry } from './lib/provider-adapters.mjs';
 import { generationRequestFingerprint } from './lib/generation-service.mjs';
 import { createProjectService } from './services/projects.mjs';
@@ -75,8 +75,8 @@ import { buildApiModelCatalog } from './lib/api-catalog.mjs';
 import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
-import { currentPricing, pricingSnapshot, modelPrice, liveLlmRates } from './lib/pricing.mjs';
-import { isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls } from './lib/model-controls.mjs';
+import { currentPricing, pricingSnapshot, modelPrice, videoBillingUnit, liveLlmRates } from './lib/pricing.mjs';
+import { isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls, validateControlledVideoRequest as validateVideoRequest } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
@@ -638,9 +638,9 @@ function publicPlatformPrices(pricing, videoCapabilities) {
       const routeItems = dynamicByModel.get(model.id) || [];
       for (const item of routeItems) {
         if (!item.available || item.credits === null || item.yuan === null) continue;
-        const seconds = Math.max(1, Number(item.duration) || 1);
+        const seconds = item.unit === 'request' ? 1 : Math.max(1, Number(item.duration) || 1);
         const { selectedRouteId, selectedRouteName, ...safeItem } = item;
-        items.push({ ...safeItem, enabled: true, availability: 'available', unit: 'second', totalCredits: item.credits * seconds, totalYuan: Number((item.yuan * seconds).toFixed(8)), credits: item.credits, yuan: item.yuan });
+        items.push({ ...safeItem, enabled: true, availability: 'available', unit: item.unit, totalCredits: item.credits * seconds, totalYuan: Number((item.yuan * seconds).toFixed(8)), credits: item.credits, yuan: item.yuan });
       }
       continue;
     }
@@ -649,7 +649,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     for (const quality of mode.qualityOptions?.length ? mode.qualityOptions : ['标准']) {
       const price = mode.pricingByQuality?.[quality] || mode.pricing || { currency: 'credit', amount: pricing.videoPerSecond, unit: 'second' };
       const credits = modelPrice(pricing, model.id, quality, Number(price.amount || 0));
-      items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:price.unit || 'second', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
+      items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:videoBillingUnit(pricing, model.id), priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
   for (const imageModel of imageModelCatalog) {

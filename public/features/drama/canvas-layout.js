@@ -63,6 +63,22 @@ export function placeCanvasNodes(nodes,positions={},occupied=[],view=null,gap=32
   return result;
 }
 
+// Reserve the whole batch as one obstacle so it cannot scatter into unrelated
+// gaps. Use the same nearby-content search, then unpack in selection order.
+export function placeCanvasRow(nodes,occupied=[],view=null,gap=32) {
+  const items=nodes.filter(content).map(node=>({node,bounds:canvasNodeBounds({...node,x:0,y:0})}));
+  if(!items.length)return {};
+  const width=items.reduce((sum,{bounds})=>sum+bounds.right-bounds.left,0)+gap*(items.length-1);
+  const height=Math.max(...items.map(({bounds})=>bounds.bottom-bounds.top));
+  const group=placeCanvasNodes([{id:'import-row',width,height}],{},occupied,view,gap)['import-row'];
+  let left=group.x;
+  return Object.fromEntries(items.map(({node,bounds})=>{
+    const position={x:left-bounds.left,y:group.y-bounds.top,width:finite(node.width,280),height:finite(node.height,228)};
+    left+=bounds.right-bounds.left+gap;
+    return [node.id,position];
+  }));
+}
+
 // Center only the new content and preserve the current zoom unless it needs
 // to shrink to show the entire batch. Ordinary polling never calls this.
 export function focusCanvasViewport(nodes,view,padding=64) {

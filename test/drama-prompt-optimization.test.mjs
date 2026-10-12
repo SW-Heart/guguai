@@ -15,9 +15,9 @@ test('the optimization button precedes generation and every changed frontend ent
   assert.match(studio, /promptOptimizationButton\(shot,locked\)\}<button type="button" class="wb-generate-button"/);
   assert.ok(studio.includes('./features/drama/prompt-optimization.js?v=4'));
   assert.ok(read('features/drama/prompt-optimization.js').includes('./prompt-optimization-loading.js?v=1'));
-  assert.ok(read('app.js').includes('./drama-studio.js?v=251'));
-  assert.ok(read('index.html').includes('/app.js?v=520'));
-  assert.ok(read('index.html').includes('/styles.css?v=377'));
+  assert.ok(read('app.js').includes('./drama-studio.js?v=256'));
+  assert.ok(read('index.html').includes('/app.js?v=525'));
+  assert.ok(read('index.html').includes('/styles.css?v=381'));
   const css = read('styles.css');
   assert.match(css,/prompt-optimization-comparison\{[^}]*grid-template-columns:1fr 1fr/);
   assert.match(css,/@media\(max-width:640px\)[\s\S]*prompt-optimization-comparison\{grid-template-columns:1fr/);

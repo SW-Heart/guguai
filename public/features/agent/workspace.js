@@ -1,5 +1,5 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=145';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=150';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';
@@ -270,6 +270,15 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       renderEmptyConversation:renderEntry,
       hasInitialContent:()=>Boolean(initialMessage||initialAttachments.length||initialDocuments.length),
       projectTitle:()=>project.title||'智能创作',onProjectBack:()=>{changeLocation('home');dispatchRoute();},
+      saveProjectTitle:async title=>{
+        const projectId=project.id,token=navigationEpoch,requestAccount=accountSnapshot();
+        const result=await api(`/api/agent/projects/${encodeURIComponent(projectId)}`,{method:'PATCH',body:JSON.stringify({title})});
+        if(!isAccountCurrent(requestAccount)||token!==navigationEpoch||project.id!==projectId)return;
+        const saved=result?.project?.title||title;
+        renameProject(projectId,saved);
+        onProjectTitleChanged?.(projectId,saved);
+        return saved;
+      },
       sessionChanged:session=>{
         const keepCanvas=Boolean(sessionId)&&session?.agentProjectId===project.id;
         sessionId=session?.id||'';
@@ -290,12 +299,16 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       // Adding files only keeps the local copy. prepareCloudFiles uploads them
       // when a message is sent or a generation starts.
       importAsset:async()=>{
-        const file=await importCanvasAsset();
-        if(!current()||!file)return null;
-        state.files=[file,...state.files.filter(item=>item.id!==file.id)];
-        project.assetIds=[...new Set([...project.assetIds,file.id])];
+        const selected=await importCanvasAsset({multiple:true});
+        if(!current()||!selected)return [];
+        const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
+        if(!files.length)return [];
+        const ids=new Set(files.map(file=>file.id));
+        state.files=[...files,...state.files.filter(item=>!ids.has(item.id))];
+        project.assetIds=[...new Set([...project.assetIds,...ids])];
         await saveCanvas({assetIds:project.assetIds});
-        return {...file,previewUrl:previewUrl(file)};
+        if(!current())return [];
+        return files.map(file=>({...file,previewUrl:previewUrl(file)}));
       },
       prepareChatAsset:async({assetId,taskId})=>{
         const file=assetId?asset(assetId):taskAsset(taskId);

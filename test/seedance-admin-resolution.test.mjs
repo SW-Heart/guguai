@@ -42,8 +42,8 @@ test('historical route data renders only supported Seedance models and deduplica
     routeModelQualities: {'seedance-2.0-fast':['720p'], 'minimax-h3-15s':['480p', '768p', '1088p', '1440p']},
     routeRowMarkup: (route, selected) => { rowIds.push([route.id, selected]); return ''; },
   });
-  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s']);
-  assert.ok(root.innerHTML.includes('全部 7'));
+  assert.deepEqual([...root.innerHTML.matchAll(/data-route-filter="([^"]*)"/g)].map(match => match[1]), ['', 'wan-3.0', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s']);
+  assert.ok(root.innerHTML.includes('全部 8'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-img'));
   assert.ok(!root.innerHTML.includes('seedance-2.0-text'));
   assert.deepEqual(rowIds.map(([id]) => id), ['route-2', 'route-3', 'route-4']);
@@ -62,6 +62,6 @@ test('Seedance route forms no longer require a creation type', () => {
 
 test('admin HTML loads the updated model configuration script cache key', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=38\b/);
+  assert.match(html, /\/guguadmin\.js\?v=44\b/);
   assert.doesNotMatch(html, /\/guguadmin\.js\?v=26\b/);
 });

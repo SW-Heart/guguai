@@ -29,6 +29,7 @@ import { createApiClient } from './api-client.js?v=4';
 
   const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '邀请码', announcements: '消息通知', models: '模型与价格', credentials: '渠道与 Key', logs: '日志中心' };
   const routeModelLabels = {
+    'wan-3.0': 'Wan 3.0',
     'seedance-2.0': 'Seedance 2.0',
     'seedance-2.0-mini': 'Seedance 2.0 Mini',
     'seedance-2.0-fast': 'Seedance 2.0 Fast',
@@ -216,6 +217,10 @@ import { createApiClient } from './api-client.js?v=4';
   function adminDialogFieldMarkup(field) {
     const id = `adminDialogField-${field.name}`;
     const help = field.help ? `<small id="${esc(id)}-help">${esc(field.help)}</small>` : '';
+    if (field.type === 'multiselect') {
+      const selected = field.options.filter(option => (field.value || []).includes(option));
+      return `<div class="admin-dialog-field${field.span === 'full' ? ' span-full' : ''}"><span id="${esc(id)}-label">${esc(field.label)}</span><details class="admin-multiselect" data-admin-dialog-field="${esc(field.name)}" data-admin-multiselect><summary aria-labelledby="${esc(id)}-label ${esc(id)}-value"${field.help ? ` aria-describedby="${esc(id)}-help"` : ''}><span id="${esc(id)}-value" data-multiselect-value>${esc(selected.join('、') || '请选择画面比例')}</span></summary><div class="admin-multiselect-menu" role="group" aria-labelledby="${esc(id)}-label">${field.options.map((option, index) => `<label class="admin-multiselect-option" for="${esc(id)}-${index}"><input id="${esc(id)}-${index}" type="checkbox" value="${esc(option)}" ${(field.value || []).includes(option) ? 'checked' : ''}><span>${esc(option)}</span></label>`).join('')}</div></details>${help}</div>`;
+    }
     if (field.type === 'checkbox') return `<label class="admin-dialog-check" for="${esc(id)}"><input id="${esc(id)}" data-admin-dialog-field="${esc(field.name)}" type="checkbox" ${field.checked ? 'checked' : ''}><span><b>${esc(field.label)}</b>${field.help ? `<small>${esc(field.help)}</small>` : ''}</span></label>`;
     const attrs = [
       `id="${esc(id)}"`, `data-admin-dialog-field="${esc(field.name)}"`, `name="${esc(field.name)}"`,
@@ -232,9 +237,41 @@ import { createApiClient } from './api-client.js?v=4';
     return `<label class="admin-dialog-field${field.span === 'full' ? ' span-full' : ''}" for="${esc(id)}"><span>${esc(field.label)}${field.required ? '<span class="required" aria-hidden="true">*</span>' : ''}</span>${control}${help}</label>`;
   }
 
+  function adminDialogFieldsMarkup(fields) {
+    const renderedGroups = new Set();
+    return fields.map(field => {
+      if (!field.group) return adminDialogFieldMarkup(field);
+      if (renderedGroups.has(field.group)) return '';
+      renderedGroups.add(field.group);
+      const children = fields.filter(item => item.group === field.group);
+      return `<fieldset class="admin-dialog-number-group span-full"><legend>${esc(field.groupLabel)}</legend><div class="admin-dialog-number-row">${children.map(adminDialogFieldMarkup).join('')}</div><small>${esc(field.groupHelp)}</small></fieldset>`;
+    }).join('');
+  }
+
+  function bindAdminMultiselects(body) {
+    $$('[data-admin-multiselect]', body).forEach(dropdown => {
+      const summary = $('summary', dropdown);
+      const value = $('[data-multiselect-value]', dropdown);
+      dropdown.onchange = () => { value.textContent = $$('input:checked', dropdown).map(input => input.value).join('、') || '请选择画面比例'; };
+      summary.onclick = event => { if (summary.getAttribute('aria-disabled') === 'true') event.preventDefault(); };
+      dropdown.onkeydown = event => {
+        if (event.key === 'Escape' && dropdown.open) {
+          event.preventDefault(); event.stopPropagation(); dropdown.open = false; summary.focus();
+        }
+      };
+      dropdown.onfocusout = event => { if (event.relatedTarget && !dropdown.contains(event.relatedTarget)) dropdown.open = false; };
+    });
+  }
+
   function setAdminDialogBusy(busy) {
     const dialog = $('#adminDialog');
     dialog.setAttribute('aria-busy', busy ? 'true' : 'false');
+    $$('[data-admin-multiselect]', dialog).forEach(dropdown => {
+      if (busy) dropdown.open = false;
+      const summary = $('summary', dropdown);
+      summary.setAttribute('aria-disabled', String(busy));
+      summary.tabIndex = busy ? -1 : 0;
+    });
     $$('input,select,textarea,button[data-rich-command],button[data-rich-image],button[data-quick-amount],#adminDialogClose,#adminDialogCancel', dialog).forEach(control => { control.disabled = busy; });
     $$('[contenteditable]', dialog).forEach(editor => { editor.contentEditable = busy ? 'false' : 'true'; });
     const submit = $('#adminDialogSubmit');
@@ -269,7 +306,7 @@ import { createApiClient } from './api-client.js?v=4';
     $('#adminDialogKicker').textContent = kicker;
     $('#adminDialogTitle').textContent = title;
     $('#adminDialogDescription').textContent = description;
-    $('#adminDialogBody').innerHTML = html || fields.map(adminDialogFieldMarkup).join('');
+    $('#adminDialogBody').innerHTML = html || adminDialogFieldsMarkup(fields);
     $('#adminDialogError').textContent = '';
     const submitButton = $('#adminDialogSubmit');
     submitButton.classList.toggle('btn-danger', danger);
@@ -286,6 +323,7 @@ import { createApiClient } from './api-client.js?v=4';
     return new Promise(resolve => {
       adminDialogResolver = resolve;
       dialog.showModal();
+      bindAdminMultiselects($('#adminDialogBody'));
       onRender?.($('#adminDialogBody'));
       requestAnimationFrame(() => {
         const firstField = $('#adminDialogBody input:not([type="checkbox"]):not([hidden]),#adminDialogBody select,#adminDialogBody textarea,#adminDialogBody [contenteditable="true"]', dialog);
@@ -295,8 +333,14 @@ import { createApiClient } from './api-client.js?v=4';
   }
 
   function adminDialogValues() {
-    return Object.fromEntries($$('[data-admin-dialog-field]', $('#adminDialogForm')).map(field => [field.dataset.adminDialogField, field.type === 'checkbox' ? field.checked : field.isContentEditable || field.hasAttribute('contenteditable') ? field.innerHTML : field.value]));
+    return Object.fromEntries($$('[data-admin-dialog-field]', $('#adminDialogForm')).map(field => [field.dataset.adminDialogField, field.hasAttribute('data-admin-multiselect') ? $$('input:checked', field).map(input => input.value) : field.type === 'checkbox' ? field.checked : field.isContentEditable || field.hasAttribute('contenteditable') ? field.innerHTML : field.value]));
   }
+
+  $('#adminDialog').addEventListener('pointerdown', event => {
+    $$('[data-admin-multiselect][open]', $('#adminDialog')).forEach(dropdown => {
+      if (!dropdown.contains(event.target)) dropdown.open = false;
+    });
+  });
 
   $('#adminDialogForm').addEventListener('submit', async event => {
     event.preventDefault();
@@ -1511,12 +1555,13 @@ import { createApiClient } from './api-client.js?v=4';
     const fields = pricing.fields || [];
     const groups = [...fields.reduce((map, field) => map.set(field.label, [...(map.get(field.label) || []), field]), new Map())];
     const priceLabel = field => field.modelId === 'llm' ? ({ input: '普通输入', output: '输出', 'cache-read': '缓存读取', 'cache-creation': '缓存创建' }[field.quality] || field.quality) : field.quality;
+    const billingSelect = field => field.billingUnit ? `<label class="field price-field" data-price-field><span class="field-label">计费类型</span><select name="videoBillingMode:${esc(field.modelId)}" data-original="${esc(field.billingUnit)}"><option value="second" ${field.billingUnit === 'second' ? 'selected' : ''}>按秒生成</option><option value="request" ${field.billingUnit === 'request' ? 'selected' : ''}>按次生成</option></select></label>` : '';
     const priceInput = (name, label, value, unit = '') => `<label class="field price-field" data-price-field><span class="field-label">${esc(label)}${unit ? `<small>${esc(unit)}</small>` : ''}</span><input name="${esc(name)}" value="${esc(value)}" data-original="${esc(value)}" inputmode="decimal" required autocomplete="off"></label>`;
     root.innerHTML = `<div class="panel-head"><div><h3>价格设置</h3><p>当前版本 v${esc(current.version)} · 新价格仅对之后提交的任务生效，历史版本保留只读。</p></div></div>
       <form id="pricingForm" novalidate>
         <div class="panel-body">
           <section class="price-section"><h4>通用价格</h4><p>未单独设置价格的图片、视频任务按此计费，单位为积分。</p><div class="price-grid">${priceInput('imagePerRequest', '图片', current.imagePerRequest, '积分 / 次')}${priceInput('videoPerSecond', '视频', current.videoPerSecond, '积分 / 秒')}</div></section>
-          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid is-models">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5><div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
+          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。视频按次生成时，每个视频收费相同；按秒生成时，按所选秒数计费。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid is-models">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5>${billingSelect(items[0])}<div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
         </div>
         <div class="sticky-bar"><span class="muted" data-price-dirty>价格未修改</span><div class="actions"><button class="btn" type="button" data-price-reset disabled>还原</button><button class="btn btn-primary" type="submit" disabled>发布新价格</button></div></div>
       </form>
@@ -1527,21 +1572,34 @@ import { createApiClient } from './api-client.js?v=4';
     const labelFor = input => {
       const [kind] = input.name.split(':');
       const key = input.name.slice(kind.length + 1);
+      if (kind === 'videoBillingMode') return `${fields.find(item => item.modelId === key)?.label || key} · 计费类型`;
       if (kind === 'imagePerRequest') return '图片 · 积分 / 次';
       if (kind === 'videoPerSecond') return '视频 · 积分 / 秒';
       const field = fields.find(item => item.key === key);
-      return field ? `${field.label} · ${priceLabel(field)} / ${field.unit}` : input.name;
+      const unit = field?.billingUnit ? (form.elements.namedItem(`videoBillingMode:${field.modelId}`)?.value === 'request' ? '次' : '秒') : field?.unit;
+      return field ? `${field.label} · ${priceLabel(field)} / ${unit}` : input.name;
     };
-    const changedInputs = () => $$('input', form).filter(input => input.value.trim() !== input.dataset.original);
+    const changedInputs = () => $$('input, select', form).filter(input => input.value.trim() !== input.dataset.original);
     const updateDirty = () => {
       const changed = changedInputs();
-      $$('[data-price-field]', form).forEach(field => field.classList.toggle('is-changed', changed.includes($('input', field))));
+      $$('[data-price-field]', form).forEach(field => field.classList.toggle('is-changed', changed.includes($('input, select', field))));
       $('[data-price-dirty]', form).innerHTML = changed.length ? `已修改 <b>${changed.length}</b> 项，发布后生效` : '价格未修改';
       submit.disabled = !changed.length;
       reset.disabled = !changed.length;
     };
-    form.addEventListener('input', updateDirty);
-    reset.onclick = () => { $$('input', form).forEach(input => { input.value = input.dataset.original; }); updateDirty(); };
+    const updateUnits = () => {
+      $$('select', form).forEach(select => {
+        const modelId = select.name.slice('videoBillingMode:'.length);
+        fields.filter(field => field.modelId === modelId).forEach(field => {
+          const input = form.elements.namedItem(`modelPrice:${field.key}`);
+          const label = input?.closest('label')?.querySelector('small');
+          if (label) label.textContent = select.value === 'request' ? '/ 次' : '/ 秒';
+        });
+      });
+    };
+    form.addEventListener('input', () => { updateUnits(); updateDirty(); });
+    form.addEventListener('change', () => { updateUnits(); updateDirty(); });
+    reset.onclick = () => { $$('input, select', form).forEach(input => { input.value = input.dataset.original; }); updateUnits(); updateDirty(); };
     form.onsubmit = async event => {
       event.preventDefault();
       const changed = changedInputs();
@@ -1556,9 +1614,9 @@ import { createApiClient } from './api-client.js?v=4';
         size: 'wide',
         submit: '确认发布',
         busyLabel: '发布中…',
-        html: `<div class="table-wrap"><table class="diff-table" style="min-width:480px"><thead><tr><th>项目</th><th class="is-num">当前</th><th class="is-num">修改为</th></tr></thead><tbody>${changed.map(input => `<tr><td>${esc(labelFor(input))}</td><td class="is-num">${esc(input.dataset.original)}</td><td class="is-num">${esc(input.value.trim())}</td></tr>`).join('')}</tbody></table></div>`,
+        html: `<div class="table-wrap"><table class="diff-table" style="min-width:480px"><thead><tr><th>项目</th><th class="is-num">当前</th><th class="is-num">修改为</th></tr></thead><tbody>${changed.map(input => `<tr><td>${esc(labelFor(input))}</td><td class="is-num">${esc(input.tagName === 'SELECT' ? (input.dataset.original === 'request' ? '按次生成' : '按秒生成') : input.dataset.original)}</td><td class="is-num">${esc(input.tagName === 'SELECT' ? (input.value === 'request' ? '按次生成' : '按秒生成') : input.value.trim())}</td></tr>`).join('')}</tbody></table></div>`,
         onSubmit: async () => {
-          await api('/api/admin/pricing', { method: 'POST', body: JSON.stringify({ imagePerRequest: values.get('imagePerRequest'), videoPerSecond: values.get('videoPerSecond'), modelPrices: Object.fromEntries(fields.map(field => [field.key, values.get(`modelPrice:${field.key}`)])), expectedVersion: current.version }) });
+          await api('/api/admin/pricing', { method: 'POST', body: JSON.stringify({ imagePerRequest: values.get('imagePerRequest'), videoPerSecond: values.get('videoPerSecond'), videoBillingModes: Object.fromEntries([...new Set(fields.filter(field => field.billingUnit).map(field => field.modelId))].map(id => [id, values.get(`videoBillingMode:${id}`)])), modelPrices: Object.fromEntries(fields.map(field => [field.key, values.get(`modelPrice:${field.key}`)])), expectedVersion: current.version }) });
           toast('新价格已发布');
           state.modelsTab = 'pricing';
           await loadModels();
@@ -1615,8 +1673,8 @@ import { createApiClient } from './api-client.js?v=4';
       <td><span class="route-priority">${esc(route.priority)}</span></td>
       <td><div class="cell-stack"><span><b>${esc(route.displayName)}</b>${selected ? ' <span class="tag is-brand">当前使用</span>' : ''}</span>${idText(route.upstreamModelId, '上游模型 ID')}<span class="detail">可选时长 ${esc((route.durations || []).join('、'))} 秒</span></div></td>
       <td>${routeStatusCell(route)}</td>
-      <td class="is-num"><b>¥${Number(Number(route.costYuan).toFixed(8))}</b><div class="detail">每秒</div></td>
-      <td class="is-num"><b>¥${Number(Number(route.salePriceYuan).toFixed(8))}</b><div class="detail">每秒${route.salePriceConfigured ? '' : ' · 自动定价'}</div></td>
+      <td class="is-num"><b>¥${Number(Number(route.costYuan).toFixed(8))}</b><div class="detail">${route.billingUnit === 'request' ? '每次' : '每秒'}</div></td>
+      <td class="is-num"><b>¥${Number(Number(route.salePriceYuan).toFixed(8))}</b><div class="detail">${route.billingUnit === 'request' ? '每次' : '每秒'}${route.salePriceConfigured ? '' : ' · 自动定价'}</div></td>
       <td>${date(route.catalogCheckedAt)}</td>
       <td class="is-actions"><div class="actions">${route.autoDisabled ? `<button class="btn btn-sm btn-primary" data-enable-route="${esc(route.id)}" type="button">恢复启用</button>` : ''}<button class="btn btn-sm" data-check-route="${esc(route.id)}" type="button">检查</button><button class="btn btn-sm" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="btn btn-sm btn-danger-ghost" data-delete-route="${esc(route.id)}" type="button">删除</button></div></td>
     </tr>`;
@@ -1626,7 +1684,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 这样空分组（例如尚未配置的 1080p 线路池）也能稳定渲染“新增线路”和选路策略。
   function renderRoutePanel(data) {
     const root = $('#routePanel'); if (!root) return;
-    const families = ['seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
+    const families = ['wan-3.0', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
     const normalizeModelId = id => /^seedance-?2\.0(?:[-_](?:text|img))$/.test(id) ? 'seedance-2.0' : id;
     const uniqueRoutes = new Map();
     const replacements = new Map();
@@ -1658,7 +1716,7 @@ import { createApiClient } from './api-client.js?v=4';
       const label = routeModelLabels[modelId] || modelId;
       const usable = routes.filter(route => route.adminEnabled && route.catalogStatus === 'available').length;
       const hint = modelId === 'seedance-2.0-fast' ? '支持 9 图 / 3 视频 / 3 音频' : modelId === 'minimax-h3-15s' ? '支持 9 图 / 3 音频，仅横屏和竖屏' : '';
-      const priceText = price?.available ? `<span class="is-price">用户价 ¥${Number(price.yuan).toFixed(2)} / 秒 · ${money(price.credits)} 积分 / 秒</span>` : '<span class="is-unavailable">暂无可用线路</span>';
+      const priceText = price?.available ? `<span class="is-price">用户价 ¥${Number(price.yuan).toFixed(2)} / ${price.unit === 'request' ? '次' : '秒'} · ${money(price.credits)} 积分 / ${price.unit === 'request' ? '次' : '秒'}</span>` : '<span class="is-unavailable">暂无可用线路</span>';
       const isSelected = route => forcedRouteId === route.id || price?.selectedRouteId === route.id;
       return `<section class="route-group${activeFamily && activeFamily !== modelId ? ' route-group-hidden' : ''}" data-route-group="${esc(modelId)}">
         <header>
@@ -1715,13 +1773,26 @@ import { createApiClient } from './api-client.js?v=4';
     const selectedModelId = route?.logicalModelId || logicalModelId;
     return [
       { name: 'credentialId', label: '渠道 / API Key', type: 'select', value: selectedChannel, options: channelDialogOptions(channels), required: true, help: '未配置 Key 的渠道保存后会显示“密钥异常”。', span: 'full' },
-      { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
+      { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : selectedModelId === 'wan-3.0' ? '例如 wd-wan-3.0-720p' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
       { name: 'priority', label: '优先级', type: 'number', value: String(route?.priority || nextPriority), min: 1, max: 1000, step: 1, inputmode: 'numeric', required: true, help: '数字越小越优先；与已有线路相同时，原线路依次后移。' },
       { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || (selectedModelId === 'minimax-h3-15s' ? Array.from({ length: 15 }, (_, index) => index + 1) : [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15])).join(', '), placeholder: '例如 5, 10, 15', required: true, help: '填写整数秒，多个用逗号分隔。' },
-      { name: 'costYuan', label: '成本（元 / 秒）', type: 'number', value: route ? Number(Number(route.costYuan).toFixed(8)) : '', placeholder: '例如 2.50', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true },
-      { name: 'salePriceYuan', label: '用户价格（元 / 秒）', type: 'number', value: route ? Number(Number(route.salePriceYuan).toFixed(8)) : '', placeholder: '例如 3.00', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true, help: '1 元 = 10 积分。' },
+      { name: 'aspectRatios', type: 'multiselect', label: '可选画面比例', value: route?.capabilities?.ratios || (selectedModelId === 'minimax-h3-15s' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1']), options: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'], span: 'full', help: '可选择多个画面比例。' },
+      ...[['image', '图像'], ['video', '视频'], ['audio', '音频']].map(([kind, label]) => ({ name: `${kind}ReferenceCount`, label, group: 'referenceCounts', groupLabel: '参考素材数量', groupHelp: '0 表示不支持该类参考素材。', type: 'number', value: route?.capabilities?.[kind] ?? (['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? (kind === 'image' ? 30 : 10) : selectedModelId === 'minimax-h3-15s' && kind === 'video' ? 0 : kind === 'image' ? 9 : 3), min: 0, step: 1, inputmode: 'numeric', required: true })),
+      { name: 'billingUnit', label: '计费类型', type: 'select', value: route?.billingUnit || 'second', options: [{ value:'second', label:'按秒生成' }, { value:'request', label:'按次生成' }], help:'按次生成：每个视频收费相同；按秒生成：单价乘以所选秒数。', span:'full' },
+      { name: 'costYuan', label: `成本（元 / ${route?.billingUnit === 'request' ? '次' : '秒'}）`, type: 'number', value: route ? Number(Number(route.costYuan).toFixed(8)) : '', placeholder: '例如 2.50', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true },
+      { name: 'salePriceYuan', label: `用户价格（元 / ${route?.billingUnit === 'request' ? '次' : '秒'}）`, type: 'number', value: route ? Number(Number(route.salePriceYuan).toFixed(8)) : '', placeholder: '例如 3.00', min: 0, max: 100000, step: 'any', inputmode: 'decimal', required: true, help: '1 元 = 10 积分。' },
       { name: 'adminEnabled', type: 'checkbox', label: '启用线路', checked: route ? route.adminEnabled : true, help: '关闭后，自动和固定选路都会跳过该线路。' },
     ];
+  }
+  function bindRouteBillingUnit(body) {
+    const select = body.querySelector('[name="billingUnit"]');
+    if (select) select.onchange = () => {
+      const unit = select.value === 'request' ? '次' : '秒';
+      for (const [name, label] of [['costYuan', '成本'], ['salePriceYuan', '用户价格']]) {
+        const input = body.querySelector(`[name="${name}"]`);
+        if (input) input.closest('label').querySelector('span').firstChild.textContent = `${label}（元 / ${unit}）`;
+      }
+    };
   }
   function validateRouteDialog(input) {
     if (!String(input.credentialId || '').trim()) return '请选择渠道 / API Key。';
@@ -1730,6 +1801,11 @@ import { createApiClient } from './api-client.js?v=4';
     if (!Number.isSafeInteger(priority) || priority < 1 || priority > 1000) return '优先级需要是 1～1000 的整数。';
     const durations = String(input.durations || '').trim().split(/[，,、\s]+/).map(Number);
     if (!durations.length || durations.some(value => !Number.isSafeInteger(value) || value < 1 || value > 3600)) return '请填写有效的整数秒数，多个秒数用逗号分隔。';
+    if (!Array.isArray(input.aspectRatios) || !input.aspectRatios.length) return '请至少选择一种画面比例。';
+    for (const [kind, label] of [['image', '图像'], ['video', '视频'], ['audio', '音频']]) {
+      const value = input[`${kind}ReferenceCount`];
+      if (String(value ?? '').trim() === '' || !Number.isSafeInteger(Number(value)) || Number(value) < 0) return `参考${label}数量必须是不小于 0 的整数。`;
+    }
     const cost = Number(input.costYuan); const sale = Number(input.salePriceYuan);
     if (!Number.isFinite(cost) || cost < 0 || input.costYuan === '') return '请填写有效的成本价格。';
     if (!Number.isFinite(sale) || sale < 0 || input.salePriceYuan === '') return '请填写有效的用户价格。';
@@ -1738,11 +1814,11 @@ import { createApiClient } from './api-client.js?v=4';
   async function addModelRoute(logicalModelId, quality, data) {
     const routes = (data.items || []).filter(item => item.logicalModelId === logicalModelId && item.quality === quality);
     const nextPriority = Math.min(1000, Math.max(0, ...routes.map(item => Number(item.priority) || 0)) + 1);
-    await showAdminDialog({ kicker: '调用线路', title: `新增线路 · ${routeModelLabels[logicalModelId] || logicalModelId} ${quality}`, description: '选择已有渠道，填写该渠道可调用的上游模型 ID 和价格。新线路会先标记为待检查。', submit: '新增线路', busyLabel: '保存中…', fields: routeDialogFields({ channels: data.channels, nextPriority, logicalModelId }), validate: validateRouteDialog, onSubmit: async values => { const result = await api('/api/admin/model-routes', { method: 'POST', body: JSON.stringify({ logicalModelId: values.logicalModelId || logicalModelId, quality, credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), adminEnabled: values.adminEnabled }) }); toast(`线路已新增：${result.route.displayName}`); await loadModels({ refreshPricing: false }); } });
+    await showAdminDialog({ kicker: '调用线路', title: `新增线路 · ${routeModelLabels[logicalModelId] || logicalModelId} ${quality}`, description: '选择已有渠道，填写该渠道可调用的上游模型 ID 和价格。新线路会先标记为待检查。', submit: '新增线路', busyLabel: '保存中…', fields: routeDialogFields({ channels: data.channels, nextPriority, logicalModelId }), validate: validateRouteDialog, onRender: bindRouteBillingUnit, onSubmit: async values => { const result = await api('/api/admin/model-routes', { method: 'POST', body: JSON.stringify({ logicalModelId: values.logicalModelId || logicalModelId, quality, credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), priority: Number(values.priority), durations: values.durations, aspectRatios: values.aspectRatios, referenceLimits: Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, Number(values[`${kind}ReferenceCount`])])), billingUnit: values.billingUnit, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), adminEnabled: values.adminEnabled }) }); toast(`线路已新增：${result.route.displayName}`); await loadModels({ refreshPricing: false }); } });
   }
   async function editRoute(route, channels = []) {
     if (!route) return;
-    await showAdminDialog({ kicker: '调用线路', title: `编辑线路 · ${route.displayName}`, description: '修改创作类型、渠道或上游模型 ID 后，需要重新检查线路状态。', submit: '保存', fields: routeDialogFields({ route, channels }), validate: validateRouteDialog, onSubmit: async values => { await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'PATCH', body: JSON.stringify({ ...(values.logicalModelId ? { logicalModelId: values.logicalModelId } : {}), credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), adminEnabled: values.adminEnabled, priority: Number(values.priority), durations: values.durations, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), expectedVersion: route.version }) }); toast('线路已更新'); await loadModels({ refreshPricing: false }); } });
+    await showAdminDialog({ kicker: '调用线路', title: `编辑线路 · ${route.displayName}`, description: '修改渠道或上游模型 ID 后，需要重新检查线路状态。', submit: '保存', fields: routeDialogFields({ route, channels }), validate: validateRouteDialog, onRender: bindRouteBillingUnit, onSubmit: async values => { await api(`/api/admin/model-routes/${encodeURIComponent(route.id)}`, { method: 'PATCH', body: JSON.stringify({ ...(values.logicalModelId ? { logicalModelId: values.logicalModelId } : {}), credentialId: values.credentialId, upstreamModelId: values.upstreamModelId.trim(), adminEnabled: values.adminEnabled, priority: Number(values.priority), durations: values.durations, aspectRatios: values.aspectRatios, referenceLimits: Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, Number(values[`${kind}ReferenceCount`])])), billingUnit: values.billingUnit, costYuan: Number(values.costYuan), salePriceYuan: Number(values.salePriceYuan), expectedVersion: route.version }) }); toast('线路已更新'); await loadModels({ refreshPricing: false }); } });
   }
   async function editModel(model) {
     if (!model) return;
@@ -1753,7 +1829,11 @@ import { createApiClient } from './api-client.js?v=4';
         { name: 'enabled', type: 'checkbox', label: '接收新任务', checked: model.enabled, help: '关闭后，服务端会拒绝该模型的新生成请求。' },
         { name: 'sortOrder', label: '排序值', type: 'number', value: String(model.sortOrder), min: 0, max: 100000, step: 1, inputmode: 'numeric', required: true, help: '0～100000 的整数，越小越靠前；与同类模型相同时，原模型依次后移。' },
       ],
-      validate: values => { const order = Number(values.sortOrder); return Number.isSafeInteger(order) && order >= 0 && order <= 100000 ? null : '排序值必须是 0～100000 的整数。'; },
+      validate: values => {
+        const order = Number(values.sortOrder);
+        if (!Number.isSafeInteger(order) || order < 0 || order > 100000) return '排序值必须是 0～100000 的整数。';
+        return null;
+      },
       onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels({ refreshPricing: false }); },
     });
   }

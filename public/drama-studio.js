@@ -4,7 +4,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=145';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=150';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -1036,7 +1036,18 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       generationPricing:()=>({config:state.config,pricing:state.pricing}),
       formatCredits:creditText,
       imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
-      importAsset:async()=>{const request=projectRequest();const file=importCanvasAsset?await importCanvasAsset():null;assertProjectRequest(request);if(!file)return null;state.files=[file,...state.files.filter(f=>f.id!==file.id)];await patch({projectAssetIds:[...new Set([...project.projectAssetIds,file.id])]},{quiet:true});assertProjectRequest(request);return file;},
+      importAsset:async()=>{
+        const request=projectRequest();
+        const selected=importCanvasAsset?await importCanvasAsset({multiple:true}):null;
+        assertProjectRequest(request);
+        const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
+        if(!files.length)return [];
+        const ids=new Set(files.map(file=>file.id));
+        state.files=[...files,...state.files.filter(file=>!ids.has(file.id))];
+        await patch({projectAssetIds:[...new Set([...project.projectAssetIds,...ids])]},{quiet:true});
+        assertProjectRequest(request);
+        return files;
+      },
       // Adding files only keeps the local copy. prepareCloudFiles uploads them
       // when a message is sent or a generation starts.
       prepareChatAsset:async({assetId,taskId})=>{
@@ -1934,7 +1945,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     const source=dropdown.querySelector('[data-wb-dropdown-source]'); const trigger=dropdown.querySelector('[data-wb-dropdown-trigger]'); if(!source||!trigger||trigger.disabled)return;
     if(dropdown.classList.contains('is-open')){closeWorkbenchDropdowns();return;} closeWorkbenchDropdowns(); dropdown.classList.add('is-open');trigger.setAttribute('aria-expanded','true');
     const kind=dropdown.dataset.wbDropdownKind||'mode'; const panel=document.createElement('div');panel.id='wbDropdownPortal';panel.className=`wb-floating-panel wb-select-popover is-${kind}`;panel.setAttribute('role','listbox');panel.setAttribute('aria-label',trigger.getAttribute('aria-label')||'选择');
-    const options=[...source.options]; panel.innerHTML=`<header><b>${esc(trigger.getAttribute('aria-label')||'请选择')}</b>${kind==='model'?'<small>仅显示当前模式可用的模型</small>':''}</header><div class="wb-select-option-list">${options.map(option=>{const promo=kind==='model'&&option.value==='minimax-h3-15s'?'<em class="wb-model-promo">限时特惠 ¥0.05/s 起</em>':'';return `<button type="button" role="option" data-wb-portal-value="${esc(option.value)}" aria-selected="${String(option.value===source.value)}" ${option.disabled?'disabled':''}>${kind==='model'?`<span class="wb-select-option-icon">${professionalModelIcon(option.value)}</span>`:''}<span class="wb-select-option-copy"><span class="wb-model-option-title"><b>${esc(option.textContent)}</b>${promo}</span>${option.dataset.meta?`<small>${esc(option.dataset.meta)}</small>`:''}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6"/></svg></button>`;}).join('')}</div>`;
+    const options=[...source.options]; panel.innerHTML=`<header><b>${esc(trigger.getAttribute('aria-label')||'请选择')}</b>${kind==='model'?'<small>仅显示当前模式可用的模型</small>':''}</header><div class="wb-select-option-list">${options.map(option=>{const promo=kind==='model'&&option.value==='minimax-h3-15s'&&!state.config?.modelPrices?.some(item=>item.modelId===option.value&&item.unit==='request')?'<em class="wb-model-promo">限时特惠 ¥0.05/s 起</em>':'';return `<button type="button" role="option" data-wb-portal-value="${esc(option.value)}" aria-selected="${String(option.value===source.value)}" ${option.disabled?'disabled':''}>${kind==='model'?`<span class="wb-select-option-icon">${professionalModelIcon(option.value)}</span>`:''}<span class="wb-select-option-copy"><span class="wb-model-option-title"><b>${esc(option.textContent)}</b>${promo}</span>${option.dataset.meta?`<small>${esc(option.dataset.meta)}</small>`:''}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8 3 3 6-6"/></svg></button>`;}).join('')}</div>`;
     document.body.append(panel); positionWorkbenchFloatingPanel(panel,trigger,{width:kind==='model'?340:260}); workbenchPortalKeyboard(panel,trigger);
     panel.querySelectorAll('[data-wb-portal-value]').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();if(button.disabled)return;source.value=button.dataset.wbPortalValue;syncWorkbenchDropdown(dropdown);closeWorkbenchDropdowns();source.dispatchEvent(new Event('change',{bubbles:true}));}));
     if(focusOption)requestAnimationFrame(()=>panel.querySelector(`[data-wb-portal-value="${CSS.escape(source.value)}"]:not(:disabled)`)?.focus()||panel.querySelector('button:not(:disabled)')?.focus());
@@ -3316,7 +3327,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       return {ready:true,credits,label:credits===null?'积分预估暂不可用':creditText(credits),message:'',priceVersion:''};
     }
     const billable=videoRequestShot(shot,shotGenerationAssetIds(shot));const parameters=professionalVideoParameters(billable);const selectedPricing=parameters?.pricingByQuality?.[shot.generation?.quality]||parameters?.pricing;
-    const credits=selectedPricing?.unit==='request'?Number(selectedPricing.amount)/Number(state.pricing.yuanPerCredit||0.1)*count:selectedPricing?.unit==='second'?shot.duration*Number(selectedPricing.amount)*count:shot.duration*state.pricing.videoPerSecond*count;
+    const credits=selectedPricing?.unit==='request'?Number(selectedPricing.amount)/(selectedPricing.currency==='credit'?1:Number(state.pricing.yuanPerCredit||0.1))*count:selectedPricing?.unit==='second'?shot.duration*Number(selectedPricing.amount)*count:shot.duration*state.pricing.videoPerSecond*count;
     return {ready:true,credits,label:creditText(credits),message:'',priceVersion:''};
   }
   function ensureProfessionalVideoSettings(shot,{resetDuration=false}={}){

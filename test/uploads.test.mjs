@@ -96,6 +96,35 @@ test('schema migration metadata rejects a tampered checksum before startup', asy
   }
 });
 
+test('existing v1 database adds route settings without changing migration metadata or model controls', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'video-settings-migration-'));
+  const file = path.join(dir, 'studio.db');
+  try {
+    const creator = await isolatedDbModule();
+    const original = creator.openDatabase({ file });
+    original.exec('ALTER TABLE model_routes DROP COLUMN capabilities_json');
+    original.exec('ALTER TABLE model_routes DROP COLUMN billing_mode');
+    original.prepare("UPDATE model_controls SET enabled = 0, user_visible = 0, sort_order = 88, version = 2 WHERE model_id = 'seedance-2.0'").run();
+    const metadata = original.prepare('SELECT * FROM schema_migrations').all();
+    assert.equal(metadata[0].checksum, '9c3d92303b67350bfe587df0fef690017db492f1664b805671ec5085974c1e29');
+    creator.closeDatabase({ checkpoint: false });
+    const reopener = await isolatedDbModule();
+    try {
+      const upgraded = reopener.openDatabase({ file });
+      assert.deepEqual(upgraded.prepare('SELECT * FROM schema_migrations').all(), metadata);
+      const routeColumns = upgraded.prepare('PRAGMA table_info(model_routes)').all().map(column => column.name);
+      assert.ok(routeColumns.includes('capabilities_json'));
+      assert.ok(routeColumns.includes('billing_mode'));
+      const control = upgraded.prepare("SELECT enabled, user_visible, sort_order FROM model_controls WHERE model_id = 'seedance-2.0'").get();
+      assert.deepEqual({ ...control }, { enabled: 0, user_visible: 0, sort_order: 88 });
+    } finally {
+      reopener.closeDatabase({ checkpoint: false });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('existing v1 database gains the WeChat payment table without changing its baseline checksum', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'wechat-schema-extension-'));
   const file = path.join(dir, 'studio.db');

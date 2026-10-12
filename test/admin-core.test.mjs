@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { configureCursors } from '../lib/store.mjs';
 import { configureLedger, adjustCredits, grantSignupBonus, walletOf } from '../lib/ledger.mjs';
-import { createPricingVersion, currentPricing, pricingSnapshot, modelPrice, modelPriceFields, liveLlmRates } from '../lib/pricing.mjs';
+import { createPricingVersion, currentPricing, pricingSnapshot, modelPrice, modelPriceFields, videoBillingUnit, liveLlmRates } from '../lib/pricing.mjs';
 import { isModelEnabled, publicVideoCapabilitiesWithControls, updateModelControl } from '../lib/model-controls.mjs';
 import { registerUser, insertUser } from '../lib/store.mjs';
 
@@ -78,6 +78,30 @@ test('admin core controls', async t => {
     assert.deepEqual(createPricingVersion(args).modelPrices, saved.modelPrices);
     for (const modelPrices of [{ unknown:1 }, { 'grok:720p':-1 }, { 'grok:720p':'1.1234567' }, []]) {
       assert.throws(() => createPricingVersion({ ...args, modelPrices }), error => error.statusCode === 400);
+    }
+  });
+
+  await t.test('video billing defaults to seconds, can switch and preserves historical snapshots', () => {
+    const admin = makeUser('video_modes', 'admin');
+    const args = { imagePerRequest:1, videoPerSecond:1, actorUserId:admin.id };
+    const before = currentPricing();
+    assert.equal(videoBillingUnit(before, 'grok'), 'second');
+    const saved = createPricingVersion({ ...args, modelPrices:{ 'grok:720p':10 }, videoBillingModes:{ grok:'request' } });
+    const field = modelPriceFields(saved).find(item => item.key === 'grok:720p');
+    assert.equal(field.unit, '次');
+    assert.equal(field.amount, 10);
+    const snapshotPricing = { ...saved, videoPerSecondMicro:10_000_000, videoBillingUnit:videoBillingUnit(saved, 'grok') };
+    const snapshot = pricingSnapshot(snapshotPricing, 'video', 10);
+    assert.equal(snapshot.total, 10);
+    assert.equal(pricingSnapshot(snapshotPricing, 'video', 30).total, 10);
+    assert.equal(snapshot.quantity, 1);
+    assert.deepEqual(createPricingVersion(args).videoBillingModes, { grok:'request' });
+    const next = createPricingVersion({ ...args, videoBillingModes:{ grok:'second' } });
+    assert.equal(pricingSnapshot({ ...snapshotPricing, videoBillingUnit:videoBillingUnit(next, 'grok') }, 'video', 30).total, 300);
+    assert.equal(snapshot.total, 10);
+    assert.equal(videoBillingUnit(before, 'grok'), 'second');
+    for (const modes of [[], {unknown:'request'}, {grok:'invalid'}, {'gpt-image-2':'request'}]) {
+      assert.throws(() => createPricingVersion({ ...args, videoBillingModes:modes }), { statusCode:400 });
     }
   });
 

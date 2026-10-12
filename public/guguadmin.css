@@ -500,6 +500,22 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 .admin-dialog-check span { display: grid; gap: 2px; }
 .admin-dialog-check b { color: var(--text); font-size: 13px; font-weight: 600; }
 .admin-dialog-check small { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.45; }
+.admin-multiselect { position: relative; min-width: 0; }
+.admin-multiselect summary { display: flex; align-items: center; min-height: 36px; padding: 7px 34px 7px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--text); background: var(--surface) var(--select-arrow) no-repeat right 10px center / 16px; box-shadow: var(--shadow-xs); font-size: 13px; font-weight: 400; line-height: 20px; list-style: none; cursor: pointer; transition: border-color var(--ease), box-shadow var(--ease); }
+.admin-multiselect summary::-webkit-details-marker { display: none; }
+.admin-multiselect summary:hover { border-color: #c4c4cc; }
+.admin-multiselect summary:focus-visible, .admin-multiselect[open] summary { border-color: var(--brand); box-shadow: var(--ring); outline: 0; }
+.admin-multiselect summary[aria-disabled="true"] { opacity: .6; cursor: default; }
+.admin-multiselect-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-lg); }
+.admin-multiselect-option { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 8px 10px; border-radius: 6px; color: var(--text-soft); font-size: 13px; font-weight: 400; cursor: pointer; }
+.admin-multiselect-option:hover { background: var(--surface-muted); }
+.admin-multiselect-option:has(input:checked) { color: var(--brand); background: var(--brand-soft); }
+.admin-multiselect-option:focus-within { outline: 2px solid var(--brand); outline-offset: -2px; }
+.admin-dialog-field .admin-multiselect-option input { flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; box-shadow: none; accent-color: var(--brand); }
+.admin-dialog-number-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.admin-dialog-number-group legend { margin-bottom: 8px; padding: 0; color: var(--text-soft); font-size: 12px; font-weight: 600; }
+.admin-dialog-number-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.admin-dialog-number-group > small { display: block; margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .admin-dialog-confirmation { grid-column: 1 / -1; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); color: var(--text-soft); background: var(--surface-muted); font-size: 13px; line-height: 1.6; }
 .admin-dialog-confirmation.is-danger { border-color: var(--danger-line); color: #991b1b; background: var(--danger-soft); }
 .admin-dialog-error { margin: 0 22px 12px; padding: 9px 12px; border: 1px solid var(--danger-line); border-radius: var(--radius-sm); color: var(--danger); background: var(--danger-soft); font-size: 13px; }

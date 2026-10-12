@@ -10,11 +10,11 @@ import { createStreamPacer } from '../agent/stream-pacer.js?v=1';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
 import { createMessageScroller } from '../agent/message-scroller.js?v=2';
 import { mediaFrameSize } from '../agent/frames.js?v=3';
-import { placeCanvasNodes, focusCanvasViewport } from './canvas-layout.js?v=1';
+import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport } from './canvas-layout.js?v=2';
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=35';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=36';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=14';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=13';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
@@ -26,6 +26,7 @@ import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-libra
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
+import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
@@ -741,15 +742,50 @@ export function createDirectorWorkspace(host, bridge) {
     if(node.kind==='asset'&&node.media?.kind==='video'&&node.media.width>0&&node.media.height>0)return mediaFrameSize(node.media);
     return {width:280,height:228};
   }
+  async function prepareImportedCanvasRow(files,token){
+    return Promise.all(files.map(async file=>{
+      if(file.kind!=='image')return {id:file.id,...mediaFrameSize(file)};
+      const url=file.previewUrl||file.url;
+      if(url&&!assetImages.has(url)){
+        const image=new Image();image.src=url;
+        try{
+          await image.decode();
+          if(token!==epoch)return null;
+          assetImages.set(url,image);
+          assetSizes.set(url,{width:image.naturalWidth,height:image.naturalHeight});
+        }catch{}
+      }
+      const size=assetSizes.get(url)||(file.width>0&&file.height>0?file:null);
+      return {id:file.id,...importedImageBounds(size)};
+    })).then(items=>items.filter(Boolean));
+  }
   async function importAssetIntoCanvas(){
     try{
-      const file=await bridge.importAsset();
-      if(!file)return;
-      revealCanvasItem(file.id);
+      const token=epoch;
+      const existingIds=new Set(liveCanvasNodes().map(node=>node.id));
+      const selected=await bridge.importAsset();
+      if(token!==epoch)return;
+      const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
+      if(!files.length)return;
+      const ids=[...new Set(files.map(file=>file.id))];
+      ids.forEach(revealCanvasItem);
       if(canvas){
+        const newFiles=files.filter(file=>!existingIds.has(file.id));
+        const items=await prepareImportedCanvasRow(newFiles,token);
+        if(token!==epoch||!canvas)return;
+        const newIds=new Set(items.map(item=>item.id));
+        const placements=placeCanvasRow(items,liveCanvasNodes().filter(node=>!newIds.has(node.id)),canvasView());
+        Object.assign(workspace().positions,placements);
+        const previousSyncing=syncing;syncing=true;
+        try{
+          for(const [id,position] of Object.entries(placements)){
+            automaticImageSizing.delete(id);
+            if(canvas.getNodeConfigById(id))canvas.updateNodes([id],position);
+          }
+        }finally{syncing=previousSyncing;}
         syncCanvas();
-        canvas.selectNodes([file.id]);
-        focusNewCanvasContent([file.id]);
+        canvas.selectNodes(ids);
+        focusNewCanvasContent(ids);
         await save();
       }
     }catch(e){bridge.toast(e.message);}
@@ -1494,6 +1530,7 @@ export function createDirectorWorkspace(host, bridge) {
       projectChrome.append(agentHeader.querySelector('.dw-agent-project'));
       const projectTitle=projectChrome.querySelector('.dw-agent-project-title');
       projectTitle.title=projectTitle.textContent;
+      if(bridge.saveProjectTitle)bindProjectTitleEditor(projectTitle,{title:()=>bridge.projectTitle?.()||'新项目',save:bridge.saveProjectTitle,toast:bridge.toast});
       projectChrome.insertAdjacentHTML('beforeend','<div class="dw-project-tools reference-canvas-host" role="toolbar" aria-label="画布工具"></div>');
       host.querySelector('.director-workspace').prepend(projectChrome);
     }
@@ -1720,7 +1757,7 @@ export function createDirectorWorkspace(host, bridge) {
     handle.onpointercancel=event=>{event?.stopPropagation?.();endResize(event);};handle.onlostpointercapture=()=>{if(resizingChat)endResize();};
     handle.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();resizeLayoutOnly(event.key==='Home'?280:event.key==='End'?720:Number(handle.getAttribute('aria-valuenow'))+(event.key==='ArrowLeft'?24:-24),true);};
     handle.ondblclick=()=>resizeLayoutOnly(460,true);
-    resizeObserver=new ResizeObserver(()=>{setWidth(preferredWidth);positionGenerationComposer();});resizeObserver.observe(workspaceElement);setWidth(preferredWidth);
+    resizeObserver=new ResizeObserver(()=>{setWidth(preferredWidth);positionGenerationComposer();});resizeObserver.observe(workspaceElement);resizeObserver.observe(host.querySelector('.dw-canvas'));setWidth(preferredWidth);
     host.querySelector('[data-agent-new]').onclick=()=>void switchConversation();
 
     host.querySelector('[data-agent-retry]').onclick=()=>void agentAction(()=>agentClient.start());

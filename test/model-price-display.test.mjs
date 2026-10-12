@@ -60,8 +60,8 @@ test('Minimax price changes refresh both versioned frontend entries', async () =
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const drama = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.match(html, /src="\/app\.js\?v=520"/);
-  assert.match(app, /import\('\.\/drama-studio\.js\?v=251'\)/);
+  assert.match(html, /src="\/app\.js\?v=525"/);
+  assert.match(app, /import\('\.\/drama-studio\.js\?v=256'\)/);
   assert.doesNotMatch(html, /app\.js\?v=462\b/);
   assert.doesNotMatch(app, /drama-studio\.js\?v=205\b/);
   assert.match(drama, /限时特惠 ¥0\.05\/s 起/);
@@ -126,4 +126,26 @@ test('configured image and video prices override defaults including zero', () =>
   assert.equal(catalog.find(item => item.modelId === 'gpt-image-2.5' && item.quality === '2K').credits, 0);
   assert.equal(catalog.find(item => item.modelId === 'midjourney').credits, 2.5);
   assert.equal(catalog.find(item => item.modelId === 'grok').credits, 3.25);
+});
+
+
+test('per-request video prices reach cards and preserve credit units', () => {
+  const pricing = { imagePerRequest:1, videoPerSecond:1, version:2, modelPrices:{ 'grok:720p':10 }, videoBillingModes:{ grok:'request' } };
+  const catalog = __test.publicPlatformPrices(pricing, publicVideoCapabilities());
+  const row = catalog.find(item => item.modelId === 'grok' && item.quality === '720p');
+  assert.equal(row.unit, 'request');
+  assert.equal(row.credits, 10);
+  assert.equal(row.yuan, 1);
+  const context = vm.createContext({ state:{config:{modelPrices:catalog}} });
+  vm.runInContext(app.slice(app.indexOf('function videoPricingFor('), app.indexOf('let videoQuoteTimer =')), context);
+  const selected = context.videoPricingFor('grok', {}, '720p');
+  assert.equal(selected.currency, 'credit');
+  assert.equal(selected.unit, 'request');
+  assert.equal(selected.amount, 10);
+});
+
+test('video billing changes refresh the admin and workspace cache entries', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
+  assert.match(admin, /guguadmin\.js\?v=44/);
 });

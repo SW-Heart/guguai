@@ -1,5 +1,5 @@
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
-import { modelPrice } from '../../lib/pricing.mjs';
+import { modelPrice, videoBillingUnit } from '../../lib/pricing.mjs';
 import { publicPrecheckHits } from './prompt-precheck.mjs';
 import { applyDramaStyle, projectDramaStyleSnapshot } from '../../lib/drama-style.mjs';
 
@@ -146,7 +146,7 @@ export function createGenerationRouteHandler({
     const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
     const pricing = currentPricing();
     const creditsPerSecond = modelPrice(pricing, request.modelId, request.quality, selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : pricing.videoPerSecond);
-    const credits = creditsPerSecond * request.duration;
+    const credits = creditsPerSecond * (videoBillingUnit(pricing, request.modelId) === 'request' ? 1 : request.duration);
     return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:staticPriceVersion(request) }), true;
   }
 
@@ -366,7 +366,7 @@ export function createGenerationRouteHandler({
     const taskIds = generationRequestId ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`) : Array.from({ length:quantity }, () => randomId());
     const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
     pricingForTask = type === 'video'
-      ? { ...pricingForTask, videoPerSecondMicro:creditsToMicro(modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
+      ? { ...pricingForTask, videoBillingUnit:videoBillingUnit(pricing, modelId), videoPerSecondMicro:creditsToMicro(modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
       : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, modelId === 'gpt-image-2.5' ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
     const pricingSnapshotValue = routeSelection
       ? { version:pricing.version, contentType:type, ...modelRouteCharge(routeSelection, videoRequest.duration), routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, markupPercent:20, priceVersion:publicRoutePriceVersion(routeSelection) }

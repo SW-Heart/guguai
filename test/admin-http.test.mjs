@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=38/);
+  assert.match(adminHtml, /guguadmin\.js\?v=44/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -297,6 +297,29 @@ test('admin HTTP permissions and core workflows', async t => {
   const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote.response.status, 200);
   assert.equal(quote.data.credits, 27.5);
+  await t.test('video billing selection affects quotes and submitted fee estimates', async () => {
+    const headers = { Origin:base, 'X-CSRF-Token':csrf };
+    const saved = await admin.call('/api/admin/pricing', { method:'POST', headers, body:{ imagePerRequest:1.5, videoPerSecond:0.8, videoBillingModes:{ grok:'request' } } });
+    assert.equal(saved.response.status, 201);
+    const config = await userClient.call('/api/config');
+    const row = config.data.modelPrices.find(item => item.modelId === 'grok' && item.quality === '720p');
+    assert.equal(row.unit, 'request');
+    assert.equal(row.credits, 2.75);
+    for (const duration of [10,30]) {
+      const body = { modelId:'grok', generationType:'TEXT', quality:'720p', duration, aspectRatio:'16:9' };
+      const quoted = await userClient.call('/api/model-quote', { method:'POST', body });
+      assert.equal(quoted.response.status, 200);
+      assert.equal(quoted.data.credits, 2.75);
+      const submitEstimate = await userClient.call('/api/generations', { method:'POST', body:{ ...body, type:'video', prompt:'一只猫在草地上散步', quantity:2 } });
+      assert.equal(submitEstimate.response.status, 402);
+      assert.match(submitEstimate.data.error, /本次需要 5\.5 积分/);
+    }
+    const restored = await admin.call('/api/admin/pricing', { method:'POST', headers, body:{ imagePerRequest:1.5, videoPerSecond:0.8, videoBillingModes:{ grok:'second' } } });
+    assert.equal(restored.response.status, 201);
+    const quoted = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:30, aspectRatio:'16:9' } });
+    assert.equal(quoted.data.credits, 82.5);
+  });
+
   await t.test('MiniMax prices, workflows and resolutions are managed through AutoDL routes', async () => {
     const modelId = 'minimax-h3-15s';
     const headers = { Origin:base, 'X-CSRF-Token':csrf };
@@ -325,14 +348,20 @@ test('admin HTTP permissions and core workflows', async t => {
 
     const textMode = data => data.videoCapabilities.models.find(item => item.id === modelId).modes.find(mode => mode.generationType === 'TEXT');
     assert.deepEqual(textMode(config.data).qualityOptions, ['480p', '768p']);
-    const route1440 = await admin.call('/api/admin/model-routes', { method:'POST', headers, body:{ logicalModelId:modelId, quality:'1440p', credentialId:'autodl-main', upstreamModelId:'minimax_h3_1440', durations:[5,10], priority:1, costYuan:0.1, salePriceYuan:0.15 } });
+    const route1440 = await admin.call('/api/admin/model-routes', { method:'POST', headers, body:{ logicalModelId:modelId, quality:'1440p', credentialId:'autodl-main', upstreamModelId:'minimax_h3_1440', durations:[5,10], priority:1, billingUnit:'request', costYuan:0.1, salePriceYuan:0.15 } });
     assert.equal(route1440.response.status, 201);
     markRouteAvailable(route1440.data.route.id);
     const withHighRes = await userClient.call('/api/config');
     assert.deepEqual(textMode(withHighRes.data).qualityOptions, ['480p', '768p', '1440p']);
     assert.deepEqual(textMode(withHighRes.data).durationsByQuality['1440p']['9:16'], [5, 10]);
     const highResQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'1440p', duration:10, aspectRatio:'9:16' } });
-    assert.equal(highResQuote.data.credits, 15);
+    assert.equal(highResQuote.data.credits, 1.5);
+    const shortQuote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'1440p', duration:5, aspectRatio:'9:16' } });
+    assert.equal(shortQuote.data.credits, 1.5);
+    const fixedCatalog = await userClient.call('/api/public/model-prices');
+    const fixedRow = fixedCatalog.data.items.find(item => item.modelId === modelId && item.quality === '1440p');
+    assert.equal(fixedRow.unit, 'request');
+    assert.equal(fixedRow.totalCredits, 1.5);
     const unsupported = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId, generationType:'TEXT', quality:'1088p', duration:5, aspectRatio:'16:9' } });
     assert.equal(unsupported.response.status, 503);
   });
