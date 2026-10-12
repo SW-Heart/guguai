@@ -6,30 +6,9 @@ import { __test } from '../server.mjs';
 const {
   autodlRetryableResponseError,
   buildAutodlPayload,
-  buildAutodlMotionPayload,
   createAutodlVideo,
   pollAutodlVideo,
 } = __test;
-
-test('AutoDL motion retargeting payload follows the documented workflow contract', () => {
-  assert.deepEqual(buildAutodlMotionPayload({ seed: 42, quality: '464*832px(竖版)', aspectRatio: '9:16' }, {
-    images: ['https://example.com/person.png'],
-    videos: ['https://example.com/dance.mp4'],
-  }), {
-    seed: 42,
-    ref_image: 'https://example.com/person.png',
-    ref_video: 'https://example.com/dance.mp4',
-    resolution: '464*832px(竖版)',
-  });
-  assert.deepEqual(buildAutodlMotionPayload({ quality: '832*464px(横版)', aspectRatio: '16:9' }, {
-    images: ['image'], videos: ['video'],
-  }), {
-    seed: undefined,
-    ref_image: 'image',
-    ref_video: 'video',
-    resolution: '832*464px(横版)',
-  });
-});
 
 test('AutoDL payload maps every supported resolution and caps typed references', () => {
   for (const [quality, aspectRatio, resolution] of [

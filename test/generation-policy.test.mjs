@@ -19,7 +19,6 @@ test('generation job policy chooses provider intervals without side effects', ()
   assert.equal(policy.pollInterval({ type: 'image', provider: 'tuzi' }), 10);
   assert.equal(policy.pollInterval({ provider: 'oai' }), 20);
   assert.equal(policy.pollInterval({ provider: 'autodl' }), 30);
-  assert.equal(policy.pollInterval({ provider: 'autodl-motion' }), 30);
   assert.equal(policy.pollInterval({ provider: 'ttapi' }), 40);
   assert.equal(policy.pollInterval({ provider: 'cntcn' }), 50);
   assert.equal(policy.pollInterval({ provider: 'duomi', type: 'video' }), 8_000);

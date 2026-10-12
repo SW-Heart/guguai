@@ -4,7 +4,6 @@ import { publicPrecheckHits } from './prompt-precheck.mjs';
 import { applyDramaStyle, projectDramaStyleSnapshot } from '../../lib/drama-style.mjs';
 
 export function createGenerationRouteHandler({
-  prepareViralGeneration,
   videoUpscale,
   bodyJson,
   sendJson,
@@ -70,7 +69,6 @@ export function createGenerationRouteHandler({
     if (provider === 'ttapi') return providerAvailability.ttapi;
     if (provider === 'cntcn') return providerAvailability.cntcn;
     if (provider === 'autodl') return providerAvailability.autodl;
-    if (provider === 'autodl-motion') return providerAvailability.autodlMotion;
     if (provider === 'oai') {
       if (videoRequest?.modelId === videoModelIds.VEO_31) return providerAvailability.oaiVeo;
       if (videoRequest?.modelId === videoModelIds.MINIMAX_H3) return providerAvailability.oaiMinimax;
@@ -147,9 +145,7 @@ export function createGenerationRouteHandler({
     }
     const selectedPricing = request.pricingByQuality?.[request.quality] || request.pricing;
     const pricing = currentPricing();
-    const creditsPerSecond = request.modelId === videoModelIds.MOTION_RETARGETING
-      ? Number(selectedPricing?.amount ?? 1)
-      : modelPrice(pricing, request.modelId, request.quality, selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : pricing.videoPerSecond);
+    const creditsPerSecond = modelPrice(pricing, request.modelId, request.quality, selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : pricing.videoPerSecond);
     const credits = creditsPerSecond * request.duration;
     return sendJson(res, 200, { modelId:request.modelId, quality:request.quality, duration:request.duration, aspectRatio:request.aspectRatio, available:true, credits, yuan:credits * 0.1, priceVersion:staticPriceVersion(request) }), true;
   }
@@ -251,7 +247,6 @@ export function createGenerationRouteHandler({
     const sendJson = (_res, status, data) => { res.result = { status, data }; };
     input = structuredClone(input);
     async function execute() {
-    if (input.viralProjectId) Object.assign(input, prepareViralGeneration(user.id, scope, input));
     const type = input.type;
     const bodyRequestId = String(input.requestId || '').trim();
     if (headerRequestId && bodyRequestId && headerRequestId !== bodyRequestId) return sendJson(res, 400, { error:'请求幂等键不一致' }), true;
@@ -333,13 +328,6 @@ export function createGenerationRouteHandler({
     const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;
     let aspectRatio = null; let duration = null; let videoRequest = null;
     if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-    let motionSeed = '';
-    if (videoRequest?.modelId === videoModelIds.MOTION_RETARGETING) {
-      if (input.seed !== undefined && input.seed !== null && String(input.seed).trim() !== '') {
-        motionSeed = Number(input.seed);
-        if (!Number.isSafeInteger(motionSeed) || motionSeed < 0 || motionSeed > 4_294_967_295) return sendJson(res, 400, { error:'随机种子必须是 0～4294967295 的整数' }), true;
-      }
-    }
     const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope });
     const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
     assertReferenceCountsWithinLimits(referenceCounts, videoRequest?.referenceLimits);
@@ -378,7 +366,7 @@ export function createGenerationRouteHandler({
     const taskIds = generationRequestId ? Array.from({ length:quantity }, (_, index) => quantity === 1 ? generationRequestId : `${generationRequestId}-${index + 1}`) : Array.from({ length:quantity }, () => randomId());
     const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
     pricingForTask = type === 'video'
-      ? { ...pricingForTask, videoPerSecondMicro:creditsToMicro(videoRequest.modelId === videoModelIds.MOTION_RETARGETING ? videoRequest.pricing.amount : modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
+      ? { ...pricingForTask, videoPerSecondMicro:creditsToMicro(modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
       : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, modelId === 'gpt-image-2.5' ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
     const pricingSnapshotValue = routeSelection
       ? { version:pricing.version, contentType:type, ...modelRouteCharge(routeSelection, videoRequest.duration), routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, markupPercent:20, priceVersion:publicRoutePriceVersion(routeSelection) }
@@ -397,7 +385,6 @@ export function createGenerationRouteHandler({
       const isIncludedOutput = isMidjourney && outputIndex > 0;
       return {
         ...taskExtras,
-        ...(input.viralProjectId ? { viralProjectId:input.viralProjectId, viralUnitId:input.viralUnitId, viralPlanHash:input.viralPlanHash } : {}),
         id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
         ...(dramaProjectId ? {dramaProjectId}:{}),
         ...(styleSnapshot ? {userPrompt,dramaStyleSnapshot:styleSnapshot,stylePromptMaxLength:promptMaxLength}:{}),
@@ -412,7 +399,6 @@ export function createGenerationRouteHandler({
           midjourneyPrimaryId:outputIds[0],
         } : {}),
         ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
-        ...(videoRequest?.modelId === videoModelIds.MOTION_RETARGETING ? { seed:motionSeed } : {}),
         ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routePriority:routeSelection.priority, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
         ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),
         creditCost:isIncludedOutput ? 0 : pricingSnapshotValue.total,

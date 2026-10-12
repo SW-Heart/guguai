@@ -9,7 +9,6 @@ import { createAgentRouteHandler } from './server/routes/agent.mjs';
 import { probeVideo, readVideoFrames, detectVideoBoundaries, extractSourceAudio, inspectVideoAudio, composeVideoClips, burnVideoCaptions, probeAudioTrack, prepareSpeechAudio } from './services/agent-video-analysis.mjs';
 import { transcribeDeepgramAudio } from './services/agent-speech-transcription.mjs';
 import { createAgentImageReader } from './services/agent-image-analysis.mjs';
-import { createViralLabRouteHandler } from './server/routes/viral-lab.mjs';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
@@ -119,8 +118,6 @@ const oaiBase = /\/v1$/i.test(configuredOaiBase) ? configuredOaiBase : `${config
 const autodlBase = (process.env.AUTODL_API_BASE || 'https://autodl.art').replace(/\/$/, '');
 const autodlWorkflowId = process.env.AUTODL_MINIMAX_H3_15S_WORKFLOW_ID || process.env.AUTODL_MINIMAX_H3_ID || 'minimax_h3_image_audio_to_video_v2_15s';
 const autodlConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlWorkflowId);
-const autodlMotionWorkflowId = process.env.AUTODL_MOTION_RETARGETING_WORKFLOW_ID || 'wan2.2animate-v4-motion_retargeting';
-const autodlMotionConfigured = Boolean(process.env.AUTODL_COMFYUI_KEY && autodlMotionWorkflowId);
 const videoUpscaleSourceRetentionMs = Math.max(60 * 60_000, Number(process.env.ALIYUN_VSR_SOURCE_RETENTION_HOURS || 6) * 3600_000);
 const videoUpscaleSweepMs = 60 * 60_000;
 const mediaRetentionEnabled = String(process.env.MEDIA_RETENTION_ENABLED ?? 'true').toLowerCase() !== 'false';
@@ -833,38 +830,6 @@ const autodlProvider = createAutodlProvider({
   maxPollDurationMs: autodlMaxPollDurationMs,
   maxPolls: autodlMaxPolls,
 });
-function buildAutodlMotionPayload(_task, refs) {
-  const groups = refs && !Array.isArray(refs) ? refs : { images: [], videos: [] };
-  const quality = String(_task.quality || '').trim();
-  const horizontal = _task.aspectRatio === '16:9'
-    || quality === '832*464px'
-    || quality === '832*464px(横版)';
-  return {
-    seed: _task.seed === undefined || _task.seed === null || _task.seed === '' ? undefined : Number(_task.seed),
-    ref_image: groups.images?.[0] || '',
-    ref_video: groups.videos?.[0] || '',
-    resolution: horizontal ? '832*464px(横版)' : '464*832px(竖版)',
-  };
-}
-const autodlMotionProvider = createAutodlProvider({
-  submitTimeoutMs: providerTaskIdTimeoutMs,
-  baseUrl: autodlBase,
-  workflowId: autodlMotionWorkflowId,
-  apiKey: process.env.AUTODL_COMFYUI_KEY,
-  ...providerTransport,
-  sleep,
-  notifyVideoProgress: providerTransport.notifyVideoProgress,
-  upstreamRequestErrorDetail: providerTransport.upstreamRequestErrorDetail,
-  isDefinitiveSubmitRejection: providerTransport.isDefinitiveSubmitRejection,
-  errorMessage,
-  videoPollTimeoutError,
-  buildPayload: buildAutodlMotionPayload,
-  providerName: 'autodl-motion',
-  pollIntervalMs: autodlPollIntervalMs,
-  requestTimeoutMs: autodlRequestTimeoutMs,
-  maxPollDurationMs: autodlMaxPollDurationMs,
-  maxPolls: autodlMaxPolls,
-});
 const aliyunVsrProvider = createAliyunVsrProvider({
   accessKeyId: process.env.ALIYUN_VSR_ACCESS_KEY_ID,
   accessKeySecret: process.env.ALIYUN_VSR_ACCESS_KEY_SECRET,
@@ -982,12 +947,6 @@ const videoProviderAdapters = createProviderAdapterRegistry({
     validate: task => { validVideoTask(task); if (!autodlConfigured) throw new Error('AutoDL Minimax H3 视频服务尚未配置'); return task; },
     submit: (task, refs, hooks) => autodlProvider.createVideo(task, refs, hooks),
     poll: (task, hooks, _startedAt) => autodlProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
-    lookup: persistedProviderTask,
-  },
-  'autodl-motion': {
-    validate: task => { validVideoTask(task); if (!autodlMotionConfigured) throw new Error('AutoDL 动作迁移服务尚未配置'); return task; },
-    submit: (task, refs, hooks) => autodlMotionProvider.createVideo(task, refs, hooks),
-    poll: (task, hooks, _startedAt) => autodlMotionProvider.pollVideo(task.providerTaskId, hooks, { startedAt: videoPollStartedAt(task) }),
     lookup: persistedProviderTask,
   },
   [VIDEO_UPSCALE_PROVIDER]: {
@@ -1527,7 +1486,7 @@ async function resolveImageRefs(userId, ids, task = {}) {
   });
 }
 async function resolveRefs(userId, ids, task = {}) {
-  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_MINI || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl' || task.provider === 'autodl-motion';
+  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_MINI || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
   const scope = { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId };
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   // Image references use the dedicated reference bucket; video and audio
@@ -2169,7 +2128,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
         ? ttapiPersistenceHooks(userId, task)
         : task.provider === 'cntcn'
           ? cntcnPersistenceHooks(userId, task)
-          : ['autodl', 'autodl-motion', VIDEO_UPSCALE_PROVIDER].includes(task.provider)
+          : ['autodl', VIDEO_UPSCALE_PROVIDER].includes(task.provider)
             ? autodlPersistenceHooks(userId, task)
             : {};
       hooks.deferPolling = deferPolling;
@@ -2183,7 +2142,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       if (error.submissionUncertain) {
         generationLifecycle.markSubmissionUncertain(task, error);
         console.error('[video] async provider submission outcome is uncertain; no refund issued', { generationId: task.id, provider: task.provider, message: error.message });
-      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl', 'autodl-motion', VIDEO_UPSCALE_PROVIDER].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
+      } else if ((task.type === 'image' || task.provider === 'duomi' || task.routeId || ['ttapi', 'cntcn', 'autodl', VIDEO_UPSCALE_PROVIDER].includes(task.provider)) && task.providerTaskId && !error.upstreamTerminal) {
         generationLifecycle.markProviderTaskPaused(task, error);
         console.error('[video] async provider task paused without refund', { generationId: task.id, provider: task.provider, providerTaskId: task.providerTaskId, message: error.message });
       } else {
@@ -2277,14 +2236,6 @@ function resumeAutodlGeneration(userId, task, options = {}) {
     logContext: () => ({ providerTaskId:task.providerTaskId }),
   });
 }
-function resumeAutodlMotionGeneration(userId, task, options = {}) {
-  return generationRecovery.resume(userId, task, {
-    ...options,
-    finalPhase: 'autodl-motion-recovery-final',
-    poll: ({ pollOnce }) => autodlMotionProvider.pollVideo(task.providerTaskId, autodlPersistenceHooks(userId, task), { startedAt: videoPollStartedAt(task), pollOnce }),
-    logContext: () => ({ providerTaskId:task.providerTaskId }),
-  });
-}
 function resumeVideoUpscaleGeneration(userId, task, options = {}) {
   return generationRecovery.resume(userId, task, {
     ...options,
@@ -2365,7 +2316,6 @@ function processGenerationTask(userId, task, kind = 'generation') {
   if (task.provider === 'ttapi' && task.providerTaskId) return resumeTtapiGeneration(userId, task, { pollOnce });
   if (task.provider === 'cntcn' && task.providerTaskId) return resumeCntcnGeneration(userId, task, { pollOnce });
   if (task.provider === 'autodl' && task.providerTaskId) return resumeAutodlGeneration(userId, task, { pollOnce });
-  if (task.provider === 'autodl-motion' && task.providerTaskId) return resumeAutodlMotionGeneration(userId, task, { pollOnce });
   if (task.provider === VIDEO_UPSCALE_PROVIDER && task.providerTaskId) return resumeVideoUpscaleGeneration(userId, task, { pollOnce });
   if (!task.providerTaskId) return reconcileMissingProviderTaskId(userId, task);
   return failUnsupportedGenerationRecovery(userId, task);
@@ -2670,9 +2620,6 @@ const accountRoute = createAccountRouteHandler({
   markNotificationRead,
   markAllNotificationsRead,
 });
-const viralLab = createViralLabRouteHandler({ bodyJson, sendJson, requireUser, requireDesktopWorkspaceScope, findAsset, publicAsset, publicGeneration,
-  llmConfig, isLlmConfigured, callLlm, llmRates, conservativeInputTokenUpperBound, llmReservationMicro, reserveLlmCredits, settleLlmCredits, releaseLlmCredits, markLlmBillingReconcile,
-  ensureLocalAsset: (userId, asset) => ensureLocalAsset(userId, asset) });
 const dramaRoute = createDramaRouteHandler({
   getVideoModels:() => publicVideoCapabilitiesWithControls().models,
   findAsset,
@@ -2800,7 +2747,6 @@ const promptPrecheckMode = ['off', 'shadow', 'enforce'].includes(process.env.PRO
 const promptPrecheck = { mode:() => promptPrecheckMode, scan:(prompt, { modelId }) => scanPromptRisk(prompt, { modelId }), record:recordPromptPrecheckEvent };
 const promptPrecheckRoute = createPromptPrecheckRouteHandler({ bodyJson, sendJson, requireUser, promptPrecheck });
 const generationRoute = createGenerationRouteHandler({
-  prepareViralGeneration: viralLab.prepareGeneration,
   videoUpscale,
   bodyJson,
   sendJson,
@@ -2861,7 +2807,6 @@ const generationRoute = createGenerationRouteHandler({
     ttapi:ttapiConfigured,
     cntcn:cntcnConfigured,
     autodl:autodlConfigured,
-    autodlMotion:autodlMotionConfigured,
     oai:oaiConfigured,
     oaiVeo:oaiVeoConfigured,
     oaiMinimax:oaiMinimaxConfigured,
@@ -3092,7 +3037,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, buildAutodlMotionPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));
@@ -3147,7 +3092,6 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok:true, ...result });
     }
 
-    if (await viralLab.route(req, res, url)) return;
     if (await agentRoute(req, res, url)) return;
     if (await dramaRoute(req, res, url)) return;
 

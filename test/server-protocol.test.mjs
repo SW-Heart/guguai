@@ -27,6 +27,7 @@ test('static routing keeps desktop separation and production cache policy', () =
   assert.equal(staticEntryFile('/', { desktop:false, appOnly:true }), 'home.html');
   assert.equal(staticEntryFile('/', { desktop:true, appOnly:true }), 'index.html');
   assert.equal(staticEntryFile('/pricing', { desktop:false, appOnly:true }), 'pricing.html');
+  assert.equal(staticEntryFile('/lab', { desktop:true }), 'index.html', '旧实验室链接仍进入应用');
   assert.equal(staticCacheControl('.js', { production:true, versioned:true }), 'public, max-age=31536000, immutable');
   assert.equal(staticCacheControl('.js', { production:false, versioned:true }), 'no-cache');
 });

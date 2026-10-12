@@ -19,7 +19,7 @@ export function createGenerationJobPolicy({
   function pollInterval(task) {
     if (task?.type === 'image' && ['duomi', 'tuzi'].includes(task.provider)) return imagePollIntervalMs;
     if (task?.provider === 'oai') return oaiPollIntervalMs;
-    if (['autodl', 'autodl-motion'].includes(task?.provider)) return autodlPollIntervalMs;
+    if (task?.provider === 'autodl') return autodlPollIntervalMs;
     if (task?.provider === 'ttapi') return ttapiPollIntervalMs;
     if (task?.provider === 'cntcn' || task?.routeId) return task?.routeId ? 10_000 : cntcnPollIntervalMs;
     if (task?.provider === 'duomi') return duomiPollIntervalMs;
