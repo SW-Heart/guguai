@@ -52,6 +52,8 @@ test('message scroller follows new content until the reader moves away, then res
     assert.equal(viewport.scrollTop, 620);
     surfaceListeners.get('wheel')({ target: { closest: () => ({}) }, deltaY: -80 });
     assert.equal(viewport.scrollTop, 620);
+    surfaceListeners.get('wheel')({ target: { closest: selector => selector.split(', ').includes('.dw-skill-menu') ? {} : null }, deltaY: -80 });
+    assert.equal(viewport.scrollTop, 620);
 
     listeners.get('wheel')({ type: 'wheel', deltaY: -80 });
     viewport.scrollTop = 200;

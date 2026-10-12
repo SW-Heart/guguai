@@ -139,7 +139,7 @@ export function createMessageScroller(viewport, rail, surface = null) {
   viewport.addEventListener('load', () => refresh(), { capture: true, signal });
   surface?.addEventListener('wheel', event => {
     if (viewport.contains(event.target) || !event.deltaY) return;
-    if (event.target.closest?.('textarea, input, select, [contenteditable], .attachment-strip, .dw-plan, .dw-agent-options, [popover]')) return;
+    if (event.target.closest?.('textarea, input, select, [contenteditable], .attachment-strip, .dw-plan, .dw-agent-options, .dw-skill-menu, [popover]')) return;
     event.preventDefault();
     stopAnimation();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1;

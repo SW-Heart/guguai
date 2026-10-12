@@ -40,10 +40,10 @@ test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
   const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=537'));
+  assert.ok(html.includes('/app.js?v=538'));
   assert.ok(frontend.includes('./features/generation/polling.js?v=4'));
   assert.ok(frontend.includes('./features/media/controller.js?v=13'));
-  assert.ok(frontend.includes('./drama-studio.js?v=259'));
+  assert.ok(frontend.includes('./drama-studio.js?v=260'));
   for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=15'));
 });
 

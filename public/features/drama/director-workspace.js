@@ -8,7 +8,7 @@ import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown
 import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=1';
 import { createStreamPacer } from '../agent/stream-pacer.js?v=1';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
-import { createMessageScroller } from '../agent/message-scroller.js?v=2';
+import { createMessageScroller } from '../agent/message-scroller.js?v=3';
 import { mediaFrameSize } from '../agent/frames.js?v=3';
 import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport } from './canvas-layout.js?v=2';
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
