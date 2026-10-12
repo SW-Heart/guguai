@@ -644,12 +644,20 @@ export function createDirectorWorkspace(host, bridge) {
     if(!canvas)return;
     const surface=canvas.getContainer();
     const list=canvas.getState().nodes.filter(n=>!String(n.id).startsWith('edge-')&&(!ids||ids.includes(n.id)));
-    const viewport=fitDirectorViewport(list,surface.clientWidth,surface.clientHeight);
+    const viewport=fitDirectorViewport(list,visibleCanvasWidth(surface),surface.clientHeight);
     if(viewport){canvas.updateViewport(viewport);queueWorkspaceFrame(alignCards);}
   }
   function canvasView(){
     const surface=canvas.getContainer();
-    return {viewport:canvas.getState().viewport,width:surface.clientWidth,height:surface.clientHeight};
+    return {viewport:canvas.getState().viewport,width:visibleCanvasWidth(surface),height:surface.clientHeight};
+  }
+  // The conversation floats over the canvas, so fitting and placement use only
+  // the part of the surface it leaves uncovered.
+  function visibleCanvasWidth(surface){
+    const width=surface.clientWidth,agent=host.querySelector('.dw-agent');
+    if(!bridge.agentMode||chatMode!=='side'||!agent)return width;
+    const overlap=surface.getBoundingClientRect().right-agent.getBoundingClientRect().left;
+    return overlap>0?Math.max(width/2,width-overlap):width;
   }
   function applyAgentStoryboards(){
     const config=generationConfig();
@@ -1154,7 +1162,13 @@ export function createDirectorWorkspace(host, bridge) {
     const offsetX=surfaceRect.left-boardRect.left,offsetY=surfaceRect.top-boardRect.top;
     const launcher=host.querySelector('.dw-generation-launcher'),launcherRect=launcher?.getBoundingClientRect();
     const launcherTop=launcherRect?.height?launcherRect.top-boardRect.top:board.clientHeight;
-    return {board,offsetX,offsetY,minTop:Math.max(12,offsetY+12),maxBottom:Math.min(board.clientHeight-12,launcherTop-10)};
+    // The project bar and the conversation float above the canvas; keep the
+    // composer in the space they leave open.
+    const chromeRect=host.querySelector('.dw-project-chrome')?.getBoundingClientRect();
+    const chromeBottom=chromeRect?.height?chromeRect.bottom-boardRect.top:0;
+    const agentRect=bridge.agentMode&&chatMode==='side'?host.querySelector('.dw-agent')?.getBoundingClientRect():null;
+    const width=agentRect?.width?Math.max(board.clientWidth/2,Math.min(board.clientWidth,agentRect.left-boardRect.left)):board.clientWidth;
+    return {board,width,offsetX,offsetY,minTop:Math.max(12,offsetY+12,chromeBottom+10),maxBottom:Math.min(board.clientHeight-12,launcherTop-10)};
   }
   function positionGenerationComposer(){
     const panel=host.querySelector('.dw-generation-composer');
@@ -1162,14 +1176,14 @@ export function createDirectorWorkspace(host, bridge) {
     const shape=canvas.getCanvasNodeById(activeGenerationId)?.getElement?.();
     const bounds=generationBounds();
     if(!shape||!bounds)return;
-    const {board,offsetX,offsetY,minTop,maxBottom}=bounds;
+    const {width:boardWidth,offsetX,offsetY,minTop,maxBottom}=bounds;
     const client=shape.getClientRect(),rect={x:client.x+offsetX,y:client.y+offsetY,width:client.width,height:client.height};
-    const type=generationDraft(activeGenerationId)?.type,width=Math.min(type==='video'?680:600,board.clientWidth-24);
+    const type=generationDraft(activeGenerationId)?.type,width=Math.min(type==='video'?680:600,boardWidth-24);
     panel.classList.toggle('is-narrow',width<500);
     panel.style.width=`${width}px`;
     panel.style.maxHeight=`${Math.max(160,maxBottom-minTop)}px`;
     const height=panel.offsetHeight;
-    const left=Math.max(12,Math.min(board.clientWidth-width-12,rect.x+rect.width/2-width/2));
+    const left=Math.max(12,Math.min(boardWidth-width-12,rect.x+rect.width/2-width/2));
     const below=rect.y+rect.height+14,above=rect.y-height-14;
     // Prefer the space under the frame, then above it; when neither fits keep
     // the composer inside the visible area instead of covering the toolbar.
@@ -1701,7 +1715,7 @@ export function createDirectorWorkspace(host, bridge) {
       queueWorkspaceFrame(()=>endResize());
     };
     handle.onpointerdown=event=>{if(event.button!==0)return;event.preventDefault();event.stopPropagation();if(resizeFinishFrame){cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;}resizeCanvasSnapshot=captureCanvasForResize();resizingChat=true;handle.setPointerCapture(event.pointerId);workspaceElement.classList.add('is-resizing-chat');};
-    handle.onpointermove=event=>{if(!handle.hasPointerCapture(event.pointerId))return;event.preventDefault();event.stopPropagation();setWidth(workspaceElement.getBoundingClientRect().right-event.clientX,true);};
+    handle.onpointermove=event=>{if(!handle.hasPointerCapture(event.pointerId))return;event.preventDefault();event.stopPropagation();setWidth(host.querySelector('.dw-agent').getBoundingClientRect().right-event.clientX,true);};
     handle.onpointerup=event=>{event.preventDefault();event.stopPropagation();endResize(event);};
     handle.onpointercancel=event=>{event?.stopPropagation?.();endResize(event);};handle.onlostpointercapture=()=>{if(resizingChat)endResize();};
     handle.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();resizeLayoutOnly(event.key==='Home'?280:event.key==='End'?720:Number(handle.getAttribute('aria-valuenow'))+(event.key==='ArrowLeft'?24:-24),true);};

@@ -24,12 +24,12 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=518'],
-    ['index.html', '/styles.css?v=375'],
-    ['app.js', './drama-studio.js?v=249'],
-    ['app.js', './features/agent/workspace.js?v=109'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=144'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=144'],
+    ['index.html', '/app.js?v=519'],
+    ['index.html', '/styles.css?v=376'],
+    ['app.js', './drama-studio.js?v=250'],
+    ['app.js', './features/agent/workspace.js?v=110'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=145'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=145'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=35'],
     ['features/drama/director-workspace.js', './canvas-generation-references.js?v=4'],
     ['features/drama/director-workspace.js', './storyboard-drafts.js?v=2'],
@@ -56,11 +56,11 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('drawing and selection fixes reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=518'],
-    ['app.js', './drama-studio.js?v=249'],
-    ['app.js', './features/agent/workspace.js?v=109'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=144'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=144'],
+    ['index.html', '/app.js?v=519'],
+    ['app.js', './drama-studio.js?v=250'],
+    ['app.js', './features/agent/workspace.js?v=110'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=145'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=145'],
   ];
   for (const [file, url] of entries) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');

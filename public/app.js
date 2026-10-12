@@ -2153,7 +2153,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=109').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=110').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2164,7 +2164,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=249').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=250').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
