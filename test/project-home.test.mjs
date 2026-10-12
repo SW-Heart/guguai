@@ -100,9 +100,10 @@ test('the 创作 home offers project creation, a quiet one-line start and a side
 
 test('changed frontend modules are reachable through current cache keys', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=525', '/styles.css?v=381']],
-    ['app.js', ['./features/projects/library.js?v=1', './features/agent/workspace.js?v=115', './drama-studio.js?v=256']],
-    ['features/agent/workspace.js', ['./skill-gallery.js?v=7']],
+    ['index.html', ['/app.js?v=537', '/styles.css?v=392']],
+    ['app.js', ['./features/projects/library.js?v=3', './features/agent/workspace.js?v=127', './drama-studio.js?v=259']],
+    ['features/agent/workspace.js', ['./skill-gallery.js?v=7', '../../vendor/ui/create-project.js?v=4']],
+    ['features/projects/library.js', ['../../vendor/ui/create-project.js?v=4']],
   ]) {
     const source = read(file);
     for (const url of urls) assert.ok(source.includes(url), `${file} → ${url}`);

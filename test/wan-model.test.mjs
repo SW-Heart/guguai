@@ -23,6 +23,9 @@ test('Wan admin configuration covers all resolutions, routing, billing, and gene
     } });
     const model = publicVideoCapabilitiesWithControls().models.find(model => model.id === 'wan-3.0');
     assert.equal(model.label, 'Wan 3.0');
+    assert.equal(model.iconKey, 'wan');
+    assert.match(model.description, /图片、视频和音频/);
+    assert.match(model.description, /480p、720p、1080p/);
     for (const mode of model.modes) {
       assert.deepEqual(mode.qualityOptions, ['480p', '720p', '1080p']);
       assert.deepEqual(mode.durations, [5, 10, 15]);

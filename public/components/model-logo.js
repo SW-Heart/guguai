@@ -1,4 +1,5 @@
 const files = Object.freeze({
+  'wan-3.0': 'qwen-color',
   'gpt-image-2': 'openai', 'gpt-image-2.5': 'openai', midjourney: 'midjourney', grok: 'grok',
   'minimax-h3-15s': 'minimax-color', 'minimax-h3': 'minimax-color',
   veo: 'gemini-color', oai: 'gemini-color', 'veo-31': 'gemini-color',
@@ -6,7 +7,7 @@ const files = Object.freeze({
   'seedance-2.0-mini': 'bytedance-color',
   'seedance-2.0': 'bytedance-color', 'seedance-2.5': 'bytedance-color', 'seedance-2.0-fast': 'bytedance-color',
 });
-const iconKeys = Object.freeze({ openai: 'openai', midjourney: 'midjourney', grok: 'grok', minimax: 'minimax-color', google: 'gemini-color', gemini: 'gemini-color', bytedance: 'bytedance-color' });
+const iconKeys = Object.freeze({ wan: 'qwen-color', openai: 'openai', midjourney: 'midjourney', grok: 'grok', minimax: 'minimax-color', google: 'gemini-color', gemini: 'gemini-color', bytedance: 'bytedance-color' });
 const url = file => `/icons/models/${file}.svg?v=1`;
 export const modelLogoUrls = Object.freeze(Object.fromEntries(Object.entries(files).map(([id, file]) => [id, url(file)])));
 export function modelLogoUrl(modelId, iconKey = '') {

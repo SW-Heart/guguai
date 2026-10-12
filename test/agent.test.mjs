@@ -18,6 +18,40 @@ import { normalizeModelPreferences } from '../lib/agent/model-preferences.mjs';
 const imagePreference = ids => ({image:{mode:'manual',modelIds:ids},video:{mode:'auto',modelIds:[]}});
 
 const scope = { deviceId:'device-a', workspaceId:'workspace-a', desktop:true, platform:'darwin' };
+test('agent search status reaches the conversation snapshot and results reach the next reply', async () => {
+  const f = fixture();
+  f.repo.enqueue(f.session, { clientId: 'search-request', text: '查询最新资料并附来源' });
+  const sources = { query: '最新资料', results: [{ title: '官方资料', url: 'https://example.com/docs', content: '搜索到的资料' }] };
+  let requests = 0;
+  const tools = createAgentTools({ webSearch: async (_args, { signal }) => {
+    assert.ok(signal instanceof AbortSignal);
+    assert.equal(f.get().doc.activity, '正在搜索资料…');
+    const route = createAgentRouteHandler({ repository: f.repo, gateway: { config: { model: 'test-model' } }, sendJson: (res, status, data) => Object.assign(res, { status, data }), requireUser: async () => ({ id: 'user-a' }), requireDesktopWorkspaceScope: () => scope, walletOf: () => ({ balance: 100 }), findGeneration: () => null, publicGeneration: value => value });
+    const res = {};
+    await route({ method: 'GET' }, res, new URL(`http://localhost/api/agent/sessions/${f.session.id}`));
+    assert.equal(res.status, 200);
+    assert.equal(res.data.activity, '正在搜索资料…');
+    assert.equal(res.data.state, 'running');
+    return sources;
+  } });
+  const { runtime } = runtimeFixture(f, async request => {
+    if (!requests++) {
+      assert.ok(request.tools.some(item => item.function.name === 'web_search'));
+      assert.match(request.messages[0].content, /自主判断是否需要 web_search/);
+      return answer('我会查找最新资料并核对来源。', [call('web_search', { query: '最新资料' }, 'search-call')]);
+    }
+    assert.deepEqual(JSON.parse(request.messages.findLast(message => message.role === 'tool').content), sources);
+    assert.equal(f.get().doc.activity, '正在回复…');
+    return answer('查询结果见[官方资料](https://example.com/docs)。');
+  }, tools);
+  try {
+    await runtime.kick(f.session.id);
+    assert.equal(f.get().state, 'completed', f.get().doc.lastError);
+    assert.equal(f.get().doc.activity, '');
+    assert.equal(requests, 2);
+  } finally { await runtime.stop(); f.db.close(); }
+});
+
 test('skill list loads without waiting for the model catalog', async () => {
   const skills = [{name:'image-design',title:'图像设计',summary:'海报、角色、场景和产品图'}];
   let modelRequests = 0;

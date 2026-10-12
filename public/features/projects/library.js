@@ -5,8 +5,8 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'
 
 export const projectTypeLabels = Object.freeze({ canvas:'智能画布', drama:'短剧工作台' });
 const projectTypeDescriptions = Object.freeze({
-  canvas:'和 GuGu 对话，在画布上构思、生成并整理图片、视频和文稿。',
-  drama:'按剧本、素材、分镜、视频四步制作短剧，逐个镜头调整和生成。',
+  canvas:'和 GuGu 边聊边创作，自由生成图片、视频和文稿，在画布上整理想法与作品。',
+  drama:'围绕剧本安排角色、场景与分镜，逐个镜头生成画面和视频，制作连贯的短剧。',
 });
 const projectTypeIcons = Object.freeze({ canvas:'layout-dashboard', drama:'clapperboard' });
 const filterOptions = Object.freeze([['all', '全部'], ['canvas', projectTypeLabels.canvas], ['drama', projectTypeLabels.drama]]);
@@ -40,36 +40,19 @@ function projectCardSkeleton(count) {
   return Array.from({ length:count }, () => '<article class="project-card loading-skeleton-project" aria-hidden="true"><div class="skeleton-project-content"><i class="skeleton-project-kicker"></i><i class="skeleton-project-title"></i><i class="skeleton-project-title short"></i></div></article>').join('');
 }
 
-let typeDialog = null;
-// Resolves with 'canvas', 'drama', or '' when the dialog is dismissed.
-export function openProjectTypeDialog() {
-  if (!typeDialog) {
-    typeDialog = document.createElement('dialog');
-    typeDialog.className = 'project-type-dialog';
-    typeDialog.setAttribute('aria-labelledby', 'projectTypeTitle');
-    typeDialog.innerHTML = `<form method="dialog"><header><h2 id="projectTypeTitle">创建项目</h2><button type="submit" value="" class="project-type-close" aria-label="关闭"><span class="gugu-lucide gugu-lucide-x" aria-hidden="true"></span></button></header><div class="project-type-options">${['canvas', 'drama'].map(type => `<button type="submit" value="${type}" class="project-type-option" data-project-type="${type}"><span class="project-type-icon" aria-hidden="true"><span class="gugu-lucide gugu-lucide-${projectTypeIcons[type]}"></span></span><span class="project-type-copy"><strong>${projectTypeLabels[type]}</strong><small>${projectTypeDescriptions[type]}</small></span></button>`).join('')}</div></form>`;
-    // Pressing outside the panel dismisses it, like the other product dialogs.
-    let backdropPress = false;
-    const outside = event => {
-      const rect = typeDialog.getBoundingClientRect();
-      return event.target === typeDialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
-    };
-    typeDialog.addEventListener('pointerdown', event => { backdropPress = outside(event); });
-    typeDialog.addEventListener('click', event => { if (backdropPress && outside(event)) typeDialog.close(''); backdropPress = false; });
-    document.body.append(typeDialog);
-  }
-  if (typeDialog.open) return Promise.resolve('');
-  const restore = document.activeElement;
-  typeDialog.returnValue = '';
-  typeDialog.showModal();
-  typeDialog.querySelector('[data-project-type="canvas"]').focus({ preventScroll:true });
-  return new Promise(resolve => {
-    typeDialog.addEventListener('close', () => {
-      const value = ['canvas', 'drama'].includes(typeDialog.returnValue) ? typeDialog.returnValue : '';
-      if (!value && restore?.isConnected) restore.focus({ preventScroll:true });
-      resolve(value);
-    }, { once:true });
-  });
+// Resolves after the closing animation, before the chosen workspace opens.
+export async function openProjectTypeDialog(trigger = document.activeElement) {
+  const anchor = trigger?.querySelector?.('.create-home-sheet-front .gugu-lucide') || trigger?.querySelector?.('svg') || trigger;
+  const getOrigin = () => {
+    if (!anchor?.isConnected || !anchor.getBoundingClientRect) return null;
+    const rect = anchor.getBoundingClientRect();
+    return rect.width && rect.height ? { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 } : null;
+  };
+  const origin = getOrigin();
+  const { openProjectTypeModal } = await import('../../vendor/ui/create-project.js?v=4');
+  return openProjectTypeModal(['canvas', 'drama'].map(type => ({
+    type, label:projectTypeLabels[type], description:projectTypeDescriptions[type], icon:projectTypeIcons[type],
+  })), { origin, getOrigin });
 }
 
 export function createProjectLibrary({ api, accountSnapshot, isAccountCurrent, toast, onOpen, onCreate, onRename, onDelete, onShowAll }) {

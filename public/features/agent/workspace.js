@@ -1,24 +1,25 @@
+import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=4';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=150';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=153';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
-import { mountModelPreferencePicker } from './model-preference-picker.js?v=11';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=13';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
 export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
-  let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,screen='',navigationEpoch=0,creating=false;
+  let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,initialCanvasOpen=false,screen='',navigationEpoch=0,creating=false;
   let homeActionsController=null;
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/create';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
   function dispatchRoute(){window.dispatchEvent(new PopStateEvent('popstate'));}
-  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;}
+  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;initialCanvasOpen=false;}
   function showHome(){
     if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.create-home')){refreshRecent();return;}
     resetView();account=accountSnapshot();screen='home';
@@ -194,12 +195,12 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   function renderHome(host){
     homeActionsController?.abort();
     const events=new AbortController();homeActionsController=events;
-    host.innerHTML=`<section class="agent-entry create-home"><div class="create-home-hero">${agentWelcomeHeroMarkup('h1')}<div class="create-home-start"><button type="button" class="create-home-primary" data-home-create><span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span><span>创建项目</span></button><form class="create-home-idea" data-home-idea><label class="dw-sr-only" for="createHomeIdea">用一句话开始创作</label><input id="createHomeIdea" type="text" maxlength="2000" autocomplete="off" enterkeyhint="go" placeholder="或者，用一句话说说你想创作什么"><button type="submit" class="create-home-idea-send" aria-label="开始创作" title="开始创作" disabled><span class="gugu-lucide gugu-lucide-arrow-up" aria-hidden="true"></span></button></form></div></div><section class="create-home-recent" aria-label="最近项目" hidden></section></section>`;
+    host.innerHTML=`<section class="agent-entry create-home"><div class="create-home-hero">${agentWelcomeHeroMarkup('h1')}<div class="create-home-start"><div class="create-home-tilt-host" data-home-create-host></div><form class="create-home-idea" data-home-idea><label class="dw-sr-only" for="createHomeIdea">用一句话开始创作</label><input id="createHomeIdea" type="text" maxlength="2000" autocomplete="off" enterkeyhint="go" placeholder="或者，用一句话说说你想创作什么"><button type="submit" class="create-home-idea-send" aria-label="开始创作" title="开始创作" disabled><span class="gugu-lucide gugu-lucide-arrow-up" aria-hidden="true"></span></button></form></div></div><section class="create-home-recent" aria-label="最近项目" hidden></section></section>`;
     const home=host.querySelector('.create-home'),form=home.querySelector('[data-home-idea]'),input=form.querySelector('input'),send=form.querySelector('button'),recent=home.querySelector('.create-home-recent');
     let submitting=false;
     const update=()=>{send.disabled=submitting||!input.value.trim();form.classList.toggle('has-value',Boolean(input.value.trim()));form.setAttribute('aria-busy',String(submitting));input.readOnly=submitting;};
     input.addEventListener('input',update,{signal:events.signal});
-    home.querySelector('[data-home-create]').addEventListener('click',()=>onCreateProject?.(),{signal:events.signal});
+    mountCreateProjectCard(home.querySelector('[data-home-create-host]'),{signal:events.signal,onCreate:trigger=>onCreateProject?.(trigger)});
     form.addEventListener('submit',event=>{
       event.preventDefault();const text=input.value.trim();if(!text||submitting)return;
       submitting=true;update();
@@ -219,17 +220,17 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       const title=defaultTitleFromMessage(message)||defaultTitleFromMessage(documents.length?`根据${documents[0].title}创作`:attachments.length?'基于附件开始创作':'')||'新项目';
       const {project:created}=await api('/api/agent/projects',{method:'POST',body:JSON.stringify({title})});
       if(token!==navigationEpoch)return;
-      changeLocation('workspace',created.id);await openProject(created.id,message,attachments,documents,skill,modelPreferences);dispatchRoute();
+      changeLocation('workspace',created.id);await openProject(created.id,message,attachments,documents,skill,modelPreferences,true);dispatchRoute();
     }catch(error){if(token===navigationEpoch)toast(error.message);}
     finally{creating=false;}
   }
-  async function openProject(id,message='',attachments=[],documents=[],skill='',modelPreferences){
+  async function openProject(id,message='',attachments=[],documents=[],skill='',modelPreferences,showCanvas=true){
     if(screen==='workspace'&&project.id===id&&view)return;
     resetView();const token=navigationEpoch;screen='loading';host.innerHTML=`<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true">${projectLoadingMarkup}</div>`;
     try{
       const result=await api(`/api/agent/projects/${encodeURIComponent(id)}`);
       if(screen!=='loading'||token!==navigationEpoch)return;
-      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;screen='workspace';mountWorkspace();
+      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;initialCanvasOpen=showCanvas;screen='workspace';mountWorkspace();
     }catch(error){if(token!==navigationEpoch)return;toast(error.message);changeLocation('home');dispatchRoute();}
   }
   const asset=id=>state.files.find(file=>file.id===id&&file.localStatus!=='missing');
@@ -262,6 +263,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     account=nextAccount;
     view=createDirectorWorkspace(host,{
       agentMode:true,agentProjectId:()=>'',creativeProjectId:()=>project.id,initialSessionId:()=>sessionId,
+      initialCanvasOpen:()=>initialCanvasOpen,
       initialMessage:()=>{const text=initialMessage;initialMessage='';return text;},
       initialAttachments:()=>{const files=initialAttachments;initialAttachments=[];return files;},
       initialDocuments:()=>{const files=initialDocuments;initialDocuments=[];return files;},

@@ -1,4 +1,4 @@
-import { modelLogoUrl } from '../../components/model-logo.js?v=3';
+import { modelLogoUrl } from '../../components/model-logo.js?v=5';
 import { defaultVideoDuration } from '../generation/video-defaults.js?v=2';
 import { replaceAssetMentions } from '../../video-prompt.js?v=6';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];

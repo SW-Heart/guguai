@@ -8,7 +8,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=6">
-  <link rel="stylesheet" href="/styles.css?v=381">
+  <link rel="stylesheet" href="/styles.css?v=392">
   <link rel="stylesheet" href="/vendor/director/reference-canvas.css?v=6">
   <link rel="stylesheet" href="/payment.css?v=3">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
@@ -111,7 +111,7 @@
             <button id="creditPurchaseButton" class="rail-credit-buy" type="button" aria-label="充值积分" data-rail-tip="充值积分">充值</button>
           </div>
           <div class="rail-account">
-            <button id="accountButton" class="rail-avatar" type="button" data-rail-tip="账户" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu"><span id="accountInitial" class="rail-avatar-initial">U</span><b id="avatarNotificationBadge" class="avatar-notification-badge hidden" aria-label="0 条未读消息">0</b><b id="accountName" class="rail-sr-only">user</b></button>
+            <button id="accountButton" class="rail-avatar" type="button" data-rail-tip="账户" aria-haspopup="true" aria-expanded="false" aria-controls="accountMenu"><span id="accountInitial" class="rail-avatar-initial">U</span><b id="avatarNotificationBadge" class="avatar-notification-badge hidden" aria-label="0 条未读消息">0</b><b id="accountName" hidden>user</b></button>
             <div id="accountMenu" class="account-menu rail-account-menu hidden" aria-label="账户菜单"><div class="account-profile"><span id="menuInitial">U</span><p><b id="menuName">user</b><small id="menuAccountMeta">当前账号 · 0 积分</small></p></div><div class="notification-menu-item"><button id="notificationMenuButton" class="notification-menu-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="notificationPanel"><span class="notification-menu-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span>消息通知</span></span><span class="notification-menu-meta"><em id="notificationCount" class="notification-count hidden">0</em><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span></button><section id="notificationPanel" class="notification-panel" aria-labelledby="notificationTitle" aria-hidden="true"><div class="notification-panel-head"><div><strong id="notificationTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>消息通知</strong><small id="notificationSummary">暂无未读消息</small></div><button id="markAllNotifications" type="button">全部已读</button></div><div id="notificationList" class="notification-list" aria-live="polite"></div></section></div><div class="account-theme"><span id="accountThemeLabel" class="account-theme-label">外观</span><div id="accountThemePicker" class="account-theme-picker" role="radiogroup" aria-labelledby="accountThemeLabel">
               <button type="button" role="radio" data-theme-choice="system" aria-checked="true" tabindex="0"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>系统</span></button>
               <button type="button" role="radio" data-theme-choice="light" aria-checked="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m4.93-17.07 1.42-1.42M4.22 19.78l1.42-1.42M20 12h2M2 12h2m12.93 4.93 1.42 1.42M4.22 4.22l1.42 1.42"/></svg><span>亮色</span></button>
@@ -286,6 +286,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=525"></script>
+  <script type="module" src="/app.js?v=537"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=5';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createConfigSync } from './state/config-sync.js?v=1';
 import { officialPriceDiscount } from './state/official-model-prices.js?v=3';
@@ -21,7 +21,7 @@ import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
-import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=1';
+import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=3';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 
 const $ = selector => document.querySelector(selector);
@@ -2157,8 +2157,8 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=115').then(({createAgentWorkspace}) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:()=>void startProjectCreation(),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=127').then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2168,7 +2168,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=256').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=259').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2281,8 +2281,8 @@ function openProjectItem(item) {
   if (window.location.pathname !== path) window.history.pushState({ route:'drama' }, '', path);
   navigate('drama', { historyMode:'none' });
 }
-async function startProjectCreation() {
-  const type = await openProjectTypeDialog();
+async function startProjectCreation(trigger) {
+  const type = await openProjectTypeDialog(trigger);
   try {
     if (type === 'canvas') await (await ensureAgentController()).createProject();
     else if (type === 'drama') await (await ensureDramaController()).create();

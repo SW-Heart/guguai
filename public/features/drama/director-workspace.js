@@ -1,5 +1,5 @@
 import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=1';
-import { modelLogoMarkup } from '../../components/model-logo.js?v=3';
+import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=5';
@@ -16,15 +16,15 @@ import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=36';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=14';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=13';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=15';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
-import { addGenerationReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=4';
-import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=2';
+import { addGenerationReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=6';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=4';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=13';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 
@@ -232,7 +232,7 @@ function renderConversationMessages(container, items, draft='', status='complete
 
 export function createDirectorWorkspace(host, bridge) {
   let canvas, canvasMount, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
-  let chatMode='full',initialMessageSent=false;
+  let chatMode=bridge.initialCanvasOpen?.()?'side':'full',initialMessageSent=false;
   let emptyEntry=null,emptyEntrySession='',disposeEmptyEntry=null;
   let mainLayer, nativeTransformer, lastNodeGeometry='', edgeRenderFrame=0, resizingChat=false, resizeCanvasSnapshot=null, resizeFinishFrame=0;
   let streamFrame=0, streamSession='', visibleDraft='', targetDraft='', lastStreamTime=0, resizeObserver, mediaLoadObserver;
@@ -1900,7 +1900,7 @@ export function createDirectorWorkspace(host, bridge) {
       }
       agentReady=Boolean(state?.id);
       agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';
-      if(bridge.agentMode&&(sessionChanged||firstReadySession))chatMode=hasSavedCanvasContent()?'side':'full';
+      if(bridge.agentMode&&(sessionChanged||firstReadySession))chatMode=(hasSavedCanvasContent()||(firstReadySession&&bridge.initialCanvasOpen?.()))?'side':'full';
       drawPanels();
       if(bridge.agentMode&&agentReady&&!initialMessageSent){initialMessageSent=true;const initial=bridge.initialMessage?.()||'',files=bridge.initialAttachments?.()||[],documents=bridge.initialDocuments?.()||[];attachments=files;documentAttachments=documents;if(initial||files.length||documents.length){if(config.configured)void submit(initial||(documents.length?'请参考我附带的文件继续创作。':''),attachments,[],documentAttachments);else {const input=host.querySelector('#directorMessage');input.value=initial||'请参考我附带的文件继续创作。';resizeAgentComposer(input);}}}
       if(state?.id){

@@ -17,7 +17,7 @@ const contrast = (a, b) => {
 
 test('every model brand has local light and dark assets with matching geometry and readable dark colors', () => {
   const urls = [...new Set(Object.values(modelLogoUrls))];
-  assert.equal(urls.length, 6);
+  assert.equal(urls.length, 7);
   for (const src of urls) {
     assert.match(src, /^\/icons\/models\/[\w-]+\.svg\?v=1$/);
     const path = src.split('?')[0].slice(1);
@@ -38,6 +38,8 @@ test('every model brand has local light and dark assets with matching geometry a
 });
 
 test('all model menus share the same sources, and both variants are ready for manual or system theme switches', () => {
+  assert.equal(modelLogoUrl('wan-3.0'), '/icons/models/qwen-color.svg?v=1');
+  assert.equal(modelLogoUrl('custom-wan', 'WAN'), modelLogoUrl('wan-3.0'));
   assert.equal(modelLogoUrl('gpt-image-2'), modelLogoUrl('gpt-image-2.5'));
   assert.equal(modelLogoUrl('custom-model', 'OPENAI'), modelLogoUrl('gpt-image-2'));
   assert.equal(modelLogoUrl('custom-model', 'unknown'), '');
@@ -77,13 +79,15 @@ test('generator hover and selection override local light tokens and remain disti
 
 test('logo and parameter fixes reach all current versioned frontend entries', () => {
   const entries = [
-    ['index.html', ['/app.js?v=525', '/styles/theme.css?v=3']],
-    ['app.js', ['./components/model-logo.js?v=3', './drama-studio.js?v=256', './features/agent/workspace.js?v=115']],
-    ['drama-studio.js', ['./components/model-logo.js?v=3', './features/drama/director-workspace.js?v=150']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=150', './model-preference-picker.js?v=11']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=13', '../agent/model-preference-picker.js?v=11', '../../components/model-logo.js?v=3']],
-    ['features/drama/canvas-generation.js', ['../../components/model-logo.js?v=3']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=13', '../../components/model-logo.js?v=3']],
+    ['index.html', ['/app.js?v=537', '/styles/theme.css?v=3']],
+    ['app.js', ['./components/model-logo.js?v=5', './drama-studio.js?v=259', './features/agent/workspace.js?v=127']],
+    ['drama-studio.js', ['./components/model-logo.js?v=5', './features/drama/director-workspace.js?v=153']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=153', './model-preference-picker.js?v=13']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=15', '../agent/model-preference-picker.js?v=13', '../../components/model-logo.js?v=5']],
+    ['features/drama/canvas-generation.js', ['../../components/model-logo.js?v=5']],
+    ['features/drama/canvas-generation-references.js', ['./canvas-generation.js?v=15']],
+    ['features/drama/storyboard-drafts.js', ['./canvas-generation.js?v=15', './canvas-generation-references.js?v=6']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=15', '../../components/model-logo.js?v=5']],
   ];
   for (const [path, urls] of entries) for (const url of urls) assert.ok(read(path).includes(url), `${path}: ${url}`);
 });
