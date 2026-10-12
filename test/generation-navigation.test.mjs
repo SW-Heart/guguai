@@ -65,7 +65,7 @@ test('returning to loaded history does not clear records or reset pagination', (
     window:{ setTimeout:callback => { callback(); return 1; } },
     renderTasks() {}, loadTasks() {}, loadGenerationHistory:options => loads.push(options),
   });
-  vm.runInContext(app.slice(app.indexOf('function scheduleRouteContentRender('), app.indexOf('// The main sidebar')), context);
+  vm.runInContext(app.slice(app.indexOf('function scheduleRouteContentRender('), app.indexOf('// Short-drama projects open inside the 项目 page')), context);
   context.scheduleRouteContentRender('image', true);
   assert.deepEqual(loads, []);
   assert.equal(entry.items[0].id, 'history-a');
@@ -77,6 +77,6 @@ test('returning to loaded history does not clear records or reset pagination', (
 
 test('generation navigation fix uses the current versioned application entry', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=519'));
+  assert.ok(html.includes('/app.js?v=520'));
   assert.ok(!html.includes('/app.js?v=512'));
 });

@@ -9,11 +9,12 @@ const app=read('app.js'),agent=read('features/agent/workspace.js'),director=read
 test('returning home disposes the project before any shell layout or scheduled paint',()=>{
   const events=[];
   const context=vm.createContext({
-    state:{route:'project'},routePaths:{agent:'/agent',files:'/files'},
-    window:{location:{pathname:'/agent',search:''},history:{pushState(){}}},document:{},
+    state:{route:'project'},routePaths:{agent:'/create',files:'/files'},
+    dramaProjectPath:/^\/projects\/drama(?:\/([\w-]+))?\/?$/,dramaProjectIdFromPath:()=>'',
+    window:{location:{pathname:'/create',search:''},history:{pushState(){}}},document:{},
     agentController:{showHome(){events.push('home');},suspend(){events.push('dispose');}},
     $:()=>({classList:{},set textContent(value){events.push('title');}}),$$:()=>[],
-    toggleClass(){events.push('layout');},syncAgentHistory(){events.push('rail');},
+    toggleClass(){events.push('layout');},
     cancelRouteContentRender(){},scheduleRouteContentRender(){events.push('schedule');},renderRouteLoadingShell(){},
   });
   vm.runInContext(app.slice(app.indexOf('function navigate('),app.indexOf("$$('.rail-button[data-route]').forEach(button => button.onclick")),context);
@@ -40,7 +41,7 @@ test('eager home rendering and deferred route loading preserve a single composer
     navigationEpoch:1,homeActionsController:{abort(){aborted++;}},view:{dispose(){disposed++;}},sessionId:'session',
     project:{id:'project'},initialMessage:'',initialAttachments:[],initialDocuments:[],initialSkill:'',initialModelPreferences:undefined,
     account:null,screen:'workspace',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>currentAccount,isAccountCurrent:account=>account===currentAccount,
-    host:{replaceChildren(){mounted=null;cleared++;},querySelector:()=>mounted},renderEntry(){mounted=entry;rendered++;},
+    host:{replaceChildren(){mounted=null;cleared++;},querySelector:()=>mounted},renderHome(){mounted=entry;rendered++;},
   });
   vm.runInContext(agent.slice(agent.indexOf('  function resetView('),agent.indexOf('  function renderEntry(')),context);
   context.showHome();
@@ -128,7 +129,7 @@ test('loading a project after returning home cannot remount its canvas',async()=
   const context=vm.createContext({host,navigationEpoch:0,homeActionsController:null,view:null,sessionId:'',project:{},
     initialMessage:'',initialAttachments:[],initialDocuments:[],initialSkill:'',initialModelPreferences:undefined,
     account:null,screen:'',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>1,isAccountCurrent:()=>true,
-    renderEntry(){homeRenders++;},projectLoadingMarkup:'正在打开项目',api:()=>new Promise(resolve=>{finishProject=resolve;}),
+    renderHome(){homeRenders++;},projectLoadingMarkup:'正在打开项目',api:()=>new Promise(resolve=>{finishProject=resolve;}),
     mountWorkspace(){mounts++;},toast(){assert.fail('stale navigation must not notify');}});
   vm.runInContext(agent.slice(agent.indexOf('  function resetView('),agent.indexOf('  function renderEntry('))+
     agent.slice(agent.indexOf('  async function openProject('),agent.indexOf('  const asset=')),context);
@@ -139,8 +140,8 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=519'));assert.ok(html.includes('/styles.css?v=376'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=110'));assert.ok(app.includes('./drama-studio.js?v=250'));
+  assert.ok(html.includes('/app.js?v=520'));assert.ok(html.includes('/styles.css?v=377'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=111'));assert.ok(app.includes('./drama-studio.js?v=251'));
   assert.ok(agent.includes('../drama/director-workspace.js?v=145'));
   assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=145'));
 });

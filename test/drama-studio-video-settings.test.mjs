@@ -1,19 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDramaVideoQuoteInput, calculateVirtualShotRange, clampVirtualScrollOffset, dramaVideoQuoteSignature, filterDramaProjects, generationNeedsLocalAssetSync, isMountedVirtualShotScroll, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, removeAssemblyVideoAssets, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
-
-test('drama project search includes both project modes and matches project details', () => {
-  const projects = [
-    { id:'smart-1', mode:'smart', title:'雨夜画布', synopsis:'城市悬疑' },
-    { id:'pro-1', mode:'professional', title:'校园告白', synopsis:'青春短剧' },
-    { id:'smart-2', mode:'smart', title:'未命名', input:'咖啡馆相遇' },
-  ];
-
-  assert.deepEqual(filterDramaProjects(projects).map(item => item.id), ['smart-1', 'pro-1', 'smart-2']);
-  assert.deepEqual(filterDramaProjects(projects, { query:'青春' }).map(item => item.id), ['pro-1']);
-  assert.deepEqual(filterDramaProjects(projects, { query:'咖啡馆' }).map(item => item.id), ['smart-2']);
-  assert.deepEqual(filterDramaProjects(projects, { query:'导演' }).map(item => item.id), ['smart-1', 'smart-2']);
-});
+import { buildDramaVideoQuoteInput, calculateVirtualShotRange, clampVirtualScrollOffset, dramaVideoQuoteSignature, generationNeedsLocalAssetSync, isMountedVirtualShotScroll, mergeDramaProjectList, mergeProjectResponseWithNewerKeys, normalizeShotVideoParameters, removeAssemblyVideoAssets, shotPreviewContentSignature, shotPreviewRenderSignature, videoPreviewVersionState, videoTaskProgress } from '../public/drama-studio.js';
 
 test('renamed drama projects update the library immediately and move to the top', () => {
   const previous = [

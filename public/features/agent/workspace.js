@@ -2,28 +2,29 @@ import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js
 import { createDirectorWorkspace } from '../drama/director-workspace.js?v=145';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
-import { mountSkillGallery } from './skill-gallery.js?v=6';
+import { mountSkillGallery } from './skill-gallery.js?v=7';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
 import { mountModelPreferencePicker } from './model-preference-picker.js?v=11';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
-export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged}) {
+export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
   let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,screen='',navigationEpoch=0,creating=false;
   let homeActionsController=null;
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-  const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/agent';
+  const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/create';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
   function dispatchRoute(){window.dispatchEvent(new PopStateEvent('popstate'));}
   function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;}
   function showHome(){
-    if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.agent-entry'))return;
+    if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.create-home')){refreshRecent();return;}
     resetView();account=accountSnapshot();screen='home';
-    renderEntry(host);
+    renderHome(host);
   }
+  let refreshRecent=()=>{};
   function renderEntry(host,{onSubmit=createProject,config=null,skill='',modelPreferences,onModelPreferencesChange}={}){
     homeActionsController?.abort();
     host.innerHTML=`<section class="agent-entry"><div class="agent-entry-main">${agentWelcomeHeroMarkup('h1')}${creativePresetsMarkup()}<form class="agent-entry-form"><label class="dw-sr-only" for="agentEntryMessage">描述你的创作想法</label><div class="agent-entry-attachments attachment-strip" aria-label="已添加的文件"></div><textarea id="agentEntryMessage" rows="3" placeholder="写下你的想法，GuGu 会和你一起完成……"></textarea><div class="agent-entry-footer"><div class="agent-entry-add-wrap"><button type="button" class="agent-entry-add" data-entry-add aria-label="添加文件" title="添加文件" aria-haspopup="menu" aria-expanded="false" aria-controls="agentEntryActions"><span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span></button><div class="agent-entry-menu" id="agentEntryActions" role="menu" aria-label="添加文件" hidden><button type="button" role="menuitem" data-entry-action="library"><span class="agent-entry-menu-icon" aria-hidden="true"><span class="gugu-lucide gugu-lucide-folder-open"></span></span><span class="agent-entry-menu-copy"><span>从文件库选择</span><small>已保存的图片、视频或音频</small></span></button><button type="button" role="menuitem" data-entry-action="local"><span class="agent-entry-menu-icon" aria-hidden="true"><span class="gugu-lucide gugu-lucide-upload"></span></span><span class="agent-entry-menu-copy"><span>从本地上传</span><small>图片、音频、视频或文档</small></span></button></div></div><input type="file" data-entry-files multiple hidden accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/aac,audio/webm,audio/flac,.pdf,.docx,.txt,.md,.csv,.json,.html,.rtf"><span class="agent-entry-spacer"></span><button type="submit" class="dw-primary agent-entry-send" aria-label="发送消息" title="发送消息" disabled><span class="gugu-lucide gugu-lucide-arrow-up" aria-hidden="true"></span></button></div></form></div></section>`;
@@ -187,6 +188,29 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const dispose=()=>menuEvents.abort();
     dispose.updateModelPreferences=value=>modelPicker.update({value});
     return dispose;
+  }
+  // 创作 home: one clear way to create a project, recent work, and skills.
+  // The one-line idea field stays quiet; it starts a canvas with that message.
+  function renderHome(host){
+    homeActionsController?.abort();
+    const events=new AbortController();homeActionsController=events;
+    host.innerHTML=`<section class="agent-entry create-home"><div class="create-home-hero">${agentWelcomeHeroMarkup('h1')}<div class="create-home-start"><button type="button" class="create-home-primary" data-home-create><span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span><span>创建项目</span></button><form class="create-home-idea" data-home-idea><label class="dw-sr-only" for="createHomeIdea">用一句话开始创作</label><input id="createHomeIdea" type="text" maxlength="2000" autocomplete="off" enterkeyhint="go" placeholder="或者，用一句话说说你想创作什么"><button type="submit" class="create-home-idea-send" aria-label="开始创作" title="开始创作" disabled><span class="gugu-lucide gugu-lucide-arrow-up" aria-hidden="true"></span></button></form></div></div><section class="create-home-recent" aria-label="最近项目" hidden></section></section>`;
+    const home=host.querySelector('.create-home'),form=home.querySelector('[data-home-idea]'),input=form.querySelector('input'),send=form.querySelector('button'),recent=home.querySelector('.create-home-recent');
+    let submitting=false;
+    const update=()=>{send.disabled=submitting||!input.value.trim();form.classList.toggle('has-value',Boolean(input.value.trim()));form.setAttribute('aria-busy',String(submitting));input.readOnly=submitting;};
+    input.addEventListener('input',update,{signal:events.signal});
+    home.querySelector('[data-home-create]').addEventListener('click',()=>onCreateProject?.(),{signal:events.signal});
+    form.addEventListener('submit',event=>{
+      event.preventDefault();const text=input.value.trim();if(!text||submitting)return;
+      submitting=true;update();
+      void createProject(text).finally(()=>{if(!events.signal.aborted){submitting=false;update();}});
+    },{signal:events.signal});
+    refreshRecent=()=>{if(!events.signal.aborted)void renderRecentProjects?.(recent,{signal:events.signal});};
+    refreshRecent();
+    const gallery=mountSkillGallery(home,{signal:events.signal,layout:'row',onChoose:name=>void createProject('',[],[],name),onRetry:()=>loadSkills()});
+    const loadSkills=()=>api('/api/agent/skills',{signal:events.signal}).then(value=>{if(!events.signal.aborted)gallery.update(value.skills||[]);}).catch(()=>{if(!events.signal.aborted)gallery.error();});
+    void loadSkills();
+    update();
   }
   async function createProject(message='',attachments=[],documents=[],skill='',modelPreferences){
     if(creating)return;
@@ -368,5 +392,5 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const heading=host?.querySelector('.dw-agent-project-title');
     if(heading){heading.textContent=title;heading.title=title;}
   }
-  return {load,showHome,loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
+  return {load,showHome,createProject:()=>createProject(),loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
 }

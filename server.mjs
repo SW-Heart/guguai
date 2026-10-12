@@ -6,6 +6,7 @@ import { createAgentTools } from './lib/agent/tools.mjs';
 import { createModelExperienceRepository } from './repositories/model-experience.mjs';
 import { createAgentRuntime } from './lib/agent/runtime.mjs';
 import { createAgentRouteHandler } from './server/routes/agent.mjs';
+import { createProjectListRouteHandler } from './server/routes/projects.mjs';
 import { probeVideo, readVideoFrames, detectVideoBoundaries, extractSourceAudio, inspectVideoAudio, composeVideoClips, burnVideoCaptions, probeAudioTrack, prepareSpeechAudio } from './services/agent-video-analysis.mjs';
 import { transcribeDeepgramAudio } from './services/agent-speech-transcription.mjs';
 import { createAgentImageReader } from './services/agent-image-analysis.mjs';
@@ -2922,6 +2923,8 @@ function startApiPlatformSweeper() {
 
 const agentGateway = createAgentGateway();
 const agentRepository = createAgentSessionRepository({ sql, tx });
+const projectListRoute = createProjectListRouteHandler({ sendJson, requireUser, requireDesktopWorkspaceScope, listDramaProjects,
+  listCanvasProjects:(userId, scope) => agentRepository.listProjects(userId, scope) });
 const modelExperienceRepository = createModelExperienceRepository({ sql });
 async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
   const storageName=`${id}.mp4`,createdAt=now();
@@ -3092,6 +3095,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok:true, ...result });
     }
 
+    if (await projectListRoute(req, res, url)) return;
     if (await agentRoute(req, res, url)) return;
     if (await dramaRoute(req, res, url)) return;
 

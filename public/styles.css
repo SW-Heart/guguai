@@ -1446,6 +1446,35 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .project-library-search input { min-width:0; width:100%; height:100%; padding:0; border:0; outline:0; color:var(--ink); background:transparent; font-size:11px; }
 .project-library-search input::placeholder { color:var(--theme-muted, #a0a3ae); }
 .project-library-count { margin-left:auto; color:var(--muted); font:10px var(--mono); white-space:nowrap; }
+.project-library-filter { display:inline-flex; flex:none; gap:2px; padding:3px; border:1px solid var(--theme-line, #dfe1e6); border-radius:10px; background:var(--theme-surface, #f2f2f6); }
+.project-library-filter button { min-height:30px; padding:0 13px; border:0; border-radius:7px; color:var(--theme-muted, #6f7287); background:transparent; font:500 12px var(--sans); white-space:nowrap; cursor:pointer; transition:background .16s, color .16s, box-shadow .16s; }
+.project-library-filter button:hover { color:var(--ink); }
+.project-library-filter button[aria-checked="true"] { color:var(--theme-ink, #2b2c45); background:var(--theme-panel, #fff); box-shadow:0 1px 3px rgba(31,32,43,.08), 0 0 0 1px rgba(31,32,43,.03); font-weight:600; }
+.project-library-filter button:focus-visible { outline:2px solid var(--brand); outline-offset:1px; }
+
+/* 创建项目: choose 智能画布 or 短剧工作台. */
+.project-type-dialog { width:min(640px, calc(100vw - 32px)); max-width:none; padding:0; border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.8); border-radius:22px; color:var(--theme-ink, #292d47); background:var(--theme-panel, #fbfbfe); box-shadow:0 30px 80px rgba(33,31,64,.22), inset 0 1px 0 rgb(var(--theme-highlight-rgb, 255 255 255) / 0.9); }
+.project-type-dialog::backdrop { background:#22223866; backdrop-filter:blur(5px); }
+.project-type-dialog[open] { animation:project-type-in .22s cubic-bezier(.2,.75,.25,1); }
+@keyframes project-type-in { from { opacity:0; transform:translateY(6px) scale(.985); } to { opacity:1; transform:none; } }
+.project-type-dialog form { display:grid; gap:18px; padding:22px 24px 24px; }
+.project-type-dialog header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.project-type-dialog h2 { margin:0; font:600 18px/1.4 var(--sans); letter-spacing:-.2px; }
+.project-type-close { display:grid; place-items:center; width:34px; height:34px; padding:0; border:0; border-radius:9px; color:var(--theme-muted, #8e90a1); background:transparent; cursor:pointer; }
+.project-type-close:hover { color:var(--theme-ink-soft, #4c4e66); background:var(--theme-surface, #f0eff6); }
+.project-type-close .gugu-lucide { width:18px; height:18px; }
+.project-type-options { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+.project-type-option { display:grid; align-content:start; gap:16px; min-height:176px; padding:20px; border:1px solid var(--theme-line, #e4e3ee); border-radius:16px; color:inherit; background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.75); text-align:left; font-family:var(--sans); cursor:pointer; transition:border-color .18s, background .18s, box-shadow .18s, transform .18s cubic-bezier(.2,.75,.25,1); }
+.project-type-option:hover { border-color:var(--theme-brand-line, #c3bff0); background:var(--theme-brand-soft, #f5f4ff); box-shadow:0 12px 28px rgba(64,53,110,.08); transform:translateY(-2px); }
+.project-type-option:focus-visible { outline:3px solid var(--theme-brand-line, #c6c2f4); outline-offset:2px; }
+.project-type-icon { display:grid; place-items:center; width:46px; height:46px; border:1px solid var(--theme-line, #dcd9f8); border-radius:13px; color:var(--theme-brand, #5750c8); background:var(--theme-brand-soft, #efedff); }
+.project-type-option[data-project-type="drama"] .project-type-icon { border-color:rgba(126,113,94,.2); color:#7b6c58; background:#f4f1ec; }
+.project-type-icon .gugu-lucide { width:22px; height:22px; }
+.project-type-copy { display:grid; gap:7px; }
+.project-type-copy strong { font-size:15px; font-weight:600; line-height:1.4; }
+.project-type-copy small { color:var(--theme-muted, #777b90); font-size:12.5px; line-height:1.65; }
+@media (max-width:560px) { .project-type-options { grid-template-columns:minmax(0, 1fr); } .project-type-option { min-height:0; grid-template-columns:auto minmax(0, 1fr); align-items:start; } .project-type-dialog form { padding:18px; } }
+@media (prefers-reduced-motion:reduce) { .project-type-dialog[open] { animation:none; } .project-type-option, .project-library-filter button { transition:none; } .project-type-option:hover { transform:none; } }
 .project-library-grid { max-width:1380px; margin:auto; padding:28px 50px 60px; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
 .project-library-empty { min-height:220px; grid-column:1 / -1; padding:40px 20px; border:1px dashed var(--theme-line, #d5d7df); border-radius:10px; color:var(--muted); background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.48); display:grid; place-items:center; align-content:center; gap:7px; text-align:center; }
 .project-library-empty b { color:var(--ink-soft); font-size:13px; }
@@ -5985,6 +6014,10 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-entry-form textarea::placeholder{color:var(--theme-muted, #777b94);opacity:1}
 .gugu-lucide{display:inline-block;flex:none;width:20px;height:20px;background:currentColor;-webkit-mask:var(--gugu-icon) center/contain no-repeat;mask:var(--gugu-icon) center/contain no-repeat}
 .gugu-lucide-plus{--gugu-icon:url('/icons/lucide/plus.svg?v=1')}
+.gugu-lucide-chevron-left{--gugu-icon:url('/icons/lucide/chevron-left.svg?v=1')}
+.gugu-lucide-chevron-right{--gugu-icon:url('/icons/lucide/chevron-right.svg?v=1')}
+.gugu-lucide-clapperboard{--gugu-icon:url('/icons/lucide/clapperboard.svg?v=1')}
+.gugu-lucide-layout-dashboard{--gugu-icon:url('/icons/lucide/layout-dashboard.svg?v=1')}
 .gugu-lucide-folder-open{--gugu-icon:url('/icons/lucide/folder-open.svg?v=1')}
 .gugu-lucide-upload{--gugu-icon:url('/icons/lucide/upload.svg?v=1')}
 .gugu-lucide-arrow-up{--gugu-icon:url('/icons/lucide/arrow-up.svg?v=1')}
@@ -6154,6 +6187,61 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 @media(max-width:1200px){#agentView .agent-skill-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){#agentView .agent-entry{gap:32px;padding:42px 20px 32px}#agentView .agent-skill-grid{grid-template-columns:minmax(0,1fr);gap:12px}#agentView .agent-skill-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);border-radius:19px}#agentView .agent-skill-dialog-body{padding:20px 20px 24px}#agentView .agent-skill-detail-header{gap:12px;flex-wrap:wrap;padding:18px 20px}#agentView .agent-skill-detail-header h2{font-size:21px}#agentView .agent-skill-detail-actions{gap:8px;margin-left:auto}#agentView .agent-skill-use{min-height:40px;padding:9px 14px}#agentView .agent-skill-description dl>div{grid-template-columns:64px minmax(0,1fr);gap:12px}#agentView .agent-skill-gallery>header{gap:10px}#agentView .agent-skill-image-labels>span{padding:10px;font-size:10px}}
 @media(prefers-reduced-motion:reduce){#agentView .agent-skill-card,#agentView .agent-skill-quick-use{transition:none}#agentView .agent-skill-card:hover{transform:none}}
+
+/* 创作 home: hero with one primary action and a quiet one-line start, then
+   recent projects and a sideways row of skills. */
+#agentView .create-home{gap:56px;padding-top:clamp(44px,9vh,96px)}
+#agentView .create-home-hero{display:grid;justify-items:center;gap:28px;width:min(720px,100%);text-align:center}
+#agentView .create-home-start{display:grid;justify-items:center;gap:16px;width:100%}
+#agentView .create-home .create-home-primary{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-width:188px;height:52px;padding:0 30px 0 24px;border:1px solid #5a53cf;border-radius:16px;background:linear-gradient(180deg,#6a64dc,#5650c6);color:#fff;font:600 15px/1 var(--sans);letter-spacing:.02em;box-shadow:0 14px 30px #534dc62e,0 2px 6px #534dc61f,inset 0 1px #ffffff3d;transition:transform .18s cubic-bezier(.2,.75,.25,1),box-shadow .18s,background .18s}
+#agentView .create-home .create-home-primary:hover{background:linear-gradient(180deg,#6660d8,#4f49bb);box-shadow:0 18px 36px #534dc63a,0 3px 8px #534dc624,inset 0 1px #ffffff3d;transform:translateY(-1px)}
+#agentView .create-home .create-home-primary:active{transform:translateY(0) scale(.98)}
+#agentView .create-home .create-home-primary .gugu-lucide{width:20px;height:20px}
+#agentView .create-home-idea{position:relative;display:flex;align-items:center;gap:6px;box-sizing:border-box;width:min(400px,100%);height:42px;padding:0 5px 0 18px;border:1px solid transparent;border-radius:999px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.42);transition:width .28s cubic-bezier(.2,.75,.25,1),background .2s,border-color .2s,box-shadow .2s}
+#agentView .create-home-idea:hover{background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.7);border-color:rgb(var(--theme-line-rgb, 223 221 239) / 0.7)}
+#agentView .create-home-idea:focus-within,#agentView .create-home-idea.has-value{width:min(560px,100%);background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96);border-color:var(--theme-brand-line, #c9c5ee);box-shadow:0 12px 32px #35335d12,inset 0 1px var(--theme-highlight, #fff)}
+#agentView .create-home-idea input{flex:1;min-width:0;height:100%;padding:0;border:0;outline:0;background:transparent;color:var(--theme-ink, #292d47);font:400 13.5px/1.4 var(--sans)}
+#agentView .create-home-idea input::placeholder{color:var(--theme-muted, #8a8ca3);opacity:1}
+#agentView .create-home-idea:focus-within input::placeholder{color:var(--theme-faint, #a6a8b8)}
+#agentView .create-home .create-home-idea-send{display:grid;place-items:center;flex:none;width:32px;height:32px;min-height:32px;padding:0;border:0;border-radius:50%;background:#5c55c8;color:#fff;opacity:0;transform:scale(.8);pointer-events:none;transition:opacity .18s,transform .18s cubic-bezier(.2,.75,.25,1),background .16s}
+#agentView .create-home-idea.has-value .create-home-idea-send{opacity:1;transform:none;pointer-events:auto}
+#agentView .create-home .create-home-idea-send:hover{background:#4f49bb}
+#agentView .create-home .create-home-idea-send:disabled{background:var(--theme-surface, #e5e5eb);color:var(--theme-faint, #a7a8b2);cursor:not-allowed}
+#agentView .create-home-idea[aria-busy="true"] .create-home-idea-send{cursor:wait}
+#agentView .create-home-idea-send .gugu-lucide{width:17px;height:17px}
+#agentView .create-home button:focus-visible{outline:3px solid var(--theme-brand-line, #c6c2f4);outline-offset:3px}
+#agentView .create-home-recent{flex:none;width:min(1320px,100%);text-align:left}
+#agentView .create-home-recent[hidden]{display:none}
+#agentView .create-home-recent>header,#agentView .agent-skill-gallery.is-row>header{display:flex;align-items:center;gap:16px;min-height:34px;margin-bottom:16px}
+#agentView .create-home-recent>header h2{margin:0;color:var(--theme-ink, #292d47);font:600 19px/1.4 var(--sans);letter-spacing:-.3px}
+#agentView .create-home .create-home-link{margin-left:auto;min-height:32px;padding:0 12px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--theme-muted, #73778f);font:500 13px var(--sans);transition:background .16s,color .16s,border-color .16s}
+#agentView .create-home .create-home-link:hover{border-color:var(--theme-line, #e2e0ee);background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.8);color:var(--theme-ink-soft, #45475f)}
+#agentView .create-home-recent-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+#agentView .create-home-recent-row .project-card,#agentView .create-home-recent-row .project-card-open{min-height:148px}
+#agentView .create-home-recent-row .project-card-open{padding:16px 18px}
+#agentView .create-home-recent-row .project-card-open h2{margin:16px 0 6px;font-size:17px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+#agentView .create-home-recent-row .project-card-art{top:30px;bottom:36px}
+#agentView .create-home-recent-row .loading-skeleton-project{min-height:148px}
+@media(max-width:1100px){#agentView .create-home-recent-row{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(230px,1fr);overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding-block:4px;margin-block:-4px}#agentView .create-home-recent-row::-webkit-scrollbar{display:none}#agentView .create-home-recent-row>*{scroll-snap-align:start}}
+
+/* Skills on the home: one row, scrolled sideways with buttons or the trackpad. */
+#agentView .agent-skill-gallery.is-row>header{margin-bottom:16px}
+#agentView .agent-skill-scroll{display:flex;gap:6px;margin-left:auto}
+#agentView .agent-skill-scroll[hidden]{display:none}
+#agentView .agent-skill-scroll button{display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--theme-line, #e2e0ee);border-radius:10px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.85);color:var(--theme-ink-soft, #4f5168);cursor:pointer;transition:background .16s,border-color .16s,opacity .16s}
+#agentView .agent-skill-scroll button:hover:not(:disabled){border-color:var(--theme-brand-line, #c7c2ed);background:var(--theme-panel, #fff);color:var(--theme-brand, #514cb5)}
+#agentView .agent-skill-scroll button:disabled{opacity:.38;cursor:default}
+#agentView .agent-skill-scroll .gugu-lucide{width:18px;height:18px}
+#agentView .agent-skill-row{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:calc((100% - 48px) / 4);overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scroll-padding-inline:0;scrollbar-width:none;padding-block:4px 8px;margin-block:-4px -8px}
+#agentView .agent-skill-row::-webkit-scrollbar{display:none}
+#agentView .agent-skill-row>.agent-skill-card{scroll-snap-align:start}
+#agentView .agent-skill-gallery.is-row.can-scroll-forward .agent-skill-row{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 56px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 56px),transparent)}
+#agentView .agent-skill-gallery.is-row.can-scroll-back .agent-skill-row{-webkit-mask-image:linear-gradient(90deg,transparent,#000 56px);mask-image:linear-gradient(90deg,transparent,#000 56px)}
+#agentView .agent-skill-gallery.is-row.can-scroll-back.can-scroll-forward .agent-skill-row{-webkit-mask-image:linear-gradient(90deg,transparent,#000 56px,#000 calc(100% - 56px),transparent);mask-image:linear-gradient(90deg,transparent,#000 56px,#000 calc(100% - 56px),transparent)}
+@media(max-width:1200px){#agentView .agent-skill-row{grid-template-columns:none;grid-auto-columns:calc((100% - 32px) / 3)}}
+@media(max-width:900px){#agentView .agent-skill-row{grid-template-columns:none;grid-auto-columns:calc((100% - 16px) / 2)}}
+@media(max-width:760px){#agentView .create-home{gap:40px;padding:40px 20px 32px}#agentView .agent-skill-row{grid-template-columns:none;grid-auto-columns:82%;gap:12px}#agentView .create-home .create-home-primary{width:min(100%,320px)}#agentView .create-home-recent-row{grid-auto-columns:76%}}
+@media(prefers-reduced-motion:reduce){#agentView .create-home .create-home-primary,#agentView .create-home-idea,#agentView .create-home .create-home-idea-send,#agentView .agent-skill-scroll button{transition:none}#agentView .create-home .create-home-primary:hover{transform:none}}
 
 /* Anchor conversation menus to their trigger buttons in the top layer. */
 .dw-model-picker,.dw-history-picker{position:fixed;inset:auto;margin:0;box-sizing:border-box;max-width:calc(100vw - 16px)}
@@ -6346,13 +6434,11 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
 .dw-message-content .attachment-card{background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.70196);max-width:100%;text-align:left}
 .dw-message-content .attachment-card-caption{line-height:1.4}
 
-/* ── Icon sidebar and the agent page conversation list ──────────────────
-   The main sidebar is always an icon column. The 对话与项目 list belongs to
-   the agent page and takes its own full-height column left of the content. */
-.app-shell { --rail-width: 72px; --agent-history-width: 248px; }
-.rail-sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.rail-project-status { height: 0; overflow: hidden; }
-@media (max-width: 1100px) { .app-shell { --rail-width: 68px; --agent-history-width: 220px; } }
+/* ── Icon sidebar ───────────────────────────────────────────────────────
+   The main sidebar is always an icon column; 快速创作 groups the standalone
+   image and video tools below the project entries. */
+.app-shell { --rail-width: 72px; }
+@media (max-width: 1100px) { .app-shell { --rail-width: 68px; } }
 
 @media (min-width: 781px) {
   .rail { position: relative; z-index: 30; min-width: 0; min-height: 0; padding: 0 12px 12px; gap: 0; }
@@ -6380,59 +6466,10 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
   /* The rail keeps its icons at the top and the version info at the bottom. */
   .rail-nav { flex: 1 1 auto; }
 
-  /* Agent page conversation list: a full-height column next to the icon rail. */
-  .agent-history { grid-area: history; position: relative; z-index: 25; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0 10px 12px; border-right: 1px solid var(--line); background: var(--theme-panel, #f9f9fb); }
-  body .app-shell.agent-project-open .agent-history { z-index: 92; }
-  .agent-history-head { display: flex; flex: none; align-items: center; height: 56px; margin-bottom: 4px; padding: 0 10px; }
-  .agent-history-head h2 { margin: 0; overflow: hidden; color: var(--ink); font-size: 15px; font-weight: 600; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
-  .agent-history-label { flex: none; margin: 16px 0 0; padding: 0 10px; overflow: hidden; color: var(--theme-muted, #8a8ca0); font-size: 12px; font-weight: 500; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
-
-  .rail-project-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-height: 0; margin: 6px 0 0; padding: 0 0 4px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; list-style: none; scrollbar-width: thin; scrollbar-color: #d9d8e6 transparent; }
-  .rail-project-list > li { min-width: 0; }
-  .rail-project { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 0 10px 0 8px; border: 1px solid transparent; border-radius: 10px; color: var(--theme-ink-soft, #52566b); background: transparent; font-size: 13px; text-align: left; transition: color var(--ease), background var(--ease), border-color var(--ease), box-shadow var(--ease); }
-  .rail-project:hover { color: var(--ink); background: rgba(99,102,241,.06); }
-  .rail-project[aria-current="page"] { border-color: rgba(99,102,241,.18); color: var(--theme-brand, #3f3f9a); background: var(--glass-soft-hover); box-shadow: 0 5px 14px rgba(91,92,232,.08), inset 0 1px rgb(var(--theme-highlight-rgb, 255 255 255) / 0.88); font-weight: 550; }
-  .rail-project-icon { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border: 1px solid var(--theme-line, #e6e6ee); border-radius: 7px; color: var(--theme-muted, #7c7f96); background: rgb(var(--theme-panel-rgb, 255 255 255) / 0.8); }
-  .rail-project[aria-current="page"] .rail-project-icon { border-color: rgba(99,102,241,.22); color: var(--brand); }
-  .rail-project-icon svg { width: 14px; height: 14px; }
-  .rail-project-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rail-project-note { display: grid; gap: 8px; padding: 8px 12px; color: var(--theme-muted, #8a8ca0); font-size: 12px; line-height: 1.5; }
-  .rail-note-button { justify-self: start; min-height: 28px; padding: 0 12px; border: 1px solid rgba(99,102,241,.2); border-radius: 8px; color: var(--theme-brand, #4c4eb1); background: var(--glass-soft); font-size: 12px; }
-  .rail-note-button:hover { background: var(--glass-soft-hover); }
-  .rail-project-skeleton { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 9px; }
-  .rail-project-skeleton i,
-  .rail-project-skeleton span { display: block; border-radius: 7px; background: var(--theme-surface, #e8e8ef); animation: rail-skeleton-pulse 1.2s ease-in-out infinite; }
-  .rail-project-skeleton i { flex: none; width: 24px; height: 24px; }
-  .rail-project-skeleton span { flex: 1; height: 10px; border-radius: 5px; }
-
-  /* Hover "more" button on each conversation, opening rename/delete. */
-  .rail-project-item { position: relative; }
-  .rail-project-more { position: absolute; top: 50%; right: 5px; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; color: var(--theme-muted, #7c7f96); background: transparent; opacity: 0; pointer-events: none; transform: translateY(-50%); transition: opacity var(--ease), color var(--ease), background var(--ease); }
-  .rail-project-more svg { width: 16px; height: 16px; stroke-width: 2.2; }
-  .rail-project-item:hover .rail-project-more,
-  .rail-project-item:focus-within .rail-project-more,
-  .rail-project-item.is-menu-open .rail-project-more { opacity: 1; pointer-events: auto; }
-  .rail-project-more:hover,
-  .rail-project-more[aria-expanded="true"] { color: var(--ink); background: rgba(99,102,241,.1); }
-  .rail-project-more:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
-  .rail-project-item:hover .rail-project,
-  .rail-project-item:focus-within .rail-project,
-  .rail-project-item.is-menu-open .rail-project { padding-right: 34px; }
-  .rail-project-item:hover .rail-project:not([aria-current="page"]),
-  .rail-project-item.is-menu-open .rail-project:not([aria-current="page"]) { color: var(--ink); background: rgba(99,102,241,.06); }
-  @media (hover: none) {
-    .rail-project-more { opacity: 1; pointer-events: auto; }
-    .rail-project-item .rail-project { padding-right: 34px; }
-  }
-  .rail-project-menu { position: fixed; z-index: 1000; width: 132px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-raised); box-shadow: var(--shadow-float); }
-  .rail-project-menu[hidden] { display: none; }
-  .rail-project-menu button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 10px; border: 0; border-radius: 7px; color: var(--ink-soft); background: transparent; font-size: 13px; text-align: left; }
-  .rail-project-menu button:hover,
-  .rail-project-menu button:focus-visible { color: var(--ink); background: var(--surface); outline: 0; }
-  .rail-project-menu svg { flex: none; width: 15px; height: 15px; }
-  .rail-project-menu .rail-project-menu-delete { color: var(--danger); }
-  .rail-project-menu .rail-project-menu-delete:hover,
-  .rail-project-menu .rail-project-menu-delete:focus-visible { color: var(--danger); background: var(--danger-soft); }
+  /* 快速创作: a hairline and a short caption above the image and video tools. */
+  .rail-group { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; margin-top: 12px; }
+  .rail-group::before { content: ""; width: 22px; height: 1px; margin-bottom: 6px; border-radius: 1px; background: var(--line-strong); }
+  .rail-group-title { color: var(--theme-muted, #8a8ca0); font-size: 10px; font-weight: 500; line-height: 1.2; letter-spacing: .02em; white-space: nowrap; }
 
   .rail-footer { display: flex; flex: none; flex-direction: column; align-items: center; width: 100%; padding-top: 8px; }
 
@@ -6447,7 +6484,6 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
   .app-shell { grid-template-areas: "rail top top" "rail creator content"; }
   .app-shell.library-mode,
   .app-shell.wide-mode { grid-template-areas: "rail top" "rail content"; }
-  .app-shell.agent-route { grid-template-columns: var(--rail-width) var(--agent-history-width) minmax(0, 1fr); grid-template-areas: "rail history top" "rail history content"; }
   #appView:not(.drama-director-open) .topbar { padding-left: 0; grid-template-columns: var(--creator-width) minmax(0, 1fr); }
   #appView.drama-project-open:not(.drama-director-open) .topbar { grid-template-columns: minmax(230px,.7fr) minmax(510px,1.45fr) auto; }
   #appView.drama-professional-open:not(.drama-director-open) .topbar { grid-template-columns: minmax(260px,1fr) auto; }
@@ -6459,11 +6495,8 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
   /* Desktop: the sidebar header doubles as a window drag area. macOS keeps
      room for the traffic lights beside or above the logo. */
   body.desktop-runtime .rail-head { -webkit-app-region: drag; user-select: none; }
-  body.desktop-runtime .agent-history-head { -webkit-app-region: drag; user-select: none; }
   body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) .rail.is-collapsed .rail-head { height: 44px; margin-top: 34px; }
 
-  /* Inside an opened conversation the list on the left replaces the back button. */
-  body .app-shell.agent-project-open { grid-template-columns: var(--rail-width) var(--agent-history-width) minmax(0, 1fr); grid-template-areas: "rail history content"; }
   #agentView [data-agent-project-back] { display: none; }
   body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) .app-shell.agent-project-open #agentView .dw-agent-project { padding-left: 0; }
 }
@@ -6474,15 +6507,16 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
 
 @media (max-width: 780px) {
   .rail .rail-head,
-  .agent-history { display: none !important; }
+  .rail-group-title,
+  .rail-group::before { display: none !important; }
   .rail .rail-nav,
+  .rail .rail-group,
   .rail .rail-footer { display: contents; }
   body .app-shell.agent-project-open { grid-template-columns: minmax(0,1fr); grid-template-areas: "content"; }
   body .app-shell.agent-project-open .rail { display: none !important; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rail-project, .rail.is-collapsed [data-rail-tip]::after { transition: none; }
-  .rail-project-skeleton i, .rail-project-skeleton span { animation: none; }
+  .rail.is-collapsed [data-rail-tip]::after { transition: none; }
 }
 
 /* Sidebar account dock: model prices, credits and the account menu live at the
@@ -6627,8 +6661,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
 .rail-avatar .avatar-notification-badge { border-color: var(--shell-bg, #f4f4f5); }
 @media (min-width: 781px) {
   #appView:not(.drama-director-open) { padding: var(--shell-gap) var(--shell-gap) var(--shell-gap) 0; background: var(--shell-bg); }
-  #appView:not(.drama-director-open) > .rail,
-  #appView:not(.drama-director-open) > .agent-history { margin-block: calc(var(--shell-gap) * -1); border-right: 0; background: transparent; }
+  #appView:not(.drama-director-open) > .rail { margin-block: calc(var(--shell-gap) * -1); border-right: 0; background: transparent; }
 
   /* Creator column + results read as one frame split by a hairline. */
   #appView:not(.drama-director-open) > .creator-panel { border: 1px solid var(--shell-frame-line); border-right-color: var(--line); border-radius: var(--shell-radius) 0 0 var(--shell-radius); box-shadow: var(--shell-frame-shadow); }
@@ -6647,16 +6680,13 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.agent-proj
   #appView.drama-professional-open:not(.drama-director-open) .drama-stage { min-height: calc(100dvh - 56px - var(--shell-gap) * 2 - 2px); }
 }
 
-/* Agent home: the conversation list joins the workspace frame. Opening a
-   conversation takes over the whole window; its back button returns home. */
+/* 创作 home sits in the workspace frame. Opening a project takes over the
+   whole window; its back button returns home. */
 @media (min-width: 781px) {
-  .agent-history-head { height: 10px; margin: 0; }
-  #appView.agent-route:not(.agent-project-open):not(.drama-director-open) > .agent-history { margin-block: 0; padding-top: 4px; border: 1px solid var(--shell-frame-line); border-right-color: var(--line); border-radius: var(--shell-radius) 0 0 var(--shell-radius); background: var(--theme-panel, #fbfbfc); box-shadow: var(--shell-frame-shadow); }
-  #appView.agent-route.agent-history-visible:not(.agent-project-open):not(.drama-director-open) > .content-panel { border-left: 0; border-radius: 0 var(--shell-radius) var(--shell-radius) 0; }
-  #appView.agent-route:not(.agent-history-visible):not(.agent-project-open):not(.drama-director-open) { grid-template-columns: var(--rail-width) minmax(0, 1fr); grid-template-areas: "rail top" "rail content"; }
+  #appView.agent-route:not(.agent-project-open):not(.drama-director-open) { grid-template-columns: var(--rail-width) minmax(0, 1fr); grid-template-areas: "rail top" "rail content"; }
 
   #appView.agent-route.agent-project-open:not(.drama-director-open) { padding: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "content"; }
-  #appView.agent-route.agent-project-open:not(.drama-director-open) > :is(.rail, .agent-history) { display: none !important; }
+  #appView.agent-route.agent-project-open:not(.drama-director-open) > .rail { display: none !important; }
   #appView.agent-route.agent-project-open:not(.drama-director-open) > .content-panel { border: 0; border-radius: 0; box-shadow: none; }
   #appView.agent-project-open #agentView [data-agent-project-back] { display: grid; }
   /* The overlapping chat header must not mark the back button as a window drag target. */

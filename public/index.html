@@ -8,7 +8,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=6">
-  <link rel="stylesheet" href="/styles.css?v=376">
+  <link rel="stylesheet" href="/styles.css?v=377">
   <link rel="stylesheet" href="/vendor/director/reference-canvas.css?v=6">
   <link rel="stylesheet" href="/payment.css?v=3">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
@@ -79,7 +79,7 @@
   <div id="appView" class="app-shell hidden">
     <header class="topbar">
       <a class="brand" href="#"><span class="brand-gem"></span><b>GuGu AI</b></a>
-      <div class="workspace-name"><button id="dramaTopBack" class="drama-top-back" type="button" aria-label="返回短剧项目"><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6M8 12h10"/></svg><span>返回</span></button><h1 id="routeTitle">Agent</h1><div class="drama-project-title-editor"><button id="dramaProjectTitleDisplay" class="drama-project-title-display" type="button" data-tooltip="点击修改名称" title="点击修改名称" aria-label="修改项目名称"></button><input id="dramaProjectTitle" class="drama-project-title-input hidden" maxlength="80" autocomplete="off" aria-label="项目名称"></div><button id="dramaProjectStyle" class="drama-project-style hidden" type="button" title="修改画面风格">选择风格</button></div>
+      <div class="workspace-name"><button id="dramaTopBack" class="drama-top-back" type="button" aria-label="返回项目列表"><svg viewBox="0 0 24 24"><path d="m14 6-6 6 6 6M8 12h10"/></svg><span>返回</span></button><h1 id="routeTitle">创作</h1><div class="drama-project-title-editor"><button id="dramaProjectTitleDisplay" class="drama-project-title-display" type="button" data-tooltip="点击修改名称" title="点击修改名称" aria-label="修改项目名称"></button><input id="dramaProjectTitle" class="drama-project-title-input hidden" maxlength="80" autocomplete="off" aria-label="项目名称"></div><button id="dramaProjectStyle" class="drama-project-style hidden" type="button" title="修改画面风格">选择风格</button></div>
       <nav id="dramaSteps" class="drama-steps" aria-label="短剧制作步骤">
         <button data-drama-step="script"><i>1</i><span>剧本</span></button>
         <button data-drama-step="resources"><i>2</i><span>素材</span></button>
@@ -93,11 +93,13 @@
         <span class="rail-brand" aria-hidden="true"><span class="brand-gem"></span></span>
       </div>
       <div class="rail-nav">
-        <button class="rail-button active" data-route="agent" data-rail-tip="Agent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 9l6 3-6 3-2 6-2-6-6-3 6-3 2-6Z"/><path d="M19 3v4M17 5h4"/></svg><span class="rail-label">Agent</span></button>
-        <button class="rail-button" data-route="image" data-rail-tip="图像生成"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span class="rail-label">图像生成</span></button>
-        <button class="rail-button" data-route="video" data-rail-tip="视频生成"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span class="rail-label">视频生成</span></button>
-        <button class="rail-button" data-route="drama" data-rail-tip="短剧创作"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 9h16M8 5l2 4M14 5l2 4"/><path d="m10 12 5 2.5-5 2.5z"/></svg><span class="rail-label">短剧创作</span></button>
+        <button class="rail-button active" data-route="agent" data-rail-tip="创作"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 14 9l6 3-6 3-2 6-2-6-6-3 6-3 2-6Z"/><path d="M19 3v4M17 5h4"/></svg><span class="rail-label">创作</span></button>
+        <button class="rail-button" data-route="drama" data-rail-tip="项目"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M8 10v4M12 10v2M16 10v6"/></svg><span class="rail-label">项目</span></button>
         <button class="rail-button" data-route="files" data-rail-tip="文件库"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/></svg><span class="rail-label">文件库</span></button>
+        <div class="rail-group" role="group" aria-labelledby="railQuickTitle"><span id="railQuickTitle" class="rail-group-title">快速创作</span>
+          <button class="rail-button" data-route="image" data-rail-tip="图像"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span class="rail-label">图像</span></button>
+          <button class="rail-button" data-route="video" data-rail-tip="视频"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span class="rail-label">视频</span></button>
+        </div>
       </div>
       <div class="rail-footer">
         <button id="desktopUpdateButton" class="rail-update-button hidden" type="button" data-rail-tip="发现新版本" aria-label="发现新版本"><span class="rail-update-icon" aria-hidden="true"><svg data-update-icon="download" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg><svg data-update-icon="refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg><svg data-update-icon="alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span><span class="rail-update-label">更新</span><span class="rail-update-progress" aria-hidden="true"><i></i></span></button>
@@ -121,11 +123,6 @@
       </div>
     </nav>
 
-    <aside id="agentHistory" class="agent-history hidden" aria-labelledby="agentHistoryTitle">
-      <div class="agent-history-head"><h2 id="agentHistoryTitle" class="rail-sr-only">Agent</h2></div>
-      <h3 id="agentHistoryListTitle" class="agent-history-label">对话与项目</h3>
-      <ul id="agentHistoryList" class="rail-project-list" data-rail-projects aria-labelledby="agentHistoryListTitle"></ul>
-    </aside>
 
     <aside id="creatorPanel" class="creator-panel">
       <form id="imageForm" class="generator-form" data-panel="image">
@@ -176,7 +173,7 @@
         <div id="fileGrid" class="file-grid"></div>
         <button id="loadMoreFiles" class="secondary-button hidden" type="button">加载更多</button>
       </section>
-      <section id="agentView" class="hidden" aria-label="Agent"></section>
+      <section id="agentView" class="hidden" aria-label="创作"></section>
       <section id="dramaView" class="drama-view hidden">
         <section id="dramaProjects" class="drama-projects"></section>
         <section id="dramaStudio" class="drama-studio hidden">
@@ -289,6 +286,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=519"></script>
+  <script type="module" src="/app.js?v=520"></script>
 </body>
 </html>

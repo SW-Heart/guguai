@@ -167,7 +167,7 @@ test('a pending snapshot and switching to the same resolved theme keep the lates
 
 test('theme controls stay inside the account menu, and every changed resource has a current cache key', () => {
   const html = read('index.html');
-  const rail = html.slice(html.indexOf('<nav id="appRail"'), html.indexOf('<aside id="agentHistory"'));
+  const rail = html.slice(html.indexOf('<nav id="appRail"'), html.indexOf('</nav>', html.indexOf('<nav id="appRail"')));
   const menu = rail.slice(rail.indexOf('id="accountMenu"'));
   assert.match(menu, /id="accountThemePicker"[^>]*role="radiogroup"/);
   for (const choice of ['system', 'light', 'dark']) assert.match(menu, new RegExp(`role="radio" data-theme-choice="${choice}"`));

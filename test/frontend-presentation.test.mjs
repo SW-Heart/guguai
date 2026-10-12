@@ -35,7 +35,7 @@ test('account controls live in the sidebar dock instead of the topbar', async ()
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const topbar = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
-  const rail = html.slice(html.indexOf('<nav id="appRail"'), html.indexOf('<aside id="agentHistory"'));
+  const rail = html.slice(html.indexOf('<nav id="appRail"'), html.indexOf('</nav>', html.indexOf('<nav id="appRail"')));
   for (const id of ['modelPriceButton', 'creditControl', 'creditBalance', 'creditAmount', 'creditDetailPopover', 'creditPurchaseButton', 'accountButton', 'accountMenu', 'serviceState']) {
     assert.ok(!topbar.includes(`id="${id}"`), `${id} left the topbar`);
     assert.ok(rail.includes(`id="${id}"`), `${id} is in the sidebar`);

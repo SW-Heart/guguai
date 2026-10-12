@@ -21,7 +21,7 @@ import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
-import { createConversationRail } from './features/agent/conversation-rail.js?v=5';
+import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=1';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 
 const $ = selector => document.querySelector(selector);
@@ -43,10 +43,13 @@ let lastTaskRender = { route:'', tab:'', ready:null, tasks:null, preparations:nu
 const failedWorkRetentionMs = 5 * 60 * 1000;
 const transientFailureDeadlines = new Map();
 const transientFailureTimers = new Map();
-const routePaths = Object.freeze({ agent:'/agent', image:'/image', video:'/video', drama:'/drama', files:'/files' });
+// The 创作 home keeps the internal route name "agent"; the 项目 page keeps "drama".
+const routePaths = Object.freeze({ agent:'/create', image:'/image', video:'/video', drama:'/projects', files:'/files' });
+const legacyRoutePaths = Object.freeze({ '/agent':'agent', '/lab':'agent', '/drama':'drama' });
 const authPath = '/login';
-// The standalone project list now lives on the left of the agent page, so old /projects links open the agent home.
-const routeFromPath = pathname => /^\/projects\/[\w-]+\/?$/.test(pathname) ? 'project' : Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || 'agent';
+const dramaProjectPath = /^\/projects\/drama(?:\/([\w-]+))?\/?$/;
+const dramaProjectIdFromPath = (pathname = window.location.pathname) => decodeURIComponent(pathname.match(dramaProjectPath)?.[1] || '');
+const routeFromPath = pathname => dramaProjectPath.test(pathname) ? 'drama' : /^\/projects\/[\w-]+\/?$/.test(pathname) ? 'project' : Object.entries(routePaths).find(([, path]) => path === pathname)?.[0] || legacyRoutePaths[pathname] || 'agent';
 const taskSignatureFields = ['id','type','status','progress','progressStage','awaitingReferences','assetId','updatedAt','error','failure','creditStatus','prompt','size','quality','aspectRatio','duration','videoModelId','modelId','midjourneyOptions','createdAt','submittedAt','finishedAt'];
 const fileSignatureFields = ['id','name','kind','mimeType','size','url','remoteUrl','directUrl','localStatus','localPath','deliveryStatus','remoteStatus','referenceSourceAvailable','updatedAt','sourceGenerationId','createdAt'];
 const taskCardSignatureFields = taskSignatureFields.filter(field => field !== 'updatedAt');
@@ -77,15 +80,16 @@ const desktopScopeHeaders = desktopScope.headers;
 const apiResponseShape = url => /\/api\/generations\?/.test(String(url)) && /(?:^|[?&])(?:ids|view)=/.test(String(url)) ? 'array' : 'object';
 const { request: api, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
 const promptPrecheck = createPromptPrecheck({ api });
-const conversationRail = createConversationRail({
-  root: document.querySelector('#agentHistory'),
+const projectLibrary = createProjectLibrary({
   api,
   accountSnapshot: accountScope.snapshot,
   isAccountCurrent: accountScope.isCurrent,
-  onOpen: id => openAgentProject(id),
-  onVisibilityChange: () => syncAgentHistoryVisibility(state.route),
-  onRename: item => openRenameAgentProjectDialog(item),
-  onDelete: item => void deleteAgentProject(item),
+  toast: message => toast(message),
+  onOpen: item => openProjectItem(item),
+  onCreate: () => void startProjectCreation(),
+  onRename: (item, trigger) => void renameProjectItem(item, trigger),
+  onDelete: item => void deleteProjectItem(item),
+  onShowAll: () => navigate('drama'),
 });
 function clearFileReferencesForIds(assetIds) {
   const ids = new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(value => String(value || '')).filter(Boolean));
@@ -705,7 +709,7 @@ function fileLibraryLoadingSkeleton() {
 }
 function dramaProjectsLoadingSkeleton() {
   const cards = Array.from({ length:7 }, () => '<article class="project-card loading-skeleton-project"><div class="skeleton-project-content"><i class="skeleton-project-kicker"></i><i class="skeleton-project-title"></i><i class="skeleton-project-title short"></i><span class="skeleton-project-footer"></span></div></article>').join('');
-  return `<div class="loading-skeleton loading-skeleton--projects" role="status" aria-live="polite" aria-label="正在加载短剧项目"><div class="project-library-toolbar loading-skeleton-project-toolbar"><span class="skeleton-project-filters"></span><span class="skeleton-project-search"></span><span class="skeleton-project-count"></span></div><div class="project-library-grid"><div class="create-project-card loading-skeleton-project-create"><span></span><i></i></div>${cards}</div></div>`;
+  return `<div class="loading-skeleton loading-skeleton--projects" role="status" aria-live="polite" aria-label="正在加载项目"><div class="project-library-toolbar loading-skeleton-project-toolbar"><span class="skeleton-project-filters"></span><span class="skeleton-project-search"></span><span class="skeleton-project-count"></span></div><div class="project-library-grid"><div class="create-project-card loading-skeleton-project-create"><span></span><i></i></div>${cards}</div></div>`;
 }
 
 let captchaRequest = null;
@@ -1583,7 +1587,7 @@ function clearDesktopAccountState() {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
   });
   dramaController?.resetForAccount?.();
-  conversationRail.reset();
+  projectLibrary.reset();
   notificationController.closeNotificationDialog();
   resetAccountState(state);
   desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
@@ -2075,16 +2079,16 @@ $('#closeRenameFile').onclick = $('#cancelRenameFile').onclick = closeRenameFile
 $('#renameFileDialog').addEventListener('cancel', event => { event.preventDefault(); closeRenameFileDialog(); });
 $('#renameFileDialog').addEventListener('close', () => { const restore = renameFileRestoreFocus; renameFileId = ''; renameFileRestoreFocus = null; renameFileError(); requestAnimationFrame(() => { if (restore?.isConnected && !restore.disabled) restore.focus(); }); });
 
-// Agent page 对话与项目 list: rename and delete.
+// Canvas projects (smart canvas): rename and delete from the project lists.
 let renameAgentProjectItem = null;
 let renameAgentProjectRestoreFocus = null;
 const deletingAgentProjectIds = new Set();
 const openAgentProjectId = () => state.route === 'project' ? decodeURIComponent(window.location.pathname.split('/').filter(Boolean).at(-1) || '') : '';
 function renameAgentProjectError(message = '') { const error = $('#renameAgentProjectError'); error.textContent = message; error.classList.toggle('hidden', !message); }
-function openRenameAgentProjectDialog(item) {
+function openRenameAgentProjectDialog(item, restoreFocus = null) {
   if (!item?.id) return;
   renameAgentProjectItem = item;
-  renameAgentProjectRestoreFocus = document.activeElement;
+  renameAgentProjectRestoreFocus = restoreFocus || document.activeElement;
   const input = $('#renameAgentProjectInput');
   input.value = item.title || '';
   renameAgentProjectError();
@@ -2112,7 +2116,7 @@ $('#renameAgentProjectForm').addEventListener('submit', async event => {
     const result = await api(`/api/agent/projects/${encodeURIComponent(item.id)}`, { method:'PATCH', body:JSON.stringify({ title }) });
     if (!accountScope.isCurrent(requestAccount)) return;
     const saved = result?.project?.title || title;
-    conversationRail.rename(item.id, saved);
+    projectLibrary.renamed('canvas', item.id, saved);
     agentController?.renameProject?.(item.id, saved);
     closeRenameAgentProjectDialog();
     toast('名称已修改');
@@ -2138,7 +2142,7 @@ async function deleteAgentProject(item) {
   try {
     await api(`/api/agent/projects/${encodeURIComponent(id)}`, { method:'DELETE', body:'{}' });
     if (!accountScope.isCurrent(requestAccount)) return;
-    conversationRail.remove(id);
+    projectLibrary.removed('canvas', id);
     // Leave the page of a project that no longer exists.
     if (openAgentProjectId() === id) navigate('agent');
     toast('项目已删除');
@@ -2153,8 +2157,8 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=110').then(({createAgentWorkspace}) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>conversationRail.rename(id,title)});
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=111').then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:()=>void startProjectCreation(),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2164,8 +2168,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=250').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo });
+    dramaControllerPromise = import('./drama-studio.js?v=251').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -2227,7 +2231,7 @@ function scheduleRouteContentRender(route, routeChanged) {
         void ensureAgentController().then(controller=>{
           if(epoch!==routeRenderEpoch||state.route!=='agent')return;
           return controller.load();
-        }).catch(error=>toast(`Agent 加载失败：${error.message}`));
+        }).catch(error=>toast(`创作页加载失败：${error.message}`));
         return;
       }
       if (route === 'project') {
@@ -2239,11 +2243,16 @@ function scheduleRouteContentRender(route, routeChanged) {
         return;
       }
       if (route === 'drama') {
-        void ensureDramaController().then(controller => {
+        void ensureDramaController().then(async controller => {
           if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
           controller.modelState();
-          return controller.load();
-        }).catch(error => { console.error('[drama] 页面加载失败', error); toast('短剧创作暂时无法打开，请刷新后重试'); });
+          await controller.load();
+          if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
+          // Follow the address: open the project it names, or show the list.
+          const id = dramaProjectIdFromPath();
+          if (id && controller.project?.id !== id) return controller.open(id);
+          if (!id && controller.project) return controller.close();
+        }).catch(error => { console.error('[drama] 页面加载失败', error); toast('项目页暂时无法打开，请刷新后重试'); });
         return;
       }
       renderTasks();
@@ -2252,18 +2261,42 @@ function scheduleRouteContentRender(route, routeChanged) {
     }, 0);
   });
 }
-// The main sidebar stays an icon column. The 对话与项目 list is part of the
-// agent page and sits on its left, so it is only shown for agent routes.
-function syncAgentHistoryVisibility(route) {
-  const visible = ['agent', 'project'].includes(route) && conversationRail.isVisible();
-  toggleClass($('#agentHistory'), 'hidden', !visible);
-  toggleClass($('#appView'), 'agent-history-visible', visible);
+// Short-drama projects open inside the 项目 page at /projects/drama/:id.
+function syncDramaProjectLocation(id, { replace = false, created = false } = {}) {
+  const path = id ? `/projects/drama/${encodeURIComponent(id)}` : routePaths.drama;
+  if (state.route !== 'drama') {
+    // A project created from the 创作 home opens on the 项目 page.
+    if (!created || !id) return;
+    window.history.pushState({ route:'drama' }, '', path);
+    navigate('drama', { historyMode:'none' });
+    return;
+  }
+  if (window.location.pathname === path) return;
+  window.history[replace ? 'replaceState' : 'pushState']({ route:'drama' }, '', path);
 }
-function syncAgentHistory(route) {
-  syncAgentHistoryVisibility(route);
-  const projectId = route === 'project' ? decodeURIComponent(window.location.pathname.split('/').filter(Boolean).at(-1) || '') : '';
-  conversationRail.setActive(projectId);
-  if (['agent', 'project'].includes(route)) void conversationRail.refresh();
+function openProjectItem(item) {
+  if (item?.source === 'canvas') return openAgentProject(item.id);
+  if (item?.source !== 'drama' || !item.id) return;
+  const path = `/projects/drama/${encodeURIComponent(item.id)}`;
+  if (window.location.pathname !== path) window.history.pushState({ route:'drama' }, '', path);
+  navigate('drama', { historyMode:'none' });
+}
+async function startProjectCreation() {
+  const type = await openProjectTypeDialog();
+  try {
+    if (type === 'canvas') await (await ensureAgentController()).createProject();
+    else if (type === 'drama') await (await ensureDramaController()).create();
+  } catch (error) {
+    toast(error.message || '项目创建失败，请重试');
+  }
+}
+async function renameProjectItem(item, trigger) {
+  if (item.source === 'canvas') return openRenameAgentProjectDialog(item, trigger);
+  (await ensureDramaController()).rename(item.id, trigger);
+}
+async function deleteProjectItem(item) {
+  if (item.source === 'canvas') return deleteAgentProject(item);
+  await (await ensureDramaController()).remove(item.id);
 }
 function openAgentProject(id) {
   if (!id) return;
@@ -2273,7 +2306,7 @@ function openAgentProject(id) {
   navigate('project', { historyMode:'none' });
 }
 function navigate(route, { historyMode = 'push' } = {}) {
-  const validProjectPath=route==='project'&&/^\/projects\/[\w-]+\/?$/.test(window.location.pathname);
+  const validProjectPath=route==='project'&&/^\/projects\/[\w-]+\/?$/.test(window.location.pathname)&&!dramaProjectPath.test(window.location.pathname);
   const nextRoute=(routePaths[route]||validProjectPath)?route:'agent';
   const routeChanged = state.route !== nextRoute;
   const creativeRoutes=['agent','project'];
@@ -2281,12 +2314,14 @@ function navigate(route, { historyMode = 'push' } = {}) {
   if (creativeRoutes.includes(state.route) && !creativeRoutes.includes(nextRoute)) agentController?.suspend?.();
   else if (state.route === 'project' && nextRoute === 'agent') agentController?.showHome?.();
   if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
-  const targetPath=nextRoute==='project'?window.location.pathname:routePaths[nextRoute];
+  // Keep an open short-drama path on load and back/forward; a sidebar click shows the list.
+  const keepDramaPath=nextRoute==='drama'&&historyMode!=='push'&&Boolean(dramaProjectIdFromPath());
+  const targetPath=nextRoute==='project'||keepDramaPath?window.location.pathname:routePaths[nextRoute];
   if (historyMode !== 'none' && (window.location.pathname !== targetPath || (nextRoute === 'agent' && window.location.search))) {
     window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', targetPath);
   }
   state.route = nextRoute;
-  const routeTitles = { agent:'Agent', project:'Agent', image:'图像生成', video:'视频生成', drama:'短剧创作', files:'文件库' };
+  const routeTitles = { agent:'创作', project:'创作', image:'图像生成', video:'视频生成', drama:'项目', files:'文件库' };
   $('#routeTitle').textContent = routeTitles[nextRoute];
   document.title = `${routeTitles[nextRoute]} · GuGu AI`;
   $$('.rail-button[data-route]').forEach(button => {
@@ -2294,7 +2329,6 @@ function navigate(route, { historyMode = 'push' } = {}) {
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
   });
-  syncAgentHistory(nextRoute);
   const files = nextRoute === 'files';
   const drama = nextRoute === 'drama';
   const agent = nextRoute === 'agent';

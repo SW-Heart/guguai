@@ -98,19 +98,19 @@ test('all changed marketing entries and help imports use consistent current cach
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
     assert.ok(html.includes('/marketing.js?v=21'));
-    assert.ok(html.includes('/marketing.css?v=15'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|20)|css\?v=(?:[789]|1[01234]))\b/);
+    assert.ok(html.includes('/marketing.css?v=16'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|20)|css\?v=(?:[789]|1[012345]))\b/);
   }
   const help = await read('public/help.html');
-  assert.ok(help.includes('/help.js?v=9'));
-  assert.doesNotMatch(help, /help\.js\?v=[12345678]\b/);
+  assert.ok(help.includes('/help.js?v=10'));
+  assert.doesNotMatch(help, /help\.js\?v=[1-9]\b/);
   const script = await read('public/help.js');
-  assert.ok(script.includes('./help-content.js?v=8'));
+  assert.ok(script.includes('./help-content.js?v=9'));
   assert.ok(script.includes('./help-copy.js?v=2'));
   assert.doesNotMatch(script, /help-copy\.js\?v=1\b/);
   await access(new URL('../public/help-copy.js', import.meta.url));
   assert.ok(script.includes('./help-search.js?v=3'));
-  assert.doesNotMatch(script, /help-content\.js\?v=[1234567]\b/);
+  assert.doesNotMatch(script, /help-content\.js\?v=[1-8]\b/);
   assert.doesNotMatch(script, /help-search\.js\?v=[12]\b/);
   assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=2'));
   assert.ok((await read('public/site-interactions.js')).includes('./home-motion.js?v=1'));

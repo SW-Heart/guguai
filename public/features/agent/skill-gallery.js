@@ -132,13 +132,39 @@ export function skillDetailMarkup(item) {
   return `<header class="agent-skill-detail-header"><h2 id="agentSkillDetailTitle">${escape(item.title)}</h2><div class="agent-skill-detail-actions"><button type="button" class="agent-skill-use" data-skill-use>使用此技能</button><button type="button" class="agent-skill-close" data-skill-close aria-label="关闭技能详情" autofocus><span class="gugu-lucide gugu-lucide-x" aria-hidden="true"></span></button></div></header><div class="agent-skill-dialog-body">${media}<section class="agent-skill-description" aria-label="技能介绍"><h3>技能介绍</h3><dl>${rows.filter(([, value]) => value).map(([label, value]) => `<div><dt>${label}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl></section>${item.prompt ? `<section class="agent-skill-prompt"><h3>试试这样说</h3><p>${escape(item.prompt)}</p></section>` : ''}</div>`;
 }
 
-export function mountSkillGallery(host, {signal, onChoose, onRetry}) {
+// layout 'row' shows one line of cards that scrolls sideways (the 创作 home);
+// the default grid is used inside an empty canvas conversation.
+export function mountSkillGallery(host, {signal, onChoose, onRetry, layout = 'grid'}) {
+  const row = layout === 'row';
   const section = document.createElement('section');
-  section.className = 'agent-skill-gallery';
+  section.className = `agent-skill-gallery${row ? ' is-row' : ''}`;
   section.setAttribute('aria-label', '创作技能');
-  section.innerHTML = '<header><h2>创作技能</h2></header><div class="agent-skill-grid" aria-busy="true"></div><dialog class="agent-skill-dialog" aria-labelledby="agentSkillDetailTitle"></dialog>';
+  const scrollButtons = row ? '<div class="agent-skill-scroll" hidden><button type="button" data-skill-scroll="-1" aria-label="查看前面的技能" title="上一组"><span class="gugu-lucide gugu-lucide-chevron-left" aria-hidden="true"></span></button><button type="button" data-skill-scroll="1" aria-label="查看后面的技能" title="下一组"><span class="gugu-lucide gugu-lucide-chevron-right" aria-hidden="true"></span></button></div>' : '';
+  section.innerHTML = `<header><h2>创作技能</h2>${scrollButtons}</header><div class="agent-skill-grid${row ? ' agent-skill-row' : ''}" aria-busy="true"></div><dialog class="agent-skill-dialog" aria-labelledby="agentSkillDetailTitle"></dialog>`;
   host.append(section);
   const grid = section.querySelector('.agent-skill-grid'), dialog = section.querySelector('dialog');
+  const scroller = row ? section.querySelector('.agent-skill-scroll') : null;
+  const syncScroll = () => {
+    if (!scroller || signal.aborted) return;
+    const max = grid.scrollWidth - grid.clientWidth;
+    scroller.hidden = max <= 1;
+    const [back, forward] = scroller.querySelectorAll('button');
+    back.disabled = grid.scrollLeft <= 1;
+    forward.disabled = grid.scrollLeft >= max - 1;
+    section.classList.toggle('can-scroll-back', !back.disabled && max > 1);
+    section.classList.toggle('can-scroll-forward', !forward.disabled && max > 1);
+  };
+  if (scroller) {
+    grid.addEventListener('scroll', syncScroll, {passive: true, signal});
+    window.addEventListener('resize', syncScroll, {signal});
+    scroller.addEventListener('click', event => {
+      const button = event.target.closest('[data-skill-scroll]');
+      if (!button) return;
+      const card = grid.querySelector('.agent-skill-card');
+      const step = card ? (card.getBoundingClientRect().width + parseFloat(getComputedStyle(grid).columnGap || '0')) * Math.max(1, Math.floor(grid.clientWidth / card.getBoundingClientRect().width)) : grid.clientWidth;
+      grid.scrollBy({left: step * Number(button.dataset.skillScroll), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+    }, {signal});
+  }
   let items = [], active = null, trigger = null;
   const showStatus = (message, retry = false) => {
     grid.setAttribute('aria-busy', 'false');
@@ -193,7 +219,8 @@ export function mountSkillGallery(host, {signal, onChoose, onRetry}) {
       grid.setAttribute('aria-busy', 'false');
       if (!items.length) showStatus('暂时没有可用的创作技能，你可以直接输入想法开始创作。');
       else grid.innerHTML = items.map(skillCardMarkup).join('');
+      if (row) {grid.scrollLeft = 0; requestAnimationFrame(syncScroll);}
     },
-    error() {if (!signal.aborted) showStatus('创作技能未能加载，请重试。', true);},
+    error() {if (!signal.aborted) {showStatus('创作技能未能加载，请重试。', true); if (row) requestAnimationFrame(syncScroll);}},
   };
 }

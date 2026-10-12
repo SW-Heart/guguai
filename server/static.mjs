@@ -2,7 +2,8 @@ import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-const frontendRoutePaths = new Set(['/login', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
+// /agent, /drama and /lab are older addresses; the app moves them to /create and /projects.
+const frontendRoutePaths = new Set(['/login', '/create', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
 const marketingRouteFiles = new Map([
   ['/help', 'help.html'],
   ['/help/', 'help.html'],
@@ -11,7 +12,7 @@ const marketingRouteFiles = new Map([
   ['/pricing', 'pricing.html'],
   ['/pricing/', 'pricing.html'],
 ]);
-const isProjectRoute = pathname => /^\/projects\/[\w-]+\/?$/.test(pathname);
+const isProjectRoute = pathname => /^\/projects\/(?:drama\/)?[\w-]+\/?$/.test(pathname);
 
 export function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
