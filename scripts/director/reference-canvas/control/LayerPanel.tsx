@@ -435,7 +435,11 @@ export function LayerPanel({ api, open, onClose }: LayerPanelProps) {
           document.getElementById(layerPanelAttachContainerId) ?? undefined
         }
         showOverlay={false}
-        onInteractOutside={event => event.preventDefault()}
+        onInteractOutside={event => {
+          // Let the toolbar button toggle once, rather than close on pointerdown
+          // and reopen on the subsequent click.
+          if ((event.target as Element)?.closest?.('[data-canvas-layer-toggle]')) event.preventDefault()
+        }}
       >
         <div
           role="separator"

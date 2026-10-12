@@ -1224,3 +1224,40 @@ test('account preference API works before creating a conversation and new projec
     assert.deepEqual(f.repo.userModelPreferences('user-b'),preferences);
   }finally{f.db.close();}
 });
+
+test('manual document edits persist revisions and reject conflicts, locks and active writers',()=>{
+  const f=fixture();
+  try{
+    f.session.doc.documents=[{id:'doc-manual',title:'文稿',text:'旧正文',revision:1,versions:[]}];
+    f.db.prepare('UPDATE agent_sessions SET doc_json=? WHERE id=?').run(JSON.stringify(f.session.doc),f.session.id);
+    const saved=f.repo.editDocument(f.session,{id:'doc-manual',text:'新正文',expectedRevision:1});
+    assert.equal(saved.revision,2);assert.equal(saved.conversationId,f.session.id);
+    assert.equal(f.get().doc.documents[0].text,'新正文');
+    assert.deepEqual(f.get().doc.documents[0].versions,[{revision:1,title:'文稿',text:'旧正文'}]);
+    assert.throws(()=>f.repo.editDocument(f.session,{id:'doc-manual',text:'冲突正文',expectedRevision:1}),{statusCode:409});
+    assert.throws(()=>f.repo.editDocument(f.session,{id:'missing',text:'正文',expectedRevision:1}),{statusCode:404});
+    assert.throws(()=>f.repo.editDocument(f.session,{id:'doc-manual',text:'x'.repeat(300001),expectedRevision:2}),{statusCode:400});
+    f.repo.saveCanvas(f.session,{directorWorkspace:{lockedIds:['doc-manual']}});
+    assert.throws(()=>f.repo.editDocument(f.session,{id:'doc-manual',text:'锁定正文',expectedRevision:2}),{statusCode:409});
+    f.repo.saveCanvas(f.session,{directorWorkspace:{lockedIds:[]}});
+    f.db.prepare('UPDATE agent_sessions SET lease_until=? WHERE id=?').run(Date.now()+10000,f.session.id);
+    assert.throws(()=>f.repo.editDocument(f.session,{id:'doc-manual',text:'并发正文',expectedRevision:2}),{statusCode:409});
+    assert.equal(f.get().doc.documents[0].text,'新正文');
+  }finally{f.db.close();}
+});
+
+test('document edit API saves only in the authenticated account and workspace',async()=>{
+  const f=fixture();let userId='user-a',requestScope=scope;
+  const input={id:'doc-edit',text:'手动编辑',expectedRevision:1};
+  const route=createAgentRouteHandler({repository:f.repo,bodyJson:async()=>input,sendJson:(res,status,data)=>Object.assign(res,{status,data}),requireUser:async()=>({id:userId}),requireDesktopWorkspaceScope:()=>requestScope});
+  const url=new URL(`http://localhost/api/agent/sessions/${f.session.id}/documents`);
+  try{
+    f.session.doc.documents=[{id:input.id,title:'文稿',text:'原文',revision:1,versions:[]}];
+    f.db.prepare('UPDATE agent_sessions SET doc_json=? WHERE id=?').run(JSON.stringify(f.session.doc),f.session.id);
+    userId='user-b';const denied={};await route({method:'PATCH'},denied,url);assert.equal(denied.status,404);
+    userId='user-a';requestScope={...scope,workspaceId:'other'};const other={};await route({method:'PATCH'},other,url);assert.equal(other.status,404);
+    requestScope=scope;const invalidMethod={};await route({method:'POST'},invalidMethod,url);assert.equal(invalidMethod.status,405);
+    const saved={};await route({method:'PATCH'},saved,url);assert.equal(saved.status,200);assert.equal(saved.data.document.text,input.text);assert.equal(saved.data.document.revision,2);
+    assert.equal(f.get().doc.documents[0].text,input.text);
+  }finally{f.db.close();}
+});

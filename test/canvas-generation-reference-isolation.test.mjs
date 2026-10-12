@@ -40,3 +40,16 @@ test('leaving the project while choosing a generation reference discards the sel
     assert.equal(await pending,null);assert.equal(context.project.assetIds.length,0);
   }
 });
+
+test('late reference delivery hydrates thumbnail URLs without replacing names, IDs or order',async()=>{
+  const {hydrateGenerationReferences}=await import('../public/features/drama/canvas-generation-references.js');
+  const references=[{id:'person',name:'陆左',kind:'image',url:''},{id:'scene',name:'卧铺车厢',kind:'image',url:'/old.png'}];
+  const draft={attachments:references};
+  const files={person:{id:'person',name:'原始文件.png',url:'https://example.com/person.png',previewUrl:'gugu-media://person'},scene:{id:'scene',url:'gugu-media://scene'}};
+  assert.equal(hydrateGenerationReferences(draft,id=>files[id]),true);
+  assert.equal(draft.attachments,references);assert.equal(draft.attachments[0].name,'陆左');
+  assert.equal(draft.attachments[0].url,'gugu-media://person');assert.equal(draft.attachments[1].url,'gugu-media://scene');
+  assert.equal(hydrateGenerationReferences(draft,id=>files[id]),false);
+  assert.equal(hydrateGenerationReferences(draft,()=>null),false);assert.equal(draft.attachments[0].url,'gugu-media://person');
+  assert.equal(hydrateGenerationReferences(undefined,()=>null),false);
+});

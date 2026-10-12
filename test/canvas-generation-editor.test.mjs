@@ -100,3 +100,26 @@ test('caret bookmarks inside paragraphs and after labels preserve their exact te
   assert.deepEqual(selection.restored.start,[following,5]);
   assert.deepEqual(selection.restored.end,[following,5]);
 });
+
+test('storyboard mentions saved as plain segments render as thumbnail chips when references arrive',()=>{
+  const prompt='参考：@陆左 @卧铺车厢。@陆左坐在窗边';
+  const draft={type:'video',prompt,promptSegments:[prompt],attachments:[{id:'person',name:'陆左',kind:'image',url:'gugu-media://person'},{id:'train',name:'卧铺车厢',kind:'image',url:'gugu-media://train'}]};
+  const html=generationPromptMarkup(draft);
+  assert.equal((html.match(/class="video-prompt-mention"/g)||[]).length,3);
+  assert.equal((html.match(/src="gugu-media:\/\/person"/g)||[]).length,2);
+  assert.match(html,/video-prompt-mention-name">卧铺车厢/);
+  assert.match(html,/src="gugu-media:\/\/train"/);
+  assert.equal(draft.prompt,prompt);
+});
+
+test('newly resolved text mentions retain existing explicit duplicate-name bindings',()=>{
+  const draft={prompt:'@参考图 然后 @场景',promptSegments:[{id:'second',label:'参考图'},' 然后 @场景'],attachments:[{id:'first',name:'参考图',kind:'image',url:'/first.png'},{id:'second',name:'参考图',kind:'image',url:'/second.png'},{id:'scene',name:'场景',kind:'image',url:'/scene.png'}]};
+  const html=generationPromptMarkup(draft);
+  assert.match(html,/id="second"/);assert.doesNotMatch(html,/id="first"/);assert.match(html,/id="scene"/);
+});
+
+test('mention thumbnails prefer the available local preview over a remote original',()=>{
+  const html=generationPromptMarkup({prompt:'@人物',promptSegments:['@人物'],attachments:[{id:'person',name:'人物',kind:'image',url:'https://example.com/person.png',previewUrl:'gugu-media://local-person'}]});
+  assert.match(html,/src="gugu-media:\/\/local-person"/);
+  assert.doesNotMatch(html,/https:\/\/example.com/);
+});

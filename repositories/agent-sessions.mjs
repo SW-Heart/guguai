@@ -225,6 +225,25 @@ export function createAgentSessionRepository({ sql, tx }) {
       return record;
     });
   }
+  function editDocument(session, input) {
+    if(typeof input.id!=='string'||typeof input.text!=='string'||input.text.length>300_000||!Number.isInteger(input.expectedRevision))throw Object.assign(new Error('文稿内容无效或过长'),{statusCode:400});
+    return tx(()=>{
+      const current=get(session.id,session.userId,session.scope);
+      if(!current)throw Object.assign(new Error('文稿不存在'),{statusCode:404});
+      if(current.leaseUntil>Date.now())throw Object.assign(new Error('GuGu 正在创作，请稍后保存；你的修改仍保留在卡片中'),{statusCode:409});
+      if(canvas(current).directorWorkspace?.lockedIds?.includes(input.id))throw Object.assign(new Error('该作品已锁定'),{statusCode:409});
+      const document=current.doc.documents.find(item=>item.id===input.id);
+      if(!document)throw Object.assign(new Error('文稿不存在'),{statusCode:404});
+      if(document.revision!==input.expectedRevision)throw Object.assign(new Error('文稿已有新内容，请先复制保留你的修改，再取消编辑查看最新内容'),{statusCode:409});
+      if(document.text===input.text)return {...document,conversationId:current.id};
+      document.versions=[...(document.versions||[]),{revision:document.revision,title:document.title,text:document.text}].slice(-20);
+      document.text=input.text;document.revision++;
+      if(JSON.stringify(current.doc.documents).length>3_000_000)throw Object.assign(new Error('文稿内容过多，请缩短后保存'),{statusCode:413});
+      current.doc.version=(current.doc.version||0)+1;
+      sql('UPDATE agent_sessions SET doc_json=:doc,updated_at=:now WHERE id=:id').run({id:current.id,doc:JSON.stringify(current.doc),now:Date.now()});
+      return {...document,conversationId:current.id};
+    });
+  }
   function settings(session, value) {
     return tx(() => {
       if (value.modelPreferences !== undefined) saveUserModelPreferences(session.userId, value.modelPreferences);
@@ -270,5 +289,5 @@ export function createAgentSessionRepository({ sql, tx }) {
       sql("UPDATE agent_sessions SET doc_json=:doc,state='queued',wake_at=0,interrupted=0 WHERE id=:id").run({ id: session.id, doc: JSON.stringify(current.doc) });
     });
   }
-  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, saveCanvas, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
+  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, saveCanvas, editDocument, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
 }

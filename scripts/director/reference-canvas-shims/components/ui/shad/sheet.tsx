@@ -18,10 +18,10 @@ export function SheetContent({ children, className, side, style, container, show
       }
     }
     document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('pointerdown', onPointerDown, true)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('pointerdown', onPointerDown, true)
     }
   }, [open, onInteractOutside])
   if (!open) return null

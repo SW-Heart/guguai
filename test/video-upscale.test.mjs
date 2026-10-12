@@ -265,8 +265,8 @@ test('changed frontend modules are reachable through current cache keys', () => 
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=6'/);
   assert.match(controller, /'\.\/upscale\.js\?v=1'/);
-  assert.match(html, /\/app\.js\?v=509"/);
-  assert.match(html, /\/styles\.css\?v=374"/);
+  assert.match(html, /\/app\.js\?v=518"/);
+  assert.match(html, /\/styles\.css\?v=375"/);
   assert.match(html, /id="videoUpscaleDialog"/);
 });
 

@@ -250,10 +250,18 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       const session = repo.create(user.id, scope, projectId, await settings(input), { fresh: input.fresh === true,agentProjectId });
       sendJson(res, 200, await snapshot(session,{conversationOnly:reuseWorkspace})); return true;
     }
-    const match = url.pathname.match(/^\/api\/agent\/sessions\/([\w-]+)(?:\/(messages|settings|interrupt|resume|approval|canvas))?$/);
+    const match = url.pathname.match(/^\/api\/agent\/sessions\/([\w-]+)(?:\/(messages|settings|interrupt|resume|approval|canvas|documents))?$/);
     if (!match) { sendJson(res, 404, { error: '接口不存在' }); return true; }
     const session = repo.get(match[1], user.id, scope);
     if (!session) { sendJson(res, 404, { error: '对话不存在' }); return true; }
+    if(match[2]==='documents'){
+      if(req.method!=='PATCH'){sendJson(res,405,{error:'请求方式不支持'});return true;}
+      const input=await bodyJson(req);
+      const project=session.projectId?await loadProject(user.id,session.projectId,scope):null;
+      if(session.projectId&&!project){sendJson(res,404,{error:'画布不存在'});return true;}
+      if(project?.directorWorkspace?.lockedIds?.includes(input.id)){sendJson(res,409,{error:'该作品已锁定'});return true;}
+      sendJson(res,200,{document:repo.editDocument(session,input)});return true;
+    }
     if (match[2] === 'canvas') {
       if (session.projectId) { sendJson(res, 400, {error:'请在短剧项目中编辑画布'}); return true; }
       if (req.method === 'GET') { sendJson(res, 200, {canvas:repo.canvas(session)}); return true; }

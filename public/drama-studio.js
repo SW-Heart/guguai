@@ -4,7 +4,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=3';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=136';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=144';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -1143,14 +1143,15 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       agentApi:async (url,options)=>{
         const request=projectRequest();const result=await api(url,options);assertProjectRequest(request);
         if(result.balance!==undefined)setCreditBalance(result.balance);
-        if(result.tasks?.length){
+        const tasks=Array.isArray(result.tasks)?result.tasks:url==='/api/generations'&&options?.method==='POST'&&result.id?[result]:[];
+        if(tasks.length){
           const previousTasks=new Map(state.tasks.map(item=>[item.id,item]));
-          const generatedAssetIds=[...new Set(result.tasks.map(item=>{
+          const generatedAssetIds=[...new Set(tasks.map(item=>{
             const assetId=String(item?.assetId||'');
             const previous=previousTasks.get(item?.id);
             return assetId&&String(previous?.assetId||'')!==assetId?assetId:'';
           }).filter(Boolean))];
-          const ids=new Set(result.tasks.map(t=>t.id));const hasNew=result.tasks.some(t=>!previousTasks.has(t.id));state.tasks=[...result.tasks,...state.tasks.filter(t=>!ids.has(t.id))];
+          const ids=new Set(tasks.map(t=>t.id));const hasNew=tasks.some(t=>!previousTasks.has(t.id));state.tasks=[...tasks,...state.tasks.filter(t=>!ids.has(t.id))];
           if(generatedAssetIds.length&&typeof syncDesktopDeliveries==='function')void syncDesktopDeliveries({assetIds:generatedAssetIds}).catch(error=>console.warn('[agent] 画布成品本地同步失败',error));
           if(hasNew)scheduleTaskPoll(0);
         }

@@ -65,7 +65,14 @@ await esbuild.build({
 // empty. In this editor, selecting a canvas text node is already the user's
 // intent to edit it, so keep the formatting bar visible while that editor is
 // active and let its controls work on the current cursor/selection.
-const bundledJs = readFileSync(bundledCanvasJs, 'utf8')
+let bundledJs = readFileSync(bundledCanvasJs, 'utf8')
+// The upstream engine owns the plain-key tool map. Remove the retired tool's
+// binding here so it cannot be activated after its toolbar entry is removed.
+const retiredToolShortcut = ',i:"image-marker"'
+if (bundledJs.split(retiredToolShortcut).length !== 2) {
+  throw new Error('Unable to locate the retired precision-edit shortcut')
+}
+bundledJs = bundledJs.replace(retiredToolShortcut, '')
 const bubbleMenuProps =
   'className:"rich-text-bubble-menu bubble-menu",editor:n,appendTo:()=>document.getElementById("rich-text-html-element"),'
 if (!bundledJs.includes(bubbleMenuProps)) {

@@ -1,5 +1,5 @@
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=136';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=144';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=6';
@@ -338,14 +338,15 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
           const ids=new Set(result.composedAssets.map(item=>item.id));
           state.files=[...result.composedAssets,...state.files.filter(item=>!ids.has(item.id))];
         }
-        if(result.tasks?.length){
+        const tasks=Array.isArray(result.tasks)?result.tasks:url==='/api/generations'&&options?.method==='POST'&&result.id?[result]:[];
+        if(tasks.length){
           const previousTasks=new Map(state.tasks.map(item=>[item.id,item]));
-          const generatedAssetIds=[...new Set(result.tasks.map(item=>{
+          const generatedAssetIds=[...new Set(tasks.map(item=>{
             const assetId=String(item?.assetId||'');
             return assetId&&String(previousTasks.get(item?.id)?.assetId||'')!==assetId?assetId:'';
           }).filter(Boolean))];
-          const ids=new Set(result.tasks.map(item=>item.id));
-          state.tasks=[...result.tasks,...state.tasks.filter(item=>!ids.has(item.id))];
+          const ids=new Set(tasks.map(item=>item.id));
+          state.tasks=[...tasks,...state.tasks.filter(item=>!ids.has(item.id))];
           if(generatedAssetIds.length&&typeof syncDesktopDeliveries==='function')void syncDesktopDeliveries({assetIds:generatedAssetIds}).catch(error=>console.warn('[agent] 画布成品本地同步失败',error));
           scheduleTaskPoll(0);
         }

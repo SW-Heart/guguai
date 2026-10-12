@@ -5601,7 +5601,6 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .dw-agent-options button{min-height:34px;margin-bottom:8px}
 .dw-agent-approval{padding:12px;border:1px solid var(--dw-line);border-radius:12px;background:var(--theme-panel, #f8f8fe);margin-bottom:8px}
 .dw-agent-approval>div{display:flex;gap:8px}.dw-agent-approval button{margin-bottom:0}.dw-agent-approval p{overflow-wrap:anywhere}
-.dw-document-content{min-height:260px;resize:vertical;white-space:pre-wrap;font:14px/1.8 inherit}
 .dw-agent button:focus-visible,.dw-agent select:focus-visible,.dw-agent input:focus-visible{outline:2px solid #6366f1;outline-offset:3px}
 .dw-agent .dw-mode-help:empty{display:none}
 @media(max-width:580px){.dw-agent>header [data-agent-model]{max-width:55vw}.dw-agent-options button{min-height:44px}}
@@ -5741,6 +5740,21 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .director-workspace .reference-canvas-host .dw-node-progress::-webkit-progress-bar{background:var(--cv-track)}
 .director-workspace .reference-canvas-host .dw-node-progress::-webkit-progress-value{background:linear-gradient(90deg,var(--cv-brand),var(--cv-violet));transition:width .4s ease}
 .director-workspace .reference-canvas-host .dw-node-progress::-moz-progress-bar{background:linear-gradient(90deg,var(--cv-brand),var(--cv-violet))}
+/* Read and edit documents directly on their canvas cards. */
+.director-workspace .reference-canvas-host .dw-document-card{width:400px;height:360px;gap:10px}
+.director-workspace .reference-canvas-host .dw-document-card .dw-node-meta{margin:0;padding:0;border:0}
+.director-workspace .reference-canvas-host .dw-document-editor{display:block;flex:1;min-height:0;width:100%;box-sizing:border-box;resize:none;overflow:auto;overscroll-behavior:contain;pointer-events:auto;touch-action:pan-y;cursor:text;white-space:pre-wrap;padding:10px 12px;border:1px solid var(--cv-line);border-radius:10px;background:rgb(var(--theme-panel-rgb,255 255 255) / .55);color:var(--cv-ink);font:14px/1.8 var(--sans);outline:none}
+.director-workspace .reference-canvas-host .dw-document-editor:focus-visible{border-color:var(--cv-brand);box-shadow:0 0 0 2px rgba(99,102,241,.12)}
+.director-workspace .reference-canvas-host .dw-document-card.is-editing .dw-document-editor{background:var(--cv-surface);border-color:var(--cv-brand)}
+.director-workspace .reference-canvas-host .dw-document-actions{display:flex;flex:none;flex-wrap:wrap;gap:6px}
+.director-workspace .reference-canvas-host .dw-document-actions button{pointer-events:auto;cursor:pointer;min-height:32px;padding:5px 10px;border:1px solid var(--cv-line);border-radius:9px;background:var(--cv-surface);color:var(--cv-ink);font:500 12px/1.4 var(--sans)}
+.director-workspace .reference-canvas-host .dw-document-actions button:hover{background:var(--cv-track)}
+.director-workspace .reference-canvas-host .dw-document-actions button:focus-visible{outline:2px solid var(--cv-brand);outline-offset:2px}
+.director-workspace .reference-canvas-host .dw-document-actions button:disabled{opacity:.5;cursor:default}
+.director-workspace .reference-canvas-host .dw-document-actions [data-document-save]{background:var(--cv-brand);color:#fff;border-color:var(--cv-brand)}
+.director-workspace .reference-canvas-host .dw-document-actions [hidden]{display:none}
+.director-workspace .reference-canvas-host .dw-document-feedback{flex:none;margin:0;color:var(--cv-muted);font:12px/1.5 var(--sans);overflow-wrap:anywhere}
+.director-workspace .reference-canvas-host .dw-document-feedback:empty{display:none}
 @keyframes dw-node-pulse{0%{box-shadow:0 0 0 0 rgba(99,102,241,.45)}70%,100%{box-shadow:0 0 0 5px rgba(99,102,241,0)}}
 
 /* Resizable, readable canvas conversation. */

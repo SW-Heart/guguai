@@ -42,32 +42,58 @@ test('saved project hydration preserves its viewport, then new documents and pla
   assert.equal(f.context.syncing,false);
 });
 
-test('native pasted components avoid existing content and undo restoration does not steal focus',()=>{
+test('native pasted media avoid existing content and undo restoration does not steal focus',()=>{
   const f=fixture();f.context.canvasContentReady=true;
   const existing={id:'existing',x:400,y:200,width:320,height:320,$_type:'rect'};
   f.canvas.createNodes([existing]);f.flush();
   const old={x:existing.x,y:existing.y};
   const paste=[{id:'pasted-image',x:old.x,y:old.y,width:200,height:100,$_type:'image'},
-    {id:'pasted-note',x:old.x,y:old.y,width:240,height:150,$_type:'rich-text'}];
+    {id:'pasted-video',x:old.x,y:old.y,width:240,height:150,$_type:'video'}];
   f.canvas.createNodes(paste);f.flush();
   assert.equal(existing.x,old.x);assert.equal(existing.y,old.y);
   for(const node of paste)assert.ok(node.x!==old.x||node.y!==old.y);
   const focused=f.views.length;
-  f.canvas.deleteNodes(['pasted-note']);
+  f.canvas.deleteNodes(['pasted-video']);
   f.canvas.createNodes([paste[1]]);f.flush();assert.equal(f.views.length,focused);
 });
 
 test('multiple native additions in one frame share a single focus and a late focus cannot affect another project',()=>{
   const f=fixture();f.context.canvasContentReady=true;
-  f.canvas.createNodes([{id:'one',width:200,height:100,$_type:'rect'}]);
+  f.canvas.createNodes([{id:'one',width:200,height:100,$_type:'image'}]);
   f.canvas.createNodes([{id:'two',width:300,height:200,$_type:'image'}]);
   f.flush();assert.equal(f.views.length,1);
-  f.canvas.createNodes([{id:'three',width:300,height:200,$_type:'rect'}]);
+  f.canvas.createNodes([{id:'three',width:300,height:200,$_type:'image'}]);
   f.context.epoch++;f.flush();assert.equal(f.views.length,1);
 });
 
 test('focusing a newly added component opens the canvas from full conversation mode',()=>{
   const f=fixture();f.context.canvasContentReady=true;f.context.chatMode='full';
-  f.canvas.createNodes([{id:'one',width:200,height:100,$_type:'rect'}]);f.flush();
+  f.canvas.createNodes([{id:'one',width:200,height:100,$_type:'image'}]);f.flush();
   assert.equal(f.context.chatMode,'side');assert.equal(f.views.length,1);
+});
+
+for(const type of ['rect','ellipse','triangle','diamond','hexagon','star','arrow','line','brush','image-marker','rich-text']){
+  test(`drawing ${type} preserves geometry and viewport on creation and restoration`,()=>{
+    const f=fixture();f.context.canvasContentReady=true;
+    const shape={id:'drawn',$_type:type,x:-725,y:930,width:240,height:150,rotation:25,scaleX:-1,scaleY:1.2,points:[0,0,200,120]};
+    const geometry=structuredClone(shape);
+    f.canvas.createNodes([shape]);f.flush();
+    assert.deepEqual(shape,geometry);
+    assert.equal(f.views.length,0);
+    assert.equal(f.saves,1);
+    f.canvas.deleteNodes([shape.id]);
+    f.canvas.createNodes([shape]);f.flush();
+    assert.deepEqual(shape,geometry);
+    assert.equal(f.views.length,0);
+  });
+}
+
+test('mixed additions focus only incoming media while preserving drawn geometry',()=>{
+  const f=fixture();f.context.canvasContentReady=true;
+  const shape={id:'drawn',$_type:'rect',x:10000,y:10000,width:240,height:150};
+  const image={id:'media',$_type:'image',x:400,y:200,width:200,height:100};
+  f.canvas.createNodes([shape,image]);f.flush();
+  assert.equal(shape.x,10000);assert.equal(shape.y,10000);
+  assert.equal(f.views.length,1);
+  assert.deepEqual({...f.views[0]},focusCanvasViewport([image],{viewport:{x:0,y:0,scale:1},width:1000,height:700}));
 });

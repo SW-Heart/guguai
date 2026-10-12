@@ -94,8 +94,8 @@ test('local videos load only near the viewport and changed entrypoints share fre
   assert.match(mediaSource,/data-wb-video-src=/);assert.match(mediaSource,/preload="metadata"/);assert.doesNotMatch(mediaSource,/preload="auto"/);
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.ok(html.includes('/app.js?v=509'));assert.ok(html.includes('/styles.css?v=374'));
-  assert.ok(app.includes('./drama-studio.js?v=241'));
+  assert.ok(html.includes('/app.js?v=518'));assert.ok(html.includes('/styles.css?v=375'));
+  assert.ok(app.includes('./drama-studio.js?v=249'));
   assert.ok(source.includes('./features/drama/workbench-media.js?v=1'));
 });
 

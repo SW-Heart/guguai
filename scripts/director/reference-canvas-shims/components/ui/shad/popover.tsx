@@ -1,4 +1,4 @@
-import { createContext, forwardRef, useContext, useEffect, useRef, useState, type PointerEventHandler, type PropsWithChildren, type ReactNode } from 'react'
+import { createContext, forwardRef, useContext, useEffect, useRef, useState, type CSSProperties, type PointerEventHandler, type PropsWithChildren, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 const PopoverContext = createContext<{ open: boolean; setOpen: (value: boolean) => void }>({ open: false, setOpen: () => undefined })
@@ -25,6 +25,7 @@ export function PopoverTrigger({ children, asChild, className }: { children: Rea
 }
 export const PopoverContent = forwardRef<HTMLDivElement, PropsWithChildren<{
   className?: string
+  style?: CSSProperties
   side?: string
   align?: string
   sideOffset?: number
@@ -35,7 +36,7 @@ export const PopoverContent = forwardRef<HTMLDivElement, PropsWithChildren<{
   onFocusOutside?: (event: FocusEvent) => void
   onPointerDownCapture?: PointerEventHandler<HTMLDivElement>
   onPointerDown?: PointerEventHandler<HTMLDivElement>
-}>>(({ children, className, side, align, container, onEscapeKeyDown, onPointerDownCapture, onPointerDown }, ref) => {
+}>>(({ children, className, style, side, align, container, onEscapeKeyDown, onPointerDownCapture, onPointerDown }, ref) => {
   const { open, setOpen } = useContext(PopoverContext)
   useEffect(() => {
     if (!open) return
@@ -48,6 +49,6 @@ export const PopoverContent = forwardRef<HTMLDivElement, PropsWithChildren<{
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onEscapeKeyDown, open])
   if (!open) return null
-  return <div ref={ref} className={cn('reference-popover-content', className)} onClick={e => e.stopPropagation()} onPointerDownCapture={onPointerDownCapture} onPointerDown={onPointerDown}><button type="button" className="reference-popover-close" onClick={() => setOpen(false)} aria-label="关闭"><X size={15} strokeWidth={2} aria-hidden="true" /></button>{children}</div>
+  return <div ref={ref} className={cn('reference-popover-content', className)} style={style} onWheel={event => event.stopPropagation()} onClick={e => e.stopPropagation()} onPointerDownCapture={onPointerDownCapture} onPointerDown={onPointerDown}><button type="button" className="reference-popover-close" onClick={() => setOpen(false)} aria-label="关闭"><X size={15} strokeWidth={2} aria-hidden="true" /></button>{children}</div>
 })
 PopoverContent.displayName = 'PopoverContent'

@@ -30,3 +30,14 @@ export function addGenerationReference(draft, file, config) {
   draft.mode = mode;
   draft.attachments.push({id:file.id,name:file.name,kind:file.kind,url:file.previewUrl || file.url || ''});
 }
+
+// Saved storyboard references can predate the local delivery of their images.
+export function hydrateGenerationReferences(draft,findFile){
+  let changed=false;
+  for(const reference of draft?.attachments||[]){
+    const file=findFile(reference.id);
+    const url=file?.previewUrl||file?.url;
+    if(url&&url!==reference.url){reference.url=url;changed=true;}
+  }
+  return changed;
+}

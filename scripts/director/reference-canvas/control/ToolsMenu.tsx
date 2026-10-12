@@ -18,13 +18,11 @@ import {
   ArrowRightIcon,
   BrushIcon,
   CircleIcon,
-  CircleHelpIcon,
   DiamondIcon,
   FocusIcon,
   HexagonIcon,
   ImagePlusIcon,
   Layers2Icon,
-  MapPinPlusIcon,
   MoreHorizontalIcon,
   MousePointer2Icon,
   MoveIcon,
@@ -66,7 +64,6 @@ type ToolType =
   | 'rich-text'
   | 'image'
   | 'hand'
-  | 'image-marker'
   | 'star'
   | 'triangle'
   | 'diamond'
@@ -98,11 +95,6 @@ const toolDefinitions = [
     icon: <ArrowRightIcon />,
     name: 'arrow',
     labelKey: 'legacy:ui_890a6158d5b7',
-  },
-  {
-    icon: <MapPinPlusIcon />,
-    name: 'image-marker',
-    labelKey: 'legacy:ui_5fca692ad7a7',
   },
   // {
   //   icon: <CircleIcon />,
@@ -222,10 +214,6 @@ export function ToolsMenu() {
       whiteboardApi?.setToolType('rectangle', { strokeWidth: 2 })
       return
     }
-    if (tool === 'image-marker') {
-      whiteboardApi?.setToolType('image-marker')
-      return
-    }
     if (tool === 'image') {
       handlePickImage()
       return
@@ -321,86 +309,6 @@ export function ToolsMenu() {
       whiteboardApi.off('toolType:change', handleToolTypeChange)
     }
   }, [whiteboardApi])
-
-  const shortcutSections = [
-    {
-      title: t('legacy:ui_6a4167e2ca90'),
-      items: [
-        {
-          key: t('common:canvas.shortcuts.doubleClickCanvas'),
-          desc: t('common:canvas.shortcuts.doubleClickCanvasDescription'),
-        },
-        {
-          key: t('common:canvas.shortcuts.dragImage'),
-          desc: t('common:canvas.shortcuts.dragImageDescription'),
-        },
-      ],
-    },
-    {
-      title: t('legacy:ui_eb1b095016fa'),
-      items: [
-        { key: 'V', desc: t('common:canvas.shortcuts.selectTool') },
-        { key: 'H', desc: t('common:canvas.shortcuts.handTool') },
-        { key: 'M', desc: t('common:canvas.shortcuts.rectangleTool') },
-        { key: 'U', desc: t('common:canvas.shortcuts.ellipseTool') },
-        { key: 'P', desc: t('common:canvas.shortcuts.arrowTool') },
-        { key: 'T', desc: t('common:canvas.shortcuts.textTool') },
-        { key: 'B', desc: t('common:canvas.shortcuts.brushTool') },
-        { key: 'S', desc: t('common:canvas.shortcuts.starTool') },
-        { key: 'I', desc: t('common:canvas.shortcuts.precisionEdit') },
-        {
-          key: t('common:canvas.shortcuts.holdSpace'),
-          desc: t('common:canvas.shortcuts.temporaryHand'),
-        },
-        { key: 'Escape', desc: t('common:canvas.shortcuts.escape') },
-      ],
-    },
-    {
-      title: t('legacy:ui_15d63423f977'),
-      items: [
-        { key: 'Ctrl+Z', desc: t('common:canvas.shortcuts.undo') },
-        { key: 'Ctrl+Shift+Z', desc: t('common:canvas.shortcuts.redo') },
-      ],
-    },
-    {
-      title: t('legacy:ui_0005d0c68653'),
-      items: [
-        {
-          key: 'Delete / Backspace',
-          desc: t('common:canvas.shortcuts.deleteNodes'),
-        },
-        { key: 'Ctrl+A', desc: t('common:canvas.shortcuts.selectAll') },
-        { key: 'Ctrl+C', desc: t('common:canvas.shortcuts.copyNodes') },
-        { key: 'Ctrl+V', desc: t('common:canvas.shortcuts.pasteNodes') },
-        { key: 'Ctrl+J', desc: t('common:canvas.shortcuts.duplicateNodes') },
-      ],
-    },
-    {
-      title: t('legacy:ui_4722e32d8961'),
-      items: [
-        { key: ']', desc: t('common:canvas.shortcuts.moveLayerUp') },
-        { key: '[', desc: t('common:canvas.shortcuts.moveLayerDown') },
-        { key: 'Ctrl+Shift+]', desc: t('common:canvas.shortcuts.moveToTop') },
-        {
-          key: 'Ctrl+Shift+[',
-          desc: t('common:canvas.shortcuts.moveToBottom'),
-        },
-      ],
-    },
-    {
-      title: t('legacy:ui_5dda4d9c203b'),
-      items: [
-        { key: 'Ctrl+= / Ctrl++', desc: t('common:canvas.shortcuts.zoomIn') },
-        { key: 'Ctrl+-', desc: t('common:canvas.shortcuts.zoomOut') },
-        { key: 'Ctrl+0', desc: t('common:canvas.shortcuts.fitToScreen') },
-        { key: 'Ctrl+1', desc: t('common:canvas.shortcuts.resetZoom') },
-      ],
-    },
-  ]
-  const shortcutCount = shortcutSections.reduce(
-    (count, section) => count + section.items.length,
-    0
-  )
 
   return (
     <>
@@ -498,6 +406,7 @@ export function ToolsMenu() {
           return (
             <MyTooltip key={it.name} content={it.label} side="bottom">
               <Button
+                data-canvas-layer-toggle={it.name === '$toggleLayerPanel' ? '' : undefined}
                 onClick={() => handleToolChange(it.name as ToolType)}
                 className={['select','hand','image'].includes(it.name) ? 'director-labelled-tool' : undefined}
                 size={'icon'}
@@ -520,95 +429,6 @@ export function ToolsMenu() {
             </MyTooltip>
           )
         })}
-        <div className="w-px h-5 bg-[#e5e5e5]" />
-        <Popover>
-          <MyTooltip content={t('legacy:ui_021cf99c0d67')} side="bottom">
-            <PopoverTrigger asChild>
-              <Button
-                size={'icon'}
-                variant={'ghost'}
-                aria-label={t('legacy:ui_021cf99c0d67')}
-              >
-                <CircleHelpIcon />
-              </Button>
-            </PopoverTrigger>
-          </MyTooltip>
-          <PopoverContent
-            side="bottom"
-            align="end"
-            className="w-[24rem] max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-md"
-          >
-            <div className="border-b border-border bg-background px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <CircleHelpIcon className="size-4 text-muted-foreground" />
-                    {t('legacy:ui_021cf99c0d67')}
-                  </h3>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {t('legacy:ui_ebdd084ae67d')}
-                  </p>
-                </div>
-                <div className="shrink-0 rounded-md border border-border bg-muted px-2.5 py-1.5 text-right">
-                  <div className="text-[10px] text-muted-foreground">
-                    {t('legacy:ui_3af1ac5b4efe')}
-                  </div>
-                  <div className="text-sm font-semibold leading-none text-foreground">
-                    {shortcutCount}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <span className="rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-                  <span className="font-mono font-medium text-foreground">
-                    +
-                  </span>{' '}
-                  {t('legacy:ui_d87d9aca7f9e')}
-                </span>
-                <span className="rounded-md border border-border bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-                  <span className="font-mono font-medium text-foreground">
-                    /
-                  </span>{' '}
-                  {t('legacy:ui_23154e8310ce')}
-                </span>
-              </div>
-            </div>
-            <div className="hover-scrollbar max-h-[70vh] overlay-scrollbar hover-scrollbar p-3">
-              <div className="space-y-3">
-                {shortcutSections.map(section => (
-                  <section
-                    key={section.title}
-                    className="overflow-hidden rounded-lg border border-border bg-background"
-                  >
-                    <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-                      <div className="text-xs font-medium text-foreground">
-                        {section.title}
-                      </div>
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {section.items.length} {t('legacy:ui_64728a772742')}
-                      </span>
-                    </div>
-                    <div className="px-2 py-1">
-                      {section.items.map(item => (
-                        <div
-                          key={item.key}
-                          className="flex min-h-10 items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-muted/60"
-                        >
-                          <span className="min-w-0 text-xs leading-5 text-foreground">
-                            {item.desc}
-                          </span>
-                          <kbd className="shrink-0 whitespace-nowrap rounded-md border border-border bg-muted px-2 py-1 font-mono text-[11px] font-medium text-foreground shadow-xs">
-                            {item.key}
-                          </kbd>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
       </div>
       <LayerPanel
         api={whiteboardApi}

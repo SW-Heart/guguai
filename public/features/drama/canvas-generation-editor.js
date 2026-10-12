@@ -6,24 +6,28 @@ export const generationPromptCodec=createPromptEditorCodec({mentionClass:'video-
 export const generationSegmentsText=segments=>segments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('');
 
 export function generationMentionMarkup(file,label=file.name||'未命名素材'){
-  const url=escape(file.url||file.previewUrl||'');
+  const url=escape(file.previewUrl||file.url||'');
   const thumb=file.kind==='image'?`<img src="${url}" alt="" decoding="async">`:file.kind==='video'?`<video src="${url}" muted playsinline preload="metadata"></video>`:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 10v4m4-7v10m4-14v18m4-14v10m4-7v4m4-6v8"/></svg>';
   return `<span class="video-prompt-mention" data-video-prompt-mention-id="${escape(file.id)}" data-video-prompt-mention-label="${escape(label)}" data-video-prompt-mention-kind="${escape(file.kind)}" contenteditable="false" aria-label="引用${escape(label)}"><span class="video-prompt-mention-thumb">${thumb}</span><span class="video-prompt-mention-name">${escape(label)}</span></span>`;
 }
 
 export function generationPromptMarkup(draft){
   let segments=draft.promptSegments;
-  if(!Array.isArray(segments)||generationSegmentsText(segments)!==draft.prompt){
-    segments=[];
-    const files=draft.attachments.filter(file=>file.name).sort((a,b)=>b.name.length-a.name.length);
-    let text=String(draft.prompt||''),plain='';
+  if(!Array.isArray(segments)||generationSegmentsText(segments)!==draft.prompt)segments=[String(draft.prompt||'')];
+  const files=draft.attachments.filter(file=>file.name).sort((a,b)=>b.name.length-a.name.length);
+  // References may become available after a storyboard's plain text was saved.
+  // Promote text mentions on every render while retaining explicit ID bindings.
+  segments=segments.flatMap(segment=>{
+    if(typeof segment!=='string')return [segment];
+    const result=[];let text=segment,plain='';
     while(text){
       const file=text[0]==='@'?files.find(file=>text.startsWith(`@${file.name}`)):null;
-      if(file){if(plain)segments.push(plain);plain='';segments.push({id:file.id,label:file.name});text=text.slice(file.name.length+1);}
+      if(file){if(plain)result.push(plain);plain='';result.push({id:file.id,label:file.name});text=text.slice(file.name.length+1);}
       else{plain+=text[0];text=text.slice(1);}
     }
-    if(plain)segments.push(plain);
-  }
+    if(plain)result.push(plain);
+    return result;
+  });
   return segments.map(segment=>{
     if(typeof segment==='string')return escape(segment);
     const file=draft.attachments.find(file=>file.id===segment.id);

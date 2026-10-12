@@ -1,3 +1,4 @@
+import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=1';
 import { modelLogoMarkup } from '../../components/model-logo.js?v=3';
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
@@ -13,14 +14,14 @@ import { placeCanvasNodes, focusCanvasViewport } from './canvas-layout.js?v=1';
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=33';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=35';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=14';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=13';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
-import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=1';
+import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=2';
 import { canvasIcon } from './canvas-icons.js?v=1';
-import { addGenerationReference } from './canvas-generation-references.js?v=3';
-import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=1';
+import { addGenerationReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=4';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=2';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=11';
@@ -40,9 +41,37 @@ function brandSelectionTransformer(transformer){
   const border=transformer.borderStroke.bind(transformer);
   transformer.borderStroke=(...args)=>args.length?border(args[0]==='transparent'?args[0]:selectionColor):border();
   border(transformer.borderStroke()==='transparent'?'transparent':selectionColor);
+  // The engine re-enables rotation in setNodes, including multi-selection.
+  // Keep the getter/setter contract while enforcing the workspace policy.
+  if(typeof transformer.rotateEnabled==='function'){
+    const rotate=transformer.rotateEnabled.bind(transformer);
+    transformer.rotateEnabled=(...args)=>args.length?rotate(false):rotate();
+    rotate(false);
+  }
+  const hasMedia=()=>transformer.nodes?.().some(node=>
+    ['image','video'].includes(node.getAttr('$_type'))||['image','video'].includes(node.getAttr('$_actualType'))
+  );
+  const corners=['top-left','top-right','bottom-left','bottom-right'];
+  // Read the current selection so native media and HTML video/image cards
+  // stay proportional even when other selection handlers reset these options.
+  if(typeof transformer.enabledAnchors==='function'){
+    const anchors=transformer.enabledAnchors.bind(transformer);
+    transformer.enabledAnchors=(...args)=>args.length?anchors(...args):hasMedia()?corners:anchors();
+  }
+  if(typeof transformer.keepRatio==='function'){
+    const ratio=transformer.keepRatio.bind(transformer);
+    transformer.keepRatio=(...args)=>args.length?ratio(...args):hasMedia()?true:ratio();
+  }
+  transformer.rotateLineVisible?.(false);
+  transformer.borderDash?.([]);
+  transformer.borderStrokeWidth?.(1.25);
+  transformer.padding?.(3);
   transformer.anchorStroke?.(selectionColor);
   transformer.anchorFill?.('#ffffff');
-  transformer.anchorCornerRadius?.(3);
+  transformer.anchorSize?.(8);
+  transformer.anchorStrokeWidth?.(1.25);
+  transformer.anchorCornerRadius?.(2);
+  transformer.anchorStyleFunc?.(anchor=>anchor.hitStrokeWidth(12));
   transformer.forceUpdate?.();
   transformer.getLayer?.()?.batchDraw?.();
 }
@@ -381,6 +410,7 @@ export function createDirectorWorkspace(host, bridge) {
     image.src=url;
   }
   function nodeContent(n) {
+    if(isDocumentCard(n))return documentCardMarkup(n);
     const captionTrack=assetId=>assetId&&agentState?.id&&(agentState.sourceTranscripts||[]).some(item=>item.assetId===assetId&&item.cues?.length)?`<track kind="subtitles" src="/api/agent/sessions/${encodeURIComponent(agentState.id)}/captions/${encodeURIComponent(assetId)}.vtt" srclang="zh" label="台词" default>`:'';
     if(n.kind==='canvas-generation'){
       const draft=n.item,task=draft.taskId?bridge.task(draft.taskId):null,media=draft.taskId?bridge.media(draft.taskId):null;
@@ -470,10 +500,45 @@ export function createDirectorWorkspace(host, bridge) {
     if(edgeRenderFrame)return;
     edgeRenderFrame=queueWorkspaceFrame(()=>{edgeRenderFrame=0;renderEdges(liveCanvasNodes());});
   }
+  const documentCards=new WeakMap();
+  function bindDocumentCard(id,element){
+    const card=element.querySelector('.dw-document-card'),node=nodes().find(item=>item.id===id);
+    if(!card||!isDocumentCard(node))return;
+    let controller=documentCards.get(card);
+    if(!controller){
+      const mountEpoch=epoch;
+      controller=mountDocumentCard(card,{
+        save:async(node,input)=>{
+          const result=await bridge.agentApi(`/api/agent/sessions/${encodeURIComponent(node.item.conversationId||agentState.id)}/documents`,{method:'PATCH',body:JSON.stringify({id:node.id,...input})});
+          if(mountEpoch===epoch){
+            const current=agentState?.documents?.find(item=>item.id===node.id);
+            if(current&&current.revision<=result.document.revision)Object.assign(current,result.document);
+          }
+          return result.document;
+        },
+        ask:async node=>{
+          if(node.item.conversationId&&node.item.conversationId!==agentState?.id)await switchConversation(node.item.conversationId);
+          if(mountEpoch!==epoch)return;
+          host.querySelector('.director-workspace').classList.remove('agent-collapsed');
+          if(bridge.agentMode)chatMode='side';
+          drawPanels();
+          const input=host.querySelector('#directorMessage');input.value=`修改「${node.title}」：`;resizeAgentComposer(input);input.focus();
+        },
+        copy:text=>navigator.clipboard.writeText(text),
+        download:(node,text)=>{
+          const file=documentDownload(node,text),url=URL.createObjectURL(new Blob([file.text],{type:'text/plain;charset=utf-8'})),link=document.createElement('a');
+          link.href=url;link.download=`${node.title.replace(/[\\/:*?"<>|]/g,'_')}.${file.extension}`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+        },
+      });
+      documentCards.set(card,controller);
+    }
+    controller.update(node,workspace().lockedIds.includes(id));
+  }
   function alignCard(id,html,geometryOnly=false) {
     const node=canvas.getCanvasNodeById(id),element=node?.htmlElement,shape=node?.getElement?.();
     if(!element||!shape)return;
     if(html!==undefined&&element.dataset.content!==html){releaseWorkspaceMedia(element);element.innerHTML=html;element.dataset.content=html;}
+    if(!geometryOnly)bindDocumentCard(id,element);
     if(!geometryOnly)element.querySelectorAll('[data-canvas-src]').forEach(media=>{
       if(mediaLoadObserver)mediaLoadObserver.observe(media);
       else {media.src=media.dataset.canvasSrc;delete media.dataset.canvasSrc;if(media.tagName==='VIDEO')media.preload='metadata';}
@@ -557,11 +622,12 @@ export function createDirectorWorkspace(host, bridge) {
     const logicalWidth=Math.max(1,baseWidth*scaleX),logicalHeight=Math.max(1,baseHeight*scaleY);
     const content=element.firstElementChild;
     if(content){
-      if(frame)Object.assign(content.style,{width:`${logicalWidth}px`,height:`${logicalHeight}px`});
+      const documentCard=content.classList.contains('dw-document-card');
+      if(frame||documentCard)Object.assign(content.style,{width:`${logicalWidth}px`,height:`${logicalHeight}px`});
       // Cards have a fixed 280 x 228 layout. Scale that entire layout with
       // the Konva rectangle; frame content instead grows to its live size.
-      const contentWidth=frame?logicalWidth:280;
-      const contentHeight=frame?logicalHeight:228;
+      const contentWidth=frame||documentCard?logicalWidth:280;
+      const contentHeight=frame||documentCard?logicalHeight:228;
       Object.assign(content.style,{transformOrigin:'0 0',transform:`scale(${rect.width/contentWidth},${rect.height/contentHeight})`});
     }
   }
@@ -614,15 +680,16 @@ export function createDirectorWorkspace(host, bridge) {
     const fresh=created.filter(node=>!seenCanvasNodeIds.has(node.id)&&!String(node.id).startsWith('edge-')&&!node.$_parentId);
     created.forEach(node=>seenCanvasNodeIds.add(node.id));
     if(syncing||!canvasContentReady||!fresh.length)return;
-    // Annotations attached to an image and connecting arrows retain their
-    // drawn geometry; independent components and pasted media are arranged.
-    const movable=fresh.filter(node=>!['arrow','line','brush','image-marker'].includes(node.$_type));
+    // Drawing tools already provide the user's chosen world coordinates.
+    // Only incoming media needs automatic placement and viewport focus.
+    const movable=fresh.filter(node=>['image','video'].includes(node.$_type));
     const ids=new Set(movable.map(node=>node.id));
     const placements=placeCanvasNodes(movable,{},liveCanvasNodes().filter(node=>!ids.has(node.id)),canvasView());
     syncing=true;
     try{Object.entries(placements).forEach(([id,position])=>canvas.updateNodes([id],position));}
     finally{syncing=false;}
-    persistLiveCanvasState();scheduleCanvasSave();focusNewCanvasContent(fresh.map(node=>node.id));
+    persistLiveCanvasState();scheduleCanvasSave();
+    if(movable.length)focusNewCanvasContent(movable.map(node=>node.id));
     queueCanvasMediaLibrary();
   }
   function canvasLibraryMedia(){
@@ -656,6 +723,7 @@ export function createDirectorWorkspace(host, bridge) {
     }
   }
   function canvasItemSize(node){
+    if(isDocumentCard(node))return {width:400,height:360};
     if(node.kind==='generation')return mediaFrameSize(node.item);
     if(node.kind==='canvas-generation')return canvasGenerationFrameSize(node.item.type,node.item.aspect);
     if(node.kind==='asset'&&node.media?.kind==='image'){
@@ -916,6 +984,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(composer)composer.placeholder=busy?'生成进行中也可以继续补充创作要求':bridge.agentMode?'写下你的想法，GuGu 会和你一起完成……':'想聊什么，或希望我帮你创作什么？';
     if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
     syncCanvas();
+    if(host.querySelector('[data-gen-prompt]')?.dataset.composing!=='true'&&hydrateGenerationDraft(generationDraft(activeGenerationId)))renderGenerationComposer();
     positionGenerationComposer();
   }
   function animateDraft(time) {
@@ -1003,16 +1072,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!el)return;
     el.hidden=!n;
     if(!n){el.innerHTML='';return;}
-    if(['document','source-transcript','source-observation'].includes(n.kind)){
-      const transcript=n.kind==='source-transcript';
-      const stamp=seconds=>{const milliseconds=Math.max(0,Math.round(seconds*1000));const hours=Math.floor(milliseconds/3600000),minutes=Math.floor(milliseconds/60000)%60,secs=Math.floor(milliseconds/1000)%60;return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(secs).padStart(2,'0')},${String(milliseconds%1000).padStart(3,'0')}`;};
-      const srt=transcript?(n.item.cues||[]).map((cue,index)=>`${index+1}\n${stamp(cue.startSeconds)} --> ${stamp(cue.endSeconds)}\n${cue.text}`).join('\n\n'):'';
-      const content=transcript?(n.item.cues||[]).map(cue=>`${Math.round(cue.startSeconds*100)/100}–${Math.round(cue.endSeconds*100)/100} 秒  ${cue.text}`).join('\n')||n.text:n.text;
-      el.classList.remove('compact');
-      el.innerHTML=`<h3>${escape(n.title)}</h3><textarea readonly aria-label="${transcript?'台词时间线':'作品正文'}" class="dw-document-content">${escape(content)}</textarea>${copyButtonMarkup('data-doc-copy','复制正文')}<button data-doc-download ${transcript&&!n.item.cues?.length?'disabled':''}>${transcript?'下载字幕':'下载文稿'}</button><button data-doc-ask>${transcript?'按台词继续创作':'继续修改'}</button>`;
-      el.querySelector('[data-doc-download]').onclick=()=>{const url=URL.createObjectURL(new Blob([transcript?srt:n.text],{type:transcript?'text/plain;charset=utf-8':'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download=`${n.title.replace(/[\\/:*?"<>|]/g,'_')}.${transcript?'srt':'md'}`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-      el.querySelector('[data-doc-ask]').onclick=async()=>{if(n.item.conversationId&&n.item.conversationId!==agentState?.id)await switchConversation(n.item.conversationId);const input=host.querySelector('#directorMessage');input.value=`${transcript?'根据':'修改'}「${n.title}」：`;resizeAgentComposer(input);input.focus();};return;
-    }
+    if(isDocumentCard(n)){el.hidden=true;el.innerHTML='';return;}
     const locked=workspace().lockedIds.includes(n.id);
     const ask=()=>{host.querySelector('.director-workspace').classList.remove('agent-collapsed');host.querySelector('[data-show-agent]').hidden=true;const input=host.querySelector('#directorMessage');input.value=`${n.kind==='asset'?'使用':'修改'}「${n.title}」：`;resizeAgentComposer(input);input.focus();};
     if(!inspectorOpen||['asset','generation'].includes(n.kind)){el.hidden=true;el.innerHTML='';return;}
@@ -1035,6 +1095,12 @@ export function createDirectorWorkspace(host, bridge) {
     el.querySelector('[data-ask-node]').onclick=()=>{const input=host.querySelector('.dw-composer textarea');input.value=`修改「${n.title}」：`;input.focus();};
   }
   const generationDraft=id=>(workspace().generationDrafts||[]).find(item=>item.id===id);
+  function hydrateGenerationDraft(draft){
+    return hydrateGenerationReferences(draft,id=>{
+      const file=bridge.canvasFile?.({assetId:id});
+      return file?(bridge.messageAttachment?.(file)||file):null;
+    });
+  }
   const generationConfig=()=>bridge.generationConfig?.()||{};
   function resizeGenerationArea(draft){
     if(!canvas||!draft||draft.taskId)return;
@@ -1243,6 +1309,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!panel)return;
     const draft=generationDraft(activeGenerationId);
     if(!draft||draft.taskId||hiddenIds().has(draft.id)){panel.hidden=true;panel.innerHTML='';renderGenerationMenu();return;}
+    hydrateGenerationDraft(draft);
     reconcileCanvasGenerationDraft(draft,generationConfig());
     const options=canvasGenerationOptions(draft,generationConfig()),models=canvasGenerationModels(draft.type,generationConfig());
     const currentModel=models.find(item=>item.id===draft.modelId);
@@ -1342,7 +1409,7 @@ export function createDirectorWorkspace(host, bridge) {
   }
   async function submitGenerationArea(){
     const draft=generationDraft(activeGenerationId);
-    if(!draft||generationSubmitting)return;
+    if(!draft||draft.taskId||generationSubmitting)return;
     let payload;
     try{payload=canvasGenerationPayload(draft,generationConfig());}
     catch(error){bridge.toast(error.message);return;}
@@ -1362,7 +1429,7 @@ export function createDirectorWorkspace(host, bridge) {
       const requestId=crypto.randomUUID();
       const result=await bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':requestId},body:JSON.stringify({...payload,precheckSource:'agent',requestId})});
       if(token!==epoch)return;
-      const tasks=result.tasks||[];
+      const tasks=Array.isArray(result?.tasks)?result.tasks:result?.id?[result]:[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');
       draft.taskId=tasks[0].id;draft.status=tasks[0].status||'queued';
       const base=workspace().positions[draft.id],extras=tasks.slice(1).map((task,index)=>({...structuredClone(draft),id:`canvas-gen-${crypto.randomUUID()}`,taskId:task.id,status:task.status||'queued',attachments:[],prompt:draft.prompt,position:{x:base.x+(index+1)*(base.width+24),y:base.y,width:base.width,height:base.height}}));

@@ -39,7 +39,7 @@ test('video picture presses reach the canvas while playback controls remain nati
   const handlers={},forwarded=[];
   const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
   const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
-  const context={selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
+  const context={bindDocumentCard(){},selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
   context.alignCard('video');
@@ -61,7 +61,7 @@ test('video picture wheel gestures reach the canvas while playback controls rema
   const handlers={},forwarded=[];
   const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
   const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
-  const context={selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
+  const context={bindDocumentCard(){},selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
   context.alignCard('video');
