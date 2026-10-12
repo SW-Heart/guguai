@@ -24,7 +24,7 @@ import { addGenerationReference, hydrateGenerationReferences } from './canvas-ge
 import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=4';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=13';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=14';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 

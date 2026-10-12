@@ -6802,7 +6802,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 :is(#agentView .agent-entry-form,.dw-agent .dw-composer) .model-preference-control .model-preference-trigger:hover,:is(#agentView .agent-entry-form,.dw-agent .dw-composer) .model-preference-control .model-preference-trigger[aria-expanded=true]{background:var(--theme-surface, #f2f1f8);color:var(--theme-brand, #4e4ba8)}
 :is(#agentView .agent-entry-form,.dw-agent .dw-composer) .model-preference-control .model-preference-trigger.is-selected{color:var(--theme-brand, #514bb9)}
 :is(#agentView .agent-entry-form,.dw-agent .dw-composer) .model-preference-control .model-preference-trigger:disabled{opacity:.5;cursor:default}
-.model-preference-popup{position:fixed;inset:auto;margin:0;width:min(390px,calc(100vw - 24px));max-height:calc(100dvh - 24px);box-sizing:border-box;padding:20px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.85098);border-radius:22px;background:rgb(var(--theme-panel-rgb, 253 253 255) / 0.96);color:var(--theme-ink, #303249);box-shadow:0 18px 60px #24234524,0 3px 12px #2423450c;backdrop-filter:blur(24px);font:400 14px/1.5 var(--sans);overflow:auto}
+.model-preference-popup{position:fixed;inset:auto;margin:0;width:min(390px,calc(100vw - 24px));max-height:calc(100dvh - 24px);box-sizing:border-box;padding:20px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.85098);border-radius:22px;background:rgb(var(--theme-panel-rgb, 253 253 255) / 0.96);color:var(--theme-ink, #303249);box-shadow:0 18px 60px #24234524,0 3px 12px #2423450c;backdrop-filter:blur(24px);font:400 14px/1.5 var(--sans);overflow:hidden}
 .model-preference-popup:popover-open{display:flex;flex-direction:column;gap:16px;animation:agent-entry-menu-in .16s ease both}
 .model-preference-popup *{box-sizing:border-box}
 .model-preference-popup button{min-height:40px;border:0;border-radius:10px;padding:8px 13px;background:transparent;color:inherit;font:500 13px/1.4 var(--sans);cursor:pointer}
@@ -6828,7 +6828,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .model-preference-auto input:checked+.model-preference-switch:after{transform:translateX(16px)}
 .model-preference-auto input:focus-visible+.model-preference-switch{outline:2px solid #6a60c7;outline-offset:3px}
 .model-preference-auto input:disabled+.model-preference-switch{opacity:.5}
-.model-preference-list{display:grid;gap:5px;overflow-y:auto;min-height:0;overscroll-behavior:contain;padding:3px}
+.model-preference-list{display:grid;align-content:start;gap:5px;flex:1;overflow-y:auto;min-height:0;overscroll-behavior:contain;padding:3px}
 .model-preference-row{display:flex;align-items:center;gap:11px;min-height:68px;padding:10px;border:1px solid transparent;border-radius:12px;cursor:pointer;transition:background .16s,border-color .16s}
 .model-preference-row:hover{background:var(--theme-surface, #f0eef8)}
 .model-preference-row.is-selected{background:var(--theme-brand-soft, #eeebfb);border-color:var(--theme-line, #d5cef1)}
@@ -6836,7 +6836,6 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .model-preference-row.is-automatic:hover{background:transparent}
 .model-preference-logo{position:relative;display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:10px;background:var(--theme-surface, #eeedf5);color:var(--theme-muted, #6a6685)}
 .model-preference-logo .gugu-lucide{width:20px;height:20px}
-.model-preference-logo img{position:absolute;inset:7px;width:22px;height:22px;background:var(--theme-surface, #eeedf5);object-fit:contain}
 .model-preference-copy{display:grid;gap:3px;flex:1;min-width:0}
 .model-preference-copy strong{font-size:14px;font-weight:550;overflow-wrap:anywhere}
 .model-preference-copy small{font-size:12px;color:var(--theme-muted, #686b80);line-height:1.5}
@@ -6849,7 +6848,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .model-preference-footer>div{display:flex;justify-content:flex-end;gap:8px}
 .model-preference-footer .model-preference-save{background:#5c55c8;color:white;min-width:72px}
 .model-preference-footer .model-preference-save:hover{background:#514bb9}
-@media(max-width:480px){.model-preference-popup{padding:16px}.model-preference-row{padding:8px;gap:8px}.model-preference-logo{width:30px;height:30px}.model-preference-logo img{inset:5px;width:20px;height:20px}}
+@media(max-width:480px){.model-preference-popup{padding:16px}.model-preference-row{padding:8px;gap:8px}.model-preference-logo{width:30px;height:30px}}
 @media(prefers-reduced-motion:reduce){.model-preference-popup:popover-open{animation:none}.model-preference-trigger,.model-preference-row,.model-preference-switch,.model-preference-switch:after{transition:none!important}}
 
 /* Keep the full generation description in the conversation confirmation card. */

@@ -94,3 +94,18 @@ test('a failed initial preference load cannot save automatic defaults and retry 
     assert.equal(popup.querySelector('[data-preference-save]').disabled,false);
   },{loadCatalog:async()=>{if(!available)throw new Error('offline');return {models:[{id:'image-a',label:'图片 A',kind:'image'}],modelPreferences:preferences};}});
 });
+
+test('video rows show only the brand logo and the popup keeps a fixed height with a scrolling list',async()=>{
+  await withPicker(async({popup,open,settle})=>{
+    await open();
+    await popup.emit('click',{target:Object.assign(element('[data-preference-tab]'),{dataset:{preferenceTab:'video'}})});await settle();
+    const rows=popup.querySelector('[data-preference-list]').innerHTML;
+    const [branded,plain]=rows.split('</label>');
+    assert.match(branded,/class="model-logo/);assert.doesNotMatch(branded,/gugu-lucide-layers-2/);
+    assert.match(plain,/gugu-lucide-layers-2/);
+    assert.equal(popup.style.height,'520px');assert.equal(popup.style.maxHeight,'520px');
+  },{loadCatalog:async()=>[{id:'seedance-2.0',label:'Seedance 2.0',kind:'video'},{id:'video-x',label:'视频 X',kind:'video'}]});
+  const css=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
+  assert.match(css,/\.model-preference-popup\{[^}]*overflow:hidden/);
+  assert.match(css,/\.model-preference-list\{[^}]*flex:1;overflow-y:auto;min-height:0/);
+});

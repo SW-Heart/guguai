@@ -45,9 +45,9 @@ test('content stays intact, snapshots survive selection changes, and overflow is
 
 test('changed frontend entry points use matching cache keys',()=>{
   const read=name=>readFileSync(new URL(`../public/${name}`,import.meta.url),'utf8');
-  assert.ok(read('index.html').includes('/app.js?v=538'));
-  assert.ok(read('index.html').includes('/styles.css?v=392'));
-  assert.ok(read('app.js').includes('./drama-studio.js?v=260'));
+  assert.ok(read('index.html').includes('/app.js?v=539'));
+  assert.ok(read('index.html').includes('/styles.css?v=393'));
+  assert.ok(read('app.js').includes('./drama-studio.js?v=261'));
   assert.ok(read('drama-studio.js').includes('./features/drama/style-dialog.js?v=2'));
   assert.ok(read('drama-studio.js').includes('./resource-prompt.js?v=4'));
   assert.ok(read('drama-studio.js').includes('./features/drama/merge.js?v=2'));
