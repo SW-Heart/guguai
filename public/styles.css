@@ -5730,6 +5730,8 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 
 /* Generation frames */
 .director-workspace .dw-generation-frame{--tone:var(--cv-brand);--tone-soft:rgba(99,102,241,.1);--tone-line:rgba(99,102,241,.2);--tone-ink:var(--cv-brand-ink);--label-ink:var(--cv-ink);position:relative;box-sizing:border-box;width:100%;height:100%;overflow:visible;border:0;border-radius:var(--cv-radius);background:transparent;box-shadow:none;font-family:var(--sans)}
+/* Canvas cards far outside the window keep their box but skip rendering. */
+.director-workspace .dw-offscreen{content-visibility:hidden}
 .dw-generation-frame>img,.dw-generation-frame>video{display:block;width:100%;height:100%;object-fit:contain;background:var(--theme-surface, #f1f0f5);animation:dw-frame-reveal .45s cubic-bezier(.2,.8,.2,1) both}
 .dw-frame-placeholder{position:absolute;inset:0;z-index:0;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:14px;overflow:hidden;isolation:isolate;text-align:center;border:1px solid var(--tone-line);border-radius:inherit;background:var(--cv-surface);box-shadow:var(--cv-shadow);color:var(--tone-ink);font:600 13px/1.4 var(--sans);transition:border-color .2s ease,box-shadow .2s ease,background .2s ease}
 .dw-frame-aura{position:absolute;z-index:-1;inset:0;pointer-events:none;background:radial-gradient(58% 48% at 50% 44%,var(--tone-soft),transparent 74%)}

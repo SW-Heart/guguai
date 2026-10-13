@@ -2,6 +2,7 @@ import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload
 import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
 import { canvasImageUrl } from '../media/thumbnail-url.js?v=2';
+import { cullOffscreenImages, isOffscreen } from './canvas-culling.js?v=1';
 
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=5';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
@@ -353,6 +354,7 @@ export function createDirectorWorkspace(host, bridge) {
   function paintAssetImage(id,url){
     const image=assetImages.get(url),shape=canvas?.getCanvasNodeById(id)?.getElement?.();
     if(!image||!shape?.image||canvas.getNodeConfigById(id)?.$_imageUrl!==url)return;
+    cullOffscreenImages(shape);
     shape.image(image);
     paintedAssetImages.set(shape,url);
     shape.clearCache();
@@ -720,6 +722,9 @@ export function createDirectorWorkspace(host, bridge) {
     // from their Konva hit rectangle while dragging.
     const rect=shape.getClientRect();
     Object.assign(element.style,{left:`${rect.x}px`,top:`${rect.y}px`,width:`${rect.width}px`,height:`${rect.height}px`,transformOrigin:'0 0',transform:'none'});
+    // Cards far outside the window keep their box but skip rendering content.
+    const stage=canvas.getStage?.();
+    if(stage)element.classList?.toggle('dw-offscreen',isOffscreen(rect,stage.width(),stage.height()));
     if(!geometryOnly)element.querySelectorAll('video').forEach(video=>{
       // Forward gestures on the picture to Konva; reserve the bottom 48 CSS
       // pixels for native playback controls (their shadow DOM is opaque),
@@ -2151,7 +2156,9 @@ export function createDirectorWorkspace(host, bridge) {
       const geometrySignature=snapshot=>(snapshot.nodes||[]).filter(n=>!String(n.id).startsWith('edge-')).map(n=>`${n.id}:${n.x}:${n.y}:${n.width}:${n.height}:${n.scaleX||1}:${n.scaleY||1}`).join('|');
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
-      canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();queueCanvasMediaLibrary();});
+      // Image classes are shared, so registering the first picture covers all.
+      let imageCulling=false;
+      canvas.on('state:change',snapshot=>{if(!imageCulling){const shape=mainLayer?.find?.('Image')?.[0];if(shape){cullOffscreenImages(shape);imageCulling=true;}}if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();queueCanvasMediaLibrary();});
       // Wheel and pan events arrive several times per frame. Align once per
       // frame, and write the node snapshot back only after the gesture settles:
       // a viewport change moves no nodes, and copying every node (including
