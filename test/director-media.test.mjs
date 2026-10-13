@@ -74,30 +74,29 @@ test('video picture presses reach the canvas while playback controls remain nati
   assert.equal(forwarded.length,1);assert.equal(controls.prevented,undefined);assert.equal(controls.stopped,true);
 });
 
-test('video picture wheel gestures reach the canvas while playback controls remain native',()=>{
+test('wheel gestures over the entire video reach the canvas, including playback controls',()=>{
   const handlers={},forwarded=[];
   const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
   const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
   const context={bindDocumentCard(){},selected:'video',canvas:{getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
   vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
-  context.alignCard('video');
+  vm.runInContext(source.slice(source.indexOf('  function forwardCanvasMediaWheel('),source.indexOf('  function alignCard(')),context);
   class WheelEvent {
-    constructor(type,init){Object.assign(this,{type,...init});}
+    constructor(type,init){Object.assign(this,{type,target:{closest:selector=>selector==='video'?video:null},...init});}
     stopPropagation(){this.stopped=true;}
     preventDefault(){this.prevented=true;}
   }
   const picture=new WheelEvent('wheel',{clientX:30,clientY:80,deltaX:0,deltaY:-120,deltaMode:0,ctrlKey:true});
-  handlers.wheel(picture);
+  context.forwardCanvasMediaWheel(picture);
   assert.equal(forwarded.length,1);
   assert.equal(forwarded[0].deltaY,-120);
   assert.equal(forwarded[0].clientX,30);
   assert.equal(forwarded[0].ctrlKey,true);
   assert.equal(picture.prevented,true);
   const controls=new WheelEvent('wheel',{clientX:30,clientY:180,deltaY:-120,ctrlKey:true});
-  handlers.wheel(controls);
-  assert.equal(forwarded.length,1);
-  assert.equal(controls.prevented,undefined);
+  context.forwardCanvasMediaWheel(controls);
+  assert.equal(forwarded.length,2);
+  assert.equal(controls.prevented,true);
   assert.equal(controls.stopped,true);
 });
 

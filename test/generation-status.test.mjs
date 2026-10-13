@@ -32,7 +32,7 @@ test('manual and agent frames share the status treatment and completed media sta
   const css=readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
   // One result frame renders canvas results and the assistant's works alike.
   assert.equal(source.match(/renderGenerationPlaceholder\(state,/g)?.length,1);
-  assert.equal(source.match(/return resultFrame\(\{state/g)?.length,2);
+  assert.equal(source.match(/return resultFrame\(\{state/g)?.length,3);
   for(const state of generationVisualStates.filter(state=>state!=='completed'))assert.ok(css.includes(`[data-state=${state}]`),state);
   assert.match(css,/\.dw-generation-frame\[data-state=completed\]\{overflow:visible;border:0/);
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)\{\.dw-frame-state-icon svg/);
@@ -65,8 +65,8 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   assert.match(css,/\.dw-frame-caption\{position:absolute;left:0;right:0;top:auto;bottom:calc\(100% \+ 6px\)/);
   assert.ok(Number(read('index.html').match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
   assert.ok(Number(read('index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('app.js').includes("./drama-studio.js?v=270"));
-  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=137"));
-  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=163"));
-  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=163"));
+  assert.ok(read('app.js').includes("./drama-studio.js?v=282"));
+  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=149"));
+  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=175"));
+  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=175"));
 });

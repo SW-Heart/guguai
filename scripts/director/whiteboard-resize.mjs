@@ -22,10 +22,10 @@ export function patchWhiteboardResize(source) {
 // Image records keep the original URL for crop, export and persistence.
 export function patchWhiteboardImageSource(source) {
   // Only the image node loader; video covers use the same shape on this.cover.
-  const loader = /(?:let|const) e\s*=\s*new Image(?:\(\))?;?\s*e\.crossOrigin\s*=\s*"anonymous",\s*e\.src\s*=\s*t,(?=\s*e\.onload\s*=\s*\(\)\s*=>\s*\{\s*this\.getElement\(\)\.image\(e\))/g;
+  const loader = /(?:let|const) (\w+)\s*=\s*new Image(?:\(\))?;?\s*\1\.crossOrigin\s*=\s*"anonymous",\s*\1\.src\s*=\s*(\w+),(?=\s*\1\.onload\s*=\s*\(\)\s*=>\s*\{\s*this\.getElement\(\)\.image\(\1\))/g;
   if ([...source.matchAll(loader)].length !== 1) {
     throw new Error('Unable to locate the whiteboard image loader');
   }
-  return source.replace(loader, () =>
-    'const e = new Image(), guguDisplayUrl = globalThis.guguCanvasImageUrl?.(t) ?? t;\n    e.crossOrigin = "anonymous", guguDisplayUrl !== t && (e.dataset.guguThumbnail = "1"), e.src = guguDisplayUrl,');
+  return source.replace(loader, (_, image, url) =>
+    `const ${image} = new Image(), guguDisplayUrl = globalThis.guguCanvasImageUrl?.(${url}) ?? ${url};\n    ${image}.crossOrigin = "anonymous", guguDisplayUrl !== ${url} && (${image}.dataset.guguThumbnail = "1"), ${image}.src = guguDisplayUrl,`);
 }

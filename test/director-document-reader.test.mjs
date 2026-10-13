@@ -1,7 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {mountDocumentCard,documentCardMarkup,documentDownload} from '../public/features/drama/document-card.js';
+
+test('card names sit outside the frame without repeated type and name rows',()=>{
+  const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
+  const context=vm.createContext({escape:value=>String(value),canvasIcon:()=>'',});
+  vm.runInContext(source.slice(source.indexOf('  function productionCard('),source.indexOf('  // Every generated picture')),context);
+  for(const [label,name] of [['角色','外婆'],['场景','场景 1'],['分镜','分镜 1']]){
+    const html=context.productionCard({id:'card',label,name,prompt:'画面描述'});
+    assert.ok(html.includes(`<span class="dw-frame-caption">${name}</span>`));
+    assert.ok(!html.includes('dw-entity-name'));
+    assert.ok(!html.includes('dw-node-kind'));
+    assert.ok(!html.includes('<header'));
+  }
+  const document=documentCardMarkup({id:'note',kind:'note',item:{}});
+  assert.ok(document.includes('class="dw-frame-caption" data-document-title'));
+  assert.ok(!document.includes('dw-node-kind'));
+});
 function harness(save=async(node,input)=>({title:node.title,text:input.text,revision:input.expectedRevision+1})){
   const elements=new Map(),events=new Map();
   for(const name of ['body','title','title-input','revision','feedback','edit','save','cancel','copy','download','ask']){
@@ -69,6 +86,6 @@ test('text cards written on the canvas can be renamed while editing; scripts edi
   await h.el('save').onclick();
   assert.deepEqual(calls,[{text:'外婆，八十六岁',expectedRevision:1,title:'人物小传'}]);
   assert.equal(h.el('title').textContent,'人物小传');assert.equal(h.el('title-input').hidden,true);
-  assert.match(documentCardMarkup({id:'story',kind:'story',title:'剧本',text:'',item:{}}),/<span class="dw-node-kind">剧本<\/span>/);
-  assert.match(documentCardMarkup({id:'canvas-note-2',kind:'note',title:'剧本',text:'',item:{role:'script'}}),/<span class="dw-node-kind">剧本<\/span>/);
+  assert.match(documentCardMarkup({id:'story',kind:'story',title:'剧本',text:'',item:{}}),/aria-label="剧本"/);
+  assert.match(documentCardMarkup({id:'canvas-note-2',kind:'note',title:'剧本',text:'',item:{role:'script'}}),/aria-label="剧本"/);
 });

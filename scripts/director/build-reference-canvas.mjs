@@ -14,6 +14,7 @@ const packageRoots = existsSync(pnpmRoot)
   : []
 const esbuildPackage = packageRoots.map(root => path.join(root, 'esbuild')).find(dir => existsSync(path.join(dir, 'package.json')))
 if (!esbuildPackage) throw new Error(`Cannot find esbuild in ${reference}`)
+const projectRequire = createRequire(path.join(repo, 'package.json'))
 const require = createRequire(path.join(esbuildPackage, 'package.json'))
 const esbuild = require('esbuild')
 
@@ -21,6 +22,11 @@ const shims = path.join(repo, 'scripts/director/reference-canvas-shims')
 const aliasPlugin = {
   name: 'director-reference-aliases',
   setup(build) {
+    // The local React entry and external canvas dependencies must share a single
+    // dispatcher. Resolve all React imports (including JSX runtimes) here.
+    build.onResolve({ filter: /^(?:react|react-dom)(?:\/.*)?$/ }, args => ({
+      path: projectRequire.resolve(args.path),
+    }))
     build.onLoad({ filter: /[\\/]@8btc[\\/]whiteboard[\\/]dist[\\/]index\.js$/ }, args => ({
       contents: patchWhiteboardImageSource(patchWhiteboardResize(readFileSync(args.path, 'utf8'))),
       loader: 'js',
@@ -50,13 +56,14 @@ const aliasPlugin = {
 
 const bundledCanvasJs = path.join(repo, 'public/vendor/director/reference-canvas.js')
 
-await esbuild.build({
+const bundleResult = await esbuild.build({
   entryPoints: [path.join(repo, 'scripts/director/reference-canvas-entry.tsx')],
   bundle: true,
   format: 'esm',
   platform: 'browser',
   target: ['es2020'],
   minify: true,
+  metafile: true,
   outfile: bundledCanvasJs,
   nodePaths: packageRoots,
   plugins: [aliasPlugin],
@@ -65,6 +72,13 @@ await esbuild.build({
   jsx: 'automatic',
   absWorkingDir: repo,
 })
+
+const reactRoots = new Set(Object.keys(bundleResult.metafile.inputs)
+  .filter(file => /(?:^|\/)node_modules\/react\//.test(file))
+  .map(file => file.slice(0, file.lastIndexOf('/react/') + '/react'.length)))
+if (reactRoots.size !== 1) {
+  throw new Error(`Canvas bundle must contain one React runtime; found ${reactRoots.size}: ${[...reactRoots].join(", ")}`)
+}
 
 // The reference BubbleMenu hides itself when the ProseMirror selection is
 // empty. In this editor, selecting a canvas text node is already the user's

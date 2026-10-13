@@ -18,7 +18,13 @@ export function normalizeLinks(value){
 }
 
 export const isGenerator=draft=>Boolean(draft&&!draft.taskId);
+export const isInlineGenerator=draft=>isGenerator(draft)&&!draft.entity&&draft.role!=='shot';
 export const draftResults=(drafts,id)=>(drafts||[]).filter(item=>item.parentId===id&&item.taskId);
+export function displayedResult(drafts,generator){
+  if(!isInlineGenerator(generator))return null;
+  const results=draftResults(drafts,generator.id);
+  return results.find(item=>item.id===generator.primaryId)||results.at(-1)||null;
+}
 export const inputLinks=(links,id)=>(links||[]).filter(link=>link.to===id);
 
 // What a generation node stands for when linked onward. A character, location
@@ -28,7 +34,7 @@ export function primaryResult(drafts,generator,task){
   if(!generator)return null;
   const results=draftResults(drafts,generator.id);
   const done=item=>task(item.taskId)?.status==='completed';
-  const chosen=generator.entity?results.find(item=>item.id===generator.primaryId&&done(item)):null;
+  const chosen=results.find(item=>item.id===generator.primaryId&&done(item));
   return chosen||(generator.entity?results.find(done):results.findLast(done))||null;
 }
 
@@ -183,6 +189,7 @@ export const FOLD_AFTER=3;
 // latest few, plus the main picture of a card.
 export function foldedResults(drafts,generator,task){
   const results=draftResults(drafts,generator.id);
+  if(isInlineGenerator(generator))return {folded:results.map(item=>item.id),total:results.length};
   if(generator.expanded||results.length<=FOLD_AFTER)return {folded:[],total:results.length};
   const keep=new Set(results.slice(-FOLD_AFTER).map(item=>item.id));
   const primary=generator.entity?primaryResult(drafts,generator,task):null;

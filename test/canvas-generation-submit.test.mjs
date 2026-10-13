@@ -6,6 +6,24 @@ import {randomUUID} from 'node:crypto';
 const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
 const source=read('features/drama/director-workspace.js');
 const links=await import('../public/features/drama/canvas-links.js');
+test('ordinary generators render pending, completed and failed outputs inside their own frame',()=>{
+  for(const type of ['image','video'])for(const status of ['queued','running','completed','failed']){
+    const draft={id:'g',type,prompt:'画面描述'};
+    const result={id:'r',parentId:'g',taskId:'t',status,prompt:'生成时的描述'};
+    const media=status==='completed'?{kind:type,url:'/result'}:null;
+    const context=vm.createContext({...links,isDocumentCard:()=>false,liveDrafts:()=>[draft,result],
+      bridge:{task:()=>({status,progress:42}),media:()=>media},
+      generationFrameState:(status,hasMedia)=>hasMedia?'completed':status,
+      resultFrame:config=>config});
+    vm.runInContext(source.slice(source.indexOf('  function nodeContent(n) {'),source.indexOf('  function nodeBounds(')),context);
+    const rendered=context.nodeContent({kind:'canvas-generation',title:'生成',item:draft});
+    assert.equal(rendered.state,status);assert.equal(rendered.media,media);
+    assert.equal(rendered.caption,'生成时的描述');assert.equal(rendered.kind,type);
+    draft.status='submitting';
+    const pending=context.nodeContent({kind:'canvas-generation',title:'生成',item:draft});
+    assert.equal(pending.media,null);assert.equal(pending.caption,'画面描述');
+  }
+});
 function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
   const draft={id:'canvas-gen-draft',type:'image',prompt:'人物半身照',aspect:'3:4',attachments:[],taskId:'',...(entity?{entity}:{})};
   const workspace={generationDrafts:[draft],links:linked,positions:{[draft.id]:{x:10,y:20,width:280,height:320}}};
@@ -19,25 +37,30 @@ function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
   vm.runInContext(source.slice(source.indexOf('  function generationRequest(draft){'),source.indexOf('  function mount()')),context);
   return {context,draft,workspace,requests,messages,saves,uploads,submit:()=>context.submitGenerationArea()};
 }
-for(const type of ['image','video'])test(`single ${type} response adds a linked result and keeps the generation node editable`,async()=>{
+for(const type of ['image','video'])test(`single ${type} response displays in place and keeps the generation node editable`,async()=>{
   const f=fixture({id:'accepted-task',status:'queued',balance:98});f.draft.type=type;
   await f.submit();
   assert.equal(f.draft.taskId,'');assert.equal(f.draft.prompt,'人物半身照');assert.equal(f.workspace.generationDrafts.length,2);
   const result=f.workspace.generationDrafts[1];
   assert.equal(result.taskId,'accepted-task');assert.equal(result.status,'queued');assert.equal(result.parentId,f.draft.id);
-  assert.ok(f.workspace.positions[result.id].x>f.workspace.positions[f.draft.id].x+280,'the result sits to the right of its node');
+  assert.equal(f.workspace.positions[result.id],undefined,'the output has no separate canvas frame');
+  assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,result.id);
+  assert.deepEqual(f.workspace.positions[f.draft.id],{x:10,y:20,width:280,height:320});
   assert.deepEqual(f.messages,['已开始生成']);assert.deepEqual(f.saves,[true]);assert.equal(f.context.activeGenerationId,f.draft.id);
   const request=f.requests.find(request=>request.url==='/api/generations');assert.equal(request.options.headers['Idempotency-Key'],JSON.parse(request.options.body).requestId);
-  // Generating again adds another result instead of replacing the first.
+  // Keep history while replacing what the same component displays.
   await f.submit();assert.equal(f.workspace.generationDrafts.filter(item=>item.parentId===f.draft.id).length,2);
+  assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,f.workspace.generationDrafts.at(-1).id);
+  assert.deepEqual(Object.keys(f.workspace.positions),[f.draft.id]);
 });
-test('batch responses keep every accepted task and stack results without overlap',async()=>{
+test('batch responses keep every accepted task within the same component',async()=>{
   const f=fixture({tasks:[{id:'first',status:'running'},{id:'second',status:'queued'}]});await f.submit();
   const [first,second]=f.workspace.generationDrafts.slice(1);
   assert.equal(first.taskId,'first');assert.equal(second.taskId,'second');
-  const [a,b]=[f.workspace.positions[first.id],f.workspace.positions[second.id]];
-  assert.ok(a.x>=10+280+96&&!(a.x<b.x+b.width&&b.x<a.x+a.width&&a.y<b.y+b.height&&b.y<a.y+a.height));
-  assert.ok(a.x>=586||a.y>=244,'the result avoids existing content');
+  assert.deepEqual(Object.keys(f.workspace.positions),[f.draft.id]);
+  assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,second.id);
+  f.draft.primaryId=first.id;
+  assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,first.id);
   assert.deepEqual(f.messages,['已开始生成 2 个']);
 });
 test('a character card picks its first result as main picture and keeps a chosen one',async()=>{

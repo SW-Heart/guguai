@@ -108,6 +108,8 @@ export function ColorAndStrokeWidthPanel({
         return
       }
       const brushIds = ids.filter(id => {
+        // Generated connections have a fixed appearance and are only selectable for deletion.
+        if (id.startsWith('edge-')) return false
         const config = api.getNodeConfigById(id)
         return [
           'brush',

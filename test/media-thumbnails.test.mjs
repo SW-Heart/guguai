@@ -125,8 +125,8 @@ test('canvas pictures use a 2048px display copy while records and crop keep the 
   assert.equal(canvasImageUrl('gugu-media://asset/a'), 'gugu-media://asset/a?thumbnail=2048');
   assert.equal(canvasImageUrl('https://cdn.example/a.png'), 'https://cdn.example/a.png');
   const bundle = await fs.readFile(new URL('../public/vendor/director/reference-canvas.js', import.meta.url), 'utf8');
-  assert.match(bundle, /guguDisplayUrl=globalThis\.guguCanvasImageUrl\?\.\(t\)\?\?t/);
-  assert.match(bundle, /if\(_\.dataset\?\.guguThumbnail\)\{let guguOriginal=new Image/);
+  assert.match(bundle, /\w+=globalThis\.guguCanvasImageUrl\?\.\((\w+)\)\?\?\1/);
+  assert.match(bundle, /if\(\w+\.dataset\?\.guguThumbnail\)\{let \w+=new Image/);
   const panel = await fs.readFile(new URL('../scripts/director/reference-canvas/control/FloatingMenuContainer.tsx', import.meta.url), 'utf8');
   assert.match(panel, /image\.dataset\?\.guguThumbnail/);
   const { patchWhiteboardImageSource } = await import('../scripts/director/whiteboard-resize.mjs');
@@ -135,6 +135,9 @@ test('canvas pictures use a 2048px display copy while records and crop keep the 
   const patched = patchWhiteboardImageSource(loader + cover);
   assert.match(patched, /guguDisplayUrl/);
   assert.equal(patched.match(/guguDisplayUrl =/g).length, 1);
+  const renamed=patchWhiteboardImageSource(loader.replaceAll(' e',' n').replaceAll('(e)','(n)').replaceAll('= t,','= url,'));
+  assert.match(renamed,/guguCanvasImageUrl\?\.\(url\)/);
+  assert.match(renamed,/n\.src = guguDisplayUrl/);
 });
 
 test('a crashed page reloads automatically and stops on the retry page after repeated crashes', () => {

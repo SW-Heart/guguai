@@ -11,7 +11,7 @@ export function generationMentionMarkup(file,label=file.name||'未命名素材')
   return `<span class="video-prompt-mention" data-video-prompt-mention-id="${escape(file.id)}" data-video-prompt-mention-label="${escape(label)}" data-video-prompt-mention-kind="${escape(file.kind)}" contenteditable="false" aria-label="引用${escape(label)}"><span class="video-prompt-mention-thumb">${thumb}</span><span class="video-prompt-mention-name">${escape(label)}</span></span>`;
 }
 
-export function generationPromptMarkup(draft){
+function generationDraftSegments(draft){
   let segments=draft.promptSegments;
   if(!Array.isArray(segments)||generationSegmentsText(segments)!==draft.prompt)segments=[String(draft.prompt||'')];
   const files=draft.attachments.filter(file=>file.name).sort((a,b)=>b.name.length-a.name.length);
@@ -28,7 +28,16 @@ export function generationPromptMarkup(draft){
     if(plain)result.push(plain);
     return result;
   });
-  return segments.map(segment=>{
+  return segments;
+}
+
+export function removeGenerationMention(draft,id,view=draft){
+  draft.promptSegments=generationDraftSegments(view).filter(segment=>typeof segment==='string'||segment.id!==id);
+  draft.prompt=generationSegmentsText(draft.promptSegments);
+}
+
+export function generationPromptMarkup(draft){
+  return generationDraftSegments(draft).map(segment=>{
     if(typeof segment==='string')return escape(segment);
     const file=draft.attachments.find(file=>file.id===segment.id);
     return file?generationMentionMarkup(file,segment.label):escape(`@${segment.label}`);
@@ -102,8 +111,8 @@ export function restoreGenerationSelection(editor,offsets){
   const selection=editor.ownerDocument.defaultView.getSelection();selection.removeAllRanges();selection.addRange(range);
 }
 
-export function bindGenerationRichPrompt(editor,{pick,getInput,signal}){
-  editor.dataset.placeholder='描述视频中的画面、动作与镜头，输入 @ 引用素材…';
+export function bindGenerationRichPrompt(editor,{pick,getInput,signal,type='video'}){
+  editor.dataset.placeholder=type==='image'?'描述想要的画面、风格与细节，输入 @ 引用图片…':'描述视频中的画面、动作与镜头，输入 @ 引用素材…';
   generationPromptCodec.normalizeEmpty(editor);
   // Let the composer save this input event before opening a dialog rebuilds it.
   bindGenerationMentionDialog(editor,{pick:()=>Promise.resolve().then(pick),getInput,signal,read:target=>generationPromptCodec.serialize(target),

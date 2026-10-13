@@ -5,7 +5,26 @@ import { normalizeDirectorWorkspace } from '../public/features/drama/director-ac
 import { createAgentTools } from '../lib/agent/tools.mjs';
 import { admitLinkedReference } from '../public/features/drama/canvas-generation-references.js';
 import { canvasGenerationPayload } from '../public/features/drama/canvas-generation.js';
-import { curvePath, rectAt } from '../public/features/drama/canvas-connect.js';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { curvePath, rectAt, connectionTarget, magneticPortPosition, connectionSource } from '../public/features/drama/canvas-connect.js';
+import { displayedResult } from '../public/features/drama/canvas-links.js';
+
+test('ordinary generators fold all output frames and display a selected result in place',()=>{
+  for(const type of ['image','video']){
+    const generator={id:'g',type};
+    const results=[{id:'r1',parentId:'g',taskId:'t1'},{id:'r2',parentId:'g',taskId:'t2'}];
+    assert.deepEqual(foldedResults(results,generator,()=>null),{folded:['r1','r2'],total:2});
+    assert.equal(displayedResult(results,generator).id,'r2');
+    generator.primaryId='r1';
+    assert.equal(displayedResult(results,generator).id,'r1');
+    generator.primaryId='missing';
+    assert.equal(displayedResult(results,generator).id,'r2');
+    assert.equal(displayedResult(results,{...generator,entity:{kind:'character',name:'外婆'}}),null);
+    assert.equal(displayedResult(results,{...generator,role:'shot'}),null);
+    assert.equal(foldedResults(results,{...generator,role:'shot'},()=>null).folded.length,0);
+  }
+});
 
 const modes = [
   { generationType: 'TEXT', aspectRatios: ['16:9'], durations: [5], qualityOptions: ['720p'], maxImages: 0 },
@@ -46,8 +65,10 @@ test('a card passes on its main picture and other nodes their latest result', ()
   assert.equal(primaryResult(drafts, drafts[0], id => tasks[id]).id, 'r1', 'an unfinished choice falls back to the first finished picture');
   tasks.t2.status = 'completed';
   assert.equal(primaryResult(drafts, drafts[0], id => tasks[id]).id, 'r2');
-  const plain = { id: 'g', primaryId: 'r1' };
+  const plain = { id: 'g' };
   assert.equal(primaryResult(drafts, plain, id => tasks[id]).id, 'r3', 'other nodes pass on their latest result');
+  plain.primaryId='r1';
+  assert.equal(primaryResult(drafts,plain,id=>tasks[id]).id,'r1','switching the displayed result updates references');
   assert.equal(generatorLabel({ entity: { name: '外婆' }, title: '角色 · 外婆' }), '外婆');
 });
 
@@ -174,4 +195,96 @@ test('the assistant reads cards with their main picture, shots with inputs, and 
   assert.equal((await tools.execute('canvas_read', {}, { userId: 'u', scope: {}, doc: {} })).cards[0].mainAssetId, 'asset-1');
   const empty = createAgentTools({ canvasStore: { read: () => null } });
   assert.deepEqual((await empty.execute('canvas_read', {}, { userId: 'u', scope: {}, doc: {} })).cards, []);
+});
+
+
+test('connections snap near compatible input cards and preserve invalid-target feedback',()=>{
+  const rects=[{id:'source',left:0,top:0,width:100,height:100},
+    {id:'shot',left:300,top:0,width:100,height:100},
+    {id:'picture',left:450,top:0,width:100,height:100}];
+  const check=(from,to)=>to==='shot'?'':'不能接收';
+  assert.equal(connectionTarget(rects,270,50,'source',check)?.id,'shot');
+  assert.equal(connectionTarget(rects,282,-20,'source',check)?.id,'shot');
+  assert.equal(connectionTarget(rects,240,50,'source',check),null);
+  assert.equal(connectionTarget(rects,435,50,'source',check)?.id,'shot');
+  assert.equal(connectionTarget(rects,460,50,'source',check)?.id,'picture');
+  assert.equal(connectionTarget(rects,50,50,'source',check),null);
+  assert.equal(connectionTarget(rects,270,50,'source',()=> '不支持'),null);
+});
+
+test('existing and persisted connections stay open and unfilled after native arrow normalization',()=>{
+  const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
+  const attrs={closed:true,fillEnabled:true,stroke:'#000000'};
+  let points,draws=0,updates=0;
+  const shape={setAttrs:value=>Object.assign(attrs,value),points:value=>{points=value;}};
+  const nodes=[{id:'from'},{id:'to'}];
+  const context=vm.createContext({canvas:{getState:()=>({nodes}),getNodeConfigById:()=>({}),updateNodes(){updates++;Object.assign(attrs,{closed:true,fillEnabled:true,stroke:'#000000'});}},
+    mainLayer:{batchDraw(){draws++;}},edgeLinks:()=>[{id:'edge',from:'from',to:'to',style:'input'}],edgeStyles:{input:{stroke:'#6366f1'}},
+    edgePointsFor:()=>[100,50,180,50,220,80,300,80],findLayerNode:()=>shape});
+  vm.runInContext(source.slice(source.indexOf('  function renderEdges('),source.indexOf('  function scheduleEdgeRender(')),context);
+  context.renderEdges(nodes);
+  assert.equal(attrs.closed,false);assert.equal(attrs.fillEnabled,false);assert.equal(attrs.stroke,'#6366f1');
+  context.renderEdges(nodes,true);
+  assert.equal(attrs.closed,false);assert.equal(attrs.fillEnabled,false);assert.equal(attrs.stroke,'#6366f1');
+  assert.equal(updates,1);assert.equal(draws,2);assert.equal(points.length,8);
+  assert.equal(attrs.listening,true);assert.equal(attrs.draggable,false);
+  assert.equal(attrs.hitStrokeWidth,14);
+  context.canvas.getState=()=>({nodes,viewport:{scale:.25},selectedNodeIds:['edge']});
+  context.edgeStyles.input.strokeWidth=2;
+  context.renderEdges(nodes);
+  assert.equal(attrs.hitStrokeWidth,56);
+  assert.equal(attrs.stroke,'#4f46e5');assert.equal(attrs.strokeWidth,3.5);
+  context.canvas.getState=()=>({nodes,viewport:{scale:2},selectedNodeIds:[]});
+  context.renderEdges(nodes);
+  assert.equal(attrs.hitStrokeWidth,7);
+  assert.equal(attrs.stroke,'#6366f1');assert.equal(attrs.strokeWidth,2);
+});
+
+test('deleting selected input edges disconnects only those inputs',()=>{
+  const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
+  const state={links:[{id:'link-a--b',from:'a',to:'b'},{id:'link-c--b',from:'c',to:'b'}]};
+  let dirty=0;
+  const context=vm.createContext({workspace:()=>state,generationDraft:()=>null,removeLinks,bridge:{markCanvasDirty(){dirty++;}}});
+  vm.runInContext(source.slice(source.indexOf('  function removeCanvasInputEdges('),source.indexOf('  function handleCanvasDeleteKeydown(')),context);
+  assert.equal(context.removeCanvasInputEdges(['edge-link-a--b','a']),true);
+  assert.deepEqual(state.links,[{id:'link-c--b',from:'c',to:'b'}]);
+  assert.equal(context.removeCanvasInputEdges(['edge-result-a']),false);
+  assert.equal(dirty,1);
+});
+
+
+test('connection plus follows a nearby pointer within a bounded distance and resets outside its reach',()=>{
+  const rect={id:'a',left:100,top:100,width:200,height:120};
+  const origin=magneticPortPosition(rect);
+  assert.deepEqual(origin,{x:318,y:160});
+  assert.deepEqual(magneticPortPosition(rect,origin),origin);
+  const near={x:348,y:180},position=magneticPortPosition(rect,near);
+  assert.ok(position.x>origin.x&&position.y>origin.y);
+  assert.ok(Math.hypot(position.x-origin.x,position.y-origin.y)<=12);
+  assert.deepEqual(magneticPortPosition(rect,{x:400,y:160}),origin);
+  assert.deepEqual(magneticPortPosition(rect,{x:321,y:162}),{x:321,y:162});
+});
+
+test('connection plus detects the pointer outside its small visible circle without selecting an obscured node',()=>{
+  const rect={id:'a',left:100,top:100,width:200,height:120};
+  assert.equal(connectionSource([rect],{x:356,y:180},()=>true)?.id,'a');
+  assert.equal(connectionSource([rect],{x:400,y:180},()=>true),null);
+  assert.equal(connectionSource([rect],{x:350,y:160},()=>false),null);
+  const obstruction={id:'blocked',left:340,top:140,width:100,height:100};
+  assert.equal(connectionSource([rect,obstruction],{x:350,y:160},id=>id==='a'),null);
+});
+
+test('generated connections never open stroke controls, including mixed selections',()=>{
+  const source=readFileSync(new URL('../scripts/director/reference-canvas/control/ColorAndStrokeWidthPanel.tsx',import.meta.url),'utf8');
+  const start=source.indexOf('    const handleNodesSelected =');
+  const handler=source.slice(start,source.indexOf("    api.on(",start))
+    .replace('ids: string[]','ids').replace(/ as StrokeEditableConfig \| null/g,'');
+  let selected=[];
+  const context=vm.createContext({api:{getNodeConfigById:()=>({$_type:'arrow',$_strokeColor:'#000'})},
+    setSelectedBrushIds:ids=>{selected=Array.from(ids);},setStrokeWidth(){},setStrokeColor(){},getDisplayStrokeWidth:()=>2});
+  vm.runInContext(`${handler}\nglobalThis.select = handleNodesSelected;`,context);
+  context.select(['drawing-arrow']);assert.deepEqual(selected,['drawing-arrow']);
+  for(const ids of [['edge-link-a--b'],['edge-result-a'],['edge-shot'],['drawing-arrow','edge-link-a--b'],[]]){
+    context.select(ids);assert.deepEqual(selected,[]);
+  }
 });

@@ -6,7 +6,7 @@ export function createTaskPoller({
   getActiveIds = () => [],
   loadActiveTasks = async () => {},
   loadNotifications = async () => {},
-  activeDelay = 6_000,
+  activeDelay = 2_000,
   notificationDelay = 60_000,
 } = {}) {
   let taskTimer = 0;
@@ -29,7 +29,7 @@ export function createTaskPoller({
       if (run !== taskRun) return;
       try { await loadActiveTasks(); } catch {}
       if (run === taskRun) scheduleTaskPollForRun(activeDelay, run);
-    }, Math.max(0, Number(delay) || activeDelay));
+    }, Number.isFinite(Number(delay)) ? Math.max(0, Number(delay)) : activeDelay);
   }
   function scheduleTaskPoll(delay = activeDelay) {
     taskRun += 1;
@@ -43,7 +43,7 @@ export function createTaskPoller({
       if (run !== notificationRun) return;
       try { await loadNotifications(); } catch {}
       if (run === notificationRun) scheduleNotificationPollForRun(notificationDelay, run);
-    }, Math.max(0, Number(delay) || notificationDelay));
+    }, Number.isFinite(Number(delay)) ? Math.max(0, Number(delay)) : notificationDelay);
   }
   function scheduleNotificationPoll(delay = notificationDelay) {
     notificationRun += 1;

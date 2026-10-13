@@ -1,6 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTaskPoller } from '../public/features/generation/polling.js';
+import { readFileSync } from 'node:fs';
+
+test('new generations query immediately and active tasks refresh every two seconds until finished',async()=>{
+  const timers=[];
+  let active=['task-1'];
+  let polls=0;
+  const poller=createTaskPoller({
+    setTimeoutFn:(callback,delay)=>{const timer={callback,delay};timers.push(timer);return timer;},
+    clearTimeoutFn:timer=>{const index=timers.indexOf(timer);if(index>=0)timers.splice(index,1);},
+    getUser:()=>true,getActiveIds:()=>active,
+    loadActiveTasks:async()=>{polls++;if(polls===2)active=[];},
+  });
+  poller.scheduleTaskPoll(0);
+  assert.equal(timers[0].delay,0);
+  await timers.shift().callback();
+  assert.equal(timers[0].delay,2000);
+  await timers.shift().callback();
+  assert.equal(polls,2);assert.equal(timers.length,0);
+});
+
+test('faster polling reaches the app through fresh versioned URLs',()=>{
+  const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
+  assert.ok(read('app.js').includes("./features/generation/polling.js?v=5"));
+  assert.match(read('app.js'),/const activePollDelay = 2000;/);
+  assert.ok(read('index.html').includes('/app.js?v=566'));
+});
 
 test('task poller schedules one active request and can stop both loops', async () => {
   const timers = [];
@@ -95,7 +121,7 @@ test('poller ignores a queued callback after stop and continues after a transien
   });
   retryPoller.scheduleTaskPoll(1);
   await timers.shift().callback();
-  assert.deepEqual(timers.map(item => item.delay), [6000]);
+  assert.deepEqual(timers.map(item => item.delay), [2000]);
 });
 
 test('hidden page stops both timer loops and resumes active polling when visible', () => {

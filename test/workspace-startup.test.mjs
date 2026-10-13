@@ -170,7 +170,15 @@ test('messages are scheduled only after notification loading and workspace start
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(source.includes('./features/notifications/controller.js?v=7'));
-  assert.ok(html.includes('/app.js?v=553'));
+  assert.ok(html.includes('/app.js?v=566'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=6\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
+});
+
+test('canvas bundle contains one React hook dispatcher shared by all canvas components',()=>{
+  const bundle=readFileSync(new URL('../public/vendor/director/reference-canvas.js',import.meta.url),'utf8');
+  const hooks=[...bundle.matchAll(/\.useRef=function\(/g)];
+  assert.equal(hooks.length,1,'two bundled React runtimes crash canvas initialization with a null useRef dispatcher');
+  const versions=new Set([...bundle.matchAll(/\.version="(19\.[0-9]+\.[0-9]+)"/g)].map(match=>match[1]));
+  assert.equal(versions.size,1,'React and its renderers must have the same version');
 });

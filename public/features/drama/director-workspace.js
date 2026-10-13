@@ -1,4 +1,4 @@
-import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=2';
+import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=3';
 import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
 import { canvasImageUrl } from '../media/thumbnail-url.js?v=2';
@@ -19,17 +19,17 @@ import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=37';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=15';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=39';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=16';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=15';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
-import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=3';
+import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=5';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=7';
-import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=1';
-import { mountCanvasConnector, rectAt } from './canvas-connect.js?v=1';
-import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=1';
-import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=5';
+import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, isInlineGenerator, displayedResult, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=2';
+import { mountCanvasConnector, rectAt } from './canvas-connect.js?v=3';
+import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=2';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=6';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
 import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=14';
@@ -294,7 +294,7 @@ export function createDirectorWorkspace(host, bridge) {
   const foldedIds=()=>{
     const drafts=liveDrafts(),counts=new Map(),ids=new Set();
     for(const item of drafts)if(item.parentId&&item.taskId)counts.set(item.parentId,(counts.get(item.parentId)||0)+1);
-    for(const item of drafts)if(!item.taskId&&(counts.get(item.id)||0)>FOLD_AFTER)foldedResults(drafts,item,id=>bridge.task(id)).folded.forEach(id=>ids.add(id));
+    for(const item of drafts)if(!item.taskId&&(isInlineGenerator(item)||(counts.get(item.id)||0)>FOLD_AFTER))foldedResults(drafts,item,id=>bridge.task(id)).folded.forEach(id=>ids.add(id));
     return ids;
   };
   const canvasItems=()=>{const hidden=hiddenIds(),folded=foldedIds();return nodes().filter(item=>!hidden.has(item.id)&&!folded.has(item.id));};
@@ -310,6 +310,17 @@ export function createDirectorWorkspace(host, bridge) {
     deletedIds.forEach(id=>{if(workspace().positions)delete workspace().positions[id];});
     return deletedIds;
   }
+  function removeCanvasInputEdges(ids) {
+    const deleted=new Set(ids);
+    const matches=link=>deleted.has(`edge-${link.id}`)||deleted.has(link.from)||deleted.has(link.to);
+    for(const link of (workspace().links||[]).filter(matches)){
+      const draft=generationDraft(link.to);
+      if(draft)removeGenerationMention(draft,link.from,generationPromptView(draft));
+    }
+    const changed=removeLinks(workspace(),matches);
+    if(changed)bridge.markCanvasDirty?.();
+    return changed;
+  }
   function handleCanvasDeleteKeydown(event) {
     if(!canvas||!['Delete','Backspace'].includes(event.key)||canvas.isEditingText)return;
     const target=event.target;
@@ -322,13 +333,14 @@ export function createDirectorWorkspace(host, bridge) {
     // dynamic nodes hidden first so that the intermediate sync cannot recreate
     // a failed generation placeholder while the delete event is still pending.
     markCanvasItemsHidden(selectedIds);
+    removeCanvasInputEdges(selectedIds);
     event.preventDefault();
     event.stopPropagation();
     const deleted=canvas.deleteNodes(selectedIds);
     if(Array.isArray(deleted)&&deleted.length)scheduleCanvasSave();
   }
   function nodes() {
-    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
+    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId||displayedResult(workspace().generationDrafts,d)?.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
   }
   function hasSavedCanvasContent() {
     const hidden=hiddenIds();
@@ -460,7 +472,7 @@ export function createDirectorWorkspace(host, bridge) {
   function productionCard({id,icon,label,name,state='draft',status='',tone='idle',progress=null,media='',prompt='',placeholder='',foot=''}){
     const pill=status?`<span class="dw-node-status" data-tone="${tone}" role="status">${tone==='locked'?canvasIcon('lock'):'<i class="dw-node-dot" aria-hidden="true"></i>'}<span>${escape(status)}</span></span>`:'';
     const meter=progress===null?'':`<progress class="dw-node-progress" max="100" value="${progress}" aria-label="制作进度"></progress>`;
-    return `<div class="dw-generation-frame dw-entity-card" data-state="${escape(state)}" data-card-id="${escape(id)}" aria-label="${escape(`${label}：${name}`)}"><header class="dw-node-head"><span class="dw-node-kind">${canvasIcon(icon)}<span>${escape(label)}</span></span>${pill}</header><b class="dw-entity-name">${escape(name)}</b>${media}<p class="dw-entity-prompt${prompt?'':' is-empty'}">${escape(prompt||placeholder)}</p>${foot?`<footer class="dw-gen-node-foot">${foot}</footer>`:''}${meter}</div>`;
+    return `<div class="dw-generation-frame dw-entity-card" data-state="${escape(state)}" data-card-id="${escape(id)}" aria-label="${escape(`${label}：${name}`)}"><span class="dw-frame-caption">${escape(name)}</span>${pill?`<header class="dw-node-head">${pill}</header>`:''}${media}<p class="dw-entity-prompt${prompt?'':' is-empty'}">${escape(prompt||placeholder)}</p>${foot?`<footer class="dw-gen-node-foot">${foot}</footer>`:''}${meter}</div>`;
   }
   // Every generated picture or clip uses the same frame, whoever asked for it.
   function resultFrame({state,kind,media,caption,progress,extra=''}){
@@ -496,7 +508,15 @@ export function createDirectorWorkspace(host, bridge) {
         const badge=primary===true?'<span class="dw-frame-badge">主图</span>':primary===false?`<button type="button" class="dw-frame-action" data-set-primary="${escape(draft.id)}">设为主图</button>`:'';
         return resultFrame({state,kind:draft.type,media,caption,progress:task?.progress,extra:badge});
       }
-      // Generation nodes keep their description; results appear beside them.
+      if(isInlineGenerator(draft)){
+        const output=displayedResult(liveDrafts(),draft);
+        if(draft.status==='submitting'||output){
+          const task=output&&bridge.task(output.taskId),media=draft.status==='submitting'?null:output&&bridge.media(output.taskId);
+          const state=generationFrameState(draft.status==='submitting'?'queued':task?.status||output?.status||'queued',Boolean(media));
+          return resultFrame({state,kind:draft.type,media,caption:(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
+        }
+      }
+      // Description cards keep their text and display results beside them.
       const drafts=liveDrafts(),foot=generatorFoot(draft,drafts);
       const meta=[draft.type==='video'&&draft.duration?`${draft.duration} 秒`:'',draft.aspect].filter(Boolean).join(' · ');
       const state=draft.status==='submitting'||foot.running?'processing':'draft';
@@ -636,18 +656,22 @@ export function createDirectorWorkspace(host, bridge) {
   function renderEdges(snapshotNodes=canvas?.getState().nodes||[], persist=false) {
     if(!canvas||!mainLayer)return;
     const byId=new Map(snapshotNodes.map(node=>[node.id,node]));
-    const updates=[];
     edgeLinks().forEach(link=>{
       const from=byId.get(link.from),to=byId.get(link.to);
       if(!from||!to)return;
-      const points=edgePointsFor(link,from,to),id=link.id,shape=findLayerNode(id);
-      if(shape?.points)shape.points(points);
-      updates.push({id,points});
+      const points=edgePointsFor(link,from,to),id=link.id;
+      if(persist&&canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});
+      const shape=findLayerNode(id);
+      // The native arrow normalizer forces closed paths and theme colors.
+      // Repair the live shape after every update so curves never fill or close.
+      const scale=Math.abs(Number(canvas.getState().viewport?.scale)||1);
+      const selected=(canvas.getState().selectedNodeIds||[]).includes(id);
+      shape?.setAttrs?.({closed:false,fillEnabled:false,listening:true,draggable:false,hitStrokeWidth:14/scale,stroke:selected?'#4f46e5':edgeStyles[link.style].stroke,strokeWidth:edgeStyles[link.style].strokeWidth+(selected?1.5:0)});
+      shape?.points?.(points);
     });
     mainLayer.batchDraw?.();
-    if(!persist)return;
-    updates.forEach(({id,points})=>{if(canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});});
   }
+
   function scheduleEdgeRender() {
     if(edgeRenderFrame)return;
     edgeRenderFrame=queueWorkspaceFrame(()=>{edgeRenderFrame=0;renderEdges(liveCanvasNodes());});
@@ -699,6 +723,39 @@ export function createDirectorWorkspace(host, bridge) {
     }
     controller.update(node,workspace().lockedIds.includes(id));
   }
+  function forwardCanvasMediaWheel(event) {
+    const onVideo=event.target?.closest?.('video')||(event.composedPath?.()||[]).some(node=>node?.tagName==='VIDEO');
+    const documentCard=event.target?.closest?.('.dw-document-card');
+    if((!onVideo&&!documentCard)||!canvas)return;
+    // Editing long text needs its own scroll; zoom gestures still belong to the canvas.
+    if(!onVideo&&documentCard?.classList?.contains('is-editing')&&event.target?.closest?.('[data-document-body]')&&!event.ctrlKey)return;
+    const surface=canvas.getStage()?.content;
+    if(!surface)return;
+    event.preventDefault();
+    event.stopPropagation();
+    surface.dispatchEvent(new event.constructor('wheel',{
+      bubbles:true,cancelable:true,
+      deltaX:event.deltaX,deltaY:event.deltaY,deltaZ:event.deltaZ,deltaMode:event.deltaMode,
+      clientX:event.clientX,clientY:event.clientY,screenX:event.screenX,screenY:event.screenY,
+      ctrlKey:event.ctrlKey,shiftKey:event.shiftKey,altKey:event.altKey,metaKey:event.metaKey,
+    }));
+  }
+  function forwardCanvasDocumentPan(event) {
+    if(!canvas||!event.target?.closest?.('.dw-document-card'))return;
+    if(canvas.getToolType?.()!=='hand'&&event.button!==1)return;
+    const surface=canvas.getStage()?.content;
+    if(!surface)return;
+    event.stopPropagation();
+    if(event.type!=='pointerdown')event.preventDefault();
+    surface.dispatchEvent(new event.constructor(event.type,{
+      bubbles:true,cancelable:true,
+      clientX:event.clientX,clientY:event.clientY,screenX:event.screenX,screenY:event.screenY,
+      button:event.button,buttons:event.buttons,
+      ctrlKey:event.ctrlKey,shiftKey:event.shiftKey,altKey:event.altKey,metaKey:event.metaKey,
+      pointerId:event.pointerId,pointerType:event.pointerType,isPrimary:event.isPrimary,
+      touches:event.touches,targetTouches:event.targetTouches,changedTouches:event.changedTouches,
+    }));
+  }
   function alignCard(id,html,geometryOnly=false) {
     const node=canvas.getCanvasNodeById(id),element=node?.htmlElement,shape=node?.getElement?.();
     if(!element||!shape)return;
@@ -721,34 +778,17 @@ export function createDirectorWorkspace(host, bridge) {
       // except when the hand tool or middle button explicitly requests panning.
       if(video.dataset.canvasPlayback)return;
       video.dataset.canvasPlayback='true';
-      ['pointerdown','mousedown','touchstart','wheel','click','dblclick','keydown','keyup'].forEach(type=>video.addEventListener(type,event=>{
+      ['pointerdown','mousedown','touchstart','click','dblclick','keydown','keyup'].forEach(type=>video.addEventListener(type,event=>{
         event.stopPropagation();
         const point=event.touches?.[0]||event;
         const rect=video.getBoundingClientRect();
         const panning=canvas.getToolType?.()==='hand'||event.button===1;
         const onPicture=panning||(Number.isFinite(point.clientY)&&point.clientY<rect.bottom-48);
-        if(onPicture&&['pointerdown','mousedown','touchstart','wheel'].includes(type)){
+        if(onPicture&&['pointerdown','mousedown','touchstart'].includes(type)){
           const surface=canvas.getStage().content;
-          const forwarded=type==='wheel'
-            ? new event.constructor('wheel',{
-              bubbles:true,
-              cancelable:true,
-              deltaX:event.deltaX,
-              deltaY:event.deltaY,
-              deltaZ:event.deltaZ,
-              deltaMode:event.deltaMode,
-              clientX:event.clientX,
-              clientY:event.clientY,
-              screenX:event.screenX,
-              screenY:event.screenY,
-              ctrlKey:event.ctrlKey,
-              shiftKey:event.shiftKey,
-              altKey:event.altKey,
-              metaKey:event.metaKey,
-            })
-            // The engine listens for middle-button presses on the stage container
-            // and finishes drags on window, so the forwarded event must bubble.
-            : new event.constructor(type,{...event,bubbles:true,cancelable:true,
+          // The engine starts middle-button drags on the stage container
+          // and finishes them on window, so the forwarded event must bubble.
+          const forwarded=new event.constructor(type,{...event,bubbles:true,cancelable:true,
               clientX:event.clientX,clientY:event.clientY,screenX:event.screenX,screenY:event.screenY,
               button:event.button,buttons:event.buttons,
               ctrlKey:event.ctrlKey,shiftKey:event.shiftKey,altKey:event.altKey,metaKey:event.metaKey,
@@ -1071,7 +1111,7 @@ export function createDirectorWorkspace(host, bridge) {
         else alignCard(node.id,node.$_htmlContent);
       });
     }
-    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=l.id;const config={id,$_type:'arrow',x:0,y:0,points:edgePointsFor(l,from,to),...edgeStyles[l.style],$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
+    links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=l.id;const config={id,$_type:'arrow',x:0,y:0,points:edgePointsFor(l,from,to),...edgeStyles[l.style],$_strokeColor:edgeStyles[l.style].stroke,closed:false,fillEnabled:false,$_listening:true,draggable:false,hitStrokeWidth:14};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
     syncing=false;
     pruneAssetImages(canvas.getState().nodes);
     renderEdges(canvas.getState().nodes);
@@ -1389,6 +1429,7 @@ export function createDirectorWorkspace(host, bridge) {
   const genIcon=paths=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   const genIcons={
     paperclip:genIcon('<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l10-10a4 4 0 0 1 5.66 5.66l-10 10a2 2 0 0 1-2.83-2.83l9.19-9.19"/>'),
+    upload:genIcon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>'),
     chevron:genIcon('<path d="m6 9 6 6 6-6"/>'),
     check:genIcon('<path d="M20 6 9 17l-5-5"/>'),
     x:genIcon('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
@@ -1493,11 +1534,9 @@ export function createDirectorWorkspace(host, bridge) {
   }
   function disconnectNodes(from,to){
     const draft=generationDraft(to);
+    const view=draft&&generationPromptView(draft);
     if(!removeLinks(workspace(),link=>link.from===from&&link.to===to))return;
-    if(draft&&Array.isArray(draft.promptSegments)&&draft.promptSegments.some(segment=>typeof segment!=='string'&&segment.id===from)){
-      draft.promptSegments=draft.promptSegments.map(segment=>typeof segment==='string'||segment.id!==from?segment:`@${segment.label}`);
-      draft.prompt=draft.promptSegments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('');
-    }
+    if(draft)removeGenerationMention(draft,from,view);
     syncCanvas();scheduleCanvasSave();
     if(activeGenerationId===to)renderGenerationComposer();
   }
@@ -1508,29 +1547,84 @@ export function createDirectorWorkspace(host, bridge) {
     const candidates=canvasItems().map(item=>item.id).concat((canvas?.getState?.().nodes||[]).filter(node=>['image','video'].includes(node.$_type)&&node.$_assetId).map(node=>node.id))
       .filter((id,index,list)=>id!==draft.id&&list.indexOf(id)===index&&!hiddenIds().has(id))
       .map(id=>({id,source:describeSource(id)}))
-      .filter(({id,source})=>source&&source.kind!=='text'&&!linkError(draft,{...source,id}))
+      .filter(({id,source})=>source?.file?.url&&source.kind!=='text'&&!linkError(draft,{...source,id}))
       .sort((a,b)=>Number(linked.has(b.id))-Number(linked.has(a.id))||Number(Boolean(generationDraft(b.id)?.entity))-Number(Boolean(generationDraft(a.id)?.entity)));
     return new Promise(resolve=>{
       const picker=linkPopup=document.createElement('div');
       picker.id='canvasInputPicker';picker.className='wb-mention-picker dw-input-picker';picker.setAttribute('role','dialog');picker.setAttribute('aria-label','引用素材');
       const kindName={image:'图片',video:'视频',audio:'音频'};
-      picker.innerHTML=`<header><b>引用素材</b><button type="button" data-picker-close aria-label="关闭">${genIcons.x}</button></header><div class="wb-mention-options"><button type="button" data-picker-upload><b>上传文件</b></button>${candidates.map(({id,source})=>`<button type="button" data-picker-id="${escape(id)}">${source.kind==='image'&&source.file?.url?`<img src="${escape(source.file.url)}" alt="">`:''}<b>${escape(source.label)}</b><small>${escape(generationDraft(id)?.entity?entityKinds[generationDraft(id).entity.kind]:kindName[source.kind])}${linked.has(id)?' · 已连接':source.file?'':' · 未生成'}</small></button>`).join('')}</div>`;
+      const kinds=Object.keys(kindName).filter(kind=>candidates.some(item=>item.source.kind===kind));
+      picker.innerHTML=`<header><b>引用素材</b><button type="button" data-picker-close aria-label="关闭">${genIcons.x}</button></header><div class="dw-input-picker-body"><div class="wb-mention-options dw-input-kinds">${kinds.map(kind=>`<button type="button" data-picker-kind="${kind}" aria-expanded="false" aria-controls="canvasInputAssets">${genIcons[kind]||genIcons.image}<b>${kindName[kind]}</b><span class="dw-input-kind-arrow" aria-hidden="true">${genIcons.chevron}</span></button>`).join('')||'<div class="wb-mention-empty">暂无可引用的素材</div>'}<button type="button" data-picker-upload>${genIcons.upload}<b>上传文件</b></button></div><div id="canvasInputAssets" class="wb-mention-options dw-input-assets" role="group" aria-label="可引用素材" hidden></div></div>`;
+      const position=()=>{
+        const rect=anchor.getBoundingClientRect();
+        picker.style.left=`${Math.max(8,Math.min(rect.left,window.innerWidth-picker.offsetWidth-8))}px`;
+        picker.style.top=`${Math.max(8,Math.min(rect.top-picker.offsetHeight-8,window.innerHeight-picker.offsetHeight-8))}px`;
+      };
+      const positionSubmenu=kind=>{
+        const submenu=picker.querySelector('.dw-input-assets');
+        const rect=picker.getBoundingClientRect();
+        const row=picker.querySelector(`[data-picker-kind="${kind}"]`).getBoundingClientRect();
+        submenu.style.width=`${Math.min(300,window.innerWidth-16)}px`;
+        submenu.style.maxHeight=`${Math.min(280,window.innerHeight-16)}px`;
+        const width=submenu.offsetWidth,height=submenu.offsetHeight;
+        const left=rect.right+width<=window.innerWidth-8?rect.right:rect.left-width;
+        submenu.style.left=`${Math.max(8,Math.min(left,window.innerWidth-width-8))}px`;
+        submenu.style.top=`${Math.max(8,Math.min(row.top,window.innerHeight-height-8))}px`;
+      };
+      let activeKind='';
+      const showKind=kind=>{
+        if(!kinds.includes(kind))return;
+        if(activeKind===kind)return;
+        activeKind=kind;
+        const matches=candidates.filter(item=>item.source.kind===kind);
+        const submenu=picker.querySelector('.dw-input-assets');
+        submenu.hidden=false;
+        submenu.innerHTML=matches.map(({id,source})=>`<button type="button" data-picker-id="${escape(id)}">${source.kind==='image'?`<img src="${escape(source.file.url)}" alt="">`:source.kind==='video'?`<video src="${escape(source.file.url)}" muted playsinline preload="metadata"></video>`:genIcons.audio}<b>${escape(source.label)}</b></button>`).join('')||'<div class="wb-mention-empty">没有匹配的素材</div>';
+        picker.querySelectorAll('[data-picker-kind]').forEach(button=>button.setAttribute('aria-expanded',String(button.dataset.pickerKind===kind)));
+        positionSubmenu(kind);
+      };
+      picker.querySelectorAll('[data-picker-kind]').forEach(button=>{
+        button.addEventListener('pointerenter',()=>showKind(button.dataset.pickerKind));
+        button.addEventListener('focus',()=>showKind(button.dataset.pickerKind));
+        button.addEventListener('click',()=>showKind(button.dataset.pickerKind));
+      });
+      const signal=generationMentionEvents?.signal;
       let done=false;
-      const close=value=>{if(done)return;done=true;picker.remove();document.removeEventListener('pointerdown',outside,true);resolve(value);};
+      const abort=()=>close(null);
+      const close=value=>{
+        if(done)return;done=true;picker.remove();
+        document.removeEventListener('pointerdown',outside,true);
+        document.removeEventListener('scroll',onScroll,true);
+        window.removeEventListener('resize',abort);
+        signal?.removeEventListener('abort',abort);
+        if(linkPopup===picker)linkPopup=null;
+        resolve(value);
+      };
+      const onScroll=event=>{if(!picker.contains(event.target))close(null);};
       const outside=event=>{if(!picker.contains(event.target))close(null);};
       picker.addEventListener('click',event=>{
         if(event.target.closest('[data-picker-close]'))close(null);
         else if(event.target.closest('[data-picker-upload]'))close('upload');
         else{const option=event.target.closest('[data-picker-id]');if(option)close(option.dataset.pickerId);}
       });
-      picker.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(null);anchor?.focus();}});
+      picker.addEventListener('keydown',event=>{
+        if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(null);anchor?.focus();return;}
+        const button=document.activeElement;
+        if(event.key==='ArrowDown'&&button===picker){event.preventDefault();picker.querySelector('[data-picker-kind],[data-picker-upload]')?.focus();return;}
+        if(event.key==='ArrowRight'&&button?.dataset.pickerKind){event.preventDefault();picker.querySelector('[data-picker-id]')?.focus();}
+        if(event.key==='ArrowLeft'&&button?.dataset.pickerId){event.preventDefault();picker.querySelector(`[data-picker-kind="${activeKind}"]`)?.focus();}
+        if(['ArrowDown','ArrowUp'].includes(event.key)){
+          const buttons=[...button?.closest('.wb-mention-options')?.querySelectorAll('button')||[]];
+          if(buttons.length){event.preventDefault();buttons[(buttons.indexOf(button)+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length].focus();}
+        }
+      });
       document.body.append(picker);
       document.addEventListener('pointerdown',outside,true);
-      const rect=anchor.getBoundingClientRect();
-      picker.style.maxHeight=`${Math.max(160,Math.min(360,rect.top-16))}px`;
-      picker.style.left=`${Math.max(8,Math.min(rect.left,window.innerWidth-picker.offsetWidth-8))}px`;
-      picker.style.top=`${Math.max(8,rect.top-picker.offsetHeight-8)}px`;
-      picker.querySelector('[data-picker-id],[data-picker-upload]')?.focus();
+      document.addEventListener('scroll',onScroll,true);
+      window.addEventListener('resize',abort);
+      signal?.addEventListener('abort',abort,{once:true});
+      position();
+      picker.tabIndex=-1;picker.focus({preventScroll:true});
     });
   }
   // Everything a person can add to the canvas, and what each one is.
@@ -1765,21 +1859,21 @@ export function createDirectorWorkspace(host, bridge) {
     const options=canvasGenerationOptions(draft,generationConfig()),models=canvasGenerationModels(draft.type,generationConfig());
     const currentModel=models.find(item=>item.id===draft.modelId);
     const video=draft.type==='video',firstLast=video&&draft.mode==='FIRST&LAST';
-    const prompt=panel.querySelector('[data-gen-prompt]'),promptFocus=prompt&&document.activeElement===prompt?(video?generationSelection(prompt):[prompt.selectionStart,prompt.selectionEnd]):null;
+    const prompt=panel.querySelector('[data-gen-prompt]'),promptFocus=prompt&&document.activeElement===prompt?generationSelection(prompt):null;
     const busy=generationSubmitting||generationUploading;
     const linked=linkedGenerationInputs(draft);
     const linkedChips=linked.map(item=>{
-      const thumb=item.kind==='image'&&item.file?.url?`<img src="${escape(item.file.url)}" alt="">`:`<span class="dw-gen-reference-icon" aria-hidden="true">${item.kind==='text'?canvasIcon('file-text'):genIcons[item.kind]||genIcons.image}</span>`;
+      const thumb=item.kind==='image'&&item.file?.url?`<img src="${escape(item.file.url)}" alt="">`:item.kind==='video'&&item.file?.url?`<video src="${escape(item.file.url)}" muted playsinline preload="metadata"></video>`:`<span class="dw-gen-reference-icon" aria-hidden="true">${item.kind==='text'?canvasIcon('file-text'):genIcons[item.kind]||genIcons.image}</span>`;
       const note=item.kind!=='text'&&!item.file?'<span class="dw-gen-reference-note">未生成</span>':'';
-      return `<span class="dw-gen-reference is-linked${note?' is-pending':''}" title="${escape(item.label)}">${thumb}<span class="dw-gen-reference-name">${escape(item.label)}</span>${note}<button type="button" data-gen-unlink="${escape(item.id)}" aria-label="断开${escape(item.label)}" title="断开">${genIcons.x}</button></span>`;
+      return `<span class="dw-gen-reference is-linked${note?' is-pending':''}" title="${escape(item.label)}"><span class="dw-gen-reference-preview">${thumb}<button type="button" class="dw-gen-reference-remove" data-gen-unlink="${escape(item.id)}" aria-label="移除${escape(item.label)}" title="移除">${genIcons.x}</button></span>${note}</span>`;
     }).join('');
     const references=draft.attachments.map((file,index)=>{
       const label=firstLast?index===0?'首帧':'尾帧':file.name;
-      const thumb=file.kind==='image'&&file.url?`<img src="${escape(file.url)}" alt="">`:`<span class="dw-gen-reference-icon" aria-hidden="true">${genIcons[file.kind]||genIcons.image}</span>`;
-      return `<span class="dw-gen-reference${firstLast?' is-frame':''}" title="${escape(file.name)}">${thumb}<span class="dw-gen-reference-name">${escape(label)}</span><button type="button" data-gen-remove="${escape(file.id)}" aria-label="移除${escape(label)}" title="移除">${genIcons.x}</button></span>`;
+      const thumb=file.kind==='image'&&file.url?`<img src="${escape(file.url)}" alt="">`:file.kind==='video'&&file.url?`<video src="${escape(file.url)}" muted playsinline preload="metadata"></video>`:`<span class="dw-gen-reference-icon" aria-hidden="true">${genIcons[file.kind]||genIcons.image}</span>`;
+      return `<span class="dw-gen-reference${firstLast?' is-frame':''}" title="${escape(file.name)}"><span class="dw-gen-reference-preview">${thumb}<button type="button" class="dw-gen-reference-remove" data-gen-remove="${escape(file.id)}" aria-label="移除${escape(label)}" title="移除">${genIcons.x}</button></span>${firstLast?`<span class="dw-gen-reference-name">${escape(label)}</span>`:''}</span>`;
     }).join('')+linkedChips;
-    // Modes that need pictures show an explicit slot, so the next step is obvious.
-    const slotLabel=firstLast&&draft.attachments.length<2?draft.attachments.length?'添加尾帧':'添加首帧':video&&draft.mode==='REFERENCE'&&!draft.attachments.length?'添加参考素材':'';
+    // Keep the frame positions visible when choosing a first and last frame.
+    const slotLabel=firstLast&&draft.attachments.length<2?draft.attachments.length?'添加尾帧':'添加首帧':'';
     const slot=slotLabel?`<button type="button" class="dw-gen-slot" data-gen-upload ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.plus}<span>${generationUploading?'正在上传':slotLabel}</span></button>`:'';
     const chip=(name,icon,label,aria,extra='')=>`<button type="button" class="dw-gen-chip${extra}" data-gen-menu="${name}" aria-haspopup="${name==='params'?'dialog':'listbox'}" aria-expanded="false" aria-label="${escape(aria)}" title="${escape(aria)}">${icon}<span class="dw-gen-chip-label">${escape(label)}</span><span class="dw-gen-chip-caret">${genIcons.chevron}</span></button>`;
     const modelLabel=currentModel?.label||draft.modelId||'选择模型';
@@ -1792,19 +1886,23 @@ export function createDirectorWorkspace(host, bridge) {
     panel.dataset.genType=draft.type;
     panel.setAttribute('role','group');
     panel.setAttribute('aria-label',video?'视频生成':'图像生成');
+    const results=isInlineGenerator(draft)?draftResults(liveDrafts(),draft.id):[];
+    const output=displayedResult(liveDrafts(),draft);
+    const resultField=results.length>1?`<label class="dw-gen-name"><span>生成结果</span><select data-gen-result aria-label="选择生成结果">${results.map((item,index)=>`<option value="${escape(item.id)}" ${item.id===output?.id?'selected':''}>第 ${index+1} 个 · ${escape(labels[bridge.task(item.taskId)?.status||item.status]||'等待制作')}</option>`).join('')}</select></label>`:'';
     const nameField=draft.entity?`<label class="dw-gen-name"><span>${escape(entityKinds[draft.entity.kind])}名称</span><input data-gen-name maxlength="40" value="${escape(draft.entity.name)}" autocomplete="off"></label>`:draft.role==='shot'?`<label class="dw-gen-name"><span>分镜标题</span><input data-gen-name maxlength="80" value="${escape(draft.title||'')}" autocomplete="off"></label>`:'';
-    panel.innerHTML=`<div class="dw-gen-input">${nameField}${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label>${video?`<div id="canvasGenerationPrompt" class="dw-gen-rich-prompt" data-gen-prompt contenteditable="true" role="textbox" aria-multiline="true" aria-label="画面描述">${generationPromptMarkup(generationPromptView(draft,linked))}</div>`:`<textarea id="canvasGenerationPrompt" data-gen-prompt rows="3" placeholder="描述想要的画面、风格与细节…">${escape(draft.prompt)}</textarea>`}</div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="${generationSubmitting?'正在开始生成':'开始生成'}" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''} ${generationSubmitting?'aria-busy="true"':''}>${generationSubmitting?genIcons.loader:genIcons.sparkles}<span class="dw-gen-submit-label">${generationSubmitting?'正在开始':'生成'}</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
+    panel.innerHTML=`<div class="dw-gen-input">${nameField}${resultField}${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label><div id="canvasGenerationPrompt" class="dw-gen-rich-prompt" data-gen-prompt contenteditable="true" role="textbox" aria-multiline="true" aria-label="画面描述">${generationPromptMarkup(generationPromptView(draft,linked))}</div></div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="${generationSubmitting?'正在开始生成':'开始生成'}" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''} ${generationSubmitting?'aria-busy="true"':''}>${generationSubmitting?genIcons.loader:genIcons.sparkles}<span class="dw-gen-submit-label">${generationSubmitting?'正在开始':'生成'}</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
     panel.classList.toggle('is-uploading',generationUploading);
     panel.classList.toggle('is-submitting',generationSubmitting);
     bindGenModelIcons(panel);
     panel.hidden=false;
     const input=panel.querySelector('[data-gen-prompt]');
-    if(video){
+    {
       draft.promptSegments=generationPromptSegments(input);
       generationMentionEvents=new AbortController();
       const token=epoch;
       const current=()=>token===epoch&&activeGenerationId===draft.id&&generationDraft(draft.id)===draft&&!draft.taskId;
       bindGenerationRichPrompt(input,{
+        type:draft.type,
         signal:generationMentionEvents.signal,
         getInput:()=>current()?panel.querySelector('[data-gen-prompt]'):null,
         pick:async()=>{
@@ -1828,7 +1926,7 @@ export function createDirectorWorkspace(host, bridge) {
       });
     }
     fitGenerationPrompt(input);
-    if(promptFocus){if(video)restoreGenerationSelection(input,promptFocus);else{input.focus({preventScroll:true});input.setSelectionRange(...promptFocus);}}
+    if(promptFocus)restoreGenerationSelection(input,promptFocus);
     positionGenerationComposer();
     renderGenerationMenu();
     updateGenerationCost(draft);
@@ -1908,16 +2006,18 @@ export function createDirectorWorkspace(host, bridge) {
       if(token!==epoch)return;
       const tasks=Array.isArray(result?.tasks)?result.tasks:result?.id?[result]:[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');
-      // The node stays editable; each accepted task becomes a result beside it.
+      // Keep the generator editable; ordinary generators show their output in place.
       draft.status='';
       const size=canvasGenerationFrameSize(draft.type,draft.aspect);
       const parent=workspace().positions[draft.id]||{x:0,y:0,...size};
       // Folded results keep their place, so new ones never land on top of them.
       const obstacles=[...liveCanvasNodes().filter(node=>node.id!==draft.id&&!String(node.id).startsWith('edge-')&&node.visible!==false).map(nodeRect),
         ...draftResults(workspace().generationDrafts,draft.id).map(item=>workspace().positions[item.id]).filter(Boolean)];
-      const places=placeResults(parent,tasks.map(()=>size),obstacles);
+      const inline=isInlineGenerator(draft);
+      const places=inline?[]:placeResults(parent,tasks.map(()=>size),obstacles);
       const results=tasks.map(task=>({id:`canvas-gen-${crypto.randomUUID()}`,type:draft.type,prompt:request.prompt,promptSegments:[],modelId:draft.modelId,aspect:draft.aspect,quality:draft.quality,mode:draft.mode,duration:draft.duration,quantity:1,attachments:[],midjourney:{},taskId:task.id,status:task.status||'queued',parentId:draft.id}));
-      results.forEach((item,index)=>{workspace().positions[item.id]=places[index];});
+      if(!inline)results.forEach((item,index)=>{workspace().positions[item.id]=places[index];});
+      if(inline)draft.primaryId=results.at(-1).id;
       workspace().generationDrafts.push(...results);
       if(draft.entity&&!draftResults(workspace().generationDrafts,draft.id).some(item=>item.id===draft.primaryId))draft.primaryId=results[0].id;
       renderGenerationComposer();syncCanvas();scheduleCanvasSave(true);
@@ -1990,8 +2090,8 @@ export function createDirectorWorkspace(host, bridge) {
       if(event.target.matches('[data-gen-prompt]')){
         if(event.isComposing||event.target.dataset.composing==='true')return;
         const previousMentions=new Set((draft.promptSegments||[]).filter(segment=>typeof segment!=='string').map(segment=>segment.id));
-        draft.prompt=draft.type==='video'?generationPromptCodec.serialize(event.target):event.target.value;
-        if(draft.type==='video'){draft.promptSegments=generationPromptSegments(event.target);generationPromptCodec.normalizeEmpty(event.target);}
+        draft.prompt=generationPromptCodec.serialize(event.target);
+        draft.promptSegments=generationPromptSegments(event.target);generationPromptCodec.normalizeEmpty(event.target);
         const mentions=new Set((draft.promptSegments||[]).filter(segment=>typeof segment!=='string').map(segment=>segment.id));
         const previousCount=draft.attachments.length;
         draft.attachments=draft.attachments.filter(file=>!previousMentions.has(file.id)||mentions.has(file.id));
@@ -2009,6 +2109,10 @@ export function createDirectorWorkspace(host, bridge) {
     // A card name is what @ mentions use: apply it once typing is done.
     generationPanel.addEventListener('change',event=>{
       const draft=generationDraft(activeGenerationId);
+      if(draft&&event.target.matches('[data-gen-result]')){
+        if(draftResults(liveDrafts(),draft.id).some(item=>item.id===event.target.value)){draft.primaryId=event.target.value;syncCanvas();scheduleCanvasSave();}
+        return;
+      }
       if(!draft?.entity||!event.target.matches('[data-gen-name]'))return;
       const wanted=event.target.value.trim();
       if(!wanted){event.target.value=draft.entity.name;return;}
@@ -2072,10 +2176,7 @@ export function createDirectorWorkspace(host, bridge) {
       const remove=event.target.closest('[data-gen-remove]');
       if(remove){
         const id=remove.dataset.genRemove;
-        if(draft.type==='video'&&Array.isArray(draft.promptSegments)){
-          draft.promptSegments=draft.promptSegments.filter(segment=>typeof segment==='string'||segment.id!==id);
-          draft.prompt=draft.promptSegments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('');
-        }
+        removeGenerationMention(draft,id,generationPromptView(draft));
         draft.attachments=draft.attachments.filter(file=>file.id!==id);scheduleCanvasSave();renderGenerationComposer();return;
       }
       if(event.target.closest('[data-gen-submit]')){void submitGenerationArea();return;}
@@ -2107,6 +2208,8 @@ export function createDirectorWorkspace(host, bridge) {
     const bindCanvas=api=>{
       if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
+      canvas.getContainer().addEventListener('wheel',forwardCanvasMediaWheel,{capture:true,passive:false});
+      for(const type of ['pointerdown','mousedown','touchstart'])canvas.getContainer().addEventListener(type,forwardCanvasDocumentPan,{capture:true,passive:false});
       canvasLibrary=createCanvasMediaLibrary({api:bridge.agentApi,findFile:bridge.canvasFile,registerFile:bridge.registerCanvasFile,importLocal:bridge.importLocalMedia,
         isCurrent:()=>mountEpoch===epoch&&Boolean(canvas)});
       canvas.on('nodes:created',handleCreatedCanvasNodes);
@@ -2131,8 +2234,10 @@ export function createDirectorWorkspace(host, bridge) {
       canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;activeGenerationId=generationDraft(next)?.taskId?'':generationDraft(next)?.id||'';renderGenerationComposer();if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else window.setTimeout(()=>{if(mountEpoch===epoch&&canvas&&!syncing&&!selected)syncCanvas();},0);});
       canvas.on('nodes:deleted',deletedNodes=>{
         if(syncing||!Array.isArray(deletedNodes)||deletedNodes.length===0)return;
-        const deletedIds=markCanvasItemsHidden(deletedNodes.map(node=>node?.id).filter(Boolean));
-        if(deletedIds.length===0)return;
+        const ids=deletedNodes.map(node=>node?.id).filter(Boolean);
+        const unlinked=removeCanvasInputEdges(ids);
+        const deletedIds=markCanvasItemsHidden(ids);
+        if(deletedIds.length===0&&!unlinked)return;
         pruneAssetImages(liveCanvasNodes().filter(node=>!deletedIds.includes(node.id)));
         clearTimeout(saveTimer);
         saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);
@@ -2144,7 +2249,7 @@ export function createDirectorWorkspace(host, bridge) {
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
       canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();queueCanvasMediaLibrary();});
-      canvas.on('viewport:change',v=>{canvasContextMenu?.close();if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();queueWorkspaceFrame(()=>{alignCards();positionGenerationComposer();connector?.refresh();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
+      canvas.on('viewport:change',v=>{canvasContextMenu?.close();if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();queueWorkspaceFrame(()=>{alignCards();renderEdges(liveCanvasNodes());positionGenerationComposer();connector?.refresh();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
       // Konva owns live geometry during both drag and resize. The public
       // state event arrives only after the gesture, so align HTML cards and
       // arrows from the native shape on every move.
@@ -2496,7 +2601,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

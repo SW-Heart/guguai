@@ -1,4 +1,4 @@
-import { normalizeLinks, entityKinds } from './canvas-links.js?v=1';
+import { normalizeLinks, entityKinds } from './canvas-links.js?v=2';
 // Persist only inert canvas attributes, never executable HTML or application state.
 function isMeaningfulRichText(node) {
  const html=typeof node?.$_htmlContent==='string'?node.$_htmlContent:(typeof node?.text==='string'?node.text:'');
