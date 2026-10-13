@@ -12,11 +12,11 @@ test('right-click placement accounts for the canvas offset, pan and zoom', () =>
 test('the context menu is reachable through fresh script and stylesheet cache versions', () => {
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=547', '/styles.css?v=399']],
-    ['app.js', ['./drama-studio.js?v=268', './features/agent/workspace.js?v=135']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=161']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=161']],
-    ['features/drama/director-workspace.js', ['./canvas-context-menu.js?v=1']],
+    ['index.html', ['/app.js?v=548', '/styles.css?v=400']],
+    ['app.js', ['./drama-studio.js?v=269', './features/agent/workspace.js?v=136']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=162']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=162']],
+    ['features/drama/director-workspace.js', ['./canvas-context-menu.js?v=2']],
   ]) for (const url of urls) assert.ok(read(file).includes(url), `${file}: ${url}`);
 });
 
@@ -95,7 +95,7 @@ test('image and video nodes use the requested point and keep normal draft setup'
     bridge: { toast: message => assert.fail(message) },
   });
   vm.runInContext(source.slice(source.indexOf('  function createGenerationArea('), source.indexOf('  async function submitGenerationArea(')), context);
-  for (const type of ['image', 'video']) context.createGenerationArea(type, { x: -150, y: 400 });
+  for (const type of ['image', 'video']) context.createGenerationArea(type, { point: { x: -150, y: 400 } });
   assert.equal(state.generationDrafts.length, 2);
   assert.equal(state.positions.image.x, -150); assert.equal(state.positions.video.y, 400);
   assert.deepEqual(selected, [['image'], ['video']]);

@@ -1,5 +1,6 @@
 import { createCanvasGenerationDraft, reconcileCanvasGenerationDraft, canvasGenerationFrameSize } from './canvas-generation.js?v=15';
-import { addGenerationReference } from './canvas-generation-references.js?v=6';
+import { addGenerationReference, admitLinkedReference } from './canvas-generation-references.js?v=7';
+import { addLink, normalizeLinks } from './canvas-links.js?v=1';
 
 // Turns the agent's storyboard plans into ordinary canvas generation cards.
 // Cards stay fully editable; a later plan revision only rewrites cards whose
@@ -16,7 +17,7 @@ function referenceAspect(reference){
 function segmentDraft(storyboard,segment,config){
   const draft=createCanvasGenerationDraft('video',config);
   Object.assign(draft,{
-    id:storyboardDraftId(storyboard.id,'segment',segment.key),prompt:segment.prompt,promptSegments:[],
+    id:storyboardDraftId(storyboard.id,'segment',segment.key),prompt:segment.prompt,promptSegments:[],role:'shot',
     modelId:storyboard.video.modelId,aspect:storyboard.video.aspect,quality:storyboard.video.quality,mode:'TEXT',duration:segment.duration,
     title:`${segment.episode} · ${segment.title}`,
     source:{storyboardId:storyboard.id,key:segment.key,revision:storyboard.revision,role:'segment',name:'',prompt:segment.prompt,references:segmentReferenceNames(storyboard,segment),autoAttached:[]},
@@ -30,6 +31,7 @@ function referenceDraft(storyboard,reference,config){
     id:storyboardDraftId(storyboard.id,'reference',reference.key),prompt:reference.prompt,promptSegments:[],
     ...(storyboard.image?.modelId?{modelId:storyboard.image.modelId}:{}),...(storyboard.image?.quality?{quality:storyboard.image.quality}:{}),
     aspect:referenceAspect(reference),quantity:1,
+    ...(kindLabels[reference.kind]?{entity:{kind:reference.kind,name:reference.name}}:{}),
     title:`${kindLabels[reference.kind]||'参考'} · ${reference.name}`,
     source:{storyboardId:storyboard.id,key:reference.key,revision:storyboard.revision,role:'reference',name:reference.name,prompt:reference.prompt,references:[],autoAttached:[]},
   });
@@ -41,29 +43,27 @@ function segmentReferenceNames(storyboard,segment){
   return (segment.references||[]).map(key=>byKey.get(key)?.name).filter(Boolean);
 }
 
-// The real image behind a reference: an existing asset chosen by the agent, or
-// the finished result of the reference card on this canvas.
-function referenceFile(storyboard,name,drafts,{task,media}){
-  const reference=(storyboard.references||[]).find(item=>item.name===name);
-  if(!reference)return null;
-  if(reference.assetId)return {id:reference.assetId,name,kind:'image',url:reference.url||''};
-  const card=drafts.find(item=>item.id===storyboardDraftId(storyboard.id,'reference',reference.key));
-  const result=card?.taskId?task(card.taskId):null;
-  if(result?.status!=='completed'||!result.assetId)return null;
-  return {id:result.assetId,name,kind:'image',url:media(card.taskId)?.url||''};
-}
-
-function attachReferences(draft,storyboard,drafts,config,lookups){
-  if(draft.taskId||draft.source?.role!=='segment')return false;
+// References the agent picked from existing files are attached directly.
+// References drawn on this canvas are linked from their card, so the segment
+// always uses the card's current main picture.
+function linkReferences(draft,storyboard,workspace,config){
+  if(draft.source?.role!=='segment'||draft.taskId)return false;
   let changed=false;
+  const linkedKinds=()=>normalizeLinks(workspace.links).filter(link=>link.to===draft.id).map(()=> 'image');
   for(const name of draft.source.references||[]){
-    const file=referenceFile(storyboard,name,drafts,lookups);
-    if(!file||draft.source.autoAttached.includes(file.id))continue;
-    // Remember the attempt even when the model refuses the file, so a card the
-    // user cleared is not refilled on every refresh.
-    draft.source.autoAttached=[...draft.source.autoAttached,file.id];
+    const reference=(storyboard.references||[]).find(item=>item.name===name);
+    if(!reference)continue;
+    const marker=reference.assetId||storyboardDraftId(storyboard.id,'reference',reference.key);
+    // Remember the attempt even when the model refuses the input, so a
+    // reference the user removed is not restored on every refresh.
+    if(draft.source.autoAttached.includes(marker))continue;
+    if(!reference.assetId&&(!workspace.generationDrafts.some(item=>item.id===marker)||(workspace.hiddenIds||[]).includes(marker)))continue;
+    draft.source.autoAttached=[...draft.source.autoAttached,marker];
     changed=true;
-    try{addGenerationReference(draft,file,config);}catch{}
+    try{
+      if(reference.assetId)addGenerationReference(draft,{id:reference.assetId,name,kind:'image',url:reference.url||''},config);
+      else{admitLinkedReference(draft,'image',linkedKinds(),config);addLink(workspace,marker,draft.id);}
+    }catch{}
   }
   if(changed)reconcileCanvasGenerationDraft(draft,config);
   return changed;
@@ -88,10 +88,9 @@ function layoutRows(rows,positions){
   return result;
 }
 
-export function mergeStoryboardDrafts(workspace,storyboards,{config={},task=()=>null,media=()=>null,limit=200}={}){
+export function mergeStoryboardDrafts(workspace,storyboards,{config={},limit=200}={}){
   const drafts=workspace.generationDrafts||=[];
   const positions=workspace.positions||={};
-  const lookups={task,media};
   const added=[],rows=[];
   let changed=false,skipped=0;
   for(const storyboard of Array.isArray(storyboards)?storyboards:[]){
@@ -100,11 +99,11 @@ export function mergeStoryboardDrafts(workspace,storyboards,{config={},task=()=>
     const upsert=(id,create,update)=>{
       const existing=drafts.find(item=>item.id===id);
       if(!existing){
-        if(drafts.length>=limit){skipped++;return;}
+        if(drafts.filter(item=>!item.parentId).length>=limit){skipped++;return;}
         const draft=create();drafts.push(draft);fresh.push(draft);added.push(id);changed=true;return;
       }
       if(!existing.source||existing.source.revision>=storyboard.revision)return;
-      const untouched=!existing.taskId&&existing.prompt===existing.source.prompt;
+      const untouched=!existing.taskId&&!drafts.some(item=>item.parentId===existing.id)&&existing.prompt===existing.source.prompt;
       update(existing,untouched);
       existing.source.revision=storyboard.revision;
       changed=true;
@@ -127,7 +126,7 @@ export function mergeStoryboardDrafts(workspace,storyboards,{config={},task=()=>
         reconcileCanvasGenerationDraft(draft,config);
       });
     }
-    for(const draft of drafts)if(draft.source?.storyboardId===storyboard.id&&attachReferences(draft,storyboard,drafts,config,lookups))changed=true;
+    for(const draft of drafts)if(draft.source?.storyboardId===storyboard.id&&linkReferences(draft,storyboard,workspace,config))changed=true;
     if(fresh.length){
       const references=fresh.filter(draft=>draft.source.role==='reference');
       const episodes=new Map();

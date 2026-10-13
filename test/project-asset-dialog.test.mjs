@@ -103,8 +103,8 @@ test('desktop drama asset picker returns the complete batch when multiple is req
 
 test('batch upload changes reach the current versioned frontend entrypoints', async () => {
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/\/app\.js\?v=547\b/);
-  assert.match(app,/\.\/drama-studio\.js\?v=268\b/);
+  assert.match(html,/\/app\.js\?v=548\b/);
+  assert.match(app,/\.\/drama-studio\.js\?v=269\b/);
 });
 
 test('short-drama asset imports keep the local copy and skip cloud upload', async () => {
@@ -162,7 +162,7 @@ test('generation uploads local references two at a time and reuses recent result
 test('canvas generations and sent messages upload local files only at that moment', async () => {
   const director = await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
   const generate = director.slice(director.indexOf('  async function submitGenerationArea(){'), director.indexOf('  function mount() {'));
-  assert.match(generate, /bridge\.prepareCloudFiles\(draft\.attachments\)[\s\S]*payload\.referenceAssetIds=ready\.map/);
+  assert.match(generate, /bridge\.prepareCloudFiles\(request\.attachments\)[\s\S]*payload\.referenceAssetIds=ready\.map/);
   const send = director.slice(director.indexOf('  async function drainSubmissions(){'), director.indexOf('  function submit('));
   assert.match(send, /bridge\.prepareCloudFiles\(request\.files\)[\s\S]*client\.send\(content,\[\.\.\.new Set\(\[\.\.\.request\.selectionIds,\.\.\.files\.map/);
   for (const bridge of [studio, await readFile(new URL('../public/features/agent/workspace.js', import.meta.url), 'utf8')]) {

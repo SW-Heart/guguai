@@ -1,7 +1,7 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=4';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=4';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=161';
-import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=162';
+import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=15';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';
 import { defaultTitleFromMessage } from './default-title.js?v=1';

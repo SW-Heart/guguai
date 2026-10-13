@@ -120,5 +120,5 @@ test('preview errors stop before the full-library refresh and cache URLs match',
   assert.match(app, /if \(media\.dataset\.previewSrc\) \{\s*videoPreviews\.fail\(media\);\s*return;/);
   assert.ok(app.includes('./features/media/video-previews.js?v=2'));
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=547'));
+  assert.ok(html.includes('/app.js?v=548'));
 });
