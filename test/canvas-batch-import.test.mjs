@@ -45,15 +45,20 @@ test('batch import reveals and selects every item with one sync, focus and save'
   assert.equal(syncs,1);assert.equal(saves,1);
   assert.equal(Object.keys(positions).length,120);
   assert.ok(Object.values(positions).every(position=>position.y===positions[files[0].id].y));
-  context.bridge.importAsset=async()=>null;await context.importAssetIntoCanvas();assert.equal(syncs,1);
-  context.bridge.importAsset=async()=>{context.epoch++;return files;};await context.importAssetIntoCanvas();assert.equal(syncs,1);
+  await context.importAssetIntoCanvas({x:-120,y:345});
+  assert.equal(positions[files[0].id].x,-120);assert.equal(positions[files[0].id].y,345);
+  assert.equal(positions[files[1].id].x,-120+positions[files[0].id].width+32);
+  assert.ok(Object.values(positions).every(position=>position.y===345));
+  assert.equal(syncs,2);
+  context.bridge.importAsset=async()=>null;await context.importAssetIntoCanvas();assert.equal(syncs,2);
+  context.bridge.importAsset=async()=>{context.epoch++;return files;};await context.importAssetIntoCanvas();assert.equal(syncs,2);
 });
 
 test('row preparation waits for every image dimension before placement',async()=>{
   const pending=[];
   const context=vm.createContext({epoch:1,assetImages:new Map(),assetSizes:new Map(),importedImageBounds,mediaFrameSize,
     Image:class {constructor(){this.naturalWidth=100;this.naturalHeight=1000;}decode(){return new Promise(resolve=>pending.push(resolve));}}});
-  vm.runInContext(director.slice(director.indexOf('  async function prepareImportedCanvasRow('),director.indexOf('  async function importAssetIntoCanvas()')),context);
+  vm.runInContext(director.slice(director.indexOf('  async function prepareImportedCanvasRow('),director.indexOf('  async function importAssetIntoCanvas(')),context);
   let complete=false;
   const result=context.prepareImportedCanvasRow([{id:'a',kind:'image',url:'a.png'},{id:'b',kind:'image',url:'b.png'}],1).then(value=>{complete=true;return value;});
   pending[0]();await Promise.resolve();assert.equal(complete,false);

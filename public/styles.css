@@ -5981,6 +5981,10 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .director-workspace .dw-gen-menu{position:fixed;inset:auto;z-index:24;box-sizing:border-box;margin:0;overflow-y:auto;overscroll-behavior:contain;padding:8px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.85098);border-radius:14px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96863);box-shadow:0 0 0 1px #5750c814,0 16px 40px #2c2a582e,0 3px 8px #2c2a5812;backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);color:var(--theme-ink-soft, #343854);font-family:var(--sans);animation:dw-gen-menu-open .14s cubic-bezier(.2,.8,.2,1)}
 .director-workspace.dw-generation-overlay{position:fixed;inset:0;z-index:10000;display:block;width:auto;height:auto;margin:0;padding:0;border:0;background:transparent;pointer-events:none}
 .director-workspace.dw-generation-overlay .dw-gen-menu:not([hidden]){display:block;visibility:visible;pointer-events:auto}
+.director-workspace .dw-canvas-context-menu{width:188px;max-width:calc(100vw - 16px);padding:6px}
+.director-workspace .dw-canvas-context-menu>button{display:flex;align-items:center;gap:10px;width:100%;min-height:38px;padding:9px 12px;border:0;border-radius:9px;background:transparent;color:var(--theme-ink, #303249);font:500 13px/1.5 var(--sans);text-align:left;cursor:pointer}
+.director-workspace .dw-canvas-context-menu>button:is(:hover,:focus-visible){outline:0;background:var(--theme-brand-soft, #efedfa);color:var(--theme-brand, #6254b5)}
+.dw-canvas-context-menu svg{flex:none;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .director-workspace .dw-gen-menu[data-placement=top]{animation-name:dw-gen-menu-open-up}
 .director-workspace .dw-gen-menu-title{padding:4px 8px 8px;color:var(--theme-muted, #7a7e98);font-size:11px;font-weight:600}
 .director-workspace .dw-gen-option-list{display:flex;flex-direction:column;gap:2px}
@@ -6032,7 +6036,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 
 /* Smart creation entry and saved projects. The masked texture stays bounded
    on large/high-DPI windows to limit compositor backing-store memory. */
-#agentView .agent-entry,#agentView .agent-projects{box-sizing:border-box;min-height:100%;background:radial-gradient(circle at 50% 20%,var(--theme-brand-soft, #efedff) 0,var(--theme-panel, #f8f8fc) 44%,var(--theme-panel, #f6f7fb) 100%);color:var(--theme-ink, #292d47)}
+#agentView .agent-entry{box-sizing:border-box;min-height:100%;background:radial-gradient(circle at 50% 20%,var(--theme-brand-soft, #efedff) 0,var(--theme-panel, #f8f8fc) 44%,var(--theme-panel, #f6f7fb) 100%);color:var(--theme-ink, #292d47)}
 #agentView .agent-entry{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;gap:44px;height:100%;min-height:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;overscroll-behavior:contain;padding:clamp(48px,10vh,104px) 32px 48px;background:radial-gradient(ellipse 68% 58% at 50% 30%,var(--theme-brand-soft, #f1f0ff) 0,var(--theme-panel, #f8f8fc) 62%,var(--theme-panel, #f7f8fb) 100%)}
 #agentView .agent-entry::before{position:absolute;z-index:-1;top:0;left:50%;width:min(100%,1320px);height:min(100%,900px);transform:translateX(-50%);content:"";background-image:radial-gradient(#6c63c51c .7px,transparent .9px);background-size:13px 13px;mask-image:radial-gradient(ellipse 63% 44% at 50% 42%,#000 0%,transparent 100%);pointer-events:none}
 #agentView .agent-entry-main{display:grid;gap:30px;width:min(900px,100%);text-align:center}
@@ -6048,9 +6052,9 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .dw-welcome .agent-welcome-hero h2{font:500 21px/1.5 var(--sans);margin:0}
 .director-workspace .dw-agent-reopen .gugu-agent-logo{width:36px;height:36px;border-radius:11px;box-shadow:0 3px 8px #252a4218}
 @media(max-width:580px){#agentView .agent-entry-main .agent-creative-presets{grid-template-columns:minmax(0,1fr);gap:4px}.dw-welcome .agent-welcome-hero{min-height:140px;gap:18px;padding:16px 0 20px}.dw-welcome .agent-welcome-hero h2{font-size:19px}.director-workspace .dw-agent-reopen .gugu-agent-logo{width:32px;height:32px;border-radius:10px}}
-#agentView .agent-entry-mark,#agentView .agent-project-icon{display:grid;place-items:center;color:var(--theme-brand, #5750c8);background:var(--theme-brand-soft, #ebe9ff);border:1px solid var(--theme-line, #dcd9f8)}
+#agentView .agent-entry-mark{display:grid;place-items:center;color:var(--theme-brand, #5750c8);background:var(--theme-brand-soft, #ebe9ff);border:1px solid var(--theme-line, #dcd9f8)}
 #agentView .agent-entry h1{margin:0;color:var(--theme-ink, #35334d);font-family:"Songti SC","STSong","Noto Serif CJK SC","SimSun",serif;font-size:30px;font-weight:400;line-height:1.5;letter-spacing:.5px}
-#agentView .agent-entry p,#agentView .agent-projects header p{margin:10px 0 24px;color:var(--theme-muted, #777b94);font-size:14px}
+#agentView .agent-entry p{margin:10px 0 24px;color:var(--theme-muted, #777b94);font-size:14px}
 #agentView .agent-entry-form{position:relative;z-index:1;display:grid;gap:9px;padding:15px 18px 11px;border:1px solid var(--theme-line, #dedff0);border-radius:22px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96078);box-shadow:0 20px 58px #35335d13,0 3px 12px #35335d08,inset 0 1px var(--theme-highlight, #fff);transition:border-color .18s ease,box-shadow .18s ease}
 #agentView .agent-entry-form:focus-within{border-color:var(--theme-brand-line, #aaa5e9);box-shadow:0 24px 72px #514e9618, inset 0 1px var(--theme-highlight, #fff)}
 #agentView .agent-entry-form textarea{box-sizing:border-box;width:100%;height:72px;min-height:72px;max-height:192px;overflow-y:auto;resize:none;padding:0;border:0;outline:0;background:transparent;color:var(--theme-ink, #292d47);font:15px/1.6 var(--sans)}
@@ -6096,9 +6100,9 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-entry-menu-copy small{color:var(--theme-muted, #85889b);font-size:11px;font-weight:400}
 @keyframes agent-entry-menu-in{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 #agentView .agent-entry-spacer{flex:1}
-#agentView .agent-entry button,#agentView .agent-projects button{font:600 13px var(--sans);cursor:pointer}
-#agentView .agent-entry-form button,#agentView .agent-projects header button{min-height:44px;padding:8px 18px;border:1px solid var(--theme-line, #dfddef);border-radius:10px;background:var(--theme-panel, #fff);color:var(--theme-brand, #514cb5)}
-#agentView .agent-entry-form .dw-primary,#agentView .agent-projects header .dw-primary{border-color:#5750c8;background:#5750c8;color:#fff}
+#agentView .agent-entry button{font:600 13px var(--sans);cursor:pointer}
+#agentView .agent-entry-form button{min-height:44px;padding:8px 18px;border:1px solid var(--theme-line, #dfddef);border-radius:10px;background:var(--theme-panel, #fff);color:var(--theme-brand, #514cb5)}
+#agentView .agent-entry-form .dw-primary{border-color:#5750c8;background:#5750c8;color:#fff}
 #agentView .agent-entry-form .agent-entry-add{display:grid;place-items:center;flex:none;width:40px;min-height:40px;height:40px;padding:0;border:0;border-radius:11px;background:transparent;color:var(--theme-muted, #74778c);transition:background .16s ease,color .16s ease}
 #agentView .agent-entry-form .agent-entry-add:hover{background:var(--theme-surface, #f2f1f8);color:var(--theme-brand, #4e4ba8)}
 #agentView .agent-entry-form .agent-entry-add .gugu-lucide{width:22px;height:22px;transition:transform .18s cubic-bezier(.2,.75,.25,1)}
@@ -6116,19 +6120,6 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 #agentView .agent-entry-form .agent-entry-send:disabled{background:var(--theme-surface, #e5e5eb);color:var(--theme-faint, #a7a8b2);box-shadow:none;cursor:not-allowed;transform:none}
 #agentView .agent-entry-form .agent-entry-send .gugu-lucide{width:20px;height:20px}
 #agentView .agent-entry-form button:focus-visible{outline:3px solid var(--theme-brand-line, #c6c2f4);outline-offset:2px}
-#agentView .agent-projects{padding:clamp(24px,5vw,64px)}
-#agentView .agent-projects>header{display:flex;align-items:center;gap:20px;max-width:1060px;margin:0 auto 28px}
-#agentView .agent-projects>header>div{flex:1}
-#agentView .agent-projects h1{margin:0;font-size:28px}
-#agentView .agent-projects header p{margin:5px 0 0}
-#agentView .agent-project-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px;max-width:1060px;margin:auto}
-#agentView .agent-project-card{display:flex;align-items:center;gap:14px;min-height:112px;padding:20px;text-align:left;border:1px solid var(--theme-line, #e1dff0);border-radius:18px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.86667);color:var(--theme-ink, #292d47);box-shadow:0 10px 28px #514e960e}
-#agentView .agent-project-card:hover{border-color:var(--theme-brand-line, #b7b0e8);box-shadow:0 14px 34px #514e961b}
-#agentView .agent-project-icon{flex:none;width:42px;height:42px;border-radius:13px;font-size:22px}
-#agentView .agent-project-card>span:nth-child(2){display:grid;gap:7px;min-width:0;flex:1}
-#agentView .agent-project-card strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
-#agentView .agent-project-card small{font-size:12px;color:var(--theme-muted, #81849b)}
-#agentView .agent-project-empty{grid-column:1/-1;padding:48px;text-align:center;color:var(--theme-muted, #777b94);border:1px dashed var(--theme-line, #d7d5e8);border-radius:18px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.54902)}
 #agentView .agent-project-loading{display:grid;place-items:center;height:100%;color:var(--theme-muted, #777b94)}
 #agentView .dw-project-back{width:auto;min-width:0;margin-right:6px;padding:5px 7px;font-size:12px;color:var(--theme-brand, #5750c8);white-space:nowrap}
 #agentView .director-workspace.agent-home .dw-agent{width:100%}
@@ -6141,7 +6132,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .gugu-lucide-maximize-2{--gugu-icon:url('/icons/lucide/maximize-2.svg?v=1')}
 .gugu-lucide-minus{--gugu-icon:url('/icons/lucide/minus.svg?v=1')}
 .gugu-lucide-message-circle{--gugu-icon:url('/icons/lucide/message-circle.svg?v=1')}
-@media(max-width:680px){#agentView .agent-projects>header{flex-wrap:wrap}#agentView .agent-projects>header>div{order:-1;flex-basis:100%}#agentView .agent-entry{padding:24px 16px}#agentView .agent-entry-main{gap:24px}#agentView .agent-entry h1{font-size:30px}#agentView .agent-entry-form{gap:8px;padding:13px 15px 10px;border-radius:19px}#agentView .agent-entry-form textarea{height:68px;min-height:68px;max-height:176px;font-size:14px}#agentView .agent-entry-chip{max-width:100%}#agentView .dw-project-back{font-size:11px}}
+@media(max-width:680px){#agentView .agent-entry{padding:24px 16px}#agentView .agent-entry-main{gap:24px}#agentView .agent-entry h1{font-size:30px}#agentView .agent-entry-form{gap:8px;padding:13px 15px 10px;border-radius:19px}#agentView .agent-entry-form textarea{height:68px;min-height:68px;max-height:176px;font-size:14px}#agentView .agent-entry-chip{max-width:100%}#agentView .dw-project-back{font-size:11px}}
 @media(prefers-reduced-motion:reduce){#agentView .agent-entry-form,#agentView .agent-entry-form .agent-entry-send,#agentView .agent-entry-form .agent-entry-menu button,#agentView .agent-entry-form .agent-entry-add .gugu-lucide,#agentView .agent-entry-form .agent-entry-skill-trigger{transition:none}#agentView .agent-entry-menu{animation:none}}
 
 #agentView .dw-agent .dw-composer>.dw-selected-skill{display:inline-flex;align-items:center;gap:6px;width:max-content;max-width:100%;min-height:30px;box-sizing:border-box;margin:0 0 5px;padding:3px 5px 3px 9px;border:1px solid var(--theme-line, #dedbe9);border-radius:9px;background:var(--theme-panel, #faf9fd);color:var(--theme-ink, #34354a);font-size:12px;font-weight:540}
@@ -6406,6 +6397,7 @@ body:has(.app-shell.agent-project-open) .desktop-titlebar-logo{display:none!impo
 #agentView .agent-home:not(.agent-empty) .dw-message-scroller{align-self:stretch;max-width:none}
 #agentView .agent-empty .dw-message-scroller{flex:0 0 auto}
 .dw-message-scroller{position:relative;display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
+.dw-message-history>.dw-message.assistant:has(+.dw-message.assistant),.dw-message-history:has(+.dw-message-draft)>.dw-message.assistant:last-child{margin-bottom:12px}
 .dw-message-scroller .dw-messages{box-sizing:border-box;flex:1;min-height:0;outline:none;overflow-anchor:none}
 .dw-message-scroller .dw-messages.has-message-rail{padding-right:48px;scrollbar-width:none}
 .dw-message-scroller .dw-messages.has-message-rail::-webkit-scrollbar{display:none}
@@ -6415,15 +6407,18 @@ body:has(.app-shell.agent-project-open) .desktop-titlebar-logo{display:none!impo
 .dw-message-rail{position:absolute;z-index:2;top:50%;right:7px;display:flex;flex-direction:column;justify-content:center;width:28px;height:280px;max-height:calc(100% - 24px);min-height:0;transform:translateY(-50%)}
 .dw-message-rail[hidden]{display:none}
 .dw-message-rail .dw-message-tick{position:relative;display:flex;flex:0 1 24px;align-items:center;justify-content:flex-end;min-height:0;width:28px;padding:0 2px;border:0;background:transparent;color:var(--theme-faint, #ada9bb);cursor:pointer}
-.dw-message-tick-line{display:block;width:10px;height:1px;border-radius:1px;background:currentColor;transition:width .15s,color .15s}
-.dw-message-tick:hover,.dw-message-tick:focus-visible,.dw-message-tick[aria-current]{color:var(--theme-brand, #7163c1)}
-.dw-message-tick:hover .dw-message-tick-line,.dw-message-tick:focus-visible .dw-message-tick-line,.dw-message-tick[aria-current] .dw-message-tick-line{width:20px;height:2px}
+.dw-message-tick-line{display:block;width:24px;height:2px;border-radius:1px;background:currentColor;transform:scaleX(.25);transform-origin:right center;transition:transform .32s cubic-bezier(.16,1,.3,1),background-color .15s}
+.dw-message-tick[data-wave=peak]{color:var(--theme-brand, #7163c1)}
+.dw-message-tick[data-wave=peak] .dw-message-tick-line{transform:scaleX(1)}
+.dw-message-tick[data-wave=near] .dw-message-tick-line{transform:scaleX(.68)}
+.dw-message-tick[data-wave=far] .dw-message-tick-line{transform:scaleX(.44)}
 .dw-message-rail .dw-message-tick:focus-visible{outline:2px solid #7163c1;outline-offset:2px}
 .dw-message-preview{position:absolute;right:35px;top:50%;display:grid;gap:5px;box-sizing:border-box;width:min(270px,calc(100vw - 110px));padding:12px 14px;border:1px solid var(--theme-line, #e6e3ef);border-radius:13px;background:rgb(var(--theme-panel-rgb, 255 254 250) / 0.93725);box-shadow:0 12px 36px #25204524;color:var(--theme-ink, #39354c);text-align:left;font-size:12px;line-height:1.5;opacity:0;pointer-events:none;transform:translate(4px,-50%);transition:opacity .15s,transform .15s;backdrop-filter:blur(14px)}
 .dw-message-preview strong,.dw-message-preview>span{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
 .dw-message-preview>span[hidden]{display:none}
 .dw-message-preview strong{font-weight:600}.dw-message-preview>span{color:var(--theme-muted, #817b90)}
-.dw-message-tick:hover .dw-message-preview,.dw-message-tick:focus-visible .dw-message-preview{opacity:1;transform:translate(0,-50%)}
+.dw-message-tick:focus-visible .dw-message-preview{opacity:1;transform:translate(0,-50%)}
+@media(hover:hover){.dw-message-tick:hover .dw-message-preview{opacity:1;transform:translate(0,-50%)}}
 @media(prefers-reduced-motion:reduce){.dw-message-tick-line,.dw-message-preview{transition:none}}
 #agentView .dw-agent .dw-composer{box-shadow:0 3px 14px #30325d08}
 body.desktop-runtime #agentView .dw-project-chrome,body.desktop-runtime #agentView .dw-agent-page-header{-webkit-app-region:drag;user-select:none}
@@ -6439,7 +6434,7 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
 #agentView .director-workspace.agent-space:not(.agent-home){--dw-float-gap:12px;--dw-agent-inset:calc(var(--dw-chat-width,460px) + var(--dw-float-gap));--dw-float-glass:rgb(var(--theme-panel-rgb, 255 255 255) / 0.82);--dw-float-line:rgb(var(--theme-line-rgb, 226 228 240) / 0.8);--dw-float-shadow:0 18px 48px #2b2d5a17,0 3px 10px #2b2d5a0d,inset 0 1px var(--theme-highlight, #fff);grid-template-columns:minmax(0,1fr)}
 #agentView .director-workspace.agent-space.agent-collapsed{--dw-agent-inset:0px}
 #agentView .agent-space:not(.agent-home)>.dw-board{padding-top:0}
-#agentView .agent-space:not(.agent-home)>.dw-agent{grid-area:1/1/2/2;justify-self:end;z-index:12;box-sizing:border-box;width:var(--dw-chat-width,460px);max-width:calc(100% - var(--dw-float-gap) * 2);height:auto;margin:var(--dw-float-gap) var(--dw-float-gap) var(--dw-float-gap) 0;border:1px solid var(--dw-float-line);border-radius:20px;background:var(--dw-float-glass);-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4);box-shadow:0 24px 64px #2b2d5a1f,0 4px 14px #2b2d5a0f,inset 0 1px var(--theme-highlight, #fff)}
+#agentView .agent-space:not(.agent-home)>.dw-agent{grid-area:1/1/2/2;justify-self:end;z-index:12;box-sizing:border-box;width:var(--dw-chat-width,460px);max-width:calc(100% - var(--dw-float-gap) * 2);height:auto;margin:var(--dw-float-gap) var(--dw-float-gap) var(--dw-float-gap) 0;border:1px solid var(--dw-float-line);border-radius:20px;background:var(--dw-float-glass);-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4);box-shadow:inset 0 1px var(--theme-highlight, #fff)}
 #agentView .agent-space:not(.agent-home)>.dw-agent>.dw-agent-page-header{border-radius:20px 20px 0 0}
 #agentView .agent-space:not(.agent-home) .dw-agent-resizer{left:-6px;top:20px;bottom:20px}
 #agentView .agent-space.agent-collapsed>.dw-agent{transform:translateX(24px) scale(.98);transform-origin:right center}

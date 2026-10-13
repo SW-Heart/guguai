@@ -12,7 +12,7 @@ test('mentions find a query at the caret without consuming surrounding text',()=
   assert.equal(mentionTrigger('@角色',1,3),null);
 });
 test('mention entry cache chain is updated',()=>{
- for(const [file,url] of [['index.html','/app.js?v=540'],['app.js','./drama-studio.js?v=262'],['drama-studio.js','./features/drama/director-workspace.js?v=156'],['features/drama/director-workspace.js','./director-mentions.js?v=5']]){
+ for(const [file,url] of [['index.html','/app.js?v=544'],['app.js','./drama-studio.js?v=266'],['drama-studio.js','./features/drama/director-workspace.js?v=159'],['features/drama/director-workspace.js','./director-mentions.js?v=5']]){
     assert.ok(readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8').includes(url));
   }
   const workspace=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');

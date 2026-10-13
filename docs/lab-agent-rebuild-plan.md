@@ -1,6 +1,6 @@
 # 实验室升级为 Agent：页面、无限画布与爆款视频复刻计划
 
-日期：2026-09-23。状态：实施中。依据当前工作区代码及 Hypit 仓库快照 `78d7436071ba`。实施时以最新代码和实际模型能力复核接口。
+日期：2026-09-23。状态：历史方案（2026-10-13 归档）。以下内容记录当时的设计与代码快照，不代表当前功能或实施任务。当前入口为 `/create` 和 `/projects`；独立爆款复刻页面与后端已下线，视频复刻仍可通过创作技能使用。
 
 首批已落地：Agent 页面与会话画布存储、短剧新建专业编辑入口、复刻 Skill 绑定、Hypit Skill 原文件留存、平台端视频探测、按时间取帧、物理切镜候选、原片混合音轨提取、Deepgram Nova-3 逐词转录、Agent 项目内共享的带时间证据原片观察、音轨/静音技术检查、分段视频拼接、独立音轨混合，以及基于成片转录的普通/逐词字幕烧录。画布可查看台词时间线、播放同步字幕并下载 SRT。模型评估见 `docs/hypit-model-integration-assessment.md`。直接读完整视频的模型按用户决定暂缓；当前仍需复刻目标方案的结构化存储、独立声音生成、声源分离、精细化音量自动调整，以及实际内容听审。当前混音只支持已提供的独立音频素材，不能从视频原声中拆出音乐；技术检查和转录不能证明成片内容正确。
 
@@ -21,11 +21,9 @@
 | `lib/agent/runtime.mjs` 已有多轮工具调用、持久会话、暂停/继续、生成报价与确认；`lib/agent/tools.mjs` 已接文档、素材、画布项目编辑及图像/视频生成。 | 复用一个主 Agent，扩展工具注册和任务状态；长视频任务需跨多个可恢复阶段，不能依赖单轮 24 步上限完成全片。 |
 | `public/features/drama/director-workspace.js` 已有对话、历史、附件、生成卡片、无限画布和节点交互。 | 提取画布和对话部件；当前节点构造、保存、`bridge` 接口、`directorWorkspace` 均绑定短剧项目，不能只移动 DOM。 |
 | `repositories/agent-sessions.mjs` 的会话按设备工作区和 `project_id` 归档；`server/routes/agent.mjs` 对非空项目 ID 只认短剧项目。 | 增加通用 Agent 创作空间 ID；让无项目对话、复刻项目和旧短剧会话都可正确归属。 |
-| `public/features/viral-lab/controller.js` 和 `server/routes/viral-lab.mjs` 已有复刻项目、素材确认、来源分析、计划和分段生成。 | 保留现有复刻项目及生成记录，逐步将其功能封装为 Agent 工具；旧页面在迁移完成前作为兼容入口。 |
 | 原片分析在服务端最多抽 24 张静态帧，并明确丢弃音频；Agent 的 `assets_inspect` 对视频也只读元信息。 | 接入可按范围反复取帧、语音转录、逐词时间戳、音画联合检查。 |
 | 文件库能存音频、视频模型能接受部分音频参考；`/api/generations` 当前只提交图像/视频。平台端可拼接片段、混合独立音轨、烧录字幕。 | 继续补齐音频生成、声源分离、音量自动调整与可编辑的完整多轨任务；不能把“接受参考音频”误算成“能生成配音”。 |
 
-已有的 `docs/viral-lab-product-spec.md`、`docs/viral-lab-workflow-mapping.md` 中的台词锁定、素材职责、分段边界、幂等收费和局部返工规则继续作为复刻领域约束；本计划负责统一 Agent 入口、Skill 和平台能力。
 
 ## 3. 页面与交互
 
@@ -127,7 +125,7 @@ P1 可作为 Agent 页面内部预览；“爆款视频复刻可执行”的公�
 ## 9. 首批代码落点
 
 - 页面：`public/index.html`、`public/app.js`、新建 `public/features/agent/workspace.js` 与通用画布组件；保留 `public/features/agent/client.js` 作为会话客户端。
-- 数据与路由：`repositories/agent-sessions.mjs`、新增 AgentSpace repository、`server/routes/agent.mjs`、`server/routes/viral-lab.mjs`、`services/projects.mjs`。
+- 数据与路由：`repositories/agent-sessions.mjs`、新增 AgentSpace repository、`server/routes/agent.mjs`、`services/projects.mjs`。
 - Agent 与 Skill：`lib/agent/runtime.mjs`、`lib/agent/tools.mjs`、`lib/agent/skills.mjs`、`agent-skills/video-replication/`。
 - 媒体：`server/routes/generations.mjs`、新增视频分析/音频/合成 Worker 与模型能力登记；复用已有文件库、价格、任务恢复和生成路由。
 - 短剧迁移：`public/drama-studio.js`、`public/features/drama/director-workspace.js`、`public/features/drama/director-actions.js`；先抽通用组件再撤短剧入口。

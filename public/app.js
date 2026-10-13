@@ -2157,7 +2157,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=130').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=133').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2168,7 +2168,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=262').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=266').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2432,97 +2432,6 @@ window.addEventListener('focus', refreshLiveConfig);
 document.addEventListener('visibilitychange', refreshLiveConfig);
 
 function updateDramaModelState() { dramaController?.modelState?.(); }
-
-if (false) {
-function assetName(asset) { return typeof asset === 'string' ? asset : asset?.name || '未命名'; }
-async function loadDramaWorkspace(force=false) {
-  if (state.dramaLoading || (state.dramaProject && !force)) return;
-  state.dramaLoading = true;
-  try {
-    const result = await api('/api/drama/projects/latest');
-    state.dramaProject = result.project;
-    $('#dramaScript').value = result.project.script || '';
-    $('#dramaScriptCount').textContent = Array.from(result.project.script || '').length.toLocaleString('zh-CN');
-    if (result.project.storyboard) renderStoryboard(result.project);
-    else renderDramaAnalysis({ project:result.project, analysis:result.project.analysis, usage:result.project.analysisUsage });
-  } catch (error) {
-    if (error.status !== 404) toast(error.message);
-  } finally { state.dramaLoading = false; }
-}
-function renderDramaAnalysis(result) {
-  state.dramaAnalysis = result;
-  if (result.project) state.dramaProject = result.project;
-  const analysis = result.analysis || state.dramaProject?.analysis;
-  const usage = result.usage || state.dramaProject?.analysisUsage || {};
-  const scenes = analysis.scenes || [];
-  const labels = { characters:'角色', locations:'场景', props:'道具', costumes:'服装' };
-  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="active">02 分镜</span><span>03 关键帧</span><span>04 视频</span></nav><header class="analysis-title"><span>剧本分析</span><h2>${esc(analysis.title)}</h2><p>${esc(analysis.logline || '尚未生成故事梗概')}</p><div class="analysis-usage"><span>输入 ${Number(usage.inputTokens || 0).toLocaleString('zh-CN')}</span><span>输出 ${Number(usage.outputTokens || 0).toLocaleString('zh-CN')}</span><span>实扣 ${creditText(usage.chargedCredits)} 积分</span></div></header><section class="analysis-section"><header><h3>场次表</h3><span>${scenes.length} 场次</span></header><div class="scene-ledger">${scenes.length ? scenes.map((scene, index) => `<article class="scene-row"><span class="scene-number">${String(scene.sceneNumber ?? index + 1).padStart(2,'0')}</span><div class="scene-copy"><b>${esc(scene.heading || scene.location || `场次 ${index + 1}`)}</b><p>${esc(scene.summary || scene.dramaticFunction || '待补充场次说明')}</p></div><span class="scene-time">${esc(scene.timeOfDay || '')}</span></article>`).join('') : '<div class="analysis-error">没有识别到场次，请补充场次标题后重新分析。</div>'}</div></section><section class="analysis-section"><header><h3>素材清单</h3><span>初步结果</span></header><div class="asset-groups">${Object.entries(labels).map(([key,label]) => { const items = analysis.assets?.[key] || []; return `<div class="asset-group"><b>${label} · ${items.length}</b><div class="asset-tags">${items.length ? items.map(item => `<span title="${esc(typeof item === 'object' ? item.description || '' : '')}">${esc(assetName(item))}</span>`).join('') : '<span>未识别</span>'}</div></div>`; }).join('')}</div></section><section class="workflow-next"><div><span>下一步</span><b>分析已保存，下一步生成导演分镜</b><p>将每个场次拆成固定 6 秒镜头，并生成关键帧与视频描述。费用按实际用量计算。</p></div><button id="generateStoryboardButton" class="gradient-button" type="button">生成导演分镜</button></section>`;
-  $('#generateStoryboardButton').onclick = generateStoryboard;
-}
-
-async function generateStoryboard() {
-  if (!state.dramaProject?.id) return toast('请先完成剧本分析');
-  const button = $('#generateStoryboardButton'); button.disabled = true; button.textContent = '正在设计镜头…';
-  try {
-    const result = await api(`/api/drama/projects/${state.dramaProject.id}/storyboard`, { method:'POST', body:'{}' });
-    state.dramaProject = result.project; setCreditBalance(result.balance); renderStoryboard(result.project);
-    toast(`分镜完成，实扣 ${creditText(result.usage.chargedCredits)} 积分`);
-  } catch (error) { button.disabled = false; button.textContent = '重新生成导演分镜'; toast(error.message); await loadCredits(); }
-}
-
-const shotTask = (shot, kind) => shot ? state.tasks.find(task => task.id === shot[kind === 'keyframe' ? 'keyframeTaskId' : 'videoTaskId']) : null;
-const shotAsset = task => task?.assetId ? state.files.find(file => file.id === task.assetId) : null;
-function shotAction(shot, keyframeTask, videoTask) {
-  if (!keyframeTask) return `<button class="shot-generate" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">生成关键帧 <small>预计消耗 ${state.pricing.image} 积分</small></button>`;
-  if (['queued','running'].includes(keyframeTask.status)) return `<span class="shot-progress"><i></i>关键帧${statusText(keyframeTask.status)}</span>`;
-  if (keyframeTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="keyframe" data-shot-id="${shot.id}" type="button">重试关键帧 <small>预计消耗 ${state.pricing.image} 积分</small></button>`;
-  if (!videoTask) return `<button class="shot-generate video" data-shot-action="video" data-shot-id="${shot.id}" type="button">生成 6 秒视频 <small>预计消耗 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
-  if (['queued','running'].includes(videoTask.status)) return `<span class="shot-progress"><i></i>视频${statusText(videoTask.status)}</span>`;
-  if (videoTask.status === 'failed') return `<button class="shot-generate retry" data-shot-action="video" data-shot-id="${shot.id}" type="button">重试视频 <small>预计消耗 ${6 * state.pricing.videoPerSecond} 积分</small></button>`;
-  return '<span class="shot-complete">✓ 镜头视频完成</span>';
-}
-function renderStoryboard(project=state.dramaProject) {
-  if (!project?.storyboard) return;
-  state.dramaProject = project;
-  const shots = project.storyboard.shots || [];
-  const completedVideos = shots.filter(shot => shotTask(shot, 'video')?.status === 'completed').length;
-  $('#dramaAnalysis').innerHTML = `<nav class="workflow-steps" aria-label="短剧制作进度"><span class="done">01 剧本</span><span class="done">02 分镜</span><span class="active">03 关键帧</span><span class="${completedVideos === shots.length && shots.length ? 'done' : ''}">04 视频</span></nav><header class="storyboard-title"><div><span>分镜设计 · ${shots.length} 个镜头</span><h2>${esc(project.title)}</h2><p>每个镜头固定 6 秒。先生成关键帧，确认视觉后再单独预计消耗视频费用。</p></div><strong>${completedVideos}<small> / ${shots.length} 完片</small></strong></header><div class="shot-list">${shots.map((shot,index) => { const keyframeTask = shotTask(shot,'keyframe'); const videoTask = shotTask(shot,'video'); const keyframe = shotAsset(keyframeTask); const video = shotAsset(videoTask); const media = video ? videoPreviewMarkup(video, 'shot-video-placeholder') : keyframe ? `<img src="${keyframe.url}" alt="${esc(shot.title)}" loading="lazy">` : `<div class="shot-placeholder"><span>${String(index+1).padStart(2,'0')}</span><small>关键帧</small></div>`; return `<article class="shot-card"><div class="shot-media">${media}<span class="shot-duration">6 秒</span></div><div class="shot-copy"><header><span>场次 ${String(shot.sceneNumber).padStart(2,'0')} / 分镜 ${String(shot.shotNumber).padStart(2,'0')}</span><h3>${esc(shot.title)}</h3></header><div class="shot-meta"><span>${esc(shot.shotSize)}</span><span>${esc(shot.cameraMovement)}</span><span>${esc((shot.characters || []).join('、') || '空镜')}</span></div><p>${esc(shot.action)}</p>${shot.dialogue ? `<blockquote>${esc(shot.dialogue)}</blockquote>` : ''}<details><summary>查看生成描述</summary><p>${esc(videoTask ? shot.videoPrompt : shot.keyframePrompt)}</p></details><footer>${shotAction(shot,keyframeTask,videoTask)}</footer></div></article>`; }).join('')}</div>`;
-  $$('[data-shot-action]').forEach(button => button.onclick = () => button.dataset.shotAction === 'video' ? startShotVideo(button.dataset.shotId, button) : startShotKeyframe(button.dataset.shotId, button));
-}
-
-async function bindShotTask(shotId, kind, task) {
-  state.tasks = [task, ...state.tasks.filter(item => item.id !== task.id)];
-  mergeTasksIntoLoadedHistory(task);
-  scheduleTaskPoll();
-  const result = await api(`/api/drama/projects/${state.dramaProject.id}/shots/${shotId}`, { method:'PATCH', body:JSON.stringify({ kind, taskId:task.id }) });
-  state.dramaProject = result.project; renderStoryboard();
-}
-async function startShotKeyframe(shotId, button) {
-  const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); if (!shot) return;
-  const checked = await promptPrecheck.check({ prompts:[shot.keyframePrompt], source:'drama', scopeNote:true }); if (checked.action === 'cancel') return;
-  button.disabled = true; button.textContent = '正在生成关键帧…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'image', prompt:checked.prompts[0], size:'9:16', quality:'medium', referenceAssetIds:[], ...checked.fields }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'keyframe',task); toast(`关键帧已开始生成，预计消耗 ${task.creditCost} 积分`); }
-  catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
-}
-async function startShotVideo(shotId, button) {
-  const shot = state.dramaProject.storyboard.shots.find(item => item.id === shotId); const keyframeTask = shotTask(shot,'keyframe');
-  if (!shot || keyframeTask?.status !== 'completed' || !keyframeTask.assetId) return toast('关键帧完成后才能生成视频');
-  const checked = await promptPrecheck.check({ prompts:[shot.videoPrompt], source:'drama', scopeNote:true }); if (checked.action === 'cancel') return;
-  button.disabled = true; button.textContent = '正在生成视频…';
-  try { const task = await api('/api/generations', { method:'POST', body:JSON.stringify({ type:'video', prompt:checked.prompts[0], aspectRatio:'9:16', duration:6, referenceAssetIds:[keyframeTask.assetId], ...checked.fields }) }); setCreditBalance(task.balance); await bindShotTask(shotId,'video',task); toast(`6 秒视频已开始生成，预计消耗 ${task.creditCost} 积分`); }
-  catch (error) { button.disabled = false; toast(error.message); await loadCredits(); }
-}
-
-$('#dramaScript').oninput = event => $('#dramaScriptCount').textContent = Array.from(event.target.value).length.toLocaleString('zh-CN');
-$('#dramaScriptForm').onsubmit = async event => {
-  event.preventDefault(); const script = $('#dramaScript').value.trim(); if (!script) return;
-  const button = $('#analyzeScriptButton'); const original = button.innerHTML; button.disabled = true; button.innerHTML = '<span class="button-spinner"></span><span>正在拆解场次</span>';
-  $('#dramaAnalysis').innerHTML = '<div class="analysis-loading"><span class="loader-ring"></span><b>AI 正在分析剧本</b><span>费用按实际用量计算</span></div>';
-  try { const result = await api('/api/drama/analyze-script', { method:'POST', body:JSON.stringify({ script }) }); setCreditBalance(result.balance); renderDramaAnalysis(result); toast(`剧本分析完成，实扣 ${creditText(result.usage.chargedCredits)} 积分`); }
-  catch (error) { $('#dramaAnalysis').innerHTML = `<div class="analysis-error"><b>剧本分析未完成</b><br>${esc(error.message)}</div>`; toast(error.message); await loadCredits(); }
-  finally { button.disabled = !state.config.llm; button.innerHTML = original; }
-};
-}
 
 function dramaProjectGenerationIds(project) {
   return new Set([
@@ -4759,8 +4668,6 @@ function renderPreviewMeta(file, width=file.width, height=file.height) {
     + detailRow('添加时间', fullDateText(file.createdAt))
     + detailRow('原始文件名', file.name);
 }
-function renderPreviewMetaLegacy(file, width=file.width, height=file.height) { renderPreviewMeta(file, width, height); }
-function openPreviewLegacy(id) { const file = state.files.find(item => item.id === id); if (!file || !requireDesktopLocalAsset(file)) return; const displayName = assetDisplayName(file); state.previewFileId = id; $('#deletePreview').disabled = false; $('#deletePreview').textContent = '删除素材'; $('#previewMedia').innerHTML = file.kind === 'image' ? `<img src="${file.url}" alt="${esc(displayName)}">` : `<video src="${file.url}" controls autoplay></video>`; $('#previewName').textContent = displayName; $('#previewUseActions').classList.toggle('hidden', file.kind !== 'image'); renderPreviewMeta(file); if (file.kind === 'image') { const image = $('#previewMedia img'); const syncImage = () => { file.width = image.naturalWidth; file.height = image.naturalHeight; fitDetailMedia(image, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; if (image.complete) syncImage(); else image.onload = syncImage; } else { const video = $('#previewMedia video'); video.onloadedmetadata = () => { file.width = video.videoWidth; file.height = video.videoHeight; fitDetailMedia(video, file.width, file.height); renderPreviewMeta(file, file.width, file.height); }; } configureLocalFileAction($('#previewDownload'), file); $('#previewDialog').showModal(); }
 function usePreviewAsset(target) { const file = state.files.find(item => item.id === state.previewFileId); if (!file || file.kind !== 'image') return; if (target === 'video' && !$('#videoModel').value) return toast('请先选择视频模型'); if (target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST') { const frame = state.videoFrames.first ? 'last' : 'first'; state.videoFrames[frame] = file.id; } else { const limit = target === 'video' ? videoReferenceLimit() : 7; if (!state.refs[target].includes(file.id)) state.refs[target] = [file.id, ...state.refs[target]].slice(0, limit); } $('#previewDialog').close(); navigate(target); renderReferences(); toast(`已将“${assetDisplayName(file)}”设为${target === 'video' && supportsVideoFirstLast() && state.videoGenerationType === 'FIRST&LAST' ? '视频帧图片' : '参考图'}`); }
 async function copyPreviewGenerationPrompt() { const task = taskForAsset(fileById(state.previewFileId)); const prompt = task?.prompt || ''; if (!prompt) return toast('暂无可复制的创作描述'); try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(prompt); else if (!copyTextFallback(prompt)) throw new Error('copy failed'); toast('创作描述已复制'); } catch { toast('复制失败，请手动选择文字复制'); const text = $('#previewGenerationPromptText'); const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(text); selection.removeAllRanges(); selection.addRange(range); } }
 let previewNameEditing = false;

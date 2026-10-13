@@ -1237,14 +1237,6 @@ async function withMediaTempDir(label, callback) {
   try { return await callback(jobDir); }
   finally { await fs.rm(jobDir, { recursive: true, force: true }).catch(error => console.error(`[media] 临时目录清理失败 ${jobDir}`, error.message)); }
 }
-async function uploadAssetFile(userId, asset, sourceFile) {
-  if (!r2Configured) throw storageUnavailable();
-  const key = asset.objectKey || assetObjectKey(userId, asset.storageName);
-  await putObject(key, sourceFile, asset.mimeType);
-  asset.objectKey = key; asset.objectUploadedAt = now();
-  await saveAsset(userId, asset);
-  return key;
-}
 const uploadExtension = storageKeyService.uploadExtension;
 const pendingUploadKey = storageKeyService.pendingUploadKey;
 const finalUploadKey = storageKeyService.finalUploadKey;

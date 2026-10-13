@@ -6,6 +6,19 @@ const previewText = (node, limit = 56) => {
   return text.length > limit ? `${text.slice(0, limit).trim()}…` : text;
 };
 
+// A user message starts a turn; tool-loop replies and the live draft belong
+// to that same turn until the next user message arrives.
+export function groupMessageTurns(nodes) {
+  const turns = [];
+  for (const node of nodes) {
+    if (node.classList.contains('user') || !turns.length) turns.push({ start: node, end: node, replies: [] });
+    const turn = turns.at(-1);
+    turn.end = node;
+    if (!node.classList.contains('user')) turn.replies.push(node);
+  }
+  return turns;
+}
+
 export function createMessageScroller(viewport, rail, surface = null) {
   let following = true;
   let programmatic = false;
@@ -14,7 +27,10 @@ export function createMessageScroller(viewport, rail, surface = null) {
   let lastTime = 0;
   let signature = '';
   let targets = [];
+  let hoveredButton = null;
+  let focusedButton = null;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const hoverCapable = window.matchMedia('(any-hover: hover)');
   const controller = new AbortController();
   const { signal } = controller;
   const distanceFromEnd = () => Math.max(0, viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop);
@@ -56,8 +72,9 @@ export function createMessageScroller(viewport, rail, surface = null) {
     let nearest = 0;
     let nearestDistance = Infinity;
     targets.forEach((target, index) => {
-      const rect = target.getBoundingClientRect();
-      const distance = Math.abs(rect.top + rect.height / 2 - middle);
+      const top = target.start.getBoundingClientRect().top;
+      const bottom = target.end.getBoundingClientRect().bottom;
+      const distance = Math.max(top - middle, middle - bottom, 0);
       if (distance < nearestDistance) { nearest = index; nearestDistance = distance; }
     });
     return nearest;
@@ -65,24 +82,32 @@ export function createMessageScroller(viewport, rail, surface = null) {
 
   function markActive() {
     const active = activeItem();
-    rail.querySelectorAll('button').forEach((button, index) => {
+    const buttons = [...rail.querySelectorAll('button')];
+    const hovered = buttons.indexOf(hoveredButton);
+    const focused = buttons.indexOf(focusedButton);
+    const peak = hovered >= 0 ? hovered : focused >= 0 ? focused : active;
+    buttons.forEach((button, index) => {
       if (index === active) button.setAttribute('aria-current', 'location');
       else button.removeAttribute('aria-current');
+      // beUI PreviewRail's distance falloff: 1, .68, .44, .25.
+      const distance = peak < 0 ? Infinity : Math.abs(index - peak);
+      button.setAttribute('data-wave', distance === 0 ? 'peak' : distance === 1 ? 'near' : distance === 2 ? 'far' : 'rest');
     });
   }
 
   function syncRail() {
     syncFrame = 0;
-    targets = [...viewport.querySelectorAll('.dw-message-history .dw-message, .dw-message-draft')];
-    const overflowing = viewport.scrollHeight > viewport.clientHeight + 1 && targets.length > 1;
+    targets = groupMessageTurns(viewport.querySelectorAll('.dw-message-history .dw-message, .dw-message-draft'));
+    const overflowing = viewport.scrollHeight > viewport.clientHeight + 1 && targets.length > 0;
     rail.hidden = !overflowing;
     viewport.classList.toggle('has-message-rail', overflowing);
     if (!overflowing) { signature = ''; rail.replaceChildren(); return; }
-    const entries = targets.map((target, index) => {
-      const role = target.classList.contains('user') ? '你' : 'GuGu';
-      const title = previewText(target) || (role === '你' ? '附件消息' : '回复中');
-      const next = role === '你' ? targets.slice(index + 1).find(item => !item.classList.contains('user')) : null;
-      return { role, title, description: previewText(next, 88) };
+    const entries = targets.map(target => {
+      const user = target.start.classList.contains('user');
+      const title = previewText(target.start) || (user ? '附件消息' : '回复中');
+      const reply = target.replies.map(node => previewText(node, 88)).filter(Boolean).join(' ');
+      const description = user ? (reply.length > 88 ? `${reply.slice(0, 88).trim()}…` : reply) : '';
+      return { title, description };
     });
     const nextSignature = JSON.stringify(entries);
     if (signature !== nextSignature) {
@@ -103,9 +128,9 @@ export function createMessageScroller(viewport, rail, surface = null) {
           return button;
         }));
       }
-      entries.forEach(({ role, title, description }, index) => {
+      entries.forEach(({ title, description }, index) => {
         const button = rail.children[index];
-        button.setAttribute('aria-label', `跳转到第 ${index + 1} 条${role}消息：${title}`);
+        button.setAttribute('aria-label', `跳转到第 ${index + 1} 轮对话：${title}`);
         const preview = button.lastElementChild;
         preview.firstElementChild.textContent = title;
         preview.lastElementChild.textContent = description;
@@ -137,6 +162,27 @@ export function createMessageScroller(viewport, rail, surface = null) {
   viewport.addEventListener('touchstart', readerInput, { passive: true, signal });
   viewport.addEventListener('keydown', readerInput, { signal });
   viewport.addEventListener('load', () => refresh(), { capture: true, signal });
+  rail.addEventListener('pointerover', event => {
+    if (!hoverCapable.matches || event.pointerType === 'touch' || event.buttons !== 0) return;
+    const button = event.target.closest('button');
+    if (!button || !rail.contains(button) || button === hoveredButton) return;
+    hoveredButton = button;
+    markActive();
+  }, { signal });
+  rail.addEventListener('pointerleave', event => {
+    if (event.pointerType === 'touch') return;
+    hoveredButton = null;
+    markActive();
+  }, { signal });
+  rail.addEventListener('focusin', event => {
+    const button = event.target.closest('button');
+    focusedButton = button?.matches(':focus-visible') && rail.contains(button) ? button : null;
+    markActive();
+  }, { signal });
+  rail.addEventListener('focusout', () => {
+    focusedButton = null;
+    markActive();
+  }, { signal });
   surface?.addEventListener('wheel', event => {
     if (viewport.contains(event.target) || !event.deltaY) return;
     if (event.target.closest?.('textarea, input, select, [contenteditable], .attachment-strip, .dw-plan, .dw-agent-options, .dw-skill-menu, [popover]')) return;
@@ -154,13 +200,12 @@ export function createMessageScroller(viewport, rail, surface = null) {
     const target = targets[index];
     if (!target) return;
     stopAnimation();
-    if (index === targets.length - 1) { following = true; followEnd(true); markActive(); return; }
     following = false;
     programmatic = true;
     const viewportRect = viewport.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
+    const targetRect = target.start.getBoundingClientRect();
     viewport.scrollTo({
-      top: viewport.scrollTop + targetRect.top - viewportRect.top - (viewport.clientHeight - targetRect.height) / 2,
+      top: Math.max(0, viewport.scrollTop + targetRect.top - viewportRect.top - 12),
       behavior: reducedMotion.matches ? 'instant' : 'smooth',
     });
     window.setTimeout(() => { programmatic = false; markActive(); }, reducedMotion.matches ? 0 : 350);
