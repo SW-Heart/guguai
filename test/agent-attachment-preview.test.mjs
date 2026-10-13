@@ -130,10 +130,10 @@ test('both composers put previews above text and all changed entry cache keys ar
   assert.match(read('features/agent/workspace.js'),/class="agent-entry-attachments attachment-strip"[^>]*><\/div><textarea id="agentEntryMessage"/);
   assert.match(read('features/drama/director-workspace.js'),/data-agent-attachments[^>]*><\/div><textarea id="directorMessage"/);
   for(const [path,urls] of [
-    ['index.html',['/app.js?v=544','/styles.css?v=399']],
-    ['app.js',['./features/agent/workspace.js?v=133','./drama-studio.js?v=266']],
-    ['drama-studio.js',['./features/drama/director-workspace.js?v=159']],
-    ['features/agent/workspace.js',['../drama/director-workspace.js?v=159','./attachment-preview.js?v=3']],
-    ['features/drama/director-workspace.js',['../agent/attachment-preview.js?v=3']],
+    ['index.html',['/app.js?v=547','/styles.css?v=399']],
+    ['app.js',['./features/agent/workspace.js?v=135','./drama-studio.js?v=268']],
+    ['drama-studio.js',['./features/drama/director-workspace.js?v=161']],
+    ['features/agent/workspace.js',['../drama/director-workspace.js?v=161','./attachment-preview.js?v=4']],
+    ['features/drama/director-workspace.js',['../agent/attachment-preview.js?v=4']],
   ])for(const url of urls)assert.ok(read(path).includes(url),`${path}: ${url}`);
 });

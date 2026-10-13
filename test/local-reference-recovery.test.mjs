@@ -40,10 +40,10 @@ test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
   const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=544'));
+  assert.ok(html.includes('/app.js?v=547'));
   assert.ok(frontend.includes('./features/generation/polling.js?v=4'));
   assert.ok(frontend.includes('./features/media/controller.js?v=13'));
-  assert.ok(frontend.includes('./drama-studio.js?v=266'));
+  assert.ok(frontend.includes('./drama-studio.js?v=268'));
   for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=15'));
 });
 
@@ -90,7 +90,7 @@ test('missing reference fails before requesting an upload intent', async () => {
   let requests = 0;
   const context = vm.createContext({ workspace:'/workspace', workspaceEpoch:1, path,
     libraryAsset:() => ({ id:'a', name:'图片.jpg', relativePath:'library/a.jpg' }), isInside:() => true,
-    fs:{ readFile:async () => { throw Object.assign(new Error('missing'), { code:'ENOENT' }); } },
+    fs:{ stat:async () => { throw Object.assign(new Error('missing'), { code:'ENOENT' }); } },
     cloudRequest:async () => { requests++; }, console:{ warn:() => {} } });
   vm.runInContext(extract(main, 'async function syncLocalAsset(', 'async function downloadRemoteAssetInternal('), context);
   await assert.rejects(context.syncLocalAsset({ assetId:'a' }), /请从原图重新导入/);

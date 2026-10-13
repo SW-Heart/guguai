@@ -53,7 +53,7 @@ for(const committed of ['地方干活','']){
 test('legacy references render image/video thumbnails using the existing inline label classes',()=>{
   const draft={prompt:'参考 @猫.png 与 @动作.mp4',attachments:[{id:'cat',name:'猫.png',kind:'image',url:'/cat.png'},{id:'motion',name:'动作.mp4',kind:'video',url:'/motion.mp4'}]};
   const html=generationPromptMarkup(draft);
-  assert.match(html,/class="video-prompt-mention"/);assert.match(html,/<img src="\/cat.png"/);assert.match(html,/<video src="\/motion.mp4"/);
+  assert.match(html,/class="video-prompt-mention"/);assert.match(html,/<img src="\/cat.png"/);assert.match(html,/<video data-preview-src="\/motion.mp4"/);
   assert.match(html,/contenteditable="false"/);assert.match(html,/data-video-prompt-mention-id="motion"/);
 });
 

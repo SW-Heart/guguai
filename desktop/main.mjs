@@ -3,13 +3,14 @@ import { createUpdateCheckScheduler } from './update-check-scheduler.mjs';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, session, shell, Tray, WebContentsView } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, openAsBlob } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { downloadMediaToFile, validateDownloadedMedia } from './media-download.mjs';
 import { inspectLocalMedia } from './local-media-state.mjs';
+import { createThumbnailCache } from './media-thumbnails.mjs';
 import { accountWorkspacePath, configuredWorkspaceRoot, normalizeAccountId } from './workspace-scope.mjs';
 import {
   claimLocalAssetByPath,
@@ -639,17 +640,17 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
   if (!asset) throw new Error('本地素材不存在');
   const source = path.resolve(targetWorkspace, asset.relativePath);
   if (!isInside(targetWorkspace, source)) throw new Error('本地素材路径不受信任');
-  // Read before creating an upload intent: missing files must not consume
-  // pending-upload slots, and later cleanup cannot invalidate these bytes.
-  let bytes;
-  try { bytes = await fs.readFile(source); }
+  // Validate before requesting an upload slot; keep the body file-backed so
+  // uploading a large video does not retain both a Buffer and a Blob copy.
+  let sourceStat, sourceBlob;
+  try { sourceStat = await fs.stat(source); sourceBlob = await openAsBlob(source, { type:asset.mimeType }); }
   catch (error) {
     console.warn('[media] 读取同步素材失败', { assetId:asset.id, relativePath:asset.relativePath, code:error.code });
     if (error.code === 'ENOENT') throw new Error(`本地素材“${asset.name}”文件未找到，请从原图重新导入`);
     throw error;
   }
   assertActiveWorkspace(targetWorkspace, targetEpoch);
-  if (bytes.length !== asset.size) throw new Error(`本地素材“${asset.name}”大小异常，请从原图重新导入`);
+  if (!sourceStat.isFile() || sourceStat.size !== asset.size) throw new Error(`本地素材“${asset.name}”大小异常，请从原图重新导入`);
   const payload = JSON.stringify({ name: asset.name, mimeType: asset.mimeType, size: asset.size, sha256: asset.sha256 });
   if (asset.cloudAssetId && !uploadForReference) {
     const verifyResponse = await cloudRequest(`/api/files/${encodeURIComponent(asset.cloudAssetId)}/local-ready`, {
@@ -697,7 +698,7 @@ async function syncLocalAsset({ assetId, uploadForReference = false }) {
     credentials: 'omit',
     method: 'PUT',
     headers: intent.headers || {},
-    body: new Blob([bytes], { type: asset.mimeType }),
+    body: sourceBlob,
   });
   await storageResponse.body?.cancel().catch(() => {});
   if (!storageResponse.ok) throw new Error(`云端上传失败（${storageResponse.status}）`);
@@ -945,6 +946,7 @@ async function listLocalAssets(options = {}) {
   return { items, total: Math.max(0, page.total - newlyMissing), nextCursor: page.nextCursor };
 }
 
+let localThumbnail = null;
 async function serveLocalMedia(request) {
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
   const url = new URL(request.url);
@@ -953,10 +955,20 @@ async function serveLocalMedia(request) {
   const targetEpoch = workspaceEpoch;
   const asset = libraryAsset(assetId);
   if (!asset || !targetWorkspace || !workspaceAccountId) return new Response('Not Found', { status: 404 });
-  const target = path.resolve(targetWorkspace, asset.relativePath);
+  let target = path.resolve(targetWorkspace, asset.relativePath);
   if (!isInside(targetWorkspace, target)) return new Response('Forbidden', { status: 403 });
-  const stat = await fs.stat(target).catch(() => null);
+  let stat = await fs.stat(target).catch(() => null);
   if (!stat?.isFile() || targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status: 404 });
+  const thumbnail = url.searchParams.get('thumbnail') === '1' && asset.kind === 'image';
+  if (thumbnail) {
+    localThumbnail ||= createThumbnailCache({
+      directory:path.join(app.getPath('cache'), 'gugu-media-thumbnails'),
+      render:(source, output) => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', '-i', source, '-frames:v', '1', '-vf', "scale='min(512,iw)':'min(512,ih)':force_original_aspect_ratio=decrease", '-threads', '1', '-y', output], { timeoutMs:30_000 }),
+    });
+    try { target = await localThumbnail(target, stat); stat = await fs.stat(target); }
+    catch { return new Response('Thumbnail unavailable', { status:404 }); }
+    if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status:404 });
+  }
 
   const range = parseLocalMediaRange(request.headers.get('range'), stat.size);
   if (range?.unsatisfiable) return new Response(null, { status: 416, headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${stat.size}` } });
@@ -966,7 +978,7 @@ async function serveLocalMedia(request) {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=0, must-revalidate',
     'Content-Length': String(Math.max(0, end - start + 1)),
-    'Content-Type': localMediaMimeType(asset, target),
+    'Content-Type': thumbnail ? 'image/png' : localMediaMimeType(asset, target),
     // CanvasApi loads images with crossOrigin="anonymous" so it can resize,
     // crop and export them. The local protocol needs an explicit CORS
     // response for that browser image element to accept the bytes.

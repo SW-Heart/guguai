@@ -11,7 +11,7 @@ const images = count => Array.from({length:count}, (_,i) => ({id:`image-${i}`,ki
 function dialogFixture(options = {chat:true,multiple:true,maxFiles:30}) {
   const nodes = new Map(), notices = [], files = images(31), buttons = files.map(file => ({dataset:{id:file.id}}));
   const node = selector => {
-    if (!nodes.has(selector)) nodes.set(selector, {close(){},showModal(){}});
+    if (!nodes.has(selector)) nodes.set(selector, {dataset:{},close(){},showModal(){}});
     return nodes.get(selector);
   };
   const state = {files,uploadJobs:[],referenceTarget:'canvas',referenceKind:'all',dialogSelection:[]};
@@ -22,7 +22,7 @@ function dialogFixture(options = {chat:true,multiple:true,maxFiles:30}) {
     referenceFileById:id => state.files.find(file => file.id === id),
     referenceDialogLimitIds:() => state.dialogSelection,withoutSupersededLocalFiles:value => value,
     sortFilesByRecency:value => value,referenceMediaMarkup:() => '',pendingReferenceJob:() => null,
-    resetReferenceDialogScroll(){},openReferenceDialog(){},
+    renderUploadJobCards(){},resetReferenceDialogScroll(){},openReferenceDialog(){},
   });
   vm.runInContext(extract(app,'function pickAndImportDramaCanvasAsset(',"$('#uploadButton').onclick"),context);
   vm.runInContext(extract(app,'async function uploadCanvasDialogAsset(',"$('#dialogUpload').onclick"),context);

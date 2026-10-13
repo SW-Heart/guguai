@@ -19,6 +19,8 @@ import { createNotificationController } from './features/notifications/controlle
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
+import { createVideoPreviews } from './features/media/video-previews.js?v=2';
+import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=1';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=3';
@@ -192,8 +194,8 @@ const videoUpscale = createVideoUpscaleController({
   },
 });
 function assetImageMarkup(file, alt = '', attributes = ' loading="lazy" decoding="async"') {
-  const preview = assetPreviewUrl(file);
-  const original = String(file?.remoteUrl || file?.url || '');
+  const preview = imageThumbnailUrl(assetPreviewUrl(file));
+  const original = String(file?.url || file?.remoteUrl || '');
   const fallback = preview && original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
   return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
 }
@@ -286,30 +288,11 @@ function requireDesktopLocalAsset(file) {
   toast('素材正在准备，请稍后再预览');
   return false;
 }
-// Local video cards only load metadata near the viewport. Creating hundreds of
-// eager <video> sources at once can saturate the desktop media process and disk.
-let videoPreviewObserver = null;
+const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver });
 let videoPreviewScanFrame = 0;
 function hydrateVisibleVideoPreviews() {
   videoPreviewScanFrame = 0;
-  const videos = $$('video[data-preview-src]');
-  const hydrate = video => {
-    const src = video.dataset.previewSrc;
-    if (!src) return;
-    video.src = src;
-    video.preload = 'metadata';
-    delete video.dataset.previewSrc;
-  };
-  if (!('IntersectionObserver' in window)) {
-    videos.forEach(hydrate);
-    return;
-  }
-  videoPreviewObserver ||= new IntersectionObserver(entries => entries.forEach(entry => {
-    if (!entry.isIntersecting) return;
-    videoPreviewObserver.unobserve(entry.target);
-    hydrate(entry.target);
-  }), { rootMargin:'240px' });
-  videos.forEach(video => videoPreviewObserver.observe(video));
+  videoPreviews.scan();
 }
 function scheduleVideoPreviewHydration() {
   if (!videoPreviewScanFrame) videoPreviewScanFrame = requestAnimationFrame(hydrateVisibleVideoPreviews);
@@ -331,6 +314,10 @@ document.addEventListener('error', event => {
     return;
   }
   if (!(media instanceof HTMLVideoElement)) return;
+  if (media.dataset.previewSrc) {
+    videoPreviews.fail(media);
+    return;
+  }
   const src = media.currentSrc || media.src || media.dataset.previewSrc || '';
   if (!src.startsWith('gugu-media://')) return;
   console.warn('[desktop] 本地视频播放失败，刷新本地索引并尝试重新同步', {
@@ -2157,7 +2144,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=133').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=135').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2168,7 +2155,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=266').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=268').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2693,9 +2680,15 @@ function layoutGenerationMasonry() {
     cards.forEach(card => generationLayoutObserver.observe(card));
   }
 }
-function reconcileCards(container, records, { card, signature, bind, empty }) {
+function reconcileCards(container, records, { card, signature, bind, empty, preserve = () => false }) {
+  const preserved = [...container.children].filter(preserve);
   const existing = new Map([...container.children].filter(node => node.dataset.recordId).map(node => [node.dataset.recordId, node]));
   if (!records.length) {
+    if (preserved.length) {
+      [...container.children].forEach(node => { if (!preserve(node)) node.remove(); });
+      delete container.dataset.emptySignature;
+      return;
+    }
     const emptySignature = empty;
     const isPlaceholder = node => node?.classList.contains('empty-state') || node?.classList.contains('loading-skeleton');
     if (container.dataset.emptySignature !== emptySignature || container.children.length !== 1 || !isPlaceholder(container.firstElementChild)) container.innerHTML = empty;
@@ -2715,9 +2708,9 @@ function reconcileCards(container, records, { card, signature, bind, empty }) {
     bind(node);
     return node;
   });
-  const desiredNodes = new Set(desired);
+  const desiredNodes = new Set([...desired, ...preserved]);
   [...container.children].forEach(node => { if (!desiredNodes.has(node)) node.remove(); });
-  desired.forEach((node, index) => { if (container.children[index] !== node) container.insertBefore(node, container.children[index] || null); });
+  desired.forEach((node, index) => { const position=index+preserved.length; if (container.children[position] !== node) container.insertBefore(node, container.children[position] || null); });
 }
 function bindTaskCard(card) {
   card.querySelector('.retry-local-download')?.addEventListener('click', event => {
@@ -3288,7 +3281,7 @@ function assetDisplayName(file) {
 function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? assetImageMarkup(file, displayName) : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : videoPreviewMarkup(file); const reveal = `<button class="show-in-folder" data-asset-id="${esc(file.id)}">在文件夹中显示</button>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${reveal}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
 function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
 function uploadJobKind(mimeType) { const value = String(mimeType || ''); return value.startsWith('image/') ? 'image' : value.startsWith('video/') ? 'video' : value.startsWith('audio/') ? 'audio' : ''; }
-function uploadJobMediaMarkup(job) { if (job.kind === 'image' && job.previewUrl) return `<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}">`; if (job.kind === 'video' && job.previewUrl) return `<video src="${esc(job.previewUrl)}" preload="metadata" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return '<span class="audio-file-mark">♫</span>'; }
+function uploadJobMediaMarkup(job) { if (job.kind === 'image' && job.previewUrl) return `<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}">`; if (job.kind === 'video' && job.previewUrl) return `<video data-preview-src="${esc(job.previewUrl)}" preload="none" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return '<span class="audio-file-mark">♫</span>'; }
 function uploadJobCard(job, variant='file') {
   const failed = job.status === 'failed';
   const completed = job.status === 'completed';
@@ -3301,7 +3294,38 @@ function uploadJobCard(job, variant='file') {
   if (variant === 'reference') return `<article class="reference-upload-placeholder upload-job-card ${failed ? 'failed' : ''} ${completed ? 'completed' : ''}" data-upload-id="${esc(job.id)}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div class="reference-upload-visual upload-job-visual">${media}<span class="upload-job-shade">${ring}</span>${selected}</div><span title="${esc(job.name)}">${esc(job.name)}</span></article>`;
   return `<article class="file-card upload-job-file-card upload-job-card ${failed ? 'failed' : ''} ${completed ? 'completed' : ''}" data-upload-id="${esc(job.id)}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div class="file-preview upload-job-visual">${media}<span class="upload-job-shade">${ring}</span>${selected}</div></article>`;
 }
-function renderUploadJobCards(container, jobs, variant='file') { container.querySelectorAll('[data-upload-id]').forEach(node => node.remove()); if (jobs.length) container.prepend(...jobs.map(job => elementFromHtml(uploadJobCard(job, variant)))); }
+function renderUploadJobCards(container, jobs, variant='file', offset=0) {
+  const existing = new Map([...container.querySelectorAll('[data-upload-id]')].map(node => [node.dataset.uploadId, node]));
+  const ids = new Set(jobs.map(job => job.id));
+  existing.forEach((node, id) => { if (!ids.has(id)) node.remove(); });
+  jobs.forEach((job, index) => {
+    const mediaKey = JSON.stringify([variant, job.kind, job.previewUrl, job.name]);
+    let node = existing.get(job.id);
+    if (!node || node.dataset.uploadMediaKey !== mediaKey) {
+      const next = elementFromHtml(uploadJobCard(job, variant));
+      next.dataset.uploadMediaKey = mediaKey;
+      if (node) node.replaceWith(next);
+      node = next;
+    } else {
+      const failed = job.status === 'failed', completed = job.status === 'completed';
+      const progress = Math.max(0, Math.min(100, Math.round(job.progress || 0)));
+      const label = failed ? job.error : completed ? (job.selected ? '上传完成，已选中' : '上传完成') : (job.label || '准备上传');
+      node.classList.toggle('failed', failed);
+      node.classList.toggle('completed', completed);
+      node.setAttribute('aria-label', `${job.name}，${label}`);
+      // Update only the small progress overlay; retain the media element and
+      // its decoder throughout all progress and completion notifications.
+      node.querySelector('.upload-job-shade').innerHTML = failed
+        ? '<span class="upload-progress-ring upload-progress-error"><b>!</b></span>'
+        : `<span class="upload-progress-ring" style="--upload-progress:${progress}%"><b>${progress}%</b></span>`;
+      const selected = node.querySelector('.upload-job-selected');
+      if (!job.selected) selected?.remove();
+      else if (!selected) node.querySelector('.upload-job-visual').insertAdjacentHTML('beforeend', '<i class="upload-job-selected" aria-label="已选中">✓</i>');
+    }
+    const position = index + offset;
+    if (container.children[position] !== node) container.insertBefore(node, container.children[position] || null);
+  });
+}
 function notifyUploadSurfaceChanged() { if (state.route === 'files') renderFiles(); if ($('#referenceDialog')?.open) renderReferenceDialog(); renderReferences(); window.dispatchEvent(new CustomEvent('gugu-upload-state-change')); }
 function createUploadJob(file, context, { previewUrl='', mimeType='', deferUpload=false, localAssetId='', removeLocalOnDiscard=false } = {}) {
   const job = { id:`upload-${crypto.randomUUID()}`, context, referenceTarget:context==='reference' ? state.referenceTarget : '', videoFrameTarget:context==='reference' ? state.videoFrameTarget : '', name:String(file?.name || '未命名文件'), mimeType, kind:uploadJobKind(mimeType), size:Number(file?.size || 0), previewUrl:String(previewUrl || ''), revokePreview:false, localAssetId, removeLocalOnDiscard, deferUpload, progress:0, status:deferUpload ? 'pending' : 'queued', label:deferUpload ? '已选择' : '准备上传', error:'', selected:false, assetId:'' };
@@ -3356,7 +3380,7 @@ function renderFiles() {
     ? uploads.length ? '' : emptyState(libraryFiles.length ? '没有匹配的文件' : '文件库还是空的', libraryFiles.length ? '换个关键词或文件类型试试。' : '上传素材，或完成一次生成后，文件会自动保存在这里。', libraryFiles.length ? '' : '<button class="upload-button empty-upload">上传第一个文件</button>')
     : fileLibraryLoadingSkeleton();
   const grid = $('#fileGrid');
-  reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty });
+  reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty, preserve:node => uploads.some(job => job.id === node.dataset.uploadId) });
   renderUploadJobCards(grid, uploads, 'file');
   grid.querySelector('.empty-upload')?.addEventListener('click', () => openUploadPicker('library'), { once:true });
   const loadMore = $('#loadMoreFiles');
@@ -3869,7 +3893,14 @@ function renderReferenceDialog() {
   const pendingLocalAssetIds = new Set(pendingJobs.map(job => job.localAssetId).filter(Boolean));
   const files = sortFilesByRecency(pickerFiles.filter(file => file.localStatus !== 'missing' && allowedKinds.has(file.kind) && (visibleKind === 'all' || file.kind === visibleKind) && (file.localOnly ? Boolean(window.guguDesktop) && !pendingLocalAssetIds.has(file.localId || file.id) : !uploadingAssetIds.has(file.id))));
   const fileMarkup = files.map(file => `<button class="reference-option ${state.dialogSelection.includes(file.id) ? 'selected' : ''}" data-id="${file.id}" type="button">${referenceMediaMarkup(file, file.name)}<span>${esc(file.name)}</span><i>✓</i></button>`).join('');
-  $('#referenceGrid').innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传可用的图片、视频或音频。'));
+  const grid = $('#referenceGrid');
+  const activeUploads = uploadJobs.filter(job => !job.deferUpload && (visibleKind === 'all' || job.kind === visibleKind));
+  const contentKey = JSON.stringify([isCanvas, pendingMarkup, fileMarkup, activeUploads.map(job => [job.id, job.kind, job.previewUrl, job.name])]);
+  if (grid.dataset.referenceContentKey !== contentKey || !grid.childElementCount) {
+    grid.innerHTML = pendingMarkup + uploadMarkup + (fileMarkup || pendingMarkup || uploadMarkup ? fileMarkup : emptyState(isCanvas ? '文件库中没有可用素材' : '没有可用参考素材', isCanvas ? '先上传一张图片或视频到文件库。' : '先上传可用的图片、视频或音频。'));
+    grid.dataset.referenceContentKey = contentKey;
+  }
+  renderUploadJobCards(grid, activeUploads, 'reference', pendingJobs.length);
   $$('.reference-option').forEach(button => button.onclick = () => {
     let id = button.dataset.id;
     let file = referenceFileById(id);

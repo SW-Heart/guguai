@@ -7,7 +7,7 @@ export const generationSegmentsText=segments=>segments.map(segment=>typeof segme
 
 export function generationMentionMarkup(file,label=file.name||'未命名素材'){
   const url=escape(file.previewUrl||file.url||'');
-  const thumb=file.kind==='image'?`<img src="${url}" alt="" decoding="async">`:file.kind==='video'?`<video src="${url}" muted playsinline preload="metadata"></video>`:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 10v4m4-7v10m4-14v18m4-14v10m4-7v4m4-6v8"/></svg>';
+  const thumb=file.kind==='image'?`<img src="${url}" alt="" decoding="async">`:file.kind==='video'?`<video data-preview-src="${url}" muted playsinline preload="none"></video>`:'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 10v4m4-7v10m4-14v18m4-14v10m4-7v4m4-6v8"/></svg>';
   return `<span class="video-prompt-mention" data-video-prompt-mention-id="${escape(file.id)}" data-video-prompt-mention-label="${escape(label)}" data-video-prompt-mention-kind="${escape(file.kind)}" contenteditable="false" aria-label="引用${escape(label)}"><span class="video-prompt-mention-thumb">${thumb}</span><span class="video-prompt-mention-name">${escape(label)}</span></span>`;
 }
 

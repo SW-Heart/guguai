@@ -1,3 +1,4 @@
+import {mapImagesWithLimit} from '../public/features/media/image-cache.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -35,7 +36,7 @@ test('uploading over 30 mixed canvas files retains all selected files',async()=>
 test('batch import reveals and selects every item with one sync, focus and save',async()=>{
   const revealed=[],selected=[],focused=[];let syncs=0,saves=0;
   const positions={};
-  const context=vm.createContext({epoch:1,bridge:{importAsset:async()=>files,toast:message=>assert.fail(message)},
+  const context=vm.createContext({mapImagesWithLimit,epoch:1,bridge:{importAsset:async()=>files,toast:message=>assert.fail(message)},
     liveCanvasNodes:()=>[],canvasView:()=>({width:1000,height:700}),workspace:()=>({positions}),placeCanvasRow,importedImageBounds,mediaFrameSize,
     syncing:false,automaticImageSizing:new Set(),assetImages:new Map(),assetSizes:new Map(),
     revealCanvasItem:id=>revealed.push(id),canvas:{getNodeConfigById:()=>null,selectNodes:ids=>selected.push([...ids])},syncCanvas:()=>syncs++,focusNewCanvasContent:ids=>focused.push([...ids]),save:async()=>saves++});
@@ -56,7 +57,7 @@ test('batch import reveals and selects every item with one sync, focus and save'
 
 test('row preparation waits for every image dimension before placement',async()=>{
   const pending=[];
-  const context=vm.createContext({epoch:1,assetImages:new Map(),assetSizes:new Map(),importedImageBounds,mediaFrameSize,
+  const context=vm.createContext({mapImagesWithLimit,epoch:1,assetImages:new Map(),assetSizes:new Map(),importedImageBounds,mediaFrameSize,
     Image:class {constructor(){this.naturalWidth=100;this.naturalHeight=1000;}decode(){return new Promise(resolve=>pending.push(resolve));}}});
   vm.runInContext(director.slice(director.indexOf('  async function prepareImportedCanvasRow('),director.indexOf('  async function importAssetIntoCanvas(')),context);
   let complete=false;

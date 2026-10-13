@@ -1,3 +1,4 @@
+import {ImageCache} from '../public/features/media/image-cache.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -55,7 +56,7 @@ function workspaceFixture(){
   const callbacks=new Map(),cancelled=[],events=[];
   let sequence=0;
   const context=vm.createContext({
-    createStreamPacer:()=>({reset(){}}),clearTimeout(){},
+    ImageCache,createStreamPacer:()=>({reset(){}}),clearTimeout(){},
     requestAnimationFrame:callback=>{const id=++sequence;callbacks.set(id,callback);return id;},
     cancelAnimationFrame:id=>cancelled.push(id),
   });
@@ -140,8 +141,8 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=544'));assert.ok(html.includes('/styles.css?v=399'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=133'));assert.ok(app.includes('./drama-studio.js?v=266'));
-  assert.ok(agent.includes('../drama/director-workspace.js?v=159'));
-  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=159'));
+  assert.ok(html.includes('/app.js?v=547'));assert.ok(html.includes('/styles.css?v=399'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=135'));assert.ok(app.includes('./drama-studio.js?v=268'));
+  assert.ok(agent.includes('../drama/director-workspace.js?v=161'));
+  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=161'));
 });

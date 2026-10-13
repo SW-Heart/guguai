@@ -35,6 +35,23 @@ test('decoding a fresh portrait image keeps it inside the space reserved for it'
   assert.equal(node.x,600);assert.equal(node.y,200);
 });
 
+test('cache eviction does not reload painted shapes but new shapes still receive their image',()=>{
+  const url='gugu-media://asset/image-1';
+  const shape={image(){},clearCache(){},getLayer:()=>null};
+  let currentShape=shape;
+  const context={epoch:1,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),
+    Image:class {naturalWidth=100;naturalHeight=100;},workspace:()=>({positions:{}}),bridge:{},
+    canvas:{getCanvasNodeById:()=>({getElement:()=>currentShape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(){}}};
+  vm.createContext(context);vm.runInContext(loading,context);
+  context.loadAssetSize('image-1',url);context.assetSizeLoads.get(url).onload();
+  context.assetImages.clear();
+  context.loadAssetSize('image-1',url);
+  assert.equal(context.assetSizeLoads.size,0);
+  currentShape={...shape};
+  context.loadAssetSize('image-1',url);
+  assert.equal(context.assetSizeLoads.size,1,'a recreated shape must not stay blank after cache eviction');
+});
+
 test('video picture presses reach the canvas while playback controls remain native',()=>{
   const handlers={},forwarded=[];
   const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
@@ -82,4 +99,46 @@ test('video picture wheel gestures reach the canvas while playback controls rema
   assert.equal(forwarded.length,1);
   assert.equal(controls.prevented,undefined);
   assert.equal(controls.stopped,true);
+});
+
+for(const gesture of [{tool:'select',button:1},{tool:'hand',button:0}])test(`video controls allow canvas panning with ${gesture.tool} tool and button ${gesture.button}`,()=>{
+  const handlers={},forwarded=[],selections=[];
+  const video={dataset:{},getBoundingClientRect:()=>({bottom:200}),addEventListener(type,handler){handlers[type]=handler;}};
+  const element={style:{},querySelectorAll:selector=>selector==='[data-canvas-src]'?[]:[video],querySelector:()=>null};
+  const context={bindDocumentCard(){},selected:null,canvas:{getToolType:()=>gesture.tool,
+    selectNodes:ids=>selections.push(ids),
+    getCanvasNodeById:()=>({htmlElement:element,getElement:()=>({getClientRect:()=>({x:0,y:0,width:280,height:200})})}),
+    getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}};
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('  function alignCard('),source.indexOf('  function alignCards(')),context);
+  context.alignCard('video');
+  // Browser event coordinates and buttons are inherited getters, not own fields.
+  class MouseEvent {
+    constructor(type,init){this.type=type;this.init=init;}
+    get clientX(){return this.init.clientX;}
+    get clientY(){return this.init.clientY;}
+    get button(){return this.init.button;}
+    get buttons(){return this.init.buttons;}
+    get bubbles(){return this.init.bubbles;}
+    get cancelable(){return this.init.cancelable;}
+    stopPropagation(){this.stopped=true;}
+    preventDefault(){this.prevented=true;}
+  }
+  for(const clientY of [80,180]){
+    const press=new MouseEvent('mousedown',{clientX:30,clientY,button:gesture.button,buttons:gesture.button===1?4:1});
+    handlers.mousedown(press);
+    const forwardedPress=forwarded.at(-1);
+    assert.equal(forwardedPress.bubbles,true,'middle-button handler on the stage container must receive the press');
+    assert.equal(forwardedPress.cancelable,true);
+    assert.equal(forwardedPress.button,gesture.button);
+    assert.equal(forwardedPress.buttons,press.buttons);
+    assert.equal(forwardedPress.clientX,30);
+    assert.equal(forwardedPress.clientY,clientY);
+    assert.equal(press.prevented,true,'panning must not activate native video controls');
+  }
+  assert.equal(forwarded.length,2);
+  const pointer=new MouseEvent('pointerdown',{clientX:30,clientY:180,button:gesture.button});
+  handlers.pointerdown(pointer);
+  assert.equal(forwarded.length,3);
+  assert.equal(selections.length,0,'panning does not select the video controls');
 });

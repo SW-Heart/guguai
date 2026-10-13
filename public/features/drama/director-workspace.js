@@ -1,6 +1,7 @@
 import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=1';
 import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
-import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=3';
+import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
+import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=4';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=5';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
@@ -18,7 +19,7 @@ import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=14';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=15';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
-import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=2';
+import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=3';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=6';
 import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=4';
@@ -271,7 +272,7 @@ export function createDirectorWorkspace(host, bridge) {
     });
   }
 
-  const assetSizes=new Map(), assetSizeLoads=new Map(), assetImages=new Map();
+  const assetSizes=new Map(), assetSizeLoads=new Map(), assetImages=new ImageCache();
   const get=()=>bridge.project();
   const workspace=()=>{const p=get();return p.directorWorkspace ||= normalizeDirectorWorkspace();};
   const save=async()=>{
@@ -338,6 +339,7 @@ export function createDirectorWorkspace(host, bridge) {
     const image=assetImages.get(url),shape=canvas?.getCanvasNodeById(id)?.getElement?.();
     if(!image||!shape?.image||canvas.getNodeConfigById(id)?.$_imageUrl!==url)return;
     shape.image(image);
+    paintedAssetImages.set(shape,url);
     shape.clearCache();
     shape.getLayer()?.batchDraw();
   }
@@ -360,14 +362,38 @@ export function createDirectorWorkspace(host, bridge) {
       }:node;
     });
   }
+  const queuedAssetLoads=new Map();
+  const paintedAssetImages=new WeakMap();
+  function finishAssetLoad(url,image){
+    if(assetSizeLoads.get(url)!==image)return;
+    assetSizeLoads.delete(url);
+    const next=queuedAssetLoads.entries().next().value;
+    if(next){queuedAssetLoads.delete(next[0]);loadAssetSize(next[1],next[0]);}
+  }
+  function pruneAssetImages(nodes){
+    const urls=new Set((nodes||[]).map(node=>node.$_imageUrl).filter(Boolean));
+    for(const url of assetImages.keys())if(!urls.has(url))assetImages.delete(url);
+    for(const url of assetSizes.keys())if(!urls.has(url))assetSizes.delete(url);
+    for(const url of queuedAssetLoads.keys())if(!urls.has(url))queuedAssetLoads.delete(url);
+    for(const [url,image] of assetSizeLoads)if(!urls.has(url)){
+      image.onload=null;image.onerror=null;image.src='';assetSizeLoads.delete(url);
+    }
+    while(assetSizeLoads.size<2&&queuedAssetLoads.size){
+      const [url,id]=queuedAssetLoads.entries().next().value;
+      queuedAssetLoads.delete(url);loadAssetSize(id,url);
+    }
+  }
   function loadAssetSize(id,url){
-    if(assetSizes.has(url)||assetSizeLoads.has(url))return;
+    if(assetSizeLoads.has(url))return;
+    const shape=canvas?.getCanvasNodeById?.(id)?.getElement?.();
+    if(assetSizes.has(url)&&(assetImages.has(url)||(shape&&paintedAssetImages.get(shape)===url)))return;
+    if(assetSizeLoads.size>=2){queuedAssetLoads.set(url,id);return;}
     const token=epoch;
     const image=new Image();
     assetSizeLoads.set(url,image);
     image.onload=()=>{
       if(token!==epoch)return;
-      assetSizeLoads.delete(url);
+      finishAssetLoad(url,image);
       if(!image.naturalWidth||!image.naturalHeight)return;
       assetImages.set(url,image);
       assetSizes.set(url,{width:image.naturalWidth,height:image.naturalHeight});
@@ -408,7 +434,7 @@ export function createDirectorWorkspace(host, bridge) {
         saveTimer=globalThis.setTimeout?.(()=>{if(token===epoch)void save().catch(e=>bridge.toast(e.message));},600);
       }
     };
-    image.onerror=()=>assetSizeLoads.delete(url);
+    image.onerror=()=>finishAssetLoad(url,image);
     if(!url.startsWith('gugu-media://'))image.crossOrigin='anonymous';
     image.src=url;
   }
@@ -422,16 +448,16 @@ export function createDirectorWorkspace(host, bridge) {
       const caption=draft.title||String(draft.prompt||'').trim()||n.title;
       // Planned storyboard cards show their script until generation starts.
       const script=draft.source&&state==='draft'&&!media?`<div class="dw-frame-script"><span class="dw-frame-script-meta">${escape([draft.type==='video'&&draft.duration?`${draft.duration} 秒`:'',draft.aspect].filter(Boolean).join(' · '))}</span><p>${escape(draft.prompt)}</p></div>`:'';
-      return `<div class="dw-generation-frame dw-manual-frame${script?' has-script':''}" data-state="${escape(state)}" data-kind="${escape(draft.type)}" aria-label="${escape(caption)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:script||renderGenerationPlaceholder(state,{kind:draft.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(caption)}</span></div>`;
+      return `<div class="dw-generation-frame dw-manual-frame${script?' has-script':''}" data-state="${escape(state)}" data-kind="${escape(draft.type)}" aria-label="${escape(caption)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} ${media.kind==='video'?'data-preview-src':'data-canvas-src'}="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:script||renderGenerationPlaceholder(state,{kind:draft.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(caption)}</span></div>`;
     }
     if(n.kind==='asset'&&n.media?.kind==='image')return '';
-    if(n.kind==='asset'&&n.media?.kind==='video')return `<div class="dw-generation-frame dw-imported-video" data-state="completed"><video controls playsinline preload="none" data-canvas-src="${escape(n.media.url)}" aria-label="${escape(n.title)}">${captionTrack(n.media.id)}</video><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
+    if(n.kind==='asset'&&n.media?.kind==='video')return `<div class="dw-generation-frame dw-imported-video" data-state="completed"><video controls playsinline preload="none" data-preview-src="${escape(n.media.url)}" aria-label="${escape(n.title)}">${captionTrack(n.media.id)}</video><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     if(n.kind==='asset'&&n.media?.kind==='audio')return `<div class="dw-generation-frame dw-imported-audio" data-state="completed"><span class="dw-audio-head"><span class="dw-audio-icon" aria-hidden="true">${canvasIcon('music')}</span><span class="dw-audio-name">${escape(n.title)}</span></span><audio controls preload="none" data-canvas-src="${escape(n.media.url)}" aria-label="${escape(n.title)}"></audio><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     if(n.kind==='generation'){
       const task=bridge.task(n.taskId),media=bridge.media(n.taskId);
       const status=n.item.placeholder?n.item.status:task?.status||'queued';
       const state=generationFrameState(status,Boolean(media));
-      return `<div class="dw-generation-frame" data-state="${escape(state)}" aria-label="${escape(n.title)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''}>${media.kind==='video'?'</video>':''}`:renderGenerationPlaceholder(state,{kind:n.item.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(n.title)}</span></div>`;
+      return `<div class="dw-generation-frame" data-state="${escape(state)}" aria-label="${escape(n.title)}">${media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} ${media.kind==='video'?'data-preview-src':'data-canvas-src'}="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(n.title)}"`:''}>${media.kind==='video'?'</video>':''}`:renderGenerationPlaceholder(state,{kind:n.item.type,progress:task?.progress})}<span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     }
     const t=bridge.task(n.taskId);const media=n.media||bridge.media(n.taskId);const action=workspace().plan?.actions?.find(a=>a.targetId===n.id&&['running','failed'].includes(a.status));
     const status=action?labels[action.status]:t?(labels[t.status]||t.status):n.kind==='asset'?'已导入':['source-observation','source-transcript'].includes(n.kind)?'已记录':n.kind==='story'&&get().script?'已设计':'待制作';
@@ -442,7 +468,7 @@ export function createDirectorWorkspace(host, bridge) {
     const progress=tone==='active'&&Number(t?.progress)>0?Math.min(99,Math.round(Number(t.progress))):null;
     const name=['source-observation','source-transcript'].includes(n.kind)?(n.item.assetName||n.title):n.title;
     const meta=n.kind==='shot'?`${n.item.duration} 秒 · ${n.item.aspectRatio} · ${n.item.videoVersions?.length||0} 个版本`:n.kind==='source-observation'?`${n.item.eventCount} 条记录 · 第 ${n.item.revision} 版`:n.kind==='source-transcript'?`${n.item.wordCount} 个词 · ${Math.round(n.item.startSeconds)}–${Math.round(n.item.endSeconds)} 秒`:n.kind==='document'?`第 ${n.item.revision} 版`:'';
-    const body=media?`<${media.kind==='video'?'video controls preload="none"':'img'} data-canvas-src="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(name)}"`:''} class="dw-node-media" >${media.kind==='video'?'</video>':''}`:`<p class="dw-node-copy">${escape(n.text)}</p>`;
+    const body=media?`<${media.kind==='video'?'video controls preload="none"':'img'} ${media.kind==='video'?'data-preview-src':'data-canvas-src'}="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(name)}"`:''} class="dw-node-media" >${media.kind==='video'?'</video>':''}`:`<p class="dw-node-copy">${escape(n.text)}</p>`;
     const statusText=locked?'已锁定':`${status}${progress===null?'':` ${progress}%`}`;
     return `<div class="dw-node-content${selected===n.id?' is-selected':''}" data-node-id="${escape(n.id)}" data-kind="${escape(n.kind)}" data-tone="${tone}"><header class="dw-node-head"><span class="dw-node-kind">${canvasIcon(kindIcon)}<span>${kindLabel}</span></span><span class="dw-node-status" data-tone="${tone}" role="status">${locked?canvasIcon('lock'):'<i class="dw-node-dot" aria-hidden="true"></i>'}<span>${escape(statusText)}</span></span></header><b class="dw-node-name">${escape(name)}</b>${body}${meta?`<footer class="dw-node-meta">${escape(meta)}</footer>`:''}${progress===null?'':`<progress class="dw-node-progress" max="100" value="${progress}" aria-label="制作进度"></progress>`}</div>`;
   }
@@ -555,18 +581,22 @@ export function createDirectorWorkspace(host, bridge) {
     Object.assign(element.style,{left:`${rect.x}px`,top:`${rect.y}px`,width:`${rect.width}px`,height:`${rect.height}px`,transformOrigin:'0 0',transform:'none'});
     if(!geometryOnly)element.querySelectorAll('video').forEach(video=>{
       // Forward gestures on the picture to Konva; reserve the bottom 48 CSS
-      // pixels for native playback controls (their shadow DOM is opaque).
+      // pixels for native playback controls (their shadow DOM is opaque),
+      // except when the hand tool or middle button explicitly requests panning.
       if(video.dataset.canvasPlayback)return;
       video.dataset.canvasPlayback='true';
       ['pointerdown','mousedown','touchstart','wheel','click','dblclick','keydown','keyup'].forEach(type=>video.addEventListener(type,event=>{
         event.stopPropagation();
         const point=event.touches?.[0]||event;
         const rect=video.getBoundingClientRect();
-        const onPicture=Number.isFinite(point.clientY)&&point.clientY<rect.bottom-48;
+        const panning=canvas.getToolType?.()==='hand'||event.button===1;
+        const onPicture=panning||(Number.isFinite(point.clientY)&&point.clientY<rect.bottom-48);
         if(onPicture&&['pointerdown','mousedown','touchstart','wheel'].includes(type)){
           const surface=canvas.getStage().content;
           const forwarded=type==='wheel'
             ? new event.constructor('wheel',{
+              bubbles:true,
+              cancelable:true,
               deltaX:event.deltaX,
               deltaY:event.deltaY,
               deltaZ:event.deltaZ,
@@ -580,7 +610,15 @@ export function createDirectorWorkspace(host, bridge) {
               altKey:event.altKey,
               metaKey:event.metaKey,
             })
-            : new event.constructor(type,event);
+            // The engine listens for middle-button presses on the stage container
+            // and finishes drags on window, so the forwarded event must bubble.
+            : new event.constructor(type,{...event,bubbles:true,cancelable:true,
+              clientX:event.clientX,clientY:event.clientY,screenX:event.screenX,screenY:event.screenY,
+              button:event.button,buttons:event.buttons,
+              ctrlKey:event.ctrlKey,shiftKey:event.shiftKey,altKey:event.altKey,metaKey:event.metaKey,
+              pointerId:event.pointerId,pointerType:event.pointerType,isPrimary:event.isPrimary,
+              touches:event.touches,targetTouches:event.targetTouches,changedTouches:event.changedTouches,
+            });
           surface.dispatchEvent(forwarded);
           if(type!=='pointerdown')event.preventDefault();
         }else if(type==='pointerdown'&&selected!==id){
@@ -745,7 +783,8 @@ export function createDirectorWorkspace(host, bridge) {
     return {width:280,height:228};
   }
   async function prepareImportedCanvasRow(files,token){
-    return Promise.all(files.map(async file=>{
+    return mapImagesWithLimit(files,async file=>{
+      if(token!==epoch)return null;
       if(file.kind!=='image')return {id:file.id,...mediaFrameSize(file)};
       const url=file.previewUrl||file.url;
       if(url&&!assetImages.has(url)){
@@ -759,7 +798,7 @@ export function createDirectorWorkspace(host, bridge) {
       }
       const size=assetSizes.get(url)||(file.width>0&&file.height>0?file:null);
       return {id:file.id,...importedImageBounds(size)};
-    })).then(items=>items.filter(Boolean));
+    }).then(items=>items.filter(Boolean));
   }
   async function importAssetIntoCanvas(point=null){
     try{
@@ -852,6 +891,7 @@ export function createDirectorWorkspace(host, bridge) {
     }
     links.forEach(l=>{const from=canvas.getNodeConfigById(l.from),to=canvas.getNodeConfigById(l.to);if(!from||!to)return;const id=`edge-${l.to}`;const config={id,$_type:'arrow',x:0,y:0,points:edgePoints(from,to),stroke:'#9b99c9',fill:'#9b99c9',strokeWidth:1.5,pointerLength:6,pointerWidth:6,$_listening:false};if(existing.has(id))canvas.updateNodes([id],config);else canvas.createNodes([config],false);canvas.moveNodesToBottom([id]);});
     syncing=false;
+    pruneAssetImages(canvas.getState().nodes);
     renderEdges(canvas.getState().nodes);
     if(canvasContentReady){const fresh=additions.filter(node=>!existing.has(node.id));if(fresh.length)focusNewCanvasContent(fresh.map(node=>node.id));}
     canvasContentReady=true;
@@ -1666,6 +1706,7 @@ export function createDirectorWorkspace(host, bridge) {
         if(syncing||!Array.isArray(deletedNodes)||deletedNodes.length===0)return;
         const deletedIds=markCanvasItemsHidden(deletedNodes.map(node=>node?.id).filter(Boolean));
         if(deletedIds.length===0)return;
+        pruneAssetImages(liveCanvasNodes().filter(node=>!deletedIds.includes(node.id)));
         clearTimeout(saveTimer);
         saveTimer=setTimeout(()=>{if(get()?.id===projectId)void save().catch(e=>bridge.toast(e.message));},600);
       });
@@ -2011,6 +2052,7 @@ export function createDirectorWorkspace(host, bridge) {
     return promise;
   }
   function dispose(){
+    queuedAssetLoads.clear();
     generationMentionEvents?.abort();generationMentionEvents=null;
     generationApproval?.destroy();generationApproval=null;
     // Invalidate callbacks before disconnecting clients or unmounting React.
@@ -2018,7 +2060,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

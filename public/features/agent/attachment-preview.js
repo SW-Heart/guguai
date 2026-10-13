@@ -1,3 +1,4 @@
+import { imageThumbnailUrl } from '../media/thumbnail-url.js?v=1';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const mediaKinds = ['image', 'video', 'audio'];
 const labels = {image:'图片', video:'视频', audio:'音频', document:'文档', file:'文件'};
@@ -48,8 +49,8 @@ export function attachmentCardMarkup(file) {
   const kind = attachmentKind(file), src = attachmentSource(file), name = file.name || file.title || '未命名文件';
   const visual = kind === 'image' || kind === 'video';
   const imageOnly = kind === 'image' && Boolean(src);
-  const media = src && kind === 'image' ? `<img src="${escape(src)}" alt="" loading="lazy" decoding="async">`
-    : src && kind === 'video' ? `<video src="${escape(src)}" preload="metadata" muted playsinline tabindex="-1"></video>` : '';
+  const media = src && kind === 'image' ? `<img src="${escape(imageThumbnailUrl(src))}" alt="" loading="lazy" decoding="async">`
+    : src && kind === 'video' ? `<video data-preview-src="${escape(src)}" preload="none" muted playsinline tabindex="-1"></video>` : '';
   const status = file.status === 'loading' ? '正在读取…' : file.status === 'error' ? '未能读取，请移除后重试' : file.status === 'unavailable' ? '文件已不可用' : metadata(file);
   const snippet = kind === 'document' && file.text ? `<span class="attachment-card-excerpt">${escape(file.text.slice(0, 90))}</span>` : '';
   return `<article class="attachment-card attachment-card--${kind}${visual ? ' attachment-card--visual' : ''}${imageOnly ? ' attachment-card--image-only' : ''}${file.status === 'error' ? ' has-error' : ''}">

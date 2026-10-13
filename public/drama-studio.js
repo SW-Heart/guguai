@@ -1,10 +1,11 @@
 import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=2';
+import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=1';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=5';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=159';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=161';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -233,8 +234,8 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   };
   const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
   const assetImageMarkup = (file, alt = '', attributes = ' loading="lazy" decoding="async"') => {
-    const preview = assetPreviewUrl(file);
-    const original = String(file?.remoteUrl || file?.url || '');
+    const preview = imageThumbnailUrl(assetPreviewUrl(file));
+    const original = String(file?.url || file?.remoteUrl || '');
     const fallback = preview && original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
     return `<img src="${esc(preview)}" alt="${esc(alt)}"${fallback}${attributes}>`;
   };
@@ -457,14 +458,14 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     projectAssetMediaObserver = null;
   };
   const projectAssetImageMarkup = (file, alt = '') => {
-    const preview = assetPreviewUrl(file);
+    const preview = imageThumbnailUrl(assetPreviewUrl(file));
     if (!preview) return assetImageMarkup(file, alt);
-    const original = String(file?.remoteUrl || file?.url || '');
+    const original = String(file?.url || file?.remoteUrl || '');
     const fallback = original && preview !== original ? ` data-original-src="${esc(original)}"` : '';
     return `<img class="project-asset-thumb" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" data-project-asset-src="${esc(preview)}" alt="${esc(alt)}"${fallback} loading="lazy" decoding="async">`;
   };
   const projectAssetVideoMarkup = file => String(file?.url || '').startsWith('gugu-media://')
-    ? `<video class="project-asset-thumb" data-project-asset-src="${esc(file.url)}" preload="none" muted playsinline></video><span class="wb-media-play">▶</span>`
+    ? `<video class="project-asset-thumb" data-preview-src="${esc(file.url)}" preload="none" muted playsinline></video><span class="wb-media-play">▶</span>`
     : workbenchVideoMarkup(file);
   const hydrateProjectAssetMedia = scope => {
     const grid = scope.querySelector('.project-asset-dialog-grid');
@@ -2116,7 +2117,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       dialog.addEventListener('close',()=>{releaseWorkbenchVideos(dialog);dialog.innerHTML='';});
       document.body.append(dialog);
     }
-    dialog.innerHTML=`<div class="dialog-head"><div><span class="dialog-kicker">ASSEMBLY LIBRARY</span><h2>合成视频库</h2><p>这里保留本项目每次合成的成片。新增分镜或更换视频后，可以继续合成新的版本。</p></div><button type="button" data-assembly-library-close aria-label="关闭">×</button></div><div class="assembly-library-body"><div class="assembly-library-summary"><b>${history.length} 条合成记录</b><span>按最近合成时间排序</span></div><div class="assembly-library-grid">${history.map((item,index)=>{const file=asset(item.assetId);const media=file&&String(file.url||'').startsWith('gugu-media://')?`<video src="${esc(file.url)}" controls preload="metadata" playsinline></video>`:'<div class="assembly-history-missing"><span>⌁</span><b>视频文件暂不可用</b><small>请在生成该视频的桌面设备上打开项目</small></div>';return `<article class="assembly-history-card"><div class="assembly-history-media">${media}</div><footer><div><b>合成版本 ${history.length-index}</b><span>${assemblyHistoryDate(item.createdAt)} · ${item.shotCount||'多个'} 个成品视频</span></div>${file?`<button type="button" class="secondary-button" data-assembly-history-preview="${esc(file.id)}">放大播放</button>`:''}</footer></article>`;}).join('')||'<div class="assembly-library-empty"><span>⌁</span><b>还没有合成记录</b><p>完成至少 2 个分镜视频后，点击“分镜合成”即可在这里保留成片。</p></div>'}</div></div><footer class="assembly-library-footer"><span>历史成片不会影响后续分镜编辑和再次合成</span><button type="button" class="secondary-button" data-assembly-library-close>关闭</button></footer>`;
+    dialog.innerHTML=`<div class="dialog-head"><div><span class="dialog-kicker">ASSEMBLY LIBRARY</span><h2>合成视频库</h2><p>这里保留本项目每次合成的成片。新增分镜或更换视频后，可以继续合成新的版本。</p></div><button type="button" data-assembly-library-close aria-label="关闭">×</button></div><div class="assembly-library-body"><div class="assembly-library-summary"><b>${history.length} 条合成记录</b><span>按最近合成时间排序</span></div><div class="assembly-library-grid">${history.map((item,index)=>{const file=asset(item.assetId);const media=file&&String(file.url||'').startsWith('gugu-media://')?`<video data-preview-src="${esc(file.url)}" controls preload="none" playsinline></video>`:'<div class="assembly-history-missing"><span>⌁</span><b>视频文件暂不可用</b><small>请在生成该视频的桌面设备上打开项目</small></div>';return `<article class="assembly-history-card"><div class="assembly-history-media">${media}</div><footer><div><b>合成版本 ${history.length-index}</b><span>${assemblyHistoryDate(item.createdAt)} · ${item.shotCount||'多个'} 个成品视频</span></div>${file?`<button type="button" class="secondary-button" data-assembly-history-preview="${esc(file.id)}">放大播放</button>`:''}</footer></article>`;}).join('')||'<div class="assembly-library-empty"><span>⌁</span><b>还没有合成记录</b><p>完成至少 2 个分镜视频后，点击“分镜合成”即可在这里保留成片。</p></div>'}</div></div><footer class="assembly-library-footer"><span>历史成片不会影响后续分镜编辑和再次合成</span><button type="button" class="secondary-button" data-assembly-library-close>关闭</button></footer>`;
     dialog.querySelectorAll('[data-assembly-library-close]').forEach(button=>button.onclick=closeProfessionalAssemblyLibrary);
     dialog.querySelectorAll('[data-assembly-history-preview]').forEach(button=>button.onclick=()=>openProfessionalMediaPreview(button.dataset.assemblyHistoryPreview));
     dialog.showModal();
@@ -2647,7 +2648,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   }
   function professionalUploadJobCard(job){
     const failed=job.status==='failed'; const completed=job.status==='completed'; const progress=Math.max(0,Math.min(100,Math.round(job.progress||0))); const percent=failed?'失败':`${progress}%`; const label=failed?job.error:completed?(job.selected?'上传完成，已选中':'上传完成'):(job.label||'准备上传');
-    const media=job.kind==='image'&&job.previewUrl?`<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}" decoding="async">`:job.kind==='video'&&job.previewUrl?`<video src="${esc(job.previewUrl)}" muted preload="metadata"></video>`:'<span class="audio-file-mark">♫</span>';
+    const media=job.kind==='image'&&job.previewUrl?`<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}" decoding="async">`:job.kind==='video'&&job.previewUrl?`<video data-preview-src="${esc(job.previewUrl)}" muted preload="none"></video>`:'<span class="audio-file-mark">♫</span>';
     const ring=failed?'<span class="upload-progress-ring upload-progress-error"><b>!</b></span>':`<span class="upload-progress-ring" style="--upload-progress:${progress}%"><b>${percent}</b></span>`;
     return `<article class="professional-upload-job ${failed?'failed':''} ${completed?'completed':''}" aria-live="polite" aria-label="${esc(job.name)}，${esc(label)}"><div>${media}<span class="professional-upload-job-status">${ring}</span>${job.selected?'<i aria-label="已选中">✓</i>':''}</div><span title="${esc(job.name)}">${esc(job.name)}</span></article>`;
   }
