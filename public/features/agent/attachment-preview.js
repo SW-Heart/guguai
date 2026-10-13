@@ -1,4 +1,4 @@
-import { imageThumbnailUrl } from '../media/thumbnail-url.js?v=1';
+import { imageThumbnailUrl } from '../media/thumbnail-url.js?v=2';
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const mediaKinds = ['image', 'video', 'audio'];
 const labels = {image:'图片', video:'视频', audio:'音频', document:'文档', file:'文件'};

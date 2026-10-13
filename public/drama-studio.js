@@ -1,11 +1,11 @@
 import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=2';
-import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=1';
+import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=5';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=162';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=163';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';

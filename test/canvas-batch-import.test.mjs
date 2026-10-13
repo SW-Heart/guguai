@@ -57,7 +57,7 @@ test('batch import reveals and selects every item with one sync, focus and save'
 
 test('row preparation waits for every image dimension before placement',async()=>{
   const pending=[];
-  const context=vm.createContext({mapImagesWithLimit,epoch:1,assetImages:new Map(),assetSizes:new Map(),importedImageBounds,mediaFrameSize,
+  const context=vm.createContext({mapImagesWithLimit,canvasImageUrl:value=>value,epoch:1,assetImages:new Map(),assetSizes:new Map(),importedImageBounds,mediaFrameSize,
     Image:class {constructor(){this.naturalWidth=100;this.naturalHeight=1000;}decode(){return new Promise(resolve=>pending.push(resolve));}}});
   vm.runInContext(director.slice(director.indexOf('  async function prepareImportedCanvasRow('),director.indexOf('  async function importAssetIntoCanvas(')),context);
   let complete=false;

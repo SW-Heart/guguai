@@ -959,14 +959,23 @@ async function serveLocalMedia(request) {
   if (!isInside(targetWorkspace, target)) return new Response('Forbidden', { status: 403 });
   let stat = await fs.stat(target).catch(() => null);
   if (!stat?.isFile() || targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status: 404 });
-  const thumbnail = url.searchParams.get('thumbnail') === '1' && asset.kind === 'image';
+  // `thumbnail=1` is the 512px card preview; canvases request a larger edge.
+  // Any decode failure serves the original so the picture never goes missing.
+  const thumbnailSize = { '1':512, '2048':2048 }[url.searchParams.get('thumbnail')] || 0;
+  let thumbnail = Boolean(thumbnailSize) && asset.kind === 'image' && !/svg/i.test(String(asset.mimeType || ''));
   if (thumbnail) {
     localThumbnail ||= createThumbnailCache({
       directory:path.join(app.getPath('cache'), 'gugu-media-thumbnails'),
-      render:(source, output) => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', '-i', source, '-frames:v', '1', '-vf', "scale='min(512,iw)':'min(512,ih)':force_original_aspect_ratio=decrease", '-threads', '1', '-y', output], { timeoutMs:30_000 }),
+      render:(source, output, size) => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', '-i', source, '-frames:v', '1', '-vf', `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`, '-threads', '1', '-f', 'image2', '-c:v', 'png', '-y', output], { timeoutMs:30_000 }),
     });
-    try { target = await localThumbnail(target, stat); stat = await fs.stat(target); }
-    catch { return new Response('Thumbnail unavailable', { status:404 }); }
+    try {
+      const preview = await localThumbnail(target, stat, thumbnailSize);
+      const previewStat = await fs.stat(preview);
+      target = preview; stat = previewStat;
+    } catch (error) {
+      if (!error?.cached) console.warn('[media] 缩略图生成失败，改用原图', { assetId:asset.id, message:error?.message });
+      thumbnail = false;
+    }
     if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status:404 });
   }
 
@@ -992,12 +1001,12 @@ async function serveLocalMedia(request) {
   return new Response(body, { status, headers });
 }
 
-async function openOfflinePage(message = '') {
+async function openOfflinePage(message = '', { autoRetry = true } = {}) {
   if (!mainWindow) return;
   if (process.platform === 'win32') {
     setWindowsModalState(false);
   }
-  await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: { message } });
+  await mainWindow.loadFile(path.join(rendererDir, 'offline.html'), { query: autoRetry ? { message } : { message, autoRetry:'0' } });
 }
 
 function updateFeedUrl() {
@@ -1739,6 +1748,27 @@ function registerIpc() {
   });
 }
 
+// A crashed renderer leaves a blank window until the app restarts. Reload it
+// automatically, but stop after repeated crashes so an out-of-memory loop
+// settles on the retry page instead of reloading forever.
+const rendererCrashTimes = [];
+function recoverRendererCrash(details) {
+  if (isQuitting || details?.reason === 'clean-exit') return;
+  const now = Date.now();
+  while (rendererCrashTimes.length && now - rendererCrashTimes[0] > 10 * 60_000) rendererCrashTimes.shift();
+  rendererCrashTimes.push(now);
+  const target = mainWindow;
+  setTimeout(() => {
+    if (isQuitting || !target || target !== mainWindow || target.isDestroyed() || target.webContents.isDestroyed()) return;
+    if (rendererCrashTimes.length > 3) {
+      void runDesktopAction('显示页面恢复提示', () => openOfflinePage('页面意外关闭了，请点击重试重新打开。', { autoRetry:false }));
+      return;
+    }
+    console.warn('[desktop] 自动重新加载页面', { reason:details?.reason, attempt:rendererCrashTimes.length });
+    target.webContents.reload();
+  }, 1000);
+}
+
 async function createWindow({ loadStudioAfter = true } = {}) {
   const usesNativeMacTitlebar = process.platform === 'darwin';
   mainWindow = new BrowserWindow({
@@ -1790,6 +1820,7 @@ async function createWindow({ loadStudioAfter = true } = {}) {
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[desktop] 渲染进程退出', details);
     flushDesktopLog();
+    recoverRendererCrash(details);
   });
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.warn('[desktop] 页面加载失败', { errorCode, errorDescription, validatedURL });

@@ -282,7 +282,7 @@
     };
 
     // Keep the page calm while the connection recovers in the background.
-    window.setTimeout(() => void bridge?.retry?.(), 5000);
+    if (new URLSearchParams(window.location.search).get('autoRetry') !== '0') window.setTimeout(() => void bridge?.retry?.(), 5000);
   </script>
 </body>
 </html>

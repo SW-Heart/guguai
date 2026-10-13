@@ -134,6 +134,24 @@ export function FloatingMenuContainer({
       const el = node.getElement() as any
       const image = el.image() as HTMLImageElement | null
       if (!image) return
+      // GuGu paints canvas pictures from a display-sized copy. Crop coordinates
+      // are measured in the original, so swap it in before opening the editor.
+      if (image.dataset?.guguThumbnail) {
+        const guguOriginal = new Image()
+        guguOriginal.crossOrigin = 'anonymous'
+        guguOriginal.onload = () => {
+          el.image(guguOriginal)
+          el.clearCache()
+          el.getLayer()?.batchDraw()
+          handleActiveCrop(imageId)
+        }
+        guguOriginal.onerror = () => {
+          delete image.dataset.guguThumbnail
+          handleActiveCrop(imageId)
+        }
+        guguOriginal.src = (api.getNodeConfigById(imageId) as any)?.$_imageUrl || image.src
+        return
+      }
 
       const config = api.getNodeConfigById(imageId) as any
       const imageUrl = config?.$_imageUrl || image.src

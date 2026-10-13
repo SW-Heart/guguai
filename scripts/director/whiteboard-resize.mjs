@@ -17,3 +17,15 @@ export function patchWhiteboardResize(source) {
   return source.replace(observer, () =>
     `new ResizeObserver(entries => (${resizeCanvasSurface.toString()})(this, entries))`);
 }
+
+// GuGu paints canvas pictures from a display-sized copy (see director-workspace).
+// Image records keep the original URL for crop, export and persistence.
+export function patchWhiteboardImageSource(source) {
+  // Only the image node loader; video covers use the same shape on this.cover.
+  const loader = /(?:let|const) e\s*=\s*new Image(?:\(\))?;?\s*e\.crossOrigin\s*=\s*"anonymous",\s*e\.src\s*=\s*t,(?=\s*e\.onload\s*=\s*\(\)\s*=>\s*\{\s*this\.getElement\(\)\.image\(e\))/g;
+  if ([...source.matchAll(loader)].length !== 1) {
+    throw new Error('Unable to locate the whiteboard image loader');
+  }
+  return source.replace(loader, () =>
+    'const e = new Image(), guguDisplayUrl = globalThis.guguCanvasImageUrl?.(t) ?? t;\n    e.crossOrigin = "anonymous", guguDisplayUrl !== t && (e.dataset.guguThumbnail = "1"), e.src = guguDisplayUrl,');
+}

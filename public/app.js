@@ -20,7 +20,8 @@ import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
 import { createVideoPreviews } from './features/media/video-previews.js?v=2';
-import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=1';
+import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
+import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=3';
@@ -289,6 +290,11 @@ function requireDesktopLocalAsset(file) {
   return false;
 }
 const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver });
+// Library and picker grids keep every loaded page; free pictures far off screen.
+[['#fileGrid', '.file-card:not(.upload-job-card) img'], ['#referenceGrid', '.reference-option img']].forEach(([selector, images]) => {
+  const root = document.querySelector(selector);
+  if (root) createOffscreenImages({ root, selector:images, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, getComputedStyle:element => window.getComputedStyle(element) }).scan();
+});
 let videoPreviewScanFrame = 0;
 function hydrateVisibleVideoPreviews() {
   videoPreviewScanFrame = 0;
@@ -2144,7 +2150,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=136').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=137').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2155,7 +2161,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=269').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=270').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});

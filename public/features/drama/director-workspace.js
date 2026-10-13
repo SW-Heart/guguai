@@ -1,7 +1,11 @@
 import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=2';
 import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
-import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=4';
+import { canvasImageUrl } from '../media/thumbnail-url.js?v=2';
+
+// The canvas engine loads image nodes itself; let it request the display-sized copy.
+globalThis.guguCanvasImageUrl=canvasImageUrl;
+import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=5';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=5';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
@@ -15,7 +19,7 @@ import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=36';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=37';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=15';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=15';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
@@ -446,7 +450,10 @@ export function createDirectorWorkspace(host, bridge) {
     };
     image.onerror=()=>finishAssetLoad(url,image);
     if(!url.startsWith('gugu-media://'))image.crossOrigin='anonymous';
-    image.src=url;
+    // Sizes keep the original aspect ratio; crop reloads the original first.
+    const display=canvasImageUrl(url);
+    if(display!==url)image.dataset.guguThumbnail='1';
+    image.src=display;
   }
   // One layout for every card that describes something to make: characters,
   // locations, props and shots, whether made on the canvas or in older projects.
@@ -699,7 +706,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!geometryOnly)bindDocumentCard(id,element);
     if(!geometryOnly)element.querySelectorAll('[data-canvas-src]').forEach(media=>{
       if(mediaLoadObserver)mediaLoadObserver.observe(media);
-      else {media.src=media.dataset.canvasSrc;delete media.dataset.canvasSrc;if(media.tagName==='VIDEO')media.preload='metadata';}
+      else {media.src=media.tagName==='IMG'?canvasImageUrl(media.dataset.canvasSrc):media.dataset.canvasSrc;delete media.dataset.canvasSrc;if(media.tagName==='VIDEO')media.preload='metadata';}
     });
     // HtmlNode already synchronizes this element from getClientRect() on
     // viewport/drag/transform events. Do the same here when content changes. Applying
@@ -959,7 +966,9 @@ export function createDirectorWorkspace(host, bridge) {
       if(file.kind!=='image')return {id:file.id,...mediaFrameSize(file)};
       const url=file.previewUrl||file.url;
       if(url&&!assetImages.has(url)){
-        const image=new Image();image.src=url;
+        const image=new Image(),display=canvasImageUrl(url);
+        if(display!==url)image.dataset.guguThumbnail='1';
+        image.src=display;
         try{
           await image.decode();
           if(token!==epoch)return null;
@@ -2091,7 +2100,7 @@ export function createDirectorWorkspace(host, bridge) {
         const media=entry.target,url=media.dataset.canvasSrc;
         mediaLoadObserver?.unobserve(media);
         if(!url)continue;
-        media.src=url;delete media.dataset.canvasSrc;
+        media.src=media.tagName==='IMG'?canvasImageUrl(url):url;delete media.dataset.canvasSrc;
         if(media.tagName==='VIDEO')media.preload='metadata';
       }
     },{root:host.querySelector('.dw-canvas'),rootMargin:'400px'});

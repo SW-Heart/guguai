@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { ImageCache, mapImagesWithLimit } from '../public/features/media/image-cache.js';
-import { imageThumbnailUrl } from '../public/features/media/thumbnail-url.js';
+import { imageThumbnailUrl, canvasImageUrl } from '../public/features/media/thumbnail-url.js';
 import { attachmentCardMarkup, attachmentDetailMarkup } from '../public/features/agent/attachment-preview.js';
 
 test('image cache evicts old references by decoded pixel budget and count', () => {
@@ -32,13 +32,16 @@ test('bulk image preparation caps concurrency at two and retains order', async (
 test('canvas dimension loads are bounded and deleted nodes release queued and cached images', () => {
   const source = readFileSync(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
   let created = 0;
-  const context = vm.createContext({ epoch:1, canvas:null, assetSizes:new Map(), assetSizeLoads:new Map(), assetImages:new ImageCache(),
-    Image:class { constructor() { created++; } },
+  const sources = [];
+  const context = vm.createContext({ epoch:1, canvas:null, assetSizes:new Map(), assetSizeLoads:new Map(), assetImages:new ImageCache(), canvasImageUrl,
+    Image:class { dataset = {}; constructor() { created++; } set src(value) { sources.push([value, this.dataset.guguThumbnail]); } },
   });
   vm.runInContext(source.slice(source.indexOf('  function assetBounds('), source.indexOf('  function nodeContent(')), context);
   for (let i = 0; i < 100; i++) context.loadAssetSize(`id-${i}`, `gugu-media://asset/${i}`);
   assert.equal(created, 2);
   assert.equal(context.assetSizeLoads.size, 2);
+  assert.deepEqual(sources[0], ['gugu-media://asset/0?thumbnail=2048', '1'], 'canvas pictures decode the display-sized copy');
+  assert.ok(context.assetSizeLoads.has('gugu-media://asset/0'), 'records stay keyed by the original URL');
   context.assetSizeLoads.values().next().value.onerror();
   assert.equal(created, 3);
   context.assetImages.set('old', { naturalWidth:10, naturalHeight:10 });

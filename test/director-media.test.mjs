@@ -9,7 +9,7 @@ test('loaded local images populate the native shape and invalidate empty drawing
   const url='gugu-media://asset/image-1';
   let painted,cleared=0,drawn=0,updated;
   const shape={image(value){painted=value;},clearCache(){cleared++;},getLayer(){return {batchDraw(){drawn++;}};}};
-  const context={epoch:0,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),bridge:{markCanvasDirty(){}},canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
+  const context={canvasImageUrl:value=>value,epoch:0,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),Image:class {naturalWidth=800;naturalHeight=400;},workspace:()=>({positions:{}}),bridge:{markCanvasDirty(){}},canvas:{getCanvasNodeById:()=>({getElement:()=>shape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(ids,bounds){updated=bounds;}}};
   vm.createContext(context);vm.runInContext(loading,context);
   context.loadAssetSize('image-1',url);
   const image=context.assetSizeLoads.get(url);image.onload();
@@ -24,7 +24,7 @@ test('decoding a fresh portrait image keeps it inside the space reserved for it'
   const url='gugu-media://portrait';
   const node={id:'portrait',$_type:'image',$_imageUrl:url,x:600,y:200,width:280,height:220};
   let updated;
-  const context={epoch:1,syncing:false,mainLayer:null,automaticImageSizing:new Set(['portrait']),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),importedImageBounds,
+  const context={canvasImageUrl:value=>value,epoch:1,syncing:false,mainLayer:null,automaticImageSizing:new Set(['portrait']),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),importedImageBounds,
     Image:class {naturalWidth=800;naturalHeight=1600;},workspace:()=>({positions:{}}),bridge:{},
     canvas:{getState:()=>({nodes:[node]}),getCanvasNodeById:()=>null,getNodeConfigById:()=>node,updateNodes(ids,bounds){updated=bounds;}}};
   vm.createContext(context);vm.runInContext(loading,context);
@@ -39,7 +39,7 @@ test('cache eviction does not reload painted shapes but new shapes still receive
   const url='gugu-media://asset/image-1';
   const shape={image(){},clearCache(){},getLayer:()=>null};
   let currentShape=shape;
-  const context={epoch:1,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),
+  const context={canvasImageUrl:value=>value,epoch:1,syncing:false,automaticImageSizing:new Set(),assetSizes:new Map(),assetSizeLoads:new Map(),assetImages:new Map(),
     Image:class {naturalWidth=100;naturalHeight=100;},workspace:()=>({positions:{}}),bridge:{},
     canvas:{getCanvasNodeById:()=>({getElement:()=>currentShape}),getNodeConfigById:()=>({$_type:'image',$_imageUrl:url}),updateNodes(){}}};
   vm.createContext(context);vm.runInContext(loading,context);
