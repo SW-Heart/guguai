@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {mountDocumentCard,documentCardMarkup,documentDownload} from '../public/features/drama/document-card.js';
 function harness(save=async(node,input)=>({title:node.title,text:input.text,revision:input.expectedRevision+1})){
   const elements=new Map(),events=new Map();
-  for(const name of ['body','title','revision','feedback','edit','save','cancel','copy','download','ask']){
+  for(const name of ['body','title','title-input','revision','feedback','edit','save','cancel','copy','download','ask']){
     let value='';
     elements.set(`[data-document-${name}]`,{textContent:'',scrollTop:0,scrollLeft:0,focus(){},addEventListener(type,callback){events.set(`${name}:${type}`,callback);},get value(){return value;},set value(next){value=next;this.scrollTop=0;this.scrollLeft=0;}});
   }
@@ -58,4 +58,17 @@ test('transcripts stay readable and download as SRT',()=>{
   const h=harness();const node={id:'transcript',kind:'source-transcript',text:'台词',title:'台词',item:{cues:[{startSeconds:1.2,endSeconds:3,text:'你好'}]}};
   h.controller.update(node);assert.equal(h.el('edit').hidden,true);assert.equal(h.el('body').value,'1.2–3 秒  你好');
   assert.deepEqual(documentDownload(node,''),{extension:'srt',text:'1\n00:00:01,200 --> 00:00:03,000\n你好'});
+});
+
+test('text cards written on the canvas can be renamed while editing; scripts edit in place',async()=>{
+  const calls=[];const h=harness(async(node,input)=>{calls.push(input);return {title:input.title||node.title,text:input.text,revision:2};});
+  h.controller.update({id:'canvas-note-1',kind:'note',title:'文字',text:'',item:{revision:1,role:'text'}});
+  assert.equal(h.el('edit').hidden,false);
+  h.controller.edit();assert.equal(h.el('title-input').hidden,false);assert.equal(h.el('title').hidden,true);
+  h.el('title-input').value='人物小传';h.el('body').value='外婆，八十六岁';
+  await h.el('save').onclick();
+  assert.deepEqual(calls,[{text:'外婆，八十六岁',expectedRevision:1,title:'人物小传'}]);
+  assert.equal(h.el('title').textContent,'人物小传');assert.equal(h.el('title-input').hidden,true);
+  assert.match(documentCardMarkup({id:'story',kind:'story',title:'剧本',text:'',item:{}}),/<span class="dw-node-kind">剧本<\/span>/);
+  assert.match(documentCardMarkup({id:'canvas-note-2',kind:'note',title:'剧本',text:'',item:{role:'script'}}),/<span class="dw-node-kind">剧本<\/span>/);
 });

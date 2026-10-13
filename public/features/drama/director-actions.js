@@ -1,3 +1,4 @@
+import { normalizeLinks, entityKinds } from './canvas-links.js?v=1';
 // Persist only inert canvas attributes, never executable HTML or application state.
 function isMeaningfulRichText(node) {
  const html=typeof node?.$_htmlContent==='string'?node.$_htmlContent:(typeof node?.text==='string'?node.text:'');
@@ -54,11 +55,18 @@ function normalizeDraftSource(source){
 }
 // One action contract for manual controls and the director. No generated code is executed.
 export const directorActionTypes = ['design_story','add_resource','update_resource','add_shot','update_shot','generate_resource','generate_video','read_tail','check_continuity','assemble'];
+// Text cards people write directly on the canvas: a script or free text.
+export function normalizeNotes(value) {
+  return (Array.isArray(value)?value:[]).filter(note=>note&&typeof note.id==='string'&&/^canvas-note-[\w-]{1,100}$/.test(note.id)).slice(0,100).map(note=>({
+    id:note.id,role:note.role==='script'?'script':'text',title:String(note.title||'').replace(/[\r\n]/g,' ').slice(0,160),text:String(note.text||'').slice(0,60000),
+    revision:Number.isInteger(note.revision)&&note.revision>0?note.revision:1,
+  }));
+}
 export function normalizeDirectorWorkspace(value = {}) {
   const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return { version:1, delegated:Boolean(object.delegated), autonomy:['assist','director','auto'].includes(object.autonomy)?object.autonomy:'director',
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
-    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,200).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
+    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,600).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
       id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),
       promptSegments:(Array.isArray(item.promptSegments)?item.promptSegments:[]).slice(0,1000).flatMap(segment=>typeof segment==='string'?[segment.slice(0,10000)]:segment&&typeof segment.id==='string'&&typeof segment.label==='string'?[{id:segment.id.slice(0,200),label:segment.label.slice(0,200)}]:[]),
       aspect:String(item.aspect||'').slice(0,20),quality:String(item.quality||'').slice(0,20),mode:String(item.mode||'').slice(0,20),
@@ -68,7 +76,15 @@ export function normalizeDirectorWorkspace(value = {}) {
       taskId:String(item.taskId||'').slice(0,200),status:String(item.status||'').slice(0,30),
       ...(typeof item.title==='string'&&item.title?{title:item.title.slice(0,160)}:{}),
       ...(item.source&&typeof item.source==='object'?{source:normalizeDraftSource(item.source)}:{}),
+      ...(item.entity&&Object.hasOwn(entityKinds,item.entity.kind)?{entity:{kind:item.entity.kind,name:String(item.entity.name||'').replace(/[@\r\n]/g,'').trim().slice(0,40)}}:{}),
+      ...(typeof item.parentId==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.parentId)?{parentId:item.parentId}:{}),
+      ...(item.role==='shot'?{role:'shot'}:{}),
+      ...(item.expanded===true?{expanded:true}:{}),
+      ...(typeof item.primaryId==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.primaryId)?{primaryId:item.primaryId}:{}),
     })),
+    links:normalizeLinks(object.links),
+    notes:normalizeNotes(object.notes),
+    editSeq:Number.isInteger(object.editSeq)&&object.editSeq>0?object.editSeq:0,
     hiddenIds:[...new Set((Array.isArray(object.hiddenIds)?object.hiddenIds:[]).map(String).filter(id=>id.length>0&&id.length<200))].slice(0,500),
     positions:Object.fromEntries(Object.entries(object.positions||{}).filter(([id,p])=>id.length<200&&Number.isFinite(p?.x)&&Number.isFinite(p?.y)).slice(0,500).map(([id,p])=>[id,{x:Math.max(-100000,Math.min(100000,p.x)),y:Math.max(-100000,Math.min(100000,p.y)),...Object.fromEntries(['width','height','scaleX','scaleY','rotation'].filter(k=>Number.isFinite(p[k])).map(k=>[k,Math.max(-100000,Math.min(100000,p[k]))])),...(p.manualSize===true?{manualSize:true}:{})}])),
     viewport:{x:Number.isFinite(object.viewport?.x)?object.viewport.x:40,y:Number.isFinite(object.viewport?.y)?object.viewport.y:40,scale:Math.max(.1,Math.min(3,Number(object.viewport?.scale)||.75))},

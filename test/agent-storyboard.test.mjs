@@ -107,33 +107,35 @@ test('storyboard plan becomes editable canvas cards grouped by episode', async (
   assert.equal(canvasGenerationPayload(restored.generationDrafts.find(item => item.id === segment.id), config).prompt, '0-5秒：@外婆 卧床，Image1 昏暗。5-10秒：近景，她睁眼。');
 });
 
-test('finished reference images attach automatically and revisions keep user edits', () => {
+test('segments link to their reference cards and revisions keep user edits', () => {
   const storyboard = { id: 'sb-1', revision: 1, title: 't', video: { modelId: 'vid', aspect: '9:16', quality: '720p' }, references: [{ key: 'grandma', name: '外婆', kind: 'character', prompt: '老人' }],
     segments: [{ key: 's1', episode: '第1集', title: '一', duration: 5, prompt: '@外婆 睁眼', references: ['grandma'] }, { key: 's2', episode: '第1集', title: '二', duration: 5, prompt: '@外婆 起身', references: ['grandma'] }] };
   const workspace = normalizeDirectorWorkspace({});
   mergeStoryboardDrafts(workspace, [storyboard], { config });
   const ref = workspace.generationDrafts.find(item => item.source.role === 'reference');
   const [first, second] = workspace.generationDrafts.filter(item => item.source.role === 'segment');
-  assert.equal(first.mode, 'TEXT');
-  ref.taskId = 'task-ref';
-  const tasks = { 'task-ref': { status: 'completed', assetId: 'asset-grandma' } };
-  const lookups = { config, task: id => tasks[id], media: () => ({ url: '/grandma.png' }) };
-  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], lookups).changed, true);
-  assert.deepEqual(first.attachments, [{ id: 'asset-grandma', name: '外婆', kind: 'image', url: '/grandma.png' }]);
+  assert.deepEqual(ref.entity, { kind: 'character', name: '外婆' }, 'the reference is a character card');
+  assert.deepEqual(workspace.links.map(link => [link.from, link.to]), [[ref.id, first.id], [ref.id, second.id]]);
+  assert.deepEqual(first.attachments, [], 'the picture is resolved from the card when generating');
   assert.equal(first.mode, 'REFERENCE');
 
-  // A user who removes the reference is not overridden on the next refresh.
-  first.attachments = [];
-  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], lookups).changed, false);
-  assert.deepEqual(first.attachments, []);
+  // The links survive saving, and a link the user removed is not restored.
+  const restored = normalizeDirectorWorkspace(JSON.parse(JSON.stringify(workspace)));
+  assert.equal(restored.links.length, 2);
+  assert.equal(restored.generationDrafts.find(item => item.id === ref.id).entity.name, '外婆');
+  workspace.links = workspace.links.filter(link => link.to !== first.id);
+  assert.equal(mergeStoryboardDrafts(workspace, [storyboard], { config }).changed, false);
+  assert.equal(workspace.links.length, 1);
 
   first.prompt = '用户改过的描述';
-  const revised = { ...storyboard, revision: 2, segments: storyboard.segments.map(item => ({ ...item, prompt: `${item.prompt}，新版`, duration: 10 })) };
-  mergeStoryboardDrafts(workspace, [revised], lookups);
+  // A segment that already has results is not rewritten either.
+  workspace.generationDrafts.push({ ...second, id: 'canvas-gen-result', source: undefined, taskId: 'task-1', parentId: second.id });
+  const revised = { ...storyboard, revision: 2, references: [{ ...storyboard.references[0], prompt: '白发老人' }], segments: storyboard.segments.map(item => ({ ...item, prompt: `${item.prompt}，新版`, duration: 10 })) };
+  mergeStoryboardDrafts(workspace, [revised], { config });
   assert.equal(first.prompt, '用户改过的描述');
-  assert.equal(second.prompt, '@外婆 起身，新版');
-  assert.equal(second.duration, 10);
-  assert.equal(workspace.generationDrafts.length, 3);
+  assert.equal(second.prompt, '@外婆 起身');
+  assert.equal(ref.prompt, '白发老人');
+  assert.equal(workspace.generationDrafts.length, 4);
 });
 
 test('deleted storyboard cards are not recreated', () => {

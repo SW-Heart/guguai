@@ -1,6 +1,7 @@
 import { generationFrames } from '../public/features/agent/frames.js';
 import { defaultTitleFromMessage } from '../public/features/agent/default-title.js';
 import { normalizeDirectorWorkspace } from '../public/features/drama/director-actions.js';
+import { applyCanvasOps, canvasRestoreFor, replayCanvasEdits, canReplay, EDIT_LOG_LIMIT } from '../public/features/drama/canvas-ops.js';
 import { randomUUID } from 'node:crypto';
 import { normalizeModelPreferences } from '../lib/agent/model-preferences.mjs';
 
@@ -179,11 +180,43 @@ export function createAgentSessionRepository({ sql, tx }) {
       : sql('SELECT data_json,revision FROM agent_canvases WHERE session_id=:id').get({id:session.id});
     return row ? {...JSON.parse(row.data_json),revision:row.revision} : {directorWorkspace:null,assetIds:[],revision:0};
   }
-  function saveCanvas(session, value) {
-    const data = {directorWorkspace:normalizeDirectorWorkspace(value.directorWorkspace),assetIds:Array.isArray(value.assetIds)?[...new Set(value.assetIds.map(String).filter(id=>id.length>0&&id.length<=200))].slice(0,200):[]};
+  function writeCanvas(session, data) {
     if(session.agentProjectId)sql('INSERT INTO agent_project_canvases(project_id,data_json,revision,updated_at) VALUES(:id,:data,1,:now) ON CONFLICT(project_id) DO UPDATE SET data_json=:data,revision=revision+1,updated_at=:now').run({id:session.agentProjectId,data:JSON.stringify(data),now:Date.now()});
     else sql('INSERT INTO agent_canvases(session_id,data_json,revision,updated_at) VALUES(:id,:data,1,:now) ON CONFLICT(session_id) DO UPDATE SET data_json=:data,revision=revision+1,updated_at=:now').run({id:session.id,data:JSON.stringify(data),now:Date.now()});
-    return canvas(session);
+  }
+  const canvasAssetIds=value=>Array.isArray(value)?[...new Set(value.map(String).filter(id=>id.length>0&&id.length<=200))].slice(0,200):[];
+  // A client saves its whole canvas. If it has not yet seen some of the
+  // assistant's edits, replay them onto the incoming canvas before storing it.
+  function saveCanvas(session, value) {
+    return tx(() => {
+      const current = canvas(session), edits = current.canvasEdits || [], editSeq = current.editSeq || 0;
+      const data = {directorWorkspace:normalizeDirectorWorkspace(value.directorWorkspace),assetIds:canvasAssetIds(value.assetIds),canvasEdits:edits,editSeq};
+      if ((data.directorWorkspace.editSeq || 0) < editSeq) {
+        if (canReplay(edits, data.directorWorkspace.editSeq)) replayCanvasEdits(data, edits);
+        else { data.directorWorkspace = normalizeDirectorWorkspace(current.directorWorkspace); data.assetIds = canvasAssetIds(current.assetIds); }
+        data.directorWorkspace.editSeq = editSeq;
+      }
+      writeCanvas(session, data);
+      return canvas(session);
+    });
+  }
+  // Apply an edit made by the assistant. `build(data)` returns the prepared
+  // operations and a summary for the user.
+  function editCanvas(session, build) {
+    return tx(() => {
+      const current = canvas(session);
+      const data = {directorWorkspace:normalizeDirectorWorkspace(current.directorWorkspace),assetIds:canvasAssetIds(current.assetIds),canvasEdits:current.canvasEdits||[],editSeq:current.editSeq||0};
+      const {ops, summary, undoes = 0} = build(data);
+      const before = structuredClone({directorWorkspace:data.directorWorkspace,assetIds:data.assetIds});
+      const touched = applyCanvasOps(data, ops);
+      data.directorWorkspace = normalizeDirectorWorkspace(data.directorWorkspace);
+      const seq = data.editSeq + 1;
+      const edit = {seq, id:`edit-${seq}`, at:Date.now(), summary:String(summary||'').slice(0,300), ops, undo:canvasRestoreFor(before,data), ...(undoes?{undoes}:{})};
+      data.canvasEdits = [...data.canvasEdits.map(item => item.seq === undoes ? {...item, undone:true} : item), edit].slice(-EDIT_LOG_LIMIT);
+      data.editSeq = seq; data.directorWorkspace.editSeq = seq;
+      writeCanvas(session, data);
+      return {edit, touched, canvas:canvas(session)};
+    });
   }
   function readObservation(session,assetId){
     if(!session.agentProjectId||!getProject(session.agentProjectId,session.userId,session.scope))return null;
@@ -289,5 +322,5 @@ export function createAgentSessionRepository({ sql, tx }) {
       sql("UPDATE agent_sessions SET doc_json=:doc,state='queued',wake_at=0,interrupted=0 WHERE id=:id").run({ id: session.id, doc: JSON.stringify(current.doc) });
     });
   }
-  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, saveCanvas, editDocument, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
+  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, editCanvas, saveCanvas, editDocument, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
 }

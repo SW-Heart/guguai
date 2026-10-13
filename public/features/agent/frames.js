@@ -9,7 +9,7 @@ export function generationFrames(doc) {
   const frames=[...(doc.generations||[])];
   for(const [id,p] of Object.entries(doc.prepared||{})){
     if(p.result)continue;
-    for(let index=0;index<Math.min(10,Number(p.quote.quantity)||1);index++)frames.push({id:`${id}-${index}`,canvasId:`${id}-${index}`,batchId:id,type:p.input.type,title:p.input.prompt.slice(0,100),modelId:p.input.modelId,aspectRatio:p.input.midjourneyOptions?.aspectRatio||p.input.aspectRatio||p.input.size||p.quote.size,createdAt:p.createdAt,index,status:p.status||'waiting_approval',placeholder:true});
+    for(let index=0;index<Math.min(10,Number(p.quote.quantity)||1);index++)frames.push({id:`${id}-${index}`,canvasId:`${id}-${index}`,batchId:id,type:p.input.type,title:p.input.prompt.slice(0,100),modelId:p.input.modelId,aspectRatio:p.input.midjourneyOptions?.aspectRatio||p.input.aspectRatio||p.input.size||p.quote.size,createdAt:p.createdAt,index,status:p.status||'waiting_approval',placeholder:true,...(p.canvasNodeId?{attachedTo:p.canvasNodeId}:{})});
   }
   return frames.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)||(a.index||0)-(b.index||0)||a.id.localeCompare(b.id));
 }

@@ -5,6 +5,13 @@ import { bodyBuffer } from '../http-protocol.mjs';
 import { normalizeModelPreferences, validateModelPreferences } from '../../lib/agent/model-preferences.mjs';
 import { publicStoryboard } from '../../lib/agent/storyboard-tools.mjs';
 
+// Clients replay recent assistant edits; what an edit replaced stays on the server.
+function publicCanvas(canvas) {
+  if (!canvas) return null;
+  const {canvasEdits = [], ...rest} = canvas;
+  return {...rest, canvasEdits:canvasEdits.slice(-20).map(({seq, id, summary, ops}) => ({seq, id, summary, ops}))};
+}
+
 const DOCUMENT_UPLOAD_MAX_BYTES=15*1024*1024;
 const DOCUMENT_TEXT_MAX_CHARS=300_000;
 async function extractDocument(req,name){
@@ -127,7 +134,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       tasks: artifacts.generations.filter(g => !g.placeholder).map(g => findGeneration(session.userId, g.id, session.scope)).filter(Boolean).map(publicGeneration),
       project: project ? publicProject(project) : null,
       agentProjectId:session.agentProjectId || '',
-      canvas: session.projectId ? null : repo.canvas?.(session) || null,
+      canvas: session.projectId ? null : publicCanvas(repo.canvas?.(session)),
       balance: walletOf(session.userId).balance,
     };
   }
@@ -264,11 +271,11 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
     }
     if (match[2] === 'canvas') {
       if (session.projectId) { sendJson(res, 400, {error:'请在短剧项目中编辑画布'}); return true; }
-      if (req.method === 'GET') { sendJson(res, 200, {canvas:repo.canvas(session)}); return true; }
+      if (req.method === 'GET') { sendJson(res, 200, {canvas:publicCanvas(repo.canvas(session))}); return true; }
       if (req.method !== 'PATCH') { sendJson(res, 405, {error:'请求方式不支持'}); return true; }
       const input = await bodyJson(req);
       if (JSON.stringify(input).length > 2_000_000) { sendJson(res, 413, {error:'画布内容过大'}); return true; }
-      sendJson(res, 200, {canvas:repo.saveCanvas(session,input)}); return true;
+      sendJson(res, 200, {canvas:publicCanvas(repo.saveCanvas(session,input))}); return true;
     }
     if (!match[2] && req.method === 'GET') { sendJson(res, 200, await snapshot(session)); return true; }
     if (req.method !== 'POST') { sendJson(res, 405, { error: '请求方式不支持' }); return true; }
