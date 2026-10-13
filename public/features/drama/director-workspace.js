@@ -3,8 +3,6 @@ import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
 import { canvasImageUrl } from '../media/thumbnail-url.js?v=2';
 
-// The canvas engine loads image nodes itself; let it request the display-sized copy.
-globalThis.guguCanvasImageUrl=canvasImageUrl;
 import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachment-preview.js?v=5';
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=5';
@@ -36,6 +34,9 @@ import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 import { mountCanvasContextMenu } from './canvas-context-menu.js?v=2';
+
+// The canvas engine loads image nodes itself; let it request the display-sized copy.
+globalThis.guguCanvasImageUrl=canvasImageUrl;
 
 const escape = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={queued:'等待制作',running:'制作中',completed:'已完成',succeeded:'已完成',failed:'失败',cancelled:'已取消',pending:'等待制作',processing:'生成中'};
@@ -240,7 +241,7 @@ function renderConversationMessages(container, items, draft='', status='complete
 }
 
 export function createDirectorWorkspace(host, bridge) {
-  let canvas, canvasMount, projectId='', syncing=false, saveTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
+  let canvas, canvasMount, projectId='', syncing=false, saveTimer, viewportPersistTimer, selected='', busy=false, stopped=false, epoch=0, draft='', layoutHistory=[], inspectorOpen=false;
   let chatMode=bridge.initialCanvasOpen?.()?'side':'full',initialMessageSent=false;
   let emptyEntry=null,emptyEntrySession='',disposeEmptyEntry=null;
   let mainLayer, nativeTransformer, lastNodeGeometry='', edgeRenderFrame=0, resizingChat=false, resizeCanvasSnapshot=null, resizeFinishFrame=0;
@@ -654,8 +655,12 @@ export function createDirectorWorkspace(host, bridge) {
   }
   const documentCards=new WeakMap();
   function bindDocumentCard(id,element){
-    const card=element.querySelector('.dw-document-card'),node=nodes().find(item=>item.id===id);
-    if(!card||!isDocumentCard(node))return;
+    // Look up the project model only for document cards; rebuilding it for
+    // every card made a full alignment pass quadratic in the node count.
+    const card=element.querySelector('.dw-document-card');
+    if(!card)return;
+    const node=nodes().find(item=>item.id===id);
+    if(!isDocumentCard(node))return;
     let controller=documentCards.get(card);
     if(!controller){
       const mountEpoch=epoch;
@@ -818,6 +823,9 @@ export function createDirectorWorkspace(host, bridge) {
     });
   }
   function alignCards(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id));}
+  // Panning and zooming move cards without changing their content; skip media
+  // and document binding, which only matter when a card's HTML is replaced.
+  function alignCardGeometry(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id,undefined,true));}
   function fitCanvas(ids){
     if(!canvas)return;
     const surface=canvas.getContainer();
@@ -2144,7 +2152,12 @@ export function createDirectorWorkspace(host, bridge) {
       // Changing the chat column can make the canvas report a resize-related
       // state/viewport event. Those events describe layout, not user edits.
       canvas.on('state:change',snapshot=>{if(mountEpoch!==epoch||syncing||resizingChat)return;bridge.markCanvasDirty?.();syncCanvasOverlayVisibility(snapshot);const current=persistLiveCanvasState(snapshot);if(!current)return;const geometry=geometrySignature(current);if(geometry!==lastNodeGeometry){lastNodeGeometry=geometry;queueEdgeSync(current);}scheduleCanvasSave();queueCanvasMediaLibrary();});
-      canvas.on('viewport:change',v=>{canvasContextMenu?.close();if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();queueWorkspaceFrame(()=>{alignCards();positionGenerationComposer();connector?.refresh();});persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:v}));workspace().viewport=v;scheduleCanvasSave();});
+      // Wheel and pan events arrive several times per frame. Align once per
+      // frame, and write the node snapshot back only after the gesture settles:
+      // a viewport change moves no nodes, and copying every node (including
+      // embedded crop images) on each event made large canvases stutter.
+      let viewportFrame=0;
+      canvas.on('viewport:change',v=>{canvasContextMenu?.close();if(mountEpoch!==epoch||syncing||resizingChat||(bridge.agentMode&&!agentReady))return;bridge.markCanvasDirty?.();workspace().viewport=v;if(!viewportFrame)viewportFrame=queueWorkspaceFrame(()=>{viewportFrame=0;alignCardGeometry();positionGenerationComposer();connector?.refresh();});clearTimeout(viewportPersistTimer);viewportPersistTimer=setTimeout(()=>{if(mountEpoch!==epoch||!canvas)return;persistLiveCanvasState(liveCanvasSnapshot({...canvas.getState(),viewport:workspace().viewport}));},150);scheduleCanvasSave();});
       // Konva owns live geometry during both drag and resize. The public
       // state event arrives only after the gesture, so align HTML cards and
       // arrows from the native shape on every move.
@@ -2496,7 +2509,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;
