@@ -50,6 +50,7 @@ test('uploads only the last 24 hours across archives, preserving complete record
   }
 
   // 没有近期记录时仍可上传诊断信息，不回退到旧日志。
+  flushDesktopLog();
   writeFileSync(path.join(dir, 'client.log.1'), fixtures['client.log.2']);
   writeFileSync(path.join(dir, 'client.log'), fixtures['client.log.2']);
   const empty = await collectDesktopLogBundle({ diagnostics: { version: 'test' } });
