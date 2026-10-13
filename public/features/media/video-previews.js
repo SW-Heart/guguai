@@ -1,6 +1,8 @@
-// Card previews retain native decoders even when paused. Keep only a small
-// visible set loaded, and release sources when cards leave or are removed.
-export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = 8 }) {
+// Card previews retain native decoders even when paused. Load the cards in
+// view (plus a short look-ahead so covers are ready while scrolling) and
+// release sources when cards leave or are removed. The budget must cover a
+// full screen of cards on large displays; it only guards against extremes.
+export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = 48 }) {
   const tracked = new Set();
   const visible = new Set();
   const active = new Set();
@@ -46,7 +48,7 @@ export function createVideoPreviews({ root, IntersectionObserver, MutationObserv
       else { visible.delete(video); release(video); }
     }
     fill();
-  }, { rootMargin:'0px' }) : null;
+  }, { rootMargin:'200px 0px' }) : null;
   function scan() {
     for (const video of tracked) {
       if (video.isConnected && root.contains(video)) continue;

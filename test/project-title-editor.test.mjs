@@ -121,7 +121,7 @@ test('desktop project names and their editor receive clicks outside native drag 
 
 test('title editor and its entry points use current cache versions', () => {
   const entries=[
-    ['index.html',['/app.js?v=550','/styles.css?v=400']],
+    ['index.html',['/app.js?v=551','/styles.css?v=400']],
     ['app.js',['./features/agent/workspace.js?v=137','./drama-studio.js?v=270']],
     ['drama-studio.js',['./features/drama/director-workspace.js?v=163']],
     ['features/agent/workspace.js',['../drama/director-workspace.js?v=163']],

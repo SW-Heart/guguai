@@ -38,20 +38,22 @@ function fixture({ count = 200, observe = true } = {}) {
   };
 }
 
-test('opening a library of 200 videos never loads more than eight card sources', () => {
+test('every card on a full screen gets a cover, while 200 videos stay within the budget', () => {
   const { videos, show } = fixture();
   assert.equal(videos.filter(video => video.src).length, 0);
+  show(videos.slice(0, 30));
+  assert.equal(videos.slice(0, 30).filter(video => video.src).length, 30, 'a large window of 30 visible cards must all load');
   show(videos);
-  assert.equal(videos.filter(video => video.src).length, 8);
+  assert.equal(videos.filter(video => video.src).length, 48);
 });
 
 test('explicit player interaction works beyond the preview limit without exceeding it', () => {
   const { videos, show, events } = fixture();
   show(videos);
-  assert.equal(videos[20].src, '');
-  events.pointerdown({ target:videos[20] });
-  assert.ok(videos[20].src);
-  assert.equal(videos.filter(video => video.src).length, 8);
+  assert.equal(videos[120].src, '');
+  events.pointerdown({ target:videos[120] });
+  assert.ok(videos[120].src);
+  assert.equal(videos.filter(video => video.src).length, 48);
 });
 
 test('offscreen players release sources and restore playback position when shown again', () => {
@@ -83,8 +85,8 @@ test('scrolling releases old decoders and fills freed slots with visible cards',
   assert.equal(videos[0].src, '');
   assert.equal(videos[0].pauses, 1);
   assert.equal(videos[0].loads, 1);
-  assert.equal(videos.filter(video => video.src).length, 8);
-  assert.ok(videos[8].src);
+  assert.equal(videos.filter(video => video.src).length, 48);
+  assert.ok(videos[48].src);
 });
 
 test('removing cards releases sources and observer references without another render', () => {
@@ -118,7 +120,7 @@ test('missing IntersectionObserver leaves sources unloaded', () => {
 test('preview errors stop before the full-library refresh and cache URLs match', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(app, /if \(media\.dataset\.previewSrc\) \{\s*videoPreviews\.fail\(media\);\s*return;/);
-  assert.ok(app.includes('./features/media/video-previews.js?v=2'));
+  assert.ok(app.includes('./features/media/video-previews.js?v=3'));
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=550'));
+  assert.ok(html.includes('/app.js?v=551'));
 });
