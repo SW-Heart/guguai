@@ -121,10 +121,10 @@ test('desktop project names and their editor receive clicks outside native drag 
 
 test('title editor and its entry points use current cache versions', () => {
   const entries=[
-    ['index.html',['/app.js?v=566','/styles.css?v=409']],
-    ['app.js',['./features/agent/workspace.js?v=149','./drama-studio.js?v=282']],
-    ['drama-studio.js',['./features/drama/director-workspace.js?v=175']],
-    ['features/agent/workspace.js',['../drama/director-workspace.js?v=175']],
+    ['index.html',['/app.js?v=567','/styles.css?v=410']],
+    ['app.js',['./features/agent/workspace.js?v=150','./drama-studio.js?v=283']],
+    ['drama-studio.js',['./features/drama/director-workspace.js?v=176']],
+    ['features/agent/workspace.js',['../drama/director-workspace.js?v=176']],
     ['features/drama/director-workspace.js',['../agent/project-title-editor.js?v=1']],
   ];
   for(const [file,urls] of entries)for(const url of urls)assert.ok(read(file).includes(url),`${file}: ${url}`);
