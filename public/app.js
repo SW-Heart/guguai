@@ -19,7 +19,7 @@ import { createNotificationController } from './features/notifications/controlle
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
-import { createVideoPreviews } from './features/media/video-previews.js?v=3';
+import { createVideoPreviews } from './features/media/video-previews.js?v=4';
 import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
