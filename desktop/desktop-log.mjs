@@ -16,6 +16,7 @@ const LOG_FILE_NAME = 'client.log';
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 // client.log 之外再保留两份归档，最差情况约 6 MB 纯文本。
 const ARCHIVE_COUNT = 2;
+const UPLOAD_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_LINE_LENGTH = 4000;
 const FLUSH_DELAY_MS = 250;
 const MAX_BUFFERED_BYTES = 64 * 1024;
@@ -144,37 +145,54 @@ export function initDesktopLogging({ dir, header = {} } = {}) {
   return logDir;
 }
 
-function readLogSection(file) {
+function readLogSection(file, since, until) {
   try {
-    const size = statSync(file).size;
-    return { name: path.basename(file), size, text: readFileSync(file, 'utf8') };
+    let include = false;
+    const lines = [];
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      // 每条记录以时间戳开头；缩进的后续行属于同一条记录（例如错误堆栈）。
+      const timestamp = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) \[/);
+      if (timestamp) {
+        const time = Date.parse(timestamp[1]);
+        include = time >= since && time <= until;
+      } else if (line && !line.startsWith('    ')) {
+        include = false;
+      }
+      if (include) lines.push(line);
+    }
+    const text = lines.join('\n');
+    if (!text) return null;
+    return { name: path.basename(file), size: Buffer.byteLength(text), text };
   } catch {
     return null;
   }
 }
 
 /**
- * 把诊断信息与全部日志文件打包成一个 gzip。返回的 bytes 可以直接经 IPC
+ * 把诊断信息与最近 24 小时的日志打包成一个 gzip。返回的 bytes 可以直接经 IPC
  * 交给渲染进程 PUT 上传，不需要落临时文件。
  */
 export async function collectDesktopLogBundle({ diagnostics = {} } = {}) {
   flushNow();
+  const until = Date.now();
+  const since = until - UPLOAD_WINDOW_MS;
   const sections = [];
   // 归档在前、当前日志在后，读起来就是时间顺序。
   for (let index = ARCHIVE_COUNT; index >= 0; index -= 1) {
-    const section = logDir ? readLogSection(fileFor(index)) : null;
+    const section = logDir ? readLogSection(fileFor(index), since, until) : null;
     if (section) sections.push(section);
   }
   const head = [
     '===== GuGu AI 客户端诊断信息 =====',
-    `生成时间: ${new Date().toISOString()}`,
+    `生成时间: ${new Date(until).toISOString()}`,
+    `日志时间范围: ${new Date(since).toISOString()} 至 ${new Date(until).toISOString()}（最近 24 小时）`,
     `日志目录: ${logDir || '（未启用）'}`,
     redact(JSON.stringify(diagnostics, null, 2)),
     '',
   ].join('\n');
   const body = sections.length
     ? sections.map(section => `\n===== ${section.name} (${section.size} 字节) =====\n${section.text}`).join('\n')
-    : '\n（本机暂无日志文件）\n';
+    : '\n（最近 24 小时暂无日志记录）\n';
   let text = `${head}${body}`;
   if (Buffer.byteLength(text) > MAX_BUNDLE_TEXT_BYTES) {
     text = `${head}\n（日志过长，仅保留最近部分）\n${text.slice(-MAX_BUNDLE_TEXT_BYTES)}`;
