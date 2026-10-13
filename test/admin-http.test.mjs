@@ -230,11 +230,12 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual({ nickname: phoneUser.data.items[0].nickname, phoneNumber: phoneUser.data.items[0].phoneNumber }, { nickname: '手机号用户', phoneNumber: '13800138000' });
   const refundedUserDetail = await admin.call(`/api/admin/users/${refundedUserId}`);
   assert.equal(refundedUserDetail.data.user.totalSpent, 0);
-  const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', durations:[5,7,15], priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
+  const createdRoute = await admin.call('/api/admin/model-routes', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { logicalModelId: 'seedance-2.0', quality: '720p', credentialId: 'diw-main', upstreamModelId: 'http-test-upstream', durations:[5,7,15], aspectRatios:['21:9', '16:9'], referenceLimits:{ image:4, video:1, audio:0 }, priority: 99, costYuan: 1.1, salePriceYuan: 2.2, adminEnabled: false } });
   assert.equal(createdRoute.response.status, 201);
   assert.equal(createdRoute.data.route.salePriceYuan, 2.2);
   assert.equal(createdRoute.data.route.adminEnabled, false);
   assert.deepEqual(createdRoute.data.route.durations, [5,7,15]);
+  assert.deepEqual((({ ratios, image, video, audio }) => ({ ratios, image, video, audio }))(createdRoute.data.route.capabilities), { ratios:['16:9', '21:9'], image:4, video:1, audio:0 });
   // Simulate historical data arriving while the server is already running.
   openDatabase({ file: path.join(workDir, 'studio.db') });
   sql("UPDATE model_routes SET logical_model_id='seedance-2.0-img' WHERE id=:id").run({ id:createdRoute.data.route.id });
