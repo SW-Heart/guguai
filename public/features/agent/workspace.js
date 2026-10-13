@@ -1,6 +1,6 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=4';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=3';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=155';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=156';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=14';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';

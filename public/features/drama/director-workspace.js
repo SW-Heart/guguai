@@ -1867,7 +1867,24 @@ export function createDirectorWorkspace(host, bridge) {
     host.querySelector('.director-workspace').addEventListener('keydown',handleCanvasDeleteKeydown,true);
     host.querySelector('.director-workspace').addEventListener('keydown',event=>{if(event.key==='Escape'){inspectorOpen=false;selected='';canvas.selectNodes([]);drawInspector();}});
 
-    const toggleAgent=collapsed=>{if(bridge.agentMode){chatMode=collapsed?'minimized':'side';drawPanels();}else{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed;} if(!collapsed)queueWorkspaceFrame(()=>composerInput.focus());};
+    // Minimizing flies the panel into the reopen button so people can see where the conversation went.
+    const genieTransform=(panel,button)=>`translate(${button.left+button.width/2-panel.left-panel.width/2}px,${button.top+button.height/2-panel.top-panel.height/2}px) scale(${button.width/panel.width},${button.height/panel.height})`;
+    const animateAgentToggle=(collapsed,change)=>{
+      const agent=host.querySelector('.dw-agent'),reopen=host.querySelector('[data-show-agent]');
+      const before=collapsed?agent.getBoundingClientRect():reopen.hidden?null:reopen.getBoundingClientRect();
+      change();
+      if(!before||!agent.animate||window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+      const panel=collapsed?before:agent.getBoundingClientRect(),button=collapsed?reopen.getBoundingClientRect():before;
+      if(!panel.width||!panel.height||!button.width)return;
+      const docked={transform:genieTransform(panel,button),opacity:0,borderRadius:'50%'},open={transform:'none',opacity:1,borderRadius:'20px'};
+      agent.animate(collapsed?[open,{opacity:1,offset:.55},docked]:[docked,{opacity:1,offset:.45},open],{duration:collapsed?420:360,easing:'cubic-bezier(.45,0,.2,1)'});
+      if(collapsed){
+        reopen.animate([{transform:'scale(.4)',opacity:0},{transform:'scale(.4)',opacity:0,offset:.6},{transform:'scale(1.14)',opacity:1,offset:.85},{transform:'scale(1)',opacity:1}],{duration:620,easing:'ease-out'});
+        reopen.classList.remove('is-arriving');void reopen.offsetWidth;reopen.classList.add('is-arriving');
+        reopen.addEventListener('animationend',event=>{if(event.animationName==='dw-agent-reopen-ripple')reopen.classList.remove('is-arriving');},{once:true});
+      }
+    };
+    const toggleAgent=collapsed=>{animateAgentToggle(collapsed,()=>{if(bridge.agentMode){chatMode=collapsed?'minimized':'side';drawPanels();}else{host.querySelector('.director-workspace').classList.toggle('agent-collapsed',collapsed);host.querySelector('[data-show-agent]').hidden=!collapsed;}}); if(!collapsed)queueWorkspaceFrame(()=>composerInput.focus());};
     host.querySelector('[data-hide-agent]').onclick=()=>toggleAgent(chatMode!=='minimized');
     host.querySelector('[data-show-agent]').onclick=()=>toggleAgent(false);
     host.querySelector('[data-director-delegate]').onclick=()=>void agentAction(()=>agentClient.resume());

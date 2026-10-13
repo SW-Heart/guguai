@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createMessageScroller } from '../public/features/agent/message-scroller.js';
 
 test('message scroller follows new content until the reader moves away, then resumes at the end', () => {
@@ -78,4 +79,14 @@ test('message scroller follows new content until the reader moves away, then res
     scroller?.destroy();
     Object.assign(globalThis, originals);
   }
+});
+
+test('minimizing the conversation flies it into the reopen button and the button calls attention to itself', () => {
+  const source = readFileSync(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.match(source, /const toggleAgent=collapsed=>\{animateAgentToggle\(collapsed,/);
+  assert.match(source, /prefers-reduced-motion: reduce\)'\)\.matches\)return;/);
+  assert.match(source, /reopen\.classList\.add\('is-arriving'\)/);
+  assert.match(css, /\.dw-agent-reopen\.is-arriving::after\{[^}]*animation:dw-agent-reopen-ripple/);
+  assert.match(css, /@media\(prefers-reduced-motion:reduce\)\{\.director-workspace \.dw-agent-reopen\.is-arriving::after\{animation:none\}\}/);
 });

@@ -130,10 +130,10 @@ test('both composers put previews above text and all changed entry cache keys ar
   assert.match(read('features/agent/workspace.js'),/class="agent-entry-attachments attachment-strip"[^>]*><\/div><textarea id="agentEntryMessage"/);
   assert.match(read('features/drama/director-workspace.js'),/data-agent-attachments[^>]*><\/div><textarea id="directorMessage"/);
   for(const [path,urls] of [
-    ['index.html',['/app.js?v=539','/styles.css?v=393']],
-    ['app.js',['./features/agent/workspace.js?v=129','./drama-studio.js?v=261']],
-    ['drama-studio.js',['./features/drama/director-workspace.js?v=155']],
-    ['features/agent/workspace.js',['../drama/director-workspace.js?v=155','./attachment-preview.js?v=3']],
+    ['index.html',['/app.js?v=540','/styles.css?v=394']],
+    ['app.js',['./features/agent/workspace.js?v=130','./drama-studio.js?v=262']],
+    ['drama-studio.js',['./features/drama/director-workspace.js?v=156']],
+    ['features/agent/workspace.js',['../drama/director-workspace.js?v=156','./attachment-preview.js?v=3']],
     ['features/drama/director-workspace.js',['../agent/attachment-preview.js?v=3']],
   ])for(const url of urls)assert.ok(read(path).includes(url),`${path}: ${url}`);
 });
