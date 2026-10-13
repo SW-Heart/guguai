@@ -6,12 +6,15 @@ import path from 'node:path';
 // the same file share work; cache keys include the source revision and size so
 // replaced files stay fresh. Cached thumbnails are served without queueing and
 // their mtime is refreshed on use, so eviction drops the least recently used.
-export function createThumbnailCache({ directory, render, maxEntries = 2048, concurrency = 2 }) {
+// The budget is in bytes as well as entries: a 2048px canvas copy can be
+// several megabytes, so a count alone would not bound disk use.
+export function createThumbnailCache({ directory, render, maxEntries = 4096, maxBytes = 1024 * 1024 * 1024, concurrency = 2 }) {
   const pending = new Map();
   const failed = new Set();
   const waiting = [];
   let running = 0;
   let entryCount = null;
+  let entryBytes = 0;
   let pruning = null;
   const acquire = () => running < concurrency ? (running++, Promise.resolve()) : new Promise(resolve => waiting.push(resolve));
   const releaseSlot = () => { const next = waiting.shift(); if (next) next(); else running--; };
@@ -24,17 +27,19 @@ export function createThumbnailCache({ directory, render, maxEntries = 2048, con
   };
   // Count entries in memory and scan the directory only when over budget.
   const prune = keep => pruning ||= (async () => {
-    const entries = (await fs.readdir(directory).catch(() => [])).filter(name => name.endsWith('.png'));
+    const names = (await fs.readdir(directory).catch(() => [])).filter(name => name.endsWith('.png'));
+    const entries = (await Promise.all(names.map(async name => {
+      const info = await fs.stat(path.join(directory, name)).catch(() => null);
+      return info && { name, file:path.join(directory, name), time:info.mtimeMs, size:info.size };
+    }))).filter(Boolean).sort((a, b) => a.time - b.time);
     entryCount = entries.length;
-    if (entries.length <= maxEntries) return;
-    const old = (await Promise.all(entries.filter(name => name !== keep).map(async name => {
-      const file = path.join(directory, name);
-      const info = await fs.stat(file).catch(() => null);
-      return { file, time:info?.mtimeMs || 0 };
-    }))).sort((a, b) => a.time - b.time);
-    const removed = old.slice(0, entries.length - maxEntries);
-    await Promise.all(removed.map(item => fs.rm(item.file, { force:true }).catch(() => {})));
-    entryCount -= removed.length;
+    entryBytes = entries.reduce((sum, item) => sum + item.size, 0);
+    for (const item of entries) {
+      if (entryCount <= maxEntries && entryBytes <= maxBytes) break;
+      if (item.name === keep) continue;
+      await fs.rm(item.file, { force:true }).catch(() => {});
+      entryCount--; entryBytes -= item.size;
+    }
   })().finally(() => { pruning = null; });
   return async function thumbnail(source, stat, size = 512, kind = 'image') {
     const key = createHash('sha256').update(JSON.stringify([source, stat.size, stat.mtimeMs, size, kind])).digest('hex');
@@ -50,14 +55,16 @@ export function createThumbnailCache({ directory, render, maxEntries = 2048, con
         const temporary = path.join(directory, `${key}-${randomUUID()}.tmp`);
         try {
           await render(source, temporary, size, kind);
-          if (!(await fs.stat(temporary).catch(() => null))?.size) throw new Error('缩略图为空');
+          const rendered = (await fs.stat(temporary).catch(() => null))?.size || 0;
+          if (!rendered) throw new Error('缩略图为空');
           await fs.rename(temporary, target);
+          entryBytes += rendered;
         } catch (error) {
           failed.add(key);
           throw error;
         } finally { await fs.rm(temporary, { force:true }).catch(() => {}); }
       } finally { releaseSlot(); }
-      if (entryCount === null || ++entryCount > maxEntries) await prune(`${key}.png`);
+      if (entryCount === null || ++entryCount > maxEntries || entryBytes > maxBytes) await prune(`${key}.png`);
       return target;
     })();
     pending.set(key, request);

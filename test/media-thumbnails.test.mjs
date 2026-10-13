@@ -76,7 +76,7 @@ test('local protocol serves thumbnail bytes and original ranges, with account ch
       libraryAsset:() => ({ relativePath:'original.png', kind:'image' }), isInside:() => true,
       localMediaMimeType:() => 'image/png',
       createThumbnailCache:() => async () => path.join(directory, 'thumb.png'),
-      app:{getPath:() => directory}, productName:'GuGu AI', runFfmpeg:() => {},
+      app:{getPath:() => directory}, productName:'GuGu AI', process:{ platform:'linux', env:{} }, runFfmpeg:() => {},
     });
     vm.runInContext(main.slice(main.indexOf('function parseLocalMediaRange('), main.indexOf('// 每次列素材')), context);
     vm.runInContext(main.slice(main.indexOf('let localThumbnail = null;'), main.indexOf('async function openOfflinePage(')), context);
@@ -180,6 +180,24 @@ test('video frames skip the opening half second and retry from the start for sho
 
 test('covers live in an app cache folder outside the workspace and are never added to the library', () => {
   const block = main.slice(main.indexOf('let localThumbnail = null;'), main.indexOf('async function openOfflinePage('));
-  assert.match(block, /directory:path\.join\(app\.getPath\('cache'\), productName, 'media-thumbnails'\)/);
+  assert.match(block, /directory:path\.join\(process\.platform === 'win32' && process\.env\.LOCALAPPDATA \? process\.env\.LOCALAPPDATA : app\.getPath\('cache'\), productName, 'media-thumbnails'\)/);
   assert.doesNotMatch(block, /upsertLocalAsset|claimLocalAsset|targetWorkspace, 'media-thumbnails'|workspace, 'media-thumbnails'/);
+});
+
+test('the cache is bounded by total bytes, dropping the least recently used first', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gugu-thumbs-'));
+  const get = createThumbnailCache({ directory, maxBytes:25, render:async (_source, output) => fs.writeFile(output, '0123456789') });
+  try {
+    const a = await get('a', {size:1,mtimeMs:1});
+    await new Promise(resolve => setTimeout(resolve, 15));
+    const b = await get('b', {size:1,mtimeMs:1});
+    await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(await get('a', {size:1,mtimeMs:1}), a, 'touching a keeps it recent');
+    await new Promise(resolve => setTimeout(resolve, 15));
+    const c = await get('c', {size:1,mtimeMs:1});
+    const left = await fs.readdir(directory);
+    assert.equal(left.length, 2);
+    assert.ok(left.includes(path.basename(a)) && left.includes(path.basename(c)));
+    assert.ok(!left.includes(path.basename(b)), 'the least recently used entry is removed');
+  } finally { await fs.rm(directory, { recursive:true, force:true }); }
 });

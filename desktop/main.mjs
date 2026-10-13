@@ -979,7 +979,9 @@ async function serveLocalMedia(request) {
     localThumbnail ||= createThumbnailCache({
       // Covers are a disposable cache kept with the app, never in the user's
       // workspace or library; deleting the folder only regenerates them.
-      directory:path.join(app.getPath('cache'), productName, 'media-thumbnails'),
+      // Electron's Windows cache path is the roaming profile, which domain
+      // accounts sync between machines; caches belong in the local profile.
+      directory:path.join(process.platform === 'win32' && process.env.LOCALAPPDATA ? process.env.LOCALAPPDATA : app.getPath('cache'), productName, 'media-thumbnails'),
       render:renderLocalThumbnail,
     });
     try {
