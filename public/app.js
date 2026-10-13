@@ -19,7 +19,7 @@ import { createNotificationController } from './features/notifications/controlle
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
-import { createVideoPreviews } from './features/media/video-previews.js?v=4';
+import { createVideoPreviews } from './features/media/video-previews.js?v=5';
 import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
@@ -289,7 +289,9 @@ function requireDesktopLocalAsset(file) {
   toast('素材正在准备，请稍后再预览');
   return false;
 }
-const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver });
+// Desktops that advertise video covers return a still frame for local videos.
+const videoCoverUrl = src => window.guguDesktop?.capabilities?.videoCovers && String(src || '').startsWith('gugu-media://') ? imageThumbnailUrl(src) : '';
+const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, coverUrl:videoCoverUrl });
 // Library and picker grids keep every loaded page; free pictures far off screen.
 [['#fileGrid', '.file-card:not(.upload-job-card) img'], ['#referenceGrid', '.reference-option img']].forEach(([selector, images]) => {
   const root = document.querySelector(selector);

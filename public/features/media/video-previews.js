@@ -2,7 +2,11 @@
 // user can see (plus a short look-ahead so covers are ready while scrolling)
 // and release sources as soon as cards leave the view or are removed. What is
 // loaded is bounded by the screen, so no fixed count can hide visible covers.
-export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = Infinity }) {
+// When `coverUrl` yields a still frame, cards show it as the poster and never
+// open the video; players with controls load the source only when pressed.
+// A frame that fails to load falls back to opening the video as before.
+export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = Infinity, coverUrl = () => '', Image = globalThis.Image }) {
+  const covers = new WeakMap();
   const tracked = new Set();
   const visible = new Set();
   const active = new Set();
@@ -34,10 +38,29 @@ export function createVideoPreviews({ root, IntersectionObserver, MutationObserv
     video.preload = 'metadata';
     video.src = video.dataset.previewSrc;
   };
+  const showCover = video => {
+    const cover = coverUrl(video.dataset.previewSrc);
+    const state = cover && Image ? covers.get(video) : 'none';
+    if (state === 'none') return false;
+    if (state === 'ready') {
+      if (video.getAttribute('poster') !== cover) video.setAttribute('poster', cover);
+      return true;
+    }
+    if (!state) {
+      covers.set(video, 'pending');
+      const probe = new Image();
+      probe.onload = () => { covers.set(video, 'ready'); if (visible.has(video)) showCover(video); };
+      probe.onerror = () => { covers.set(video, 'none'); fill(); };
+      probe.src = cover;
+    }
+    return true;
+  };
+  const hideCover = video => { if (video.getAttribute('poster')) video.removeAttribute('poster'); };
   const fill = () => {
     for (const video of visible) {
-      if (active.size >= limit) break;
       if (active.has(video) || failed.has(video) || !video.isConnected) continue;
+      if (showCover(video)) continue;
+      if (active.size >= limit) break;
       load(video);
     }
   };
@@ -45,7 +68,7 @@ export function createVideoPreviews({ root, IntersectionObserver, MutationObserv
     for (const { target:video, isIntersecting } of entries) {
       if (!tracked.has(video)) continue;
       if (isIntersecting && video.isConnected) visible.add(video);
-      else { visible.delete(video); release(video); }
+      else { visible.delete(video); release(video); hideCover(video); }
     }
     fill();
   }, { rootMargin:'200px 0px' }) : null;
@@ -76,6 +99,8 @@ export function createVideoPreviews({ root, IntersectionObserver, MutationObserv
   const activate = event => {
     const video = event.target.closest?.('video[data-preview-src]');
     if (!video || !root.contains(video) || active.has(video)) return;
+    // A covered card is opened through its own detail view, not in place.
+    if (covers.get(video) === 'ready' && !video.controls) return;
     scan();
     if (active.has(video)) return;
     failed.delete(video);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createVideoPreviews } from '../public/features/media/video-previews.js';
 
-function fixture({ count = 200, observe = true, limit } = {}) {
+function fixture({ count = 200, observe = true, limit, coverUrl, Image } = {}) {
   const videos = Array.from({ length:count }, (_, id) => ({
     dataset:{ previewSrc:`gugu-media://asset/${id}` }, isConnected:true,
     src:'', loads:0, pauses:0, currentTime:0, handlers:{},
@@ -11,13 +11,16 @@ function fixture({ count = 200, observe = true, limit } = {}) {
     removeEventListener(type) { delete this.handlers[type]; },
     closest() { return this; },
     pause() { this.pauses++; }, load() { this.loads++; },
-    removeAttribute(name) { if (name === 'src') this.src = ''; },
+    attributes:{}, controls:false,
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { if (name === 'src') this.src = ''; delete this.attributes[name]; },
   }));
   let intersect, mutated;
   const observed = new Set();
   const events = {};
   const root = { addEventListener:(type, handler) => { events[type] = handler; }, removeEventListener:type => { delete events[type]; }, contains:video => videos.includes(video), querySelectorAll:() => videos.filter(video => video.isConnected) };
-  const previews = createVideoPreviews({ root, limit,
+  const previews = createVideoPreviews({ root, limit, coverUrl, Image,
     IntersectionObserver:observe ? class {
       constructor(callback) { intersect = callback; }
       observe(video) { observed.add(video); } unobserve(video) { observed.delete(video); }
@@ -123,7 +126,59 @@ test('missing IntersectionObserver leaves sources unloaded', () => {
 test('preview errors stop before the full-library refresh and cache URLs match', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(app, /if \(media\.dataset\.previewSrc\) \{\s*videoPreviews\.fail\(media\);\s*return;/);
-  assert.ok(app.includes('./features/media/video-previews.js?v=4'));
+  assert.ok(app.includes('./features/media/video-previews.js?v=5'));
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=552'));
+  assert.ok(html.includes('/app.js?v=553'));
+});
+
+function probes() {
+  const created = [];
+  return { created, Image:class { constructor() { created.push(this); } } };
+}
+
+test('desktop video covers show a still frame and never open card videos', () => {
+  const { created, Image } = probes();
+  const { videos, show, events } = fixture({ count:30, Image, coverUrl:src => `${src}?thumbnail=1` });
+  show(videos);
+  assert.equal(created.length, 30);
+  created.forEach(probe => probe.onload());
+  assert.equal(videos.filter(video => video.src).length, 0, 'covered cards keep no decoders');
+  assert.equal(videos[3].getAttribute('poster'), 'gugu-media://asset/3?thumbnail=1');
+  events.pointerdown({ target:videos[3] });
+  assert.equal(videos[3].src, '', 'cards open the detail view instead of playing in place');
+  show([videos[3]], false);
+  assert.equal(videos[3].getAttribute('poster'), null, 'off-screen covers are released');
+  show([videos[3]]);
+  assert.equal(created.length, 30, 'a known cover is not probed again');
+  assert.equal(videos[3].getAttribute('poster'), 'gugu-media://asset/3?thumbnail=1');
+});
+
+test('canvas players with controls keep the cover and load the video only when pressed', () => {
+  const { created, Image } = probes();
+  const { videos, show, events } = fixture({ count:1, Image, coverUrl:src => `${src}?thumbnail=1` });
+  videos[0].controls = true;
+  show(videos); created[0].onload();
+  assert.equal(videos[0].src, '');
+  events.pointerdown({ target:videos[0] });
+  assert.equal(videos[0].src, 'gugu-media://asset/0');
+  assert.equal(videos[0].getAttribute('poster'), 'gugu-media://asset/0?thumbnail=1');
+});
+
+test('a video whose frame cannot be produced falls back to opening the video', () => {
+  const { created, Image } = probes();
+  const { videos, show } = fixture({ count:2, Image, coverUrl:src => `${src}?thumbnail=1` });
+  show(videos);
+  created[0].onerror(); created[1].onload();
+  assert.equal(videos[0].src, 'gugu-media://asset/0');
+  assert.equal(videos[1].src, '');
+});
+
+test('older desktops without frame support keep loading visible videos', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /window\.guguDesktop\?\.capabilities\?\.videoCovers && String\(src \|\| ''\)\.startsWith\('gugu-media:\/\/'\) \? imageThumbnailUrl\(src\) : ''/);
+  const preload = await readFile(new URL('../desktop/preload.cjs', import.meta.url), 'utf8');
+  assert.match(preload, /capabilities: Object\.freeze\(\{ videoCovers: true \}\)/);
+  const { videos, show } = fixture({ count:3 });
+  show(videos);
+  assert.equal(videos.filter(video => video.src).length, 3);
 });

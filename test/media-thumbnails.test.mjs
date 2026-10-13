@@ -76,7 +76,7 @@ test('local protocol serves thumbnail bytes and original ranges, with account ch
       libraryAsset:() => ({ relativePath:'original.png', kind:'image' }), isInside:() => true,
       localMediaMimeType:() => 'image/png',
       createThumbnailCache:() => async () => path.join(directory, 'thumb.png'),
-      app:{getPath:() => directory}, runFfmpeg:() => {},
+      app:{getPath:() => directory}, productName:'GuGu AI', runFfmpeg:() => {},
     });
     vm.runInContext(main.slice(main.indexOf('function parseLocalMediaRange('), main.indexOf('// 每次列素材')), context);
     vm.runInContext(main.slice(main.indexOf('let localThumbnail = null;'), main.indexOf('async function openOfflinePage(')), context);
@@ -93,6 +93,9 @@ test('local protocol serves thumbnail bytes and original ranges, with account ch
     const fallback = await context.serveLocalMedia(new Request('gugu-media://asset/a?thumbnail=2048'));
     assert.equal(fallback.status, 200);
     assert.equal(await fallback.text(), 'original-content');
+    context.libraryAsset = () => ({ relativePath:'original.png', kind:'video', mimeType:'video/mp4' });
+    const video = await context.serveLocalMedia(new Request('gugu-media://asset/a?thumbnail=1'));
+    assert.equal(video.status, 404, 'a missing video frame must not return video bytes to an image');
   } finally { await fs.rm(directory, { recursive:true, force:true }); }
 });
 
@@ -149,4 +152,34 @@ test('a crashed page reloads automatically and stops on the retry page after rep
   assert.equal(reloads.length, 3);
   assert.equal(offline.length, 1);
   assert.equal(JSON.stringify(offline[0][1]), JSON.stringify({ autoRetry:false }));
+});
+
+test('video frames skip the opening half second and retry from the start for short clips', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gugu-frame-'));
+  try {
+    const calls = [];
+    const context = vm.createContext({ fs, runFfmpeg:async args => {
+      calls.push(args);
+      const seek = args.includes('-ss');
+      if (!seek) await fs.writeFile(args.at(-1), 'frame');
+    } });
+    const source = main.slice(main.indexOf('async function renderLocalThumbnail('), main.indexOf('async function serveLocalMedia('));
+    vm.runInContext(source, context);
+    const output = path.join(directory, 'out.tmp');
+    await context.renderLocalThumbnail('clip.mp4', output, 512, 'video');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0][calls[0].indexOf('-ss') + 1], '0.5');
+    assert.equal(calls[1].includes('-ss'), false);
+    assert.equal(await fs.readFile(output, 'utf8'), 'frame');
+    calls.length = 0;
+    await context.renderLocalThumbnail('photo.png', output, 512, 'image');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].includes('-ss'), false);
+  } finally { await fs.rm(directory, { recursive:true, force:true }); }
+});
+
+test('covers live in an app cache folder outside the workspace and are never added to the library', () => {
+  const block = main.slice(main.indexOf('let localThumbnail = null;'), main.indexOf('async function openOfflinePage('));
+  assert.match(block, /directory:path\.join\(app\.getPath\('cache'\), productName, 'media-thumbnails'\)/);
+  assert.doesNotMatch(block, /upsertLocalAsset|claimLocalAsset|targetWorkspace, 'media-thumbnails'|workspace, 'media-thumbnails'/);
 });

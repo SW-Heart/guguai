@@ -36,8 +36,8 @@ export function createThumbnailCache({ directory, render, maxEntries = 2048, con
     await Promise.all(removed.map(item => fs.rm(item.file, { force:true }).catch(() => {})));
     entryCount -= removed.length;
   })().finally(() => { pruning = null; });
-  return async function thumbnail(source, stat, size = 512) {
-    const key = createHash('sha256').update(JSON.stringify([source, stat.size, stat.mtimeMs, size])).digest('hex');
+  return async function thumbnail(source, stat, size = 512, kind = 'image') {
+    const key = createHash('sha256').update(JSON.stringify([source, stat.size, stat.mtimeMs, size, kind])).digest('hex');
     const target = path.join(directory, `${key}.png`);
     if (failed.has(key)) throw Object.assign(new Error('缩略图生成失败'), { cached:true });
     if (pending.has(key)) return pending.get(key);
@@ -49,7 +49,8 @@ export function createThumbnailCache({ directory, render, maxEntries = 2048, con
         await fs.mkdir(directory, { recursive:true });
         const temporary = path.join(directory, `${key}-${randomUUID()}.tmp`);
         try {
-          await render(source, temporary, size);
+          await render(source, temporary, size, kind);
+          if (!(await fs.stat(temporary).catch(() => null))?.size) throw new Error('缩略图为空');
           await fs.rename(temporary, target);
         } catch (error) {
           failed.add(key);

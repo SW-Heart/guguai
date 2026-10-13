@@ -947,6 +947,16 @@ async function listLocalAssets(options = {}) {
 }
 
 let localThumbnail = null;
+async function renderLocalThumbnail(source, output, size, kind) {
+  const frame = ['-frames:v', '1', '-vf', `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`, '-threads', '1', '-f', 'image2', '-c:v', 'png', '-y', output];
+  const run = seek => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', ...(seek ? ['-ss', seek] : []), '-i', source, ...frame], { timeoutMs:30_000 });
+  if (kind !== 'video') return run('');
+  // Skip the first half second, which is often black; very short clips
+  // produce no frame there, so retry from the start.
+  await run('0.5').catch(() => {});
+  if ((await fs.stat(output).catch(() => null))?.size) return;
+  await run('');
+}
 async function serveLocalMedia(request) {
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
   const url = new URL(request.url);
@@ -960,20 +970,25 @@ async function serveLocalMedia(request) {
   let stat = await fs.stat(target).catch(() => null);
   if (!stat?.isFile() || targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status: 404 });
   // `thumbnail=1` is the 512px card preview; canvases request a larger edge.
-  // Any decode failure serves the original so the picture never goes missing.
+  // Videos return a still frame for covers. A failed image falls back to the
+  // original; a failed video frame is a 404 so the page can load the video.
   const thumbnailSize = { '1':512, '2048':2048 }[url.searchParams.get('thumbnail')] || 0;
-  let thumbnail = Boolean(thumbnailSize) && asset.kind === 'image' && !/svg/i.test(String(asset.mimeType || ''));
+  const thumbnailKind = asset.kind === 'video' ? 'video' : asset.kind === 'image' && !/svg/i.test(String(asset.mimeType || '')) ? 'image' : '';
+  let thumbnail = Boolean(thumbnailSize && thumbnailKind);
   if (thumbnail) {
     localThumbnail ||= createThumbnailCache({
-      directory:path.join(app.getPath('cache'), 'gugu-media-thumbnails'),
-      render:(source, output, size) => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', '-i', source, '-frames:v', '1', '-vf', `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`, '-threads', '1', '-f', 'image2', '-c:v', 'png', '-y', output], { timeoutMs:30_000 }),
+      // Covers are a disposable cache kept with the app, never in the user's
+      // workspace or library; deleting the folder only regenerates them.
+      directory:path.join(app.getPath('cache'), productName, 'media-thumbnails'),
+      render:renderLocalThumbnail,
     });
     try {
-      const preview = await localThumbnail(target, stat, thumbnailSize);
+      const preview = await localThumbnail(target, stat, thumbnailSize, thumbnailKind);
       const previewStat = await fs.stat(preview);
       target = preview; stat = previewStat;
     } catch (error) {
-      if (!error?.cached) console.warn('[media] 缩略图生成失败，改用原图', { assetId:asset.id, message:error?.message });
+      if (!error?.cached) console.warn('[media] 缩略图生成失败', { assetId:asset.id, kind:thumbnailKind, message:error?.message });
+      if (thumbnailKind === 'video') return new Response('Thumbnail unavailable', { status:404 });
       thumbnail = false;
     }
     if (targetWorkspace !== workspace || targetEpoch !== workspaceEpoch) return new Response('Not Found', { status:404 });

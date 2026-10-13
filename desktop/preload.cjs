@@ -4,6 +4,8 @@ const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
 
 contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   isDesktop: true,
+  // Local media URLs accept `?thumbnail=1` for videos and return a still frame.
+  capabilities: Object.freeze({ videoCovers: true }),
   getInfo: () => invoke('desktop:get-info'),
   setApiBase: value => invoke('desktop:set-api-base', value),
   setUpdateUrl: value => invoke('desktop:set-update-url', value),
