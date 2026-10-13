@@ -2951,6 +2951,7 @@ const agentTools = createAgentTools({
   observationStore:{read:(session,assetId)=>agentRepository.readObservation(session,assetId),list:session=>agentRepository.listObservations(session),write:(session,record,revision,invocationId)=>agentRepository.saveObservation(session,record,revision,invocationId)},
   transcriptStore:{list:(session,assetId)=>agentRepository.listTranscripts(session,assetId),write:(session,record)=>agentRepository.saveTranscript(session,record)},
   compositionStore:{list:session=>agentRepository.artifacts(session).compositions},
+  canvasStore:{read:session=>agentRepository.canvas(session),edit:(session,build)=>agentRepository.editCanvas(session,build)},
   inspectImage:createAgentImageReader({ r2Configured, signedAssetUrl, ensureLocalAsset, withMediaTempDir }),
   inspectVideo:{
     probe:async(userId,asset)=>probeVideo(await ensureLocalAsset(userId,asset)),

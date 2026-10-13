@@ -41,3 +41,12 @@ export function hydrateGenerationReferences(draft,findFile){
   }
   return changed;
 }
+
+// A canvas link adds one more reference of `kind`. Validate it against the
+// model with the references already present and switch a text-only video to a
+// mode that accepts references.
+export function admitLinkedReference(draft, kind, linkedKinds, config) {
+  const probe = {...draft, attachments:[...draft.attachments, ...linkedKinds.map((item, index) => ({id:`linked-${index}`, kind:item, name:''}))]};
+  addGenerationReference(probe, {id:'linked-new', kind, name:''}, config);
+  draft.mode = probe.mode;
+}

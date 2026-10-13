@@ -4,7 +4,7 @@ export function canvasContextPoint(client, rect, viewport = {}) {
     y: (client.y - rect.top - (Number(viewport.y) || 0)) / scale };
 }
 
-export function mountCanvasContextMenu(surface, { layer, icons, ready, view, onSelect, onError }) {
+export function mountCanvasContextMenu(surface, { layer, icons, items = [['upload', '上传素材'], ['image', '图像生成'], ['video', '视频生成']], ready, view, onSelect, onError }) {
   const controller = new AbortController();
   const { signal } = controller;
   const menu = document.createElement('div');
@@ -12,7 +12,7 @@ export function mountCanvasContextMenu(surface, { layer, icons, ready, view, onS
   menu.hidden = true;
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', '画布操作');
-  menu.innerHTML = [['upload', '上传素材'], ['image', '图像生成'], ['video', '视频生成']]
+  menu.innerHTML = items
     .map(([action, label]) => `<button type="button" role="menuitem" data-canvas-action="${action}">${icons[action]}<span>${label}</span></button>`).join('');
   layer.append(menu);
   let point = null;

@@ -132,7 +132,7 @@ test('typing @ in the video composer uses the shared reference dialog and reject
   let options,resolveFile,saved=0;
   const context=vm.createContext({video:true,AbortController,epoch:1,draft,input:{},panel:{querySelector:()=>({})},
     activeGenerationId:draft.id,generationDraft:()=>draft,generationUploading:false,generationSubmitting:false,
-    syncCanvasMediaLibrary:async()=>{},nodes:()=>[],hiddenIds:()=>new Set(),
+    syncCanvasMediaLibrary:async()=>{},nodes:()=>[],hiddenIds:()=>new Set(),pickGenerationInput:async()=>'upload',
     bridge:{toast:assert.fail,uploadGenerationFile:()=>new Promise(resolve=>{resolveFile=resolve;})},
     generationPromptSegments:()=>[],bindGenerationRichPrompt:(_,value)=>{options=value;},addGenerationReference,generationConfig:()=>config,
     closeGenerationMenu(){},renderGenerationComposer(){},reconcileCanvasGenerationDraft(){},resizeGenerationArea(){},scheduleCanvasSave(){saved++;},
