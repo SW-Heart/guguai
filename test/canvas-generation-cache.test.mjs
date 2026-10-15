@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=583', '/styles.css?v=418']],
-    ['app.js', ['./drama-studio.js?v=296', './features/agent/workspace.js?v=163']],
+    ['index.html', ['/app.js?v=584', '/styles.css?v=418']],
+    ['app.js', ['./drama-studio.js?v=296', './features/agent/workspace.js?v=164']],
     ['drama-studio.js', ['./features/drama/director-workspace.js?v=188']],
     ['features/agent/workspace.js', ['../drama/director-workspace.js?v=188']],
     ['features/drama/director-workspace.js', ['./canvas-layout.js?v=2']],
@@ -24,10 +24,10 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=583'],
+    ['index.html', '/app.js?v=584'],
     ['index.html', '/styles.css?v=418'],
     ['app.js', './drama-studio.js?v=296'],
-    ['app.js', './features/agent/workspace.js?v=163'],
+    ['app.js', './features/agent/workspace.js?v=164'],
     ['drama-studio.js', './features/drama/director-workspace.js?v=188'],
     ['features/agent/workspace.js', '../drama/director-workspace.js?v=188'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=41'],
@@ -64,9 +64,9 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('drawing and selection fixes reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=583'],
+    ['index.html', '/app.js?v=584'],
     ['app.js', './drama-studio.js?v=296'],
-    ['app.js', './features/agent/workspace.js?v=163'],
+    ['app.js', './features/agent/workspace.js?v=164'],
     ['drama-studio.js', './features/drama/director-workspace.js?v=188'],
     ['features/agent/workspace.js', '../drama/director-workspace.js?v=188'],
   ];

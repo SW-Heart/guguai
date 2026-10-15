@@ -1,6 +1,5 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=5';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=5';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=188';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=20';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=8';
@@ -10,11 +9,24 @@ import { mountModelPreferencePicker } from './model-preference-picker.js?v=17';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
-export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,renameCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects}) {
+export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,renameCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects,loadCanvasStyles=async()=>{}}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
   let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,initialCanvasOpen=false,screen='',navigationEpoch=0,creating=false;
   let homeActionsController=null;
+  // The canvas engine is most of this page's code but the home view never uses
+  // it, so it loads with the project data and is warmed up once the home is idle.
+  let canvasModule=null,canvasWarmup=0;
+  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=188'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
+    canvasModule=null;
+    console.warn('[agent] 画布模块加载失败',error);
+    throw new Error('画布加载失败，请检查网络后重试');
+  });
+  function warmCanvas(){
+    if(canvasModule||canvasWarmup)return;
+    const idle=globalThis.requestIdleCallback||(callback=>setTimeout(callback,1500));
+    canvasWarmup=idle(()=>{canvasWarmup=0;if(screen==='home')void loadCanvas().catch(()=>{});},{timeout:4000});
+  }
   const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/create';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
@@ -24,6 +36,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.create-home')){refreshRecent();return;}
     resetView();account=accountSnapshot();screen='home';
     renderHome(host);
+    warmCanvas();
   }
   let refreshRecent=()=>{};
   function renderEntry(host,{onSubmit=createProject,config=null,skill='',modelPreferences,onModelPreferencesChange}={}){
@@ -228,9 +241,9 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     if(screen==='workspace'&&project.id===id&&view)return;
     resetView();const token=navigationEpoch;screen='loading';host.innerHTML=`<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true">${projectLoadingMarkup}</div>`;
     try{
-      const result=await api(`/api/agent/projects/${encodeURIComponent(id)}`);
+      const [result,{createDirectorWorkspace}]=await Promise.all([api(`/api/agent/projects/${encodeURIComponent(id)}`),loadCanvas()]);
       if(screen!=='loading'||token!==navigationEpoch)return;
-      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;initialCanvasOpen=showCanvas;screen='workspace';mountWorkspace();
+      project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;initialCanvasOpen=showCanvas;screen='workspace';mountWorkspace(createDirectorWorkspace);
     }catch(error){if(token!==navigationEpoch)return;toast(error.message);changeLocation('home');dispatchRoute();}
   }
   const asset=id=>state.files.find(file=>file.id===id&&file.localStatus!=='missing');
@@ -256,7 +269,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     if(!current())return null;
     return result.canvas;
   }
-  function mountWorkspace(){
+  function mountWorkspace(createDirectorWorkspace){
     if(view){view.mount();return;}
     const nextAccount=accountSnapshot();
     if(account&&(account.epoch!==nextAccount.epoch||account.userId!==nextAccount.userId))sessionId='';

@@ -36,7 +36,7 @@ test('returning home disposes the project before any shell layout or scheduled p
 });
 
 test('eager home rendering and deferred route loading preserve a single composer and its draft',()=>{
-  let disposed=0,cleared=0,rendered=0,aborted=0;
+  let disposed=0,cleared=0,rendered=0,aborted=0,warmed=0;
   const entry={draft:'保留我的创作想法'};
   let mounted=null,currentAccount=1;
   const context=vm.createContext({
@@ -44,11 +44,13 @@ test('eager home rendering and deferred route loading preserve a single composer
     project:{id:'project'},initialMessage:'',initialAttachments:[],initialDocuments:[],initialSkill:'',initialModelPreferences:undefined,
     account:null,screen:'workspace',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>currentAccount,isAccountCurrent:account=>account===currentAccount,
     host:{replaceChildren(){mounted=null;cleared++;},querySelector:()=>mounted},renderHome(){mounted=entry;rendered++;},
+    warmCanvas(){warmed++;},
   });
   vm.runInContext(agent.slice(agent.indexOf('  function resetView('),agent.indexOf('  function renderEntry(')),context);
   context.showHome();
   for(let i=0;i<100;i++)context.showHome();
   assert.equal(disposed,1);assert.equal(aborted,1);assert.equal(cleared,1);assert.equal(rendered,1);
+  assert.equal(warmed,1,'the canvas is warmed up once after the home is drawn');
   assert.equal(mounted.draft,'保留我的创作想法');
   currentAccount=2;context.showHome();assert.equal(rendered,2,'a different account must get a fresh home');
 });
@@ -132,7 +134,8 @@ test('loading a project after returning home cannot remount its canvas',async()=
     initialMessage:'',initialAttachments:[],initialDocuments:[],initialSkill:'',initialModelPreferences:undefined,
     account:null,screen:'',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>1,isAccountCurrent:()=>true,
     renderHome(){homeRenders++;},projectLoadingMarkup:'正在打开项目',api:()=>new Promise(resolve=>{finishProject=resolve;}),
-    mountWorkspace(){mounts++;},toast(){assert.fail('stale navigation must not notify');}});
+    mountWorkspace(){mounts++;},toast(){assert.fail('stale navigation must not notify');},
+    warmCanvas(){},loadCanvas:async()=>({createDirectorWorkspace(){}})});
   vm.runInContext(agent.slice(agent.indexOf('  function resetView('),agent.indexOf('  function renderEntry('))+
     agent.slice(agent.indexOf('  async function openProject('),agent.indexOf('  const asset=')),context);
   const pending=context.openProject('project');
@@ -142,8 +145,20 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=583'));assert.ok(html.includes('/styles.css?v=418'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=163'));assert.ok(app.includes('./drama-studio.js?v=296'));
+  assert.ok(html.includes('/app.js?v=584'));assert.ok(html.includes('/styles.css?v=418'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=164'));assert.ok(app.includes('./drama-studio.js?v=296'));
   assert.ok(agent.includes('../drama/director-workspace.js?v=188'));
   assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=188'));
+});
+
+test('the creation route shows a loading state until its page is ready and starts downloading at startup',()=>{
+  const view={children:[],innerHTML:''};
+  const context=vm.createContext({$:selector=>selector==='#agentView'?view:null,agentController:null,state:{},mediaController:{},renderTasks(){},layoutGenerationMasonry(){},dramaProjectsLoadingSkeleton:()=>'',fileLibraryLoadingSkeleton:()=>''});
+  vm.runInContext(app.slice(app.indexOf('function renderRouteLoadingShell('),app.indexOf('function cancelRouteContentRender(')),context);
+  context.renderRouteLoadingShell('agent');
+  assert.match(view.innerHTML,/正在打开创作页/);
+  view.innerHTML='';context.agentController={};context.renderRouteLoadingShell('agent');
+  assert.equal(view.innerHTML,'','a ready creation page is never covered');
+  assert.match(app,/async function bootstrap\(\) \{\n  prefetchRouteModule\(routeFromPath\(window\.location\.pathname\)\);/);
+  assert.match(app,/agentControllerPromise = importAgentWorkspace\(\)\.then/,'the creation page does not wait for canvas styles');
 });

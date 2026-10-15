@@ -2202,12 +2202,20 @@ function loadReferenceCanvasStyles() {
   return referenceCanvasStylesPromise;
 }
 
+// Startup begins downloading the opening route's module while sign-in and
+// settings load; the later controller setup reuses the same request.
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=164');
+const importDramaStudio = () => import('./drama-studio.js?v=296');
+function prefetchRouteModule(route) {
+  const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
+  void load?.().catch(() => {});
+}
 let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=163'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
+  if (!agentControllerPromise) agentControllerPromise = importAgentWorkspace().then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({loadCanvasStyles:loadReferenceCanvasStyles,api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2217,7 +2225,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = Promise.all([import('./drama-studio.js?v=296'), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
+    dramaControllerPromise = Promise.all([importDramaStudio(), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2251,6 +2259,12 @@ function renderRouteLoadingShell(route) {
   if (route === 'drama') {
     const projects = $('#dramaProjects');
     if (projects && !projects.children.length) projects.innerHTML = dramaProjectsLoadingSkeleton();
+  }
+  if (route === 'agent') {
+    // The creation page draws itself once its module is ready; until then the
+    // empty section would show as a blank page.
+    const view = $('#agentView');
+    if (view && !agentController && !view.children.length) view.innerHTML = '<div class="agent-project-loading" role="status" aria-live="polite" aria-busy="true"><span class="button-spinner" aria-hidden="true"></span><strong>正在打开创作页…</strong></div>';
   }
 }
 
@@ -2403,6 +2417,8 @@ function navigate(route, { historyMode = 'push' } = {}) {
     renderRouteLoadingShell('files');
   } else if (drama) {
     renderRouteLoadingShell('drama');
+  } else if (creative) {
+    renderRouteLoadingShell('agent');
   }
   scheduleRouteContentRender(nextRoute, routeChanged);
 }
@@ -4868,6 +4884,7 @@ $('#copyPreviewGenerationPrompt').onclick = copyPreviewGenerationPrompt;
 $('#previewGenerationPromptToggle').onclick = () => { const prompt = $('#previewGenerationPromptText'); const toggle = $('#previewGenerationPromptToggle'); const expanded = prompt.classList.toggle('expanded'); toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? '收起描述' : '展开全部'; };
 
 async function bootstrap() {
+  prefetchRouteModule(routeFromPath(window.location.pathname));
   const desktopReady = await initDesktopBridge().catch(error => { console.warn('[desktop] 初始化工作区桥接失败', error); return false; });
   if (!desktopReady) {
     showBoot('请使用 GuGu AI 客户端', '创作工作台不支持浏览器访问。');

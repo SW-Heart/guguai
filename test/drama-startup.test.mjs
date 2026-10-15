@@ -33,6 +33,7 @@ test('a failed drama initialization can retry and concurrent callers share one a
   const context = Object.fromEntries(['api','promptPrecheck','esc','toast','setCreditBalance','creditText','loadTasks','scheduleTaskPoll','loadCredits','loadFiles','pickAndUploadDramaImage','pickAndUploadDramaAsset','pickAndImportDramaCanvasAsset','confirmDelete','taskFailure','isDesktopAssetSyncing','desktopSyncMarkup','showDesktopAssetInFolder','removeDesktopCloudAssets','syncDesktopDeliveries'].map(name => [name,() => {}]));
   Object.assign(context,{registerCanvasFile(){},renameCanvasFile(){},importLocalMedia(){},loadReferenceFiles:async()=>[],state:{},mediaController:{},accountScope:{},desktopSyncInfo:{},projectLibrary:{renderPage(){}},syncDramaProjectLocation(){},loadReferenceCanvasStyles:async()=>{},
     importStudio:async () => ({createDramaStudio:() => {if (++attempts === 1) throw new ReferenceError('controller initialization failed');return controller;}})});
+  context.importDramaStudio = context.importStudio;
   vm.createContext(context);vm.runInContext(code,context);
   const first = context.ensureDramaController();
   assert.equal(context.ensureDramaController(),first);

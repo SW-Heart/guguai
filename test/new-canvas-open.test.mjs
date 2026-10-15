@@ -13,7 +13,8 @@ function setup() {
     defaultTitleFromMessage: () => '', changeLocation() {}, dispatchRoute() {},
     resetView() { context.navigationEpoch++; context.initialCanvasOpen = false; },
     host: { innerHTML: '' }, projectLoadingMarkup: '', toast: message => errors.push(message),
-    mountWorkspace() { mounted.push(context.initialCanvasOpen); },
+    mountWorkspace(create) { assert.equal(typeof create, 'function'); mounted.push(context.initialCanvasOpen); },
+    loadCanvas: async () => ({ createDirectorWorkspace() {} }), warmCanvas() {},
   });
   vm.runInContext(source.slice(source.indexOf('  async function createProject('), source.indexOf('  const asset=id=>')), context);
   return { context, mounted, errors };
@@ -41,4 +42,34 @@ test('opening an existing project directly starts with its canvas visible', asyn
   await context.openProject('existing-canvas');
   assert.deepEqual(mounted, [true]);
   assert.deepEqual(errors, []);
+});
+
+test('a project waits for its canvas code alongside its data, and a failed download returns home with a plain message', async () => {
+  const { context, mounted, errors } = setup();
+  let finishCanvas, finishProject;
+  context.loadCanvas = () => new Promise(resolve => { finishCanvas = resolve; });
+  context.api = () => new Promise(resolve => { finishProject = resolve; });
+  const opening = context.openProject('existing-canvas');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(typeof finishCanvas, 'function', 'canvas code starts downloading with the project request');
+  finishProject({ project: { id: 'existing-canvas', title: '项目' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(mounted, [], 'the canvas mounts only when its code is ready');
+  finishCanvas({ createDirectorWorkspace() {} });
+  await opening;
+  assert.deepEqual(mounted, [true]);
+
+  const failed = setup();
+  const locations = [];
+  failed.context.changeLocation = view => locations.push(view);
+  failed.context.loadCanvas = async () => { throw new Error('画布加载失败，请检查网络后重试'); };
+  await failed.context.openProject('existing-canvas');
+  assert.deepEqual(failed.mounted, []);
+  assert.deepEqual(failed.errors, ['画布加载失败，请检查网络后重试']);
+  assert.deepEqual(locations, ['home']);
+});
+
+test('the creation home does not import the canvas engine up front', () => {
+  assert.doesNotMatch(source, /^import[^;]*director-workspace\.js/m);
+  assert.match(source, /import\('\.\.\/drama\/director-workspace\.js\?v=\d+'\)/);
 });
