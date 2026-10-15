@@ -8,7 +8,7 @@ const source=readFileSync(new URL('../public/features/drama/director-workspace.j
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function setup(){
   const input={value:'',style:{},scrollTop:0,get scrollHeight(){return 84+Math.ceil(this.value.length/30)*20;}},form={},sent=[],toasts=[];
-  const context={normalizeModelPreferences,preferenceUpdating:false,epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
+  const context={crypto:globalThis.crypto,pendingMessages:[],retrySubmission:null,normalizeModelPreferences,preferenceUpdating:false,epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
     host:{querySelector:selector=>selector==='#directorMessage'?input:selector==='.dw-composer'?form:{hidePopover(){}}},
     bridge:{toast:message=>toasts.push(message)},drawPanels(){},save:async()=>{},
     agentClient:{send:async text=>sent.push(text),open:async()=>{},newConversation:async()=>{}},
@@ -18,6 +18,60 @@ function setup(){
   vm.runInContext(source.slice(source.indexOf('  async function switchConversation('),source.indexOf('  function dispose(')),context);
   return {context,input,form,sent,toasts};
 }
+test('sending displays text and attachments before save, upload or network completes',async()=>{
+  const {context}=setup(),saving=deferred(),uploading=deferred(),sending=deferred();
+  const draws=[];
+  context.drawPanels=()=>draws.push(context.pendingMessages.map(item=>({...item})));
+  context.save=()=>saving.promise;
+  context.bridge.prepareCloudFiles=()=>uploading.promise;
+  let identity;
+  context.agentClient.send=async(text,selection,documents,preferences,clientId)=>{identity=clientId;await sending.promise;};
+  context.attachments=[{id:'local-image',kind:'image',url:'/local',name:'图片'}];
+  context.documentAttachments=[{id:'doc',title:'文档',text:'内容'}];
+  const request=context.submit('立即显示');
+  assert.equal(draws[0][0].text,'立即显示');
+  assert.equal(context.pendingMessages.length,1);
+  assert.equal(context.pendingMessages[0].attachments.length,2);
+  assert.equal(context.attachments.length,0);
+  saving.resolve();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(context.pendingMessages.length,1);
+  uploading.resolve([{id:'cloud-image',name:'图片'}]);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(identity,context.pendingMessages[0].clientId);
+  sending.resolve();await request;
+});
+test('confirmation merges the pending bubble by identity and ignores older polls',()=>{
+  const {context}=setup();
+  context.pendingMessages=[{id:'input-client',clientId:'client',sessionId:'first',role:'user',text:'相同内容'}];
+  context.bridge={};
+  const start=source.indexOf('    const confirmed=agentState?.messages||[];');
+  const end=source.indexOf('    messagePreviews?.update',start);
+  const render=()=>vm.runInContext(`(()=>{${source.slice(start,end)}return items;})()`,context);
+  context.agentState.messages=[];
+  assert.equal(render().length,1);
+  context.agentState.messages=[{id:'input-1',clientId:'client',role:'user',text:'相同内容'}];
+  const items=render();
+  assert.equal(items.length,1);assert.equal(items[0].id,'input-client');
+  assert.equal(context.pendingMessages.length,0);
+});
+test('failed sending removes the pending bubble and restores the message',async()=>{
+  const {context,input}=setup();
+  context.save=async()=>{throw new Error('保存失败');};
+  await context.submit('保留这条消息');
+  assert.equal(context.pendingMessages.length,0);
+  assert.equal(input.value,'保留这条消息');
+  assert.equal(context.sending,false);
+});
+test('retrying the same failed message keeps its identity to prevent duplicate delivery',async()=>{
+  const {context}=setup(),ids=[];
+  context.agentClient.send=async(text,selection,documents,preferences,id)=>{
+    ids.push(id);
+    if(ids.length===1)throw new Error('连接中断');
+  };
+  await context.submit('重试这条消息');
+  await context.submit('重试这条消息');
+  assert.equal(ids.length,2);
+  assert.equal(ids[0],ids[1]);
+});
 test('composer grows to a limit, scrolls internally, and returns to its default height after sending',async()=>{
   const {context,input,form,sent}=setup();
   input.value='长内容'.repeat(500);
@@ -104,7 +158,7 @@ test('opening a ready conversation keeps saved canvas visible without failing',(
   const start=source.indexOf('onState:(state,config)=>{')+'onState:'.length;
   const end=source.indexOf('},onError:error=>',start)+1;
   assert.ok(start>='onState:'.length&&end>start);
-  const context={token:1,epoch:1,bridge:{agentMode:true,sessionChanged(){},snapshotKey:()=>''},agentState:{id:'cached'},agentReady:false,agentConfig:null,chatMode:'full',canvas:null,saveTimer:0,clearTimeout(){},autoOpenedGenerations:new Set(),hasSavedCanvasContent:()=>true,drawPanels(){},initialMessageSent:true,lastAgentCacheSignature:'',writeCanvasSnapshot:async()=>{}};
+  const context={token:1,epoch:1,bridge:{agentMode:true,sessionChanged(){},snapshotKey:()=>''},agentState:{id:'cached'},agentReady:false,agentConfig:null,chatMode:'full',canvas:null,saveTimer:0,clearTimeout(){},autoOpenedGenerations:new Set(),hasSavedCanvasContent:()=>true,drawPanels(){},initialMessageSent:true,lastCanvasContentSignature:'',lastAgentCacheSignature:'',writeCanvasSnapshot:async()=>{}};
   vm.createContext(context);
   const onState=vm.runInContext(`(${source.slice(start,end)})`,context);
   onState({id:'cached',messages:[]},{configured:true});
@@ -119,6 +173,23 @@ test('opening a ready conversation keeps saved canvas visible without failing',(
   context.hasSavedCanvasContent=()=>false;
   onState({id:'empty',messages:[]},{configured:true});
   assert.equal(context.chatMode,'full');
+});
+
+test('chat polling skips canvas work while canvas edits and media changes still refresh it',()=>{
+  const start=source.indexOf('onState:(state,config)=>{')+'onState:'.length;
+  const end=source.indexOf('},onError:error=>',start)+1;
+  const draws=[];
+  const context={token:1,epoch:1,bridge:{agentMode:true,snapshotKey:()=>''},agentState:{id:'chat'},agentReady:true,agentConfig:null,chatMode:'side',canvas:null,initialMessageSent:true,lastAgentCacheSignature:'',lastCanvasContentSignature:'',writeCanvasSnapshot:async()=>{},drawPanels:options=>draws.push(options?.syncBoard)};
+  vm.createContext(context);
+  const onState=vm.runInContext(`(${source.slice(start,end)})`,context);
+  const state={id:'chat',messages:[],state:'running',canvas:{editSeq:1},tasks:[]};
+  const config={configured:true};
+  onState(state,config);
+  onState({...state,draft:'回复片段',version:2},config);
+  onState({...state,draft:'更多回复片段',version:3},config);
+  onState({...state,canvas:{editSeq:2}},config);
+  onState({...state,tasks:[{id:'image',status:'completed',url:'/result'}]},config);
+  assert.deepEqual(draws,[true,false,false,true,true]);
 });
 
 test('stream refreshes keep the working status mounted and place drafts before it',()=>{

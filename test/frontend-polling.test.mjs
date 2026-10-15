@@ -25,7 +25,7 @@ test('faster polling reaches the app through fresh versioned URLs',()=>{
   const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
   assert.ok(read('app.js').includes("./features/generation/polling.js?v=5"));
   assert.match(read('app.js'),/const activePollDelay = 2000;/);
-  assert.ok(read('index.html').includes('/app.js?v=587'));
+  assert.ok(read('index.html').includes('/app.js?v=588'));
 });
 
 test('task poller schedules one active request and can stop both loops', async () => {

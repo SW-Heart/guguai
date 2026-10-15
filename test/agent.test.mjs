@@ -983,6 +983,7 @@ test('message previews survive processing and reopen with the correct same-named
     assert.equal(pending.length,2);
     for(const [index,message] of pending.entries()){
       assert.equal(message.text,'请参考这些文件');
+      assert.equal(message.clientId,index===0?'first-upload':'second-upload');
       assert.equal(message.attachments.length,6);
       assert.deepEqual(message.attachments.slice(0,4).map(file=>file.kind),['image','video','audio','video']);
       assert.equal(message.images.length,1);

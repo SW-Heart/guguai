@@ -30,7 +30,7 @@ function selectionHandlers(){
     canvas:{on:(name,fn)=>{handlers[name]=fn;},getStage:()=>({on:(name,fn)=>{handlers[name]=fn;}}),getState:()=>({selectedNodeIds:context.ids}),getToolType:()=> 'select',getNodeConfigById:()=>({$_type:'html'})},
     host:{querySelector:()=>({classList:{toggle(){}},hidden:false,innerHTML:''})},
     generationDraft:id=>id?{id}:null,selected:'',activeGenerationId:'',inspectorOpen:false,
-    renderGenerationComposer(){},drawInspector(){},syncCanvas(){},nativeTransformer:{},window:{setTimeout(){}},mountEpoch:1,epoch:1,
+    renderGenerationComposer(){},drawInspector(){},syncCanvas(){},renderEdges(){},liveCanvasNodes:()=>[],nativeTransformer:{},window:{setTimeout(){}},mountEpoch:1,epoch:1,
   });
   vm.runInContext(source.slice(source.indexOf("      canvas.on('nodes:selected',ids=>"),source.indexOf("      canvas.on('nodes:deleted'")),context);
   return {context,select:ids=>{context.ids=ids;handlers['nodes:selected'](ids);},click:event=>handlers['pointerclick.director-selection'](event)};

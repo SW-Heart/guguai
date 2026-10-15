@@ -3,6 +3,46 @@ import assert from 'node:assert/strict';
 import {createCreativeAgentClient} from '../public/features/agent/client.js';
 import {normalizeModelPreferences} from '../public/features/agent/model-preferences.js';
 
+test('model choices display immediately and roll back when saving fails',async()=>{
+  const states=[];
+  let rejectSave;
+  const client=createCreativeAgentClient({projectId:'p',onState:state=>states.push(state),onError(){},api:async(url)=>{
+    if(url==='/api/agent/config')return {configured:true};
+    if(url.includes('?'))return {sessions:[]};
+    if(url.endsWith('/settings'))return new Promise((resolve,reject)=>{rejectSave=reject;});
+    return {id:'chat',settings:{model:'old',skill:''},state:'idle'};
+  }});
+  try{
+    await client.start();
+    const saving=client.settings({model:'new'});
+    assert.equal(states.at(-1).settings.model,'new');
+    rejectSave(new Error('保存失败'));
+    await assert.rejects(saving,/保存失败/);
+    assert.equal(states.at(-1).settings.model,'old');
+  }finally{client.dispose();}
+});
+
+test('a delayed settings response cannot replace a different conversation',async()=>{
+  const states=[];
+  let resolveSave;
+  const client=createCreativeAgentClient({projectId:'p',onState:state=>states.push(state),onError(){},api:async(url)=>{
+    if(url==='/api/agent/config')return {configured:true};
+    if(url.includes('?'))return {sessions:[]};
+    if(url.endsWith('/settings'))return new Promise(resolve=>{resolveSave=resolve;});
+    return {id:url.endsWith('/next')?'next':'chat',settings:{model:'old'},state:'idle'};
+  }});
+  try{
+    await client.start();
+    const saving=client.settings({model:'new'});
+    assert.equal(states.at(-1).settings.model,'new');
+    await client.open('next');
+    resolveSave({id:'chat',settings:{model:'new'},state:'idle'});
+    await saving;
+    assert.equal(states.at(-1).id,'next');
+    assert.equal(states.at(-1).settings.model,'old');
+  }finally{client.dispose();}
+});
+
 test('startup loads session and configuration concurrently without publishing partial state',async()=>{
   const requests=[],states=[];let resolveConfig,resolveSession;
   const client=createCreativeAgentClient({projectId:'p',onState:(state,config)=>states.push({state,config}),onError(){},api:async url=>{

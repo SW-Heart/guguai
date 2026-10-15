@@ -16,10 +16,10 @@ import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown
 import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=1';
 import { createStreamPacer } from '../agent/stream-pacer.js?v=1';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
-import { createMessageScroller } from '../agent/message-scroller.js?v=5';
+import { createMessageScroller } from '../agent/message-scroller.js?v=6';
 import { mediaFrameSize } from '../agent/frames.js?v=4';
 import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds } from './canvas-layout.js?v=2';
-import { createCreativeAgentClient } from '../agent/client.js?v=13';
+import { createCreativeAgentClient } from '../agent/client.js?v=15';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=42';
@@ -254,9 +254,9 @@ export function createDirectorWorkspace(host, bridge) {
   // settlingMessageId: a finished reply whose remaining text is still being revealed.
   let streamPacer=createStreamPacer(), settlingMessageId='', messageScroller=null, reasoning=null;
   let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, modelPreferencePicker=null, preferenceUpdating=false, connectionError='', conversations=[], historyOpen=false;
-  let lastAgentCacheSignature='', generationApproval=null;
-  const syncAgentAssetMetadata=createAgentAssetMetadataSync({findFile:id=>bridge.canvasFile?.({assetId:id}),renameFile:(file,name)=>bridge.renameFile(file,name),current:()=>!stopped,onChange:()=>drawPanels(),onError:error=>bridge.toast(error.message)});
-  let submissionQueue=[], drainingSubmissions=false;
+  let lastAgentCacheSignature='', lastCanvasContentSignature='', generationApproval=null;
+  const syncAgentAssetMetadata=createAgentAssetMetadataSync({findFile:id=>bridge.canvasFile?.({assetId:id}),renameFile:(file,name)=>bridge.renameFile(file,name),current:()=>!stopped,onChange:()=>drawPanels({syncBoard:true}),onError:error=>bridge.toast(error.message)});
+  let submissionQueue=[], drainingSubmissions=false, pendingMessages=[], retrySubmission=null;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
   let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
   const autoOpenedGenerations=new Set();
@@ -1212,7 +1212,7 @@ export function createDirectorWorkspace(host, bridge) {
     }
     loading?.remove();
     if(emptyEntrySession&&emptyEntrySession!==agentState.id)clearEmptyEntry();
-    const empty=!(agentState.messages||[]).length&&!agentState.draft&&!['queued','running','waiting_job'].includes(agentState.state);
+    const empty=!pendingMessages.some(item=>item.sessionId===agentState.id)&&!(agentState.messages||[]).length&&!agentState.draft&&!['queued','running','waiting_job'].includes(agentState.state);
     if(!empty)clearEmptyEntry();
     if(empty&&chatMode==='full'&&!emptyEntry&&bridge.renderEmptyConversation&&!bridge.hasInitialContent?.()&&!sending){
       emptyEntry=document.createElement('div');emptyEntry.className='agent-conversation-entry';root.append(emptyEntry);
@@ -1228,9 +1228,11 @@ export function createDirectorWorkspace(host, bridge) {
         if(!agentConfig?.configured)throw new Error('对话功能暂时无法使用，请稍后再试');
         skillUpdating=true;
         try{
-          if(skill!==(agentState.settings?.skill||''))await agentClient.settings({skill});
-          if(token!==epoch||session!==agentState?.id)return;
-          await submit(text,files,[],documents,modelPreferences);
+          const client=agentClient;
+          await submit(text,files,[],documents,modelPreferences,async()=>{
+            if(skill!==(agentState.settings?.skill||''))await client.settings({skill});
+            if(token!==epoch||session!==agentState?.id)throw Object.assign(new Error('对话已切换'),{stale:true});
+          });
         }finally{if(token===epoch){skillUpdating=false;drawPanels();}}
       }});
     }
@@ -1240,15 +1242,14 @@ export function createDirectorWorkspace(host, bridge) {
     if(emptyEntry){emptyEntry.hidden=!visible;emptyEntry.inert=switchingConversation;}
     return true;
   }
-  function drawPanels() {
-    syncAgentAssetMetadata(agentState?.assetMetadata);
+  function drawPanels({syncBoard=false}={}) {
+    if(syncBoard)syncAgentAssetMetadata(agentState?.assetMetadata);
     const root=host.querySelector('.director-workspace');
     const messages=root?.querySelector('.dw-messages');
     if(!root||!messages)return;
     if(!drawConversationEntry(root))return;
     if(bridge.agentMode){
-      applyAgentCanvasEdits();
-      applyAgentStoryboards();
+      if(syncBoard){applyAgentCanvasEdits();applyAgentStoryboards();}
       const activeGenerations=(agentState?.generations||[]).filter(frame=>{
         const task=frame.placeholder?null:bridge.task(frame.id);
         return ['queued','running','processing','waiting_job'].includes(task?.status||frame.status);
@@ -1258,19 +1259,19 @@ export function createDirectorWorkspace(host, bridge) {
       if(hasNewActiveGeneration&&chatMode==='full')chatMode='side';
       if(chatMode==='full')closeGenerationMenu(false);
       root.classList.toggle('agent-home',chatMode==='full');
-      root.classList.toggle('agent-empty',chatMode==='full'&&!(agentState?.messages||[]).length);
+      root.classList.toggle('agent-empty',chatMode==='full'&&!(agentState?.messages||[]).length&&!pendingMessages.some(item=>item.sessionId===agentState?.id));
       root.classList.toggle('agent-collapsed',chatMode==='minimized');
       root.querySelector('[data-show-agent]')?.toggleAttribute('hidden',chatMode!=='minimized');
       const toggle=root.querySelector('[data-agent-canvas]');
       if(toggle){
         const label=chatMode==='full'?'显示画布':'放大对话';
-        toggle.innerHTML=`<span class="gugu-lucide ${chatMode==='full'?'gugu-lucide-minimize-2':'gugu-lucide-maximize-2'}" aria-hidden="true"></span>`;
+        if(toggle.getAttribute('aria-label')!==label)toggle.innerHTML=`<span class="gugu-lucide ${chatMode==='full'?'gugu-lucide-minimize-2':'gugu-lucide-maximize-2'}" aria-hidden="true"></span>`;
         toggle.setAttribute('aria-label',label);toggle.dataset.tooltip=label;
       }
       const hideToggle=root.querySelector('[data-hide-agent]');
       if(hideToggle){
         const label=chatMode==='minimized'?'打开对话':'收起对话';
-        hideToggle.innerHTML=`<span class="gugu-lucide ${chatMode==='minimized'?'gugu-lucide-message-circle':'gugu-lucide-minus'}" aria-hidden="true"></span>`;
+        if(hideToggle.getAttribute('aria-label')!==label)hideToggle.innerHTML=`<span class="gugu-lucide ${chatMode==='minimized'?'gugu-lucide-message-circle':'gugu-lucide-minus'}" aria-hidden="true"></span>`;
         hideToggle.setAttribute('aria-label',label);hideToggle.dataset.tooltip=label;
       }
       const selectedSkill=skillSelection??agentState?.settings?.skill??'';
@@ -1310,7 +1311,8 @@ export function createDirectorWorkspace(host, bridge) {
 
     historyButton?.setAttribute('aria-expanded',String(historyOpen));
     if(historyOpen&&history){
-      history.innerHTML=`<div class="dw-history-heading"><strong>历史对话</strong><span>${conversations.length} 条</span></div>`+(conversations.length?conversations.map(c=>`<button type="button" data-conversation="${escape(c.id)}" aria-current="${c.id===agentState?.id}" ${conversationBusy?'disabled':''}><span>${escape(c.title)}</span><small>${escape(new Date(c.updatedAt).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}))}${['running','queued','waiting_job'].includes(c.state)?' · 进行中':''}</small></button>`).join(''):'<p>还没有历史对话</p>');
+      const markup=`<div class="dw-history-heading"><strong>历史对话</strong><span>${conversations.length} 条</span></div>`+(conversations.length?conversations.map(c=>`<button type="button" data-conversation="${escape(c.id)}" aria-current="${c.id===agentState?.id}" ${conversationBusy?'disabled':''}><span>${escape(c.title)}</span><small>${escape(new Date(c.updatedAt).toLocaleDateString('zh-CN',{month:'short',day:'numeric'}))}${['running','queued','waiting_job'].includes(c.state)?' · 进行中':''}</small></button>`).join(''):'<p>还没有历史对话</p>');
+      if(history.__guguMarkup!==markup){history.innerHTML=markup;history.__guguMarkup=markup;}
       history.querySelectorAll('[data-conversation]').forEach(button=>button.onclick=()=>void switchConversation(button.dataset.conversation));
     }
     const auto=root.querySelector('[data-agent-auto]');
@@ -1322,10 +1324,13 @@ export function createDirectorWorkspace(host, bridge) {
     // pauses, confirmations and errors keep the readable static message.
     const working=busy&&agentReady&&!connectionError;
     reasoning?.update({active:working,phrases:reasoningPhrases({activity:agentState?.activity,streaming:Boolean(agentState?.draft)})});
-    if(status){status.textContent=working?'':connectionError||agentState?.activity||'';status.setAttribute('role','status');}
+    if(status){const text=working?'':connectionError||agentState?.activity||'';if(status.textContent!==text)status.textContent=text;status.setAttribute('role','status');}
     root.querySelector('[data-director-stop]')?.toggleAttribute('hidden',!busy||!agentReady);
     root.querySelector('[data-director-delegate]')?.toggleAttribute('hidden',!agentReady||agentState?.state!=='paused');
-    const items=(agentState?.messages||[]).map(item=>item.role==='user'&&bridge.messageAttachment
+    const confirmed=agentState?.messages||[];
+    const confirmedIds=new Set(confirmed.map(item=>item.clientId).filter(Boolean));
+    pendingMessages=pendingMessages.filter(item=>item.sessionId===agentState?.id&&!confirmedIds.has(item.clientId));
+    const items=[...confirmed.map(item=>item.clientId?{...item,id:`input-${item.clientId}`}:item),...pendingMessages].map(item=>item.role==='user'&&bridge.messageAttachment
       ? {...item,attachments:(item.attachments||item.images||[]).map(file=>bridge.messageAttachment(file)||file)} : item);
     messagePreviews?.update(items.flatMap(messageAttachments));
     const sessionChanged=streamSession!==agentState?.id;
@@ -1359,10 +1364,12 @@ export function createDirectorWorkspace(host, bridge) {
     updateSendAvailability();
     const composer=root.querySelector('#directorMessage');
     if(composer)composer.placeholder=busy?'生成进行中也可以继续补充创作要求':bridge.agentMode?'写下你的想法，GuGu 会和你一起完成……':'想聊什么，或希望我帮你创作什么？';
-    if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
-    syncCanvas();
-    if(host.querySelector('[data-gen-prompt]')?.dataset.composing!=='true'&&hydrateGenerationDraft(generationDraft(activeGenerationId)))renderGenerationComposer();
-    positionGenerationComposer();
+    if(syncBoard){
+      if(!host.querySelector('.dw-inspector')?.contains(document.activeElement))drawInspector();
+      syncCanvas();
+      if(host.querySelector('[data-gen-prompt]')?.dataset.composing!=='true'&&hydrateGenerationDraft(generationDraft(activeGenerationId)))renderGenerationComposer();
+      positionGenerationComposer();
+    }
   }
   function animateDraft(time) {
     streamFrame=0;
@@ -1460,15 +1467,15 @@ export function createDirectorWorkspace(host, bridge) {
       const versions=n.kind==='resource'?n.item.versions:n.item.videoVersions;
       const selectedVersion=n.kind==='resource'?n.item.selectedTaskId:n.item.selectedVideoTaskId;
       el.insertAdjacentHTML('beforeend',`<label>作品版本<select data-version ${locked?'disabled':''}><option value="">选择已完成版本</option>${(versions||[]).filter(id=>bridge.task(id)?.status==='completed').map((id,i)=>`<option value="${escape(id)}" ${id===selectedVersion?'selected':''}>版本 ${i+1}${id===selectedVersion?' · 当前':''}</option>`).join('')}</select></label>`);
-      el.querySelector('[data-version]').onchange=async e=>{if(!e.target.value)return;const key=n.kind==='resource'?'resources':'shots';const field=n.kind==='resource'?'selectedTaskId':'selectedVideoTaskId';const item=get()[key].find(x=>x.id===n.id);if(workspace().lockedIds.includes(n.id))return;item[field]=e.target.value;await bridge.patch({[key]:get()[key]});drawPanels();};
+      el.querySelector('[data-version]').onchange=async e=>{if(!e.target.value)return;const key=n.kind==='resource'?'resources':'shots';const field=n.kind==='resource'?'selectedTaskId':'selectedVideoTaskId';const item=get()[key].find(x=>x.id===n.id);if(workspace().lockedIds.includes(n.id))return;item[field]=e.target.value;await bridge.patch({[key]:get()[key]});drawPanels({syncBoard:true});};
     }
     if(n.kind==='shot'){
       const images=bridge.images();const options=value=>`<option value="">未指定</option>${images.map(f=>`<option value="${escape(f.id)}" ${f.id===value?'selected':''}>${escape(f.name||f.id)}</option>`).join('')}`;
       el.insertAdjacentHTML('beforeend',`<label>生成方式<select data-generation-type ${locked?'disabled':''}>${[['TEXT','文本生成'],['FIRST&LAST','首尾帧'],['REFERENCE','参考图']].map(([v,t])=>`<option value="${v}" ${n.item.generation?.type===v?'selected':''}>${t}</option>`).join('')}</select></label><label>首帧<select data-first-frame ${locked?'disabled':''}>${options(n.item.generation?.firstFrameAssetId)}</select></label><label>尾帧<select data-last-frame ${locked?'disabled':''}>${options(n.item.generation?.lastFrameAssetId)}</select></label><label>参考图<select data-reference ${locked?'disabled':''}>${options(n.item.generation?.referenceAssetIds?.[0])}</select></label><button data-save-refs ${locked?'disabled':''}>保存参考设置</button>`);
-      el.querySelector('[data-save-refs]').onclick=async()=>{if(workspace().lockedIds.includes(n.id))return;const shot=get().shots.find(x=>x.id===n.id);const ref=el.querySelector('[data-reference]').value;shot.generation={...shot.generation,type:el.querySelector('[data-generation-type]').value,firstFrameAssetId:el.querySelector('[data-first-frame]').value,lastFrameAssetId:el.querySelector('[data-last-frame]').value,referenceAssetIds:ref?[ref]:[]};await bridge.patch({shots:get().shots});drawPanels();};
+      el.querySelector('[data-save-refs]').onclick=async()=>{if(workspace().lockedIds.includes(n.id))return;const shot=get().shots.find(x=>x.id===n.id);const ref=el.querySelector('[data-reference]').value;shot.generation={...shot.generation,type:el.querySelector('[data-generation-type]').value,firstFrameAssetId:el.querySelector('[data-first-frame]').value,lastFrameAssetId:el.querySelector('[data-last-frame]').value,referenceAssetIds:ref?[ref]:[]};await bridge.patch({shots:get().shots});drawPanels({syncBoard:true});};
     }
-    el.querySelector('[data-lock]').onclick=async()=>{workspace().lockedIds=locked?workspace().lockedIds.filter(id=>id!==n.id):[...workspace().lockedIds,n.id];await save();drawPanels();};
-    el.querySelector('[data-save-edit]').onclick=async()=>{try{if(n.kind==='story')await bridge.patch({script:el.querySelector('textarea').value});else {const data={prompt:el.querySelector('textarea').value};if(n.kind==='shot')data.duration=Number(el.querySelector('input').value);await bridge.patch(applyDirectorEdit(get(),{type:n.kind==='shot'?'update_shot':'update_resource',targetId:n.id,data}));}drawPanels();}catch(e){bridge.toast(e.message);}};
+    el.querySelector('[data-lock]').onclick=async()=>{workspace().lockedIds=locked?workspace().lockedIds.filter(id=>id!==n.id):[...workspace().lockedIds,n.id];await save();drawPanels({syncBoard:true});};
+    el.querySelector('[data-save-edit]').onclick=async()=>{try{if(n.kind==='story')await bridge.patch({script:el.querySelector('textarea').value});else {const data={prompt:el.querySelector('textarea').value};if(n.kind==='shot')data.duration=Number(el.querySelector('input').value);await bridge.patch(applyDirectorEdit(get(),{type:n.kind==='shot'?'update_shot':'update_resource',targetId:n.id,data}));}drawPanels({syncBoard:true});}catch(e){bridge.toast(e.message);}};
     el.querySelector('[data-ask-node]').onclick=()=>{const input=host.querySelector('.dw-composer textarea');input.value=`修改「${n.title}」：`;input.focus();};
   }
   const generationDraft=id=>(workspace().generationDrafts||[]).find(item=>item.id===id);
@@ -2102,7 +2109,7 @@ export function createDirectorWorkspace(host, bridge) {
     finally{if(token===epoch){generationSubmitting=false;renderGenerationComposer();syncCanvas();}}
   }
   function mount() {
-    if(projectId===get().id&&host.querySelector('.dw-canvas')){drawPanels();return;}
+    if(projectId===get().id&&host.querySelector('.dw-canvas')){drawPanels({syncBoard:true});return;}
     dispose();projectId=get().id;
     const mountEpoch=epoch;workspaceActive=true;
     host.innerHTML=`<section class="director-workspace"><section class="dw-board"><div class="dw-canvas reference-canvas-host" aria-label="无限分镜画布"></div><section class="dw-inspector" hidden></section></section><aside class="dw-agent"><div class="dw-agent-resizer" role="separator" aria-label="调整对话区域宽度" aria-orientation="vertical" tabindex="0"></div><header><b>GuGu</b><nav aria-label="对话操作"><button type="button" data-agent-new title="新建对话">＋ 新对话</button><button type="button" data-agent-history aria-expanded="false" aria-haspopup="dialog" popovertarget="directorHistoryPicker">历史</button><button type="button" data-hide-agent aria-label="收起对话" title="收起对话"><span class="gugu-lucide gugu-lucide-minus" aria-hidden="true"></span></button></nav></header><section id="directorHistoryPicker" class="dw-conversations dw-history-picker" aria-label="历史对话" popover role="dialog"></section><details class="dw-agent-options"><summary>生成设置</summary><label><input type="checkbox" data-agent-auto> 预算内自动生成</label><label>本次对话生成预算（积分）<input type="number" data-agent-budget min="0" max="10000" step="1" value="0"></label><button type="button" data-agent-save-settings>保存设置</button></details><div class="dw-message-scroller"><div class="dw-messages" role="log" aria-label="对话内容" aria-live="polite" tabindex="0"><div class="dw-turn-activity"><p class="dw-mode-help"></p><button type="button" class="dw-agent-retry" data-agent-retry hidden>重新连接</button></div></div><nav class="dw-message-rail" aria-label="消息导航" hidden></nav></div><div class="dw-plan"></div><form class="dw-composer"><label for="directorMessage" class="dw-sr-only">告诉 GuGu 你的想法</label><div data-agent-attachments class="dw-attachments attachment-strip" aria-label="已添加的文件"></div><textarea id="directorMessage" placeholder="想聊什么，或希望我帮你创作什么？" rows="3"></textarea><div class="dw-composer-actions"><button type="button" data-agent-upload class="dw-icon-button" aria-label="上传文件" title="上传文件"><span class="gugu-lucide gugu-lucide-paperclip" aria-hidden="true"></span></button><button data-director-delegate type="button" title="继续当前创作">继续</button><button data-director-stop type="button" hidden>暂停</button><button type="button" data-agent-model-toggle class="dw-icon-button" aria-label="切换对话模型" aria-haspopup="dialog" aria-expanded="false" popovertarget="directorModelPicker"><span class="gugu-lucide gugu-lucide-layers-2" aria-hidden="true"></span></button><button data-director-send class="dw-primary" type="submit" aria-label="发送消息">发送</button></div></form><div id="directorModelPicker" class="dw-model-picker" popover role="dialog" aria-label="选择对话模型"><strong>选择对话模型</strong><div data-agent-model-list></div></div></aside></section>`;
@@ -2345,8 +2352,7 @@ export function createDirectorWorkspace(host, bridge) {
         renderGenerationComposer();
         if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}
         else drawInspector();
-        if(ids.length)syncCanvas();
-        else window.setTimeout(()=>{if(mountEpoch===epoch&&canvas&&!syncing&&!selected)syncCanvas();},0);
+        renderEdges(liveCanvasNodes());
       });
       canvas.getStage()?.on('pointerclick.director-selection',event=>{
         if(event.evt?.button!==undefined&&event.evt.button!==0)return;
@@ -2635,7 +2641,7 @@ export function createDirectorWorkspace(host, bridge) {
       lastAgentCacheSignature=JSON.stringify([cached.state.id,cached.state.version,cached.state.state,cached.state.settings,cached.state.messages?.length,cached.state.draft]);
       drawPanels();
     });
-    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId:bridge.agentProjectId?.()??projectId,agentProjectId:bridge.creativeProjectId?.()||'',initialSessionId:bridge.initialSessionId?.()||'',initialSkill:bridge.initialSkill?.()||'',initialModelPreferences:bridge.initialModelPreferences?.(),onHistory:items=>{if(token===epoch){conversations=items;drawPanels();}},onState:(state,config)=>{
+    agentClient=createCreativeAgentClient({api:bridge.agentApi,projectId:bridge.agentProjectId?.()??projectId,agentProjectId:bridge.creativeProjectId?.()||'',initialSessionId:bridge.initialSessionId?.()||'',initialSkill:bridge.initialSkill?.()||'',initialModelPreferences:bridge.initialModelPreferences?.(),onHistory:items=>{if(token===epoch){conversations=items;if(historyOpen)drawPanels();}},onState:(state,config)=>{
       if(token!==epoch)return;
       if(!state&&agentState?.id){agentConfig=config;drawPanels();return;}
       const firstReadySession=bridge.agentMode&&!agentReady&&Boolean(state?.id);
@@ -2656,13 +2662,16 @@ export function createDirectorWorkspace(host, bridge) {
       }
       agentReady=Boolean(state?.id);
       agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';
-      if(state?.assetMetadata?.length){
+      const canvasSignature=JSON.stringify([state?.id,config,state?.canvas?.editSeq,state?.documents,state?.sourceObservations,state?.sourceTranscripts,state?.generations,state?.storyboards,state?.audioAssets,state?.composedAssets,state?.assetMetadata,state?.tasks,state?.project]);
+      const syncBoard=firstReadySession||canvasSignature!==lastCanvasContentSignature;
+      lastCanvasContentSignature=canvasSignature;
+      if(syncBoard&&state?.assetMetadata?.length){
         workspace().projectAssets||={types:[],categories:{},collapsed:[],names:{}};
         const names=workspace().projectAssets.names||={};
         for(const item of state.assetMetadata){const file=bridge.canvasFile?.({assetId:item.id});names[item.id]=item.name;if(file?.id)names[file.id]=item.name;}
       }
       if(bridge.agentMode&&(sessionChanged||firstReadySession))chatMode=(hasSavedCanvasContent()||(firstReadySession&&bridge.initialCanvasOpen?.()))?'side':'full';
-      drawPanels();
+      drawPanels({syncBoard});
       if(bridge.agentMode&&agentReady&&!initialMessageSent){initialMessageSent=true;const initial=bridge.initialMessage?.()||'',files=bridge.initialAttachments?.()||[],documents=bridge.initialDocuments?.()||[];attachments=files;documentAttachments=documents;if(initial||files.length||documents.length){if(config.configured)void submit(initial||(documents.length?'请参考我附带的文件继续创作。':''),attachments,[],documentAttachments);else {const input=host.querySelector('#directorMessage');input.value=initial||'请参考我附带的文件继续创作。';resizeAgentComposer(input);}}}
       if(state?.id){
         const signature=JSON.stringify([state.id,state.version,state.state,state.settings,state.messages?.length,state.draft]);
@@ -2691,6 +2700,8 @@ export function createDirectorWorkspace(host, bridge) {
       sending=true;
       try{
         redrawComposer();
+        if(request.prepare)await request.prepare();
+        if(!current()){request.resolve?.();continue;}
         await save();
         if(!current()){request.resolve?.();continue;}
         // Attachments stay local until the message is actually sent.
@@ -2699,12 +2710,15 @@ export function createDirectorWorkspace(host, bridge) {
         const mediaText=files.length?'\n\n附件：\n'+files.map(f=>`${f.name}（素材 ID：${f.id}）`).join('\n'):'';
         const documentText=request.documents.length?'\n\n附带文件：\n'+request.documents.map(file=>file.title).join('\n'):'';
         const content=request.text+mediaText+documentText;
-        await client.send(content,[...new Set([...request.selectionIds,...files.map(f=>f.id)])],request.documents,request.modelPreferences);
+        await client.send(content,[...new Set([...request.selectionIds,...files.map(f=>f.id)])],request.documents,request.modelPreferences,request.clientId);
         if(!current()){request.resolve?.();continue;}
         connectionError='';
+        if(retrySubmission?.clientId===request.clientId)retrySubmission=null;
         request.resolve?.();
       }catch(error){
         if(current()&&!error.stale){
+          retrySubmission={sessionId:session,signature:request.signature,clientId:request.clientId};
+          pendingMessages=pendingMessages.filter(item=>item.clientId!==request.clientId);
           connectionError=error.message;
           const input=host.querySelector('#directorMessage');
           if(request.composerSend&&input&&!input.value){input.value=request.text;resizeAgentComposer(input);}
@@ -2726,15 +2740,19 @@ export function createDirectorWorkspace(host, bridge) {
     drainingSubmissions=false;
     redrawComposer();
   }
-  function submit(text,files=attachments,selectionIds=selected?[selected]:[],documents=files===attachments?documentAttachments:[],modelPreferences=agentState?.settings?.modelPreferences){
+  function submit(text,files=attachments,selectionIds=selected?[selected]:[],documents=files===attachments?documentAttachments:[],modelPreferences=agentState?.settings?.modelPreferences,prepare=null){
     if(uploading||switchingConversation||preferenceUpdating)return Promise.resolve();
-    const composerSend=files===attachments&&documents===documentAttachments;
-    const request={text:String(text||''),files:[...files],documents:[...documents],selectionIds:[...selectionIds],modelPreferences:normalizeModelPreferences(modelPreferences),composerSend};
+    const composerSend=Boolean(prepare)||(files===attachments&&documents===documentAttachments);
+    const request={clientId:crypto.randomUUID(),text:String(text||''),files:[...files],documents:[...documents],selectionIds:[...selectionIds],modelPreferences:normalizeModelPreferences(modelPreferences),composerSend,prepare};
     if(!request.text&&!request.files.length&&!request.documents.length)return Promise.resolve();
+    request.signature=JSON.stringify([request.text,request.files,request.documents,request.selectionIds,request.modelPreferences]);
+    if(retrySubmission?.sessionId===agentState?.id&&retrySubmission.signature===request.signature)request.clientId=retrySubmission.clientId;
+    pendingMessages.push({id:`input-${request.clientId}`,clientId:request.clientId,sessionId:agentState?.id,role:'user',text:request.text,attachments:[...request.files,...request.documents.map(file=>({...file,kind:'document',name:file.title}))]});
     // Snapshot and release attachments immediately so the next prompt can be
     // prepared while this one is being added to the conversation.
     if(composerSend){attachments=[];documentAttachments=[];}
     const promise=new Promise(resolve=>{request.resolve=resolve;submissionQueue.push(request);});
+    redrawComposer();
     void drainSubmissions();
     return promise;
   }
@@ -2751,10 +2769,10 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());pendingMessages=[];retrySubmission=null;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';lastCanvasContentSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;
     projectId='';selected='';inspectorOpen=false;lastNodeGeometry='';}
-  return {mount,refresh:drawPanels,dispose};
+  return {mount,refresh:()=>drawPanels({syncBoard:true}),dispose};
 }

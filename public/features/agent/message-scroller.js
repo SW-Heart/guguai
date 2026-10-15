@@ -19,6 +19,23 @@ export function groupMessageTurns(nodes) {
   return turns;
 }
 
+// Turns follow document order. Find the visible turn without measuring every
+// message on each scroll event, including long conversation histories.
+export function nearestMessageTurn(targets, middle) {
+  if (!targets.length) return -1;
+  let low = 0, high = targets.length;
+  while (low < high) {
+    const index = (low + high) >>> 1;
+    if (targets[index].start.getBoundingClientRect().top <= middle) low = index + 1;
+    else high = index;
+  }
+  const previous = Math.max(0, low - 1);
+  if (!low || low === targets.length) return previous;
+  const bottom = targets[previous].end.getBoundingClientRect().bottom;
+  const nextTop = targets[low].start.getBoundingClientRect().top;
+  return middle - bottom <= nextTop - middle ? previous : low;
+}
+
 export function createMessageScroller(viewport, rail, surface = null) {
   let following = true;
   let programmatic = false;
@@ -69,15 +86,7 @@ export function createMessageScroller(viewport, rail, surface = null) {
     if (viewport.scrollTop <= FOLLOW_THRESHOLD) return 0;
     if (distanceFromEnd() <= FOLLOW_THRESHOLD) return targets.length - 1;
     const middle = viewport.getBoundingClientRect().top + viewport.clientHeight / 2;
-    let nearest = 0;
-    let nearestDistance = Infinity;
-    targets.forEach((target, index) => {
-      const top = target.start.getBoundingClientRect().top;
-      const bottom = target.end.getBoundingClientRect().bottom;
-      const distance = Math.max(top - middle, middle - bottom, 0);
-      if (distance < nearestDistance) { nearest = index; nearestDistance = distance; }
-    });
-    return nearest;
+    return nearestMessageTurn(targets, middle);
   }
 
   function markActive() {

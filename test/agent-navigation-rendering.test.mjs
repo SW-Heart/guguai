@@ -65,7 +65,7 @@ function workspaceFixture(){
   });
   const instrumented=director.slice(director.indexOf('export function createDirectorWorkspace('))
     .replace('export function','function')
-    .replace('return {mount,refresh:drawPanels,dispose};',
+    .replace('return {mount,refresh:()=>drawPanels({syncBoard:true}),dispose};',
       'return {dispose,queueWorkspaceFrame,releaseWorkspaceMedia,setMounted(scope,mount){mountedWorkspace=scope;canvasMount=mount;workspaceActive=true;},frameCount:()=>workspaceFrames.size};');
   vm.runInContext(instrumented,context);
   const workspace=context.createDirectorWorkspace({querySelector:()=>null},{});
@@ -145,10 +145,10 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=587'));assert.ok(html.includes('/styles.css?v=421'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=167'));assert.ok(app.includes('./drama-studio.js?v=300'));
-  assert.ok(agent.includes('../drama/director-workspace.js?v=191'));
-  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=191'));
+  assert.ok(html.includes('/app.js?v=588'));assert.ok(html.includes('/styles.css?v=421'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=168'));assert.ok(app.includes('./drama-studio.js?v=301'));
+  assert.ok(agent.includes('../drama/director-workspace.js?v=193'));
+  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=193'));
 });
 
 test('the creation route shows a loading state until its page is ready and starts downloading at startup',()=>{

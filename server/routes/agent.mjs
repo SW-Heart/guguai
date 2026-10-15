@@ -113,7 +113,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
           : {id:`document-${index}`, name, kind:'document', status:'unavailable'};
       })];
       const images = attachments.filter(file => file.kind === 'image' && (file.previewUrl || file.url));
-      return { id, role, text:visibleText, ...(attachments.length ? {attachments} : {}), ...(images.length ? {images} : {}) };
+      return { id, role, ...(input?.client_id ? {clientId:input.client_id} : {}), text:visibleText, ...(attachments.length ? {attachments} : {}), ...(images.length ? {images} : {}) };
     };
     const messages = doc.messages.filter(m => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string' && m.content).map((m, i) => {
       const input = m.role === 'user' ? inputsByText.get(m.content)?.shift() : null;

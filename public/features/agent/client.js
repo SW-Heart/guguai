@@ -2,14 +2,16 @@ import { normalizeModelPreferences } from './model-preferences.js?v=1';
 
 export function createCreativeAgentClient({ api, projectId, agentProjectId = '', initialSessionId = '', initialSkill = '', initialModelPreferences, onState, onError, onHistory = () => {} }) {
   let sessionId = '', stopped = false, timer, state, pendingSend, config, epoch = 0, sequence = 0, accepted = 0;
+  const savingSettings = new Map();
   const current = token => !stopped && token === epoch;
   function accept(value, token, request) {
     if (current(token) && request >= accepted) { accepted = request; state = value; onState(value, config); }
     return value;
   }
   function schedule(token) {
+    if (!current(token)) return;
     clearTimeout(timer);
-    if (current(token)) timer = setTimeout(() => poll(token), ['running','queued','waiting_job'].includes(state?.state) ? 500 : 1200);
+    if (!savingSettings.has(token)) timer = setTimeout(() => poll(token), ['running','queued','waiting_job'].includes(state?.state) ? 500 : 1200);
   }
   async function poll(token) {
     if (!current(token) || !sessionId) return;
@@ -62,15 +64,41 @@ export function createCreativeAgentClient({ api, projectId, agentProjectId = '',
     const result = accept(await api(`/api/agent/sessions/${sessionId}/${name}`, { method:'POST', body:JSON.stringify(body) }), token, request);
     return result;
   }
+  async function settings(value) {
+    if (!sessionId) throw new Error('对话正在连接，请稍后重试');
+    const token = epoch, request = ++sequence, previous = state;
+    // Publish the choice immediately and ignore older in-flight polls. Pause
+    // polling until saving settles so an old server value cannot flash back.
+    clearTimeout(timer);
+    savingSettings.set(token, (savingSettings.get(token) || 0) + 1);
+    accepted = request;
+    state = {...state, settings:{...state?.settings,...value}};
+    try {
+      onState(state, config);
+      return accept(await api(`/api/agent/sessions/${sessionId}/settings`, {method:'POST',body:JSON.stringify(value)}), token, request);
+    } catch (error) {
+      if (current(token) && accepted === request) {
+        state = previous;
+        onState(state, config);
+      }
+      throw error;
+    } finally {
+      const remaining = savingSettings.get(token) - 1;
+      if (remaining) savingSettings.set(token, remaining);
+      else savingSettings.delete(token);
+      schedule(token);
+    }
+  }
   return {
     start, history, open: id => open(id), newConversation: () => open('', true),
-    async send(text, selection = [], documents = [], modelPreferences = state?.settings?.modelPreferences) {
+    async send(text, selection = [], documents = [], modelPreferences = state?.settings?.modelPreferences, clientId) {
       const next={text,selection,documents,modelPreferences:normalizeModelPreferences(modelPreferences)};
+      if (clientId) pendingSend = { clientId, ...next };
       if (!pendingSend || JSON.stringify({text:pendingSend.text,selection:pendingSend.selection,documents:pendingSend.documents||[],modelPreferences:pendingSend.modelPreferences}) !== JSON.stringify(next)) pendingSend = { clientId:crypto.randomUUID(), ...next };
       const result = await action('messages', pendingSend); pendingSend = null;
       void history().catch(() => {}); return result;
     },
-    settings: value => action('settings', value), interrupt: () => action('interrupt'), resume: () => action('resume'),
+    settings, interrupt: () => action('interrupt'), resume: () => action('resume'),
     approve: (approvalId, accepted) => action('approval', { approvalId, accepted }),
     dispose() { stopped = true; epoch++; clearTimeout(timer); },
   };

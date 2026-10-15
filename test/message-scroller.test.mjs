@@ -1,7 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createMessageScroller, groupMessageTurns } from '../public/features/agent/message-scroller.js';
+import { createMessageScroller, groupMessageTurns, nearestMessageTurn } from '../public/features/agent/message-scroller.js';
+
+test('long conversation scrolling measures only nearby turns',()=>{
+  let measurements=0;
+  const turns=Array.from({length:1024},(_,index)=>{
+    const node={getBoundingClientRect(){measurements++;return {top:index*200,bottom:index*200+100};}};
+    return {start:node,end:node};
+  });
+  for(const [middle,expected] of [[-10,0],[640*200+50,640],[640*200+140,640],[640*200+180,641],[300000,1023]]){
+    measurements=0;
+    assert.equal(nearestMessageTurn(turns,middle),expected);
+    assert.ok(measurements<=13,`${measurements} layout measurements for 1024 turns`);
+  }
+  assert.equal(nearestMessageTurn([],0),-1);
+});
 
 const message = (role, text = '', top = 0, bottom = top + 100) => ({
   classList: { contains: name => name === role },
