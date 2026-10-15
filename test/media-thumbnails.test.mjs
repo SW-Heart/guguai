@@ -81,7 +81,13 @@ test('local protocol serves thumbnail bytes and original ranges, with account ch
     vm.runInContext(main.slice(main.indexOf('function parseLocalMediaRange('), main.indexOf('// 每次列素材')), context);
     vm.runInContext(main.slice(main.indexOf('let localThumbnail = null;'), main.indexOf('async function openOfflinePage(')), context);
     const thumb = await context.serveLocalMedia(new Request('gugu-media://asset/a?thumbnail=1'));
+    assert.equal(thumb.headers.get('content-type'), 'image/png', 'covers from older versions keep their PNG type');
     assert.equal(await thumb.text(), 'small');
+    await fs.writeFile(path.join(directory, 'thumb.png'), 'RIFF\0\0\0\0WEBPVP8 ');
+    const webp = await context.serveLocalMedia(new Request('gugu-media://asset/a?thumbnail=1'));
+    assert.equal(webp.headers.get('content-type'), 'image/webp');
+    await webp.arrayBuffer();
+    await fs.writeFile(path.join(directory, 'thumb.png'), 'small');
     const original = await context.serveLocalMedia(new Request('gugu-media://asset/a', {headers:{range:'bytes=0-7'}}));
     assert.equal(original.status, 206); assert.equal(await original.text(), 'original');
     context.changeAccount = () => { context.workspaceEpoch++; return path.join(directory, 'thumb.png'); };
@@ -178,6 +184,34 @@ test('video frames skip the opening half second and retry from the start for sho
     await context.renderLocalThumbnail('photo.png', output, 512, 'image');
     assert.equal(calls.length, 1);
     assert.equal(calls[0].includes('-ss'), false);
+    assert.equal(calls[0][calls[0].indexOf('-c:v') + 1], 'libwebp');
+  } finally { await fs.rm(directory, { recursive:true, force:true }); }
+});
+
+test('covers fall back to PNG only when the bundled encoder lacks WebP', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gugu-webp-'));
+  try {
+    const calls = [];
+    let webp = false, broken = false;
+    const context = vm.createContext({ fs, runFfmpeg:async args => {
+      const codec = args[args.indexOf('-c:v') + 1];
+      calls.push(codec);
+      if (broken || (codec === 'libwebp' && !webp)) throw new Error('encode failed');
+      await fs.writeFile(args.at(-1), codec);
+    } });
+    vm.runInContext(main.slice(main.indexOf('async function renderLocalThumbnail('), main.indexOf('async function serveLocalMedia(')), context);
+    const output = path.join(directory, 'out.tmp');
+    broken = true;
+    await assert.rejects(context.renderLocalThumbnail('broken.png', output, 512, 'image'));
+    assert.deepEqual(calls, ['libwebp', 'png']);
+    assert.equal(vm.runInContext('thumbnailWebp', context), true, 'a broken source must not disable WebP');
+    broken = false; calls.length = 0;
+    await context.renderLocalThumbnail('photo.png', output, 512, 'image');
+    assert.deepEqual(calls, ['libwebp', 'png']);
+    assert.equal(await fs.readFile(output, 'utf8'), 'png');
+    calls.length = 0;
+    await context.renderLocalThumbnail('next.png', output, 512, 'image');
+    assert.deepEqual(calls, ['png'], 'later covers skip the unavailable encoder');
   } finally { await fs.rm(directory, { recursive:true, force:true }); }
 });
 

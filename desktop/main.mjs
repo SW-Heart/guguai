@@ -952,14 +952,34 @@ async function listLocalAssets(options = {}) {
 
 let localThumbnail = null;
 async function renderLocalThumbnail(source, output, size, kind) {
-  const frame = ['-frames:v', '1', '-vf', `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`, '-threads', '1', '-f', 'image2', '-c:v', 'png', '-y', output];
-  const run = seek => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', ...(seek ? ['-ss', seek] : []), '-i', source, ...frame], { timeoutMs:30_000 });
-  if (kind !== 'video') return run('');
-  // Skip the first half second, which is often black; very short clips
-  // produce no frame there, so retry from the start.
-  await run('0.5').catch(() => {});
-  if ((await fs.stat(output).catch(() => null))?.size) return;
-  await run('');
+  const render = async codec => {
+    const encoder = codec === 'webp' ? ['-c:v', 'libwebp', '-quality', '82'] : ['-c:v', 'png'];
+    const frame = ['-frames:v', '1', '-vf', `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`, '-threads', '1', '-f', 'image2', ...encoder, '-y', output];
+    const run = seek => runFfmpeg(['-nostdin', '-v', 'error', '-threads', '1', ...(seek ? ['-ss', seek] : []), '-i', source, ...frame], { timeoutMs:30_000 });
+    if (kind !== 'video') return run('');
+    // Skip the first half second, which is often black; very short clips
+    // produce no frame there, so retry from the start.
+    await run('0.5').catch(() => {});
+    if ((await fs.stat(output).catch(() => null))?.size) return;
+    await run('');
+  };
+  if (!thumbnailWebp) return render('png');
+  try { await render('webp'); }
+  catch {
+    // Only switch formats when PNG works for the same file; a broken source fails both.
+    await render('png');
+    thumbnailWebp = false;
+  }
+}
+// WebP covers keep transparency and are 10-20x smaller than PNG, so they read and
+// decode faster. A bundled ffmpeg without the encoder uses PNG for the session.
+let thumbnailWebp = true;
+async function thumbnailMimeType(file) {
+  const handle = await fs.open(file, 'r');
+  try {
+    const { buffer, bytesRead } = await handle.read(new Uint8Array(12), 0, 12, 0);
+    return bytesRead === 12 && String.fromCharCode(...buffer.subarray(8, 12)) === 'WEBP' ? 'image/webp' : 'image/png';
+  } finally { await handle.close(); }
 }
 async function serveLocalMedia(request) {
   if (!['GET', 'HEAD'].includes(request.method)) return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
@@ -979,6 +999,7 @@ async function serveLocalMedia(request) {
   const thumbnailSize = { '1':512, '2048':2048 }[url.searchParams.get('thumbnail')] || 0;
   const thumbnailKind = asset.kind === 'video' ? 'video' : asset.kind === 'image' && !/svg/i.test(String(asset.mimeType || '')) ? 'image' : '';
   let thumbnail = Boolean(thumbnailSize && thumbnailKind);
+  let thumbnailType = 'image/png';
   if (thumbnail) {
     localThumbnail ||= createThumbnailCache({
       // Covers are a disposable cache kept with the app, never in the user's
@@ -991,6 +1012,7 @@ async function serveLocalMedia(request) {
     try {
       const preview = await localThumbnail(target, stat, thumbnailSize, thumbnailKind);
       const previewStat = await fs.stat(preview);
+      thumbnailType = await thumbnailMimeType(preview);
       target = preview; stat = previewStat;
     } catch (error) {
       if (!error?.cached) console.warn('[media] 缩略图生成失败', { assetId:asset.id, kind:thumbnailKind, message:error?.message });
@@ -1008,7 +1030,7 @@ async function serveLocalMedia(request) {
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=0, must-revalidate',
     'Content-Length': String(Math.max(0, end - start + 1)),
-    'Content-Type': thumbnail ? 'image/png' : localMediaMimeType(asset, target),
+    'Content-Type': thumbnail ? thumbnailType : localMediaMimeType(asset, target),
     // CanvasApi loads images with crossOrigin="anonymous" so it can resize,
     // crop and export them. The local protocol needs an explicit CORS
     // response for that browser image element to accept the bytes.

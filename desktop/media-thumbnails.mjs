@@ -27,7 +27,8 @@ export function createThumbnailCache({ directory, render, maxEntries = 4096, max
   };
   // Count entries in memory and scan the directory only when over budget.
   const prune = keep => pruning ||= (async () => {
-    const names = (await fs.readdir(directory).catch(() => [])).filter(name => name.endsWith('.png'));
+    // `.png` entries come from older versions and are pruned like current ones.
+    const names = (await fs.readdir(directory).catch(() => [])).filter(name => /\.(?:thumb|png)$/.test(name));
     const entries = (await Promise.all(names.map(async name => {
       const info = await fs.stat(path.join(directory, name)).catch(() => null);
       return info && { name, file:path.join(directory, name), time:info.mtimeMs, size:info.size };
@@ -43,7 +44,7 @@ export function createThumbnailCache({ directory, render, maxEntries = 4096, max
   })().finally(() => { pruning = null; });
   return async function thumbnail(source, stat, size = 512, kind = 'image') {
     const key = createHash('sha256').update(JSON.stringify([source, stat.size, stat.mtimeMs, size, kind])).digest('hex');
-    const target = path.join(directory, `${key}.png`);
+    const target = path.join(directory, `${key}.thumb`);
     if (failed.has(key)) throw Object.assign(new Error('缩略图生成失败'), { cached:true });
     if (pending.has(key)) return pending.get(key);
     const request = (async () => {
@@ -64,7 +65,7 @@ export function createThumbnailCache({ directory, render, maxEntries = 4096, max
           throw error;
         } finally { await fs.rm(temporary, { force:true }).catch(() => {}); }
       } finally { releaseSlot(); }
-      if (entryCount === null || ++entryCount > maxEntries || entryBytes > maxBytes) await prune(`${key}.png`);
+      if (entryCount === null || ++entryCount > maxEntries || entryBytes > maxBytes) await prune(`${key}.thumb`);
       return target;
     })();
     pending.set(key, request);
