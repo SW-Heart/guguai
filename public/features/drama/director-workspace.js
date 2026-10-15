@@ -22,7 +22,7 @@ import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=41';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=42';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=20';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=18';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
@@ -2086,10 +2086,16 @@ export function createDirectorWorkspace(host, bridge) {
       if(inline)draft.primaryId=results.at(-1).id;
       workspace().generationDrafts.push(...results);
       if(draft.entity&&!draftResults(workspace().generationDrafts,draft.id).some(item=>item.id===draft.primaryId))draft.primaryId=results[0].id;
-      const focusResults=draft.role==='shot'&&activeGenerationId===draft.id;
-      if(focusResults){activeGenerationId='';closeGenerationMenu();}
-      renderGenerationComposer();syncCanvas();
-      if(focusResults){canvas?.selectNodes([results[0].id]);focusNewCanvasContent(results.map(item=>item.id));}
+      const focusResults=activeGenerationId===draft.id;
+      syncCanvas();
+      if(focusResults){
+        const outputIds=inline?[draft.id]:results.map(item=>item.id);
+        canvas?.selectNodes([outputIds[0]]);
+        // Selecting an inline generator opens its composer; close it after selection.
+        activeGenerationId='';closeGenerationMenu();
+        focusNewCanvasContent(outputIds);
+      }
+      renderGenerationComposer();
       scheduleCanvasSave(true);
       bridge.toast(tasks.length>1?`已开始生成 ${tasks.length} 个`:'已开始生成');
     }catch(error){if(token===epoch){draft.status='';bridge.toast(error.message);}}
@@ -2288,6 +2294,8 @@ export function createDirectorWorkspace(host, bridge) {
     const bindCanvas=api=>{
       if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
+      // Mount overlays after React's initial render so it cannot remove them.
+      mediaNameEditor=mountMediaNameEditor(host.querySelector('.dw-canvas'),{entries:canvasMediaNameEntries,save:saveCanvasMediaName,error:bridge.toast});
       cancelledNodeCleanup=createCancelledNodeCleanup({
         items:()=>canvas?(canvas.getState().nodes||[]).flatMap(node=>{
           const element=canvas.getCanvasNodeById(node.id)?.htmlElement;
@@ -2325,7 +2333,34 @@ export function createDirectorWorkspace(host, bridge) {
       nativeTransformer=canvas.getTransformer?.();
       brandSelectionTransformer(nativeTransformer);
       if(workspace().viewport)canvas.updateViewport(workspace().viewport);
-      canvas.on('nodes:selected',ids=>{const next=ids.find(id=>!id.startsWith('edge-'))||'';const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);if(next!==selected)inspectorOpen=false;selected=next;activeGenerationId=generationDraft(next)?.taskId?'':generationDraft(next)?.id||'';renderGenerationComposer();if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}else drawInspector();if(ids.length)syncCanvas();else window.setTimeout(()=>{if(mountEpoch===epoch&&canvas&&!syncing&&!selected)syncCanvas();},0);});
+      canvas.on('nodes:selected',ids=>{
+        const next=ids.length===1&&!ids[0].startsWith('edge-')?ids[0]:'';
+        const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');
+        host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);
+        if(next!==selected)inspectorOpen=false;
+        selected=next;
+        // Selection changes also come from the marquee and programmatic focus.
+        // Only a click may open settings; retain an already open single node.
+        if(activeGenerationId!==next)activeGenerationId='';
+        renderGenerationComposer();
+        if(isRichText){const inspector=host.querySelector('.dw-inspector');if(inspector){inspector.hidden=true;inspector.innerHTML='';}}
+        else drawInspector();
+        if(ids.length)syncCanvas();
+        else window.setTimeout(()=>{if(mountEpoch===epoch&&canvas&&!syncing&&!selected)syncCanvas();},0);
+      });
+      canvas.getStage()?.on('pointerclick.director-selection',event=>{
+        if(event.evt?.button!==undefined&&event.evt.button!==0)return;
+        if(canvas.getToolType?.()!=='select')return;
+        const ids=canvas.getState().selectedNodeIds||[];
+        if(ids.length!==1||ids[0]!==selected)return;
+        const target=event.target;
+        const onNode=target?.id?.()===selected||target?.findAncestor?.(node=>node.id?.()===selected);
+        const onSelection=target?.getParent?.()===nativeTransformer&&target?.hasName?.('back');
+        if(!onNode&&!onSelection)return;
+        const draft=generationDraft(selected);
+        activeGenerationId=draft&&!draft.taskId?draft.id:'';
+        renderGenerationComposer();
+      });
       canvas.on('nodes:deleted',deletedNodes=>{
         if(syncing||!Array.isArray(deletedNodes)||deletedNodes.length===0)return;
         const ids=deletedNodes.map(node=>node?.id).filter(Boolean);
@@ -2355,7 +2390,9 @@ export function createDirectorWorkspace(host, bridge) {
       // state event arrives only after the gesture, so align HTML cards and
       // arrows from the native shape on every move.
       const geometryIds=event=>{
-        const targets=event?.type?.startsWith('transform')?nativeTransformer?.nodes?.():[event?.target];
+        const attached=nativeTransformer?.nodes?.()||[];
+        const grouped=event?.target===nativeTransformer||attached.includes(event?.target);
+        const targets=event?.type?.startsWith('transform')||grouped?attached:[event?.target];
         return (targets||[]).map(target=>target?.id?.()).filter(id=>id&&!String(id).startsWith('edge-'));
       };
       const onGeometryMove=event=>{
@@ -2407,7 +2444,6 @@ export function createDirectorWorkspace(host, bridge) {
       saveUpload:payload=>bridge.saveUpload?.(payload)||URL.createObjectURL(new Blob([Uint8Array.from(atob(payload.base64),char=>char.charCodeAt(0))])),
       saveTemp:payload=>bridge.saveTemp?.(payload)||bridge.saveUpload?.(payload),
     },onReady:bindCanvas});
-    mediaNameEditor=mountMediaNameEditor(host.querySelector('.dw-canvas'),{entries:canvasMediaNameEntries,save:saveCanvasMediaName,error:bridge.toast});
     const workspaceElement=host.querySelector('.director-workspace');
     const handle=host.querySelector('.dw-agent-resizer');
     let preferredWidth=460;
@@ -2715,7 +2751,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

@@ -43,15 +43,15 @@ test('shipped islands import the same immutable runtime without embedding React'
 
 test('both paths to React components use fresh cache keys from the HTML entry', () => {
   const entries = [
-    ['public/index.html', '/app.js?v=585'],
+    ['public/index.html', '/app.js?v=587'],
     ['public/app.js', './features/projects/library.js?v=5'],
-    ['public/app.js', './features/agent/workspace.js?v=164'],
-    ['public/app.js', './drama-studio.js?v=297'],
+    ['public/app.js', './features/agent/workspace.js?v=167'],
+    ['public/app.js', './drama-studio.js?v=300'],
     ['public/features/projects/library.js', '../../vendor/ui/create-project.js?v=5'],
     ['public/features/agent/workspace.js', '../../vendor/ui/create-project.js?v=5'],
-    ['public/features/agent/workspace.js', '../drama/director-workspace.js?v=188'],
-    ['public/drama-studio.js', './features/drama/director-workspace.js?v=188'],
-    ['public/features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=41'],
+    ['public/features/agent/workspace.js', '../drama/director-workspace.js?v=191'],
+    ['public/drama-studio.js', './features/drama/director-workspace.js?v=191'],
+    ['public/features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=42'],
   ];
   for (const [file, url] of entries) assert.ok(read(file).includes(url), `${file} must use ${url}`);
   assert.doesNotMatch(read('public/features/projects/library.js'), /^import.*reference-canvas/m);

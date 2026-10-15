@@ -2,10 +2,66 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import { selectPointerNode, patchWhiteboardSelection } from '../scripts/director/whiteboard-resize.mjs';
 
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 const context=vm.createContext({});
 vm.runInContext(source.slice(source.indexOf('const selectionColor='),source.indexOf('function cardKind(')),context);
+
+test('starting a drag on a selected component preserves all selected nodes',()=>{
+  const state={selectedNodeIds:['first','second']};
+  const core={getState:()=>state,_selectNodes(ids,append){state.selectedNodeIds=append?[...state.selectedNodeIds,...ids]:ids;}};
+  selectPointerNode(core,'second',false);
+  assert.deepEqual(state.selectedNodeIds,['first','second']);
+  selectPointerNode(core,'second',true);
+  assert.deepEqual(state.selectedNodeIds,['first','second']);
+  selectPointerNode(core,'third',true);
+  assert.deepEqual(state.selectedNodeIds,['first','second','third']);
+  selectPointerNode(core,'fourth',false);
+  assert.deepEqual(state.selectedNodeIds,['fourth']);
+  assert.throws(()=>patchWhiteboardSelection('unsupported engine'),/Unable to locate/);
+  const bundle=readFileSync(new URL('../public/vendor/director/reference-canvas.js',import.meta.url),'utf8');
+  assert.ok(/selectedNodeIds\?\?\[\]\)\.includes\(\w+\)\|\|\w+\._selectNodes/.test(bundle));
+});
+
+function selectionHandlers(){
+  const handlers={};
+  const context=vm.createContext({
+    canvas:{on:(name,fn)=>{handlers[name]=fn;},getStage:()=>({on:(name,fn)=>{handlers[name]=fn;}}),getState:()=>({selectedNodeIds:context.ids}),getToolType:()=> 'select',getNodeConfigById:()=>({$_type:'html'})},
+    host:{querySelector:()=>({classList:{toggle(){}},hidden:false,innerHTML:''})},
+    generationDraft:id=>id?{id}:null,selected:'',activeGenerationId:'',inspectorOpen:false,
+    renderGenerationComposer(){},drawInspector(){},syncCanvas(){},nativeTransformer:{},window:{setTimeout(){}},mountEpoch:1,epoch:1,
+  });
+  vm.runInContext(source.slice(source.indexOf("      canvas.on('nodes:selected',ids=>"),source.indexOf("      canvas.on('nodes:deleted'")),context);
+  return {context,select:ids=>{context.ids=ids;handlers['nodes:selected'](ids);},click:event=>handlers['pointerclick.director-selection'](event)};
+}
+
+test('marquee selection never opens parameters; clicking a single component does',()=>{
+  const {context,select,click}=selectionHandlers();
+  select(['first','second']);
+  assert.equal(context.selected,'');
+  assert.equal(context.activeGenerationId,'');
+  click({target:{id:()=> 'first'}});
+  assert.equal(context.activeGenerationId,'');
+  select(['first']);
+  assert.equal(context.activeGenerationId,'');
+  click({target:{id:()=> 'first'}});
+  assert.equal(context.activeGenerationId,'first');
+  select(['first','second']);
+  assert.equal(context.activeGenerationId,'');
+});
+
+test('group dragging updates geometry for every selected card and excludes connections',()=>{
+  const first={id:()=> 'first'},second={id:()=> 'second'},edge={id:()=> 'edge-link'};
+  const transformer={nodes:()=>[first,second,edge]};
+  const start=source.indexOf('      const geometryIds=event=>{');
+  const end=source.indexOf('      const onGeometryMove=',start);
+  const geometryIds=vm.runInNewContext(`${source.slice(start,end)};geometryIds`,{nativeTransformer:transformer});
+  for(const target of [first,second,transformer]){
+    assert.deepEqual(Array.from(geometryIds({type:'dragmove',target})),['first','second']);
+  }
+  assert.deepEqual(Array.from(geometryIds({type:'dragend',target:{id:()=> 'other'}})),['other']);
+});
 
 function fixture(){
   const attrs={borderStroke:'#00a1ff',rotateEnabled:true,enabledAnchors:['top-left','top-center','top-right','middle-left','middle-right','bottom-left','bottom-center','bottom-right'],keepRatio:false};

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindMediaNameInput} from '../public/features/drama/media-name-editor.js';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import {bindMediaNameInput,mountMediaNameEditor} from '../public/features/drama/media-name-editor.js';
 import {normalizeDirectorWorkspace} from '../public/features/drama/director-actions.js';
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(save=async()=>{}){
@@ -38,4 +40,46 @@ test('renamed files survive project serialization and reject empty or oversized 
   const restored=normalizeDirectorWorkspace(JSON.parse(JSON.stringify(saved)));
   assert.equal(restored.projectAssets.names.image,'主角定妆照.png');assert.equal(restored.projectAssets.names.audio,'背景音乐.wav');
   assert.ok(!('empty' in restored.projectAssets.names));assert.equal(restored.projectAssets.names.long.length,160);
+});
+
+test('canvas readiness mounts a connected rename input after the initial React render',async()=>{
+  class Element extends EventTarget {
+    constructor(document){super();this.ownerDocument=document;this.children=[];this.style={};this.parent=null;}
+    append(element){element.remove();this.children.push(element);element.parent=this;}
+    remove(){if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this);this.parent=null;}
+    setAttribute(name,value){this[name]=value;}
+    focus(){this.ownerDocument.activeElement=this;}
+    select(){this.selected=true;}
+    get isConnected(){return this===container||Boolean(this.parent?.isConnected);}
+  }
+  const previousDocument=globalThis.document;
+  const document=new EventTarget();document.createElement=()=>new Element(document);
+  const container=new Element(document),saved=[];
+  const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
+  const start=source.indexOf('    const bindCanvas=api=>{');
+  const end=source.indexOf('      cancelledNodeCleanup=',start);
+  // Run the readiness setup with the real editor; the remaining callback binds canvas events.
+  const setup=source.slice(start,end)+'};globalThis.ready=bindCanvas;';
+  const context=vm.createContext({mountEpoch:1,epoch:1,canvas:null,mediaNameEditor:null,
+    host:{querySelector:()=>container},mountMediaNameEditor,
+    canvasMediaNameEntries:()=>[{id:'picture',native:true,name:'原始图片.png',rect:{x:120,y:180,width:240}}],
+    saveCanvasMediaName:async(id,name)=>saved.push({id,name}),bridge:{toast:assert.fail}});
+  try{
+    globalThis.document=document;
+    assert.equal((source.match(/mediaNameEditor=mountMediaNameEditor/g)||[]).length,1);
+    vm.runInContext(setup,context);
+    // createRoot owns the container's initial children until readiness is reported.
+    container.children.forEach(child=>child.remove());
+    context.ready({});
+    context.mediaNameEditor.begin('picture');
+    const input=document.activeElement;
+    assert.equal(input.className,'dw-media-name-input');assert.equal(input.isConnected,true);
+    assert.equal(input.value,'原始图片.png');assert.equal(input.selected,true);
+    input.value='主角定妆照.png';
+    const enter=new Event('keydown',{cancelable:true});enter.key='Enter';input.dispatchEvent(enter);await tick();
+    assert.deepEqual(saved,[{id:'picture',name:'主角定妆照.png'}]);assert.equal(input.isConnected,false);
+    context.mediaNameEditor.destroy();context.mediaNameEditor=null;
+    context.epoch=2;let disposed=false;context.ready({dispose(){disposed=true;}});
+    assert.equal(disposed,true);assert.equal(context.mediaNameEditor,null);
+  }finally{context.mediaNameEditor?.destroy();globalThis.document=previousDocument;}
 });

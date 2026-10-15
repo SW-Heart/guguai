@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { sharedReactRuntime, assertSharedReactBundle } from '../shared/react-runtime.mjs'
-import { patchWhiteboardImageSource, patchWhiteboardResize } from './whiteboard-resize.mjs'
+import { patchWhiteboardImageSource, patchWhiteboardResize, patchWhiteboardSelection } from './whiteboard-resize.mjs'
 
 const repo = path.resolve(new URL('..', import.meta.url).pathname, '..')
 const reference = path.resolve(process.argv[2] || '/Users/sunshuwen/Documents/ChatGPT/desktop-wujieai-global/wujie-ai')
@@ -23,7 +23,7 @@ const aliasPlugin = {
   name: 'director-reference-aliases',
   setup(build) {
     build.onLoad({ filter: /[\\/]@8btc[\\/]whiteboard[\\/]dist[\\/]index\.js$/ }, args => ({
-      contents: patchWhiteboardImageSource(patchWhiteboardResize(readFileSync(args.path, 'utf8'))),
+      contents: patchWhiteboardSelection(patchWhiteboardImageSource(patchWhiteboardResize(readFileSync(args.path, 'utf8')))),
       loader: 'js',
     }))
     build.onResolve({ filter: /^react-i18next$/ }, () => ({ path: path.join(shims, 'react-i18next.ts') }))

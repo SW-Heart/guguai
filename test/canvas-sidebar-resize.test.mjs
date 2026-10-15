@@ -42,7 +42,7 @@ test('closing, opening and dragging the chat column preserve the scene at any zo
 
 test('build applies the resize adapter and fails on unsupported engine versions', () => {
   const build = readFileSync(new URL('../scripts/director/build-reference-canvas.mjs', import.meta.url), 'utf8');
-  assert.match(build, /contents: patchWhiteboardImageSource\(patchWhiteboardResize\(readFileSync\(args.path, 'utf8'\)\)\)/);
+  assert.match(build, /contents: patchWhiteboardSelection\(patchWhiteboardImageSource\(patchWhiteboardResize\(readFileSync\(args.path, 'utf8'\)\)\)/);
   assert.ok(observer);
   assert.throws(() => patchWhiteboardResize('unsupported observer'), /Unable to locate/);
 });

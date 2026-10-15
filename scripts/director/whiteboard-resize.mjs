@@ -18,6 +18,24 @@ export function patchWhiteboardResize(source) {
     `new ResizeObserver(entries => (${resizeCanvasSurface.toString()})(this, entries))`);
 }
 
+// Keep the Transformer attached to the whole selection when a drag starts
+// on one of its nodes. Konva then moves all attached nodes together.
+export function selectPointerNode(core, id, shiftKey) {
+  if (!id) return;
+  const selected = core.getState().selectedNodeIds ?? [];
+  if (selected.includes(id)) return;
+  core._selectNodes([id], shiftKey);
+}
+
+export function patchWhiteboardSelection(source) {
+  const pointerSelection = 'o && r(this, L)._selectNodes([o], i.evt.shiftKey);';
+  if (source.split(pointerSelection).length !== 2) {
+    throw new Error('Unable to locate the whiteboard pointer selection');
+  }
+  return source.replace(pointerSelection,
+    `(${selectPointerNode.toString()})(r(this, L), o, i.evt.shiftKey);`);
+}
+
 // GuGu paints canvas pictures from a display-sized copy (see director-workspace).
 // Image records keep the original URL for crop, export and persistence.
 export function patchWhiteboardImageSource(source) {

@@ -30,7 +30,7 @@ function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
   const requests=[],messages=[],saves=[],uploads=[],focused=[],selected=[];
   const context=vm.createContext({activeGenerationId:draft.id,generationSubmitting:false,epoch:1,generationDraft:id=>workspace.generationDrafts.find(item=>item.id===id),workspace:()=>workspace,
     canvasGenerationPayload:request=>({type:request.type,prompt:request.prompt,referenceAssetIds:request.attachments.map(file=>file.id)}),generationConfig:()=>({}),renderGenerationComposer(){},syncCanvas(){},scheduleCanvasSave:now=>saves.push(now),crypto:{randomUUID},
-    closeGenerationMenu(){},canvas:{selectNodes:ids=>selected.push(...ids)},focusNewCanvasContent:ids=>focused.push(...ids),
+    closeGenerationMenu(){},canvas:{selectNodes:ids=>{selected.push(...ids);const node=workspace.generationDrafts.find(item=>item.id===ids[0]);context.activeGenerationId=node?.taskId?'':node?.id||'';}},focusNewCanvasContent:ids=>focused.push(...ids),
     describeInput:describe,liveCanvasNodes:()=>[{id:'other',x:386,y:20,width:200,height:200}],nodeRect:node=>({x:node.x,y:node.y,width:node.width,height:node.height}),
     canvasGenerationFrameSize:()=>({width:240,height:320}),...links,
     bridge:{toast:message=>messages.push(message),prepareCloudFiles:async files=>{uploads.push(files.map(file=>file.id));return files.map(file=>({id:`cloud-${file.id}`}));},
@@ -60,12 +60,36 @@ for(const type of ['image','video'])test(`single ${type} response displays in pl
   assert.equal(f.workspace.positions[result.id],undefined,'the output has no separate canvas frame');
   assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,result.id);
   assert.deepEqual(f.workspace.positions[f.draft.id],{x:10,y:20,width:280,height:320});
-  assert.deepEqual(f.messages,['已开始生成']);assert.deepEqual(f.saves,[true]);assert.equal(f.context.activeGenerationId,f.draft.id);
+  assert.deepEqual(f.messages,['已开始生成']);assert.deepEqual(f.saves,[true]);assert.equal(f.context.activeGenerationId,'');
+  assert.deepEqual(f.selected,[f.draft.id]);assert.deepEqual(f.focused,[f.draft.id]);
   const request=f.requests.find(request=>request.url==='/api/generations');assert.equal(request.options.headers['Idempotency-Key'],JSON.parse(request.options.body).requestId);
   // Keep history while replacing what the same component displays.
+  f.context.activeGenerationId=f.draft.id;
   await f.submit();assert.equal(f.workspace.generationDrafts.filter(item=>item.parentId===f.draft.id).length,2);
   assert.equal(links.displayedResult(f.workspace.generationDrafts,f.draft).id,f.workspace.generationDrafts.at(-1).id);
   assert.deepEqual(Object.keys(f.workspace.positions),[f.draft.id]);
+});
+
+for(const kind of ['character','location','prop'])test(`${kind} submission closes the composer and selects the pending output`,async()=>{
+  const f=fixture({tasks:[{id:'first',status:'running'},{id:'second',status:'queued'}]},{entity:{kind,name:'素材'}});
+  await f.submit();
+  const outputs=f.workspace.generationDrafts.slice(1);
+  assert.equal(f.context.activeGenerationId,'');
+  assert.deepEqual(f.selected,[outputs[0].id]);assert.deepEqual(f.focused,outputs.map(item=>item.id));
+  assert.ok(f.workspace.positions[outputs[0].id]);
+  assert.equal(outputs[0].status,'running');assert.equal(outputs[1].status,'queued');
+});
+test('a delayed submission does not change the node or composer the user switched to',async()=>{
+  const f=fixture({id:'accepted-task',status:'queued'},{entity:{kind:'character',name:'外婆'}});
+  const api=f.context.bridge.agentApi;
+  let accept;
+  f.context.bridge.agentApi=(...args)=>new Promise(resolve=>{accept=()=>resolve(api(...args));});
+  const pending=f.submit();
+  f.context.activeGenerationId='another-node';
+  accept();await pending;
+  assert.equal(f.context.activeGenerationId,'another-node');
+  assert.deepEqual(f.selected,[]);assert.deepEqual(f.focused,[]);
+  assert.equal(f.workspace.generationDrafts[1].taskId,'accepted-task');
 });
 test('batch responses keep every accepted task within the same component',async()=>{
   const f=fixture({tasks:[{id:'first',status:'running'},{id:'second',status:'queued'}]});await f.submit();
@@ -80,6 +104,7 @@ test('batch responses keep every accepted task within the same component',async(
 test('a character card picks its first result as main picture and keeps a chosen one',async()=>{
   const f=fixture({id:'one',status:'queued'},{entity:{kind:'character',name:'外婆'}});
   await f.submit();const first=f.workspace.generationDrafts[1];assert.equal(f.draft.primaryId,first.id);
+  f.context.activeGenerationId=f.draft.id;
   await f.submit();assert.equal(f.draft.primaryId,first.id);
 });
 test('linked text and pictures are part of the request and a shared picture uploads once',async()=>{
@@ -97,6 +122,7 @@ test('a linked card without a finished picture stops the request with a clear re
 test('empty response or rejected request reports failure without inventing a result',async()=>{
   for(const result of [{tasks:[]},new Error('余额不足')]){
     const f=fixture(result);await f.submit();assert.equal(f.workspace.generationDrafts.length,1);assert.equal(f.draft.status,'');assert.equal(f.context.generationSubmitting,false);assert.equal(f.saves.length,0);assert.equal(f.messages.length,1);
+    assert.equal(f.context.activeGenerationId,f.draft.id);assert.deepEqual(f.selected,[]);assert.deepEqual(f.focused,[]);
   }
 });
 for(const file of ['features/agent/workspace.js','drama-studio.js'])test(`${file} registers a single task and schedules polling without mistaking sessions for tasks`,()=>{
