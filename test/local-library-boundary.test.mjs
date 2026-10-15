@@ -68,7 +68,7 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(admin.includes('/guguadmin.css?v=22'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=580\b/);
+  assert.match(index, /\/app\.js\?v=581\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
   assert.match(index, /\/styles\.css\?v=417/);
   assert.doesNotMatch(index, /reference-canvas\.css/, 'canvas styles load with the canvas workspaces');
@@ -82,7 +82,7 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.match(dramaStudio, /\.\/features\/drama\/pure\.js\?v=4/);
   assert.match(dramaStudio, /director-workspace\.js\?v=186\b/);
   assert.match(await readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8'), /agent\/client\.js\?v=13\b/);
-  assert.match(app, /\.\/state\/account-state\.js\?v=1/);
+  assert.match(app, /\.\/state\/account-state\.js\?v=2/);
   assert.match(app, /\.\/state\/account-lifecycle\.js\?v=1/);
 });
 
@@ -235,7 +235,7 @@ test('workspace boot exposes progress for the initial load', () => {
   assert.match(index, /id="bootProgress"/);
   assert.match(index, /role="progressbar"/);
   assert.match(app, /function setBootProgress\(/);
-  assert.match(app, /const initialLoadSteps = \[/);
+  assert.match(app, /setBootProgress\(40, '读取创作配置'\);\n  await loadConfig\(\);/);
   assert.doesNotMatch(app, /updateHistoryProgress\(scanned/);
   assert.match(app, /progress:8, progressLabel:'准备工作区'/);
 });

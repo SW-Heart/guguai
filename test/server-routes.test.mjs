@@ -69,6 +69,21 @@ test('account routes preserve public payment callbacks and authenticated respons
   assert.deepEqual(staleResponse.value, { models:[], configVersion });
 });
 
+test('balance refreshes skip the credit history that only the detail view needs', async () => {
+  let historyReads = 0;
+  const route = accountRoute({ recentCreditEntries:() => { historyReads++; return [{ id:'entry-a' }]; } });
+  const summary = response();
+  await route({ method:'GET', headers:{} }, summary, new URL('http://localhost/api/credits?view=summary'));
+  assert.equal(summary.value.balance, 10);
+  assert.equal(summary.value.pricing.yuanPerCredit, 0.1);
+  assert.equal(summary.value.transactions, undefined);
+  assert.equal(historyReads, 0);
+  const detail = response();
+  await route({ method:'GET', headers:{} }, detail, new URL('http://localhost/api/credits'));
+  assert.deepEqual(detail.value.transactions, [{ id:'entry-a' }]);
+  assert.equal(historyReads, 1);
+});
+
 test('auth me keeps its explicit unauthenticated error shape', async () => {
   const route = createAuthRouteHandler({
     currentUser:() => null,

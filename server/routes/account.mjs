@@ -85,7 +85,9 @@ export function createAccountRouteHandler({
       if (!user) return true;
       const wallet = walletOf(user.id);
       const pricing = currentPricing();
-      const transactions = recentCreditEntries(user.id, 1000).map(publicCreditEntry);
+      // Balance refreshes skip the history; the credit detail dialog asks for it.
+      const summary = url.searchParams.get('view') === 'summary';
+      const transactions = summary ? undefined : recentCreditEntries(user.id, 1000).map(publicCreditEntry);
       sendJson(res, 200, {
         ...wallet,
         pricing: {

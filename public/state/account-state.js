@@ -14,6 +14,7 @@ export function resetAccountState(state) {
     files:[],
     credits:0,
     creditTransactions:[],
+    creditTransactionsLoaded:false,
     creditWallet:{ balance:0, held:0, available:0 },
     alipayOrderNo:'',
     notifications:[],

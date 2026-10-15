@@ -84,7 +84,7 @@ test('tier clicks update and hide the badge along with the displayed price', () 
 
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=580/);
+  assert.match(html, /\/app\.js\?v=581/);
   assert.match(html, /\/styles\.css\?v=417/);
   assert.match(app, /official-model-prices\.js\?v=5/);
 });

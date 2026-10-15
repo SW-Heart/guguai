@@ -191,7 +191,7 @@ test('account changes cancel pending startup dialogs and deferred prices', () =>
   assert.deepEqual(opened.events, ['check-notification']);
 });
 
-test('messages are scheduled only after notification loading and workspace startup complete', async () => {
+test('the workspace opens after configuration while other data loads, and messages wait for that data', async () => {
   let finishNotifications;
   const notifications = new Promise(resolve => { finishNotifications = resolve; });
   const events = [];
@@ -211,7 +211,7 @@ test('messages are scheduled only after notification loading and workspace start
   vm.runInContext(extract('async function enterApp(user)', 'let accountSettingsRestoreFocus'), context);
   const startup = vm.runInContext('enterApp({})', context);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(events, []);
+  assert.deepEqual(events, ['workspace'], 'the workspace must not wait for messages, files or history');
   finishNotifications();
   await startup;
   assert.deepEqual(events, ['workspace', 'dialogs']);
@@ -220,7 +220,7 @@ test('messages are scheduled only after notification loading and workspace start
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(source.includes('./features/notifications/controller.js?v=8'));
-  assert.ok(html.includes('/app.js?v=580'));
+  assert.ok(html.includes('/app.js?v=581'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=[67]\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });
@@ -231,4 +231,37 @@ test('canvas bundle contains one React hook dispatcher shared by all canvas comp
   assert.equal(hooks.length,1,'two bundled React runtimes crash canvas initialization with a null useRef dispatcher');
   const versions=new Set([...bundle.matchAll(/\.version="(19\.[0-9]+\.[0-9]+)"/g)].map(match=>match[1]));
   assert.equal(versions.size,1,'React and its renderers must have the same version');
+});
+
+test('background data starts with the configuration and marks the workspace ready only when it settles', async () => {
+  let finishConfig, finishFiles;
+  const config = new Promise(resolve => { finishConfig = resolve; });
+  const files = new Promise(resolve => { finishFiles = resolve; });
+  const events = [];
+  const context = vm.createContext({
+    loginReturnDestination:() => '', activateDesktopAccount:async () => {},
+    state:{}, accountLifecycle:{ snapshot:() => 1, isCurrent:() => true },
+    sessionStorage:{ getItem:() => '' }, alipayOrderStorageKey:() => '',
+    showBoot:() => {}, updateAccountIdentity:() => {}, setCreditBalance:() => {},
+    claimLegacyWorkspace:async () => {}, navigate:() => {}, routeFromPath:() => 'image',
+    window:{ location:{ pathname:'/image' } },
+    loadConfig:() => { events.push('config'); return config; },
+    loadCredits:async () => { events.push('credits'); }, loadNotifications:async () => { events.push('notifications'); },
+    loadFiles:() => { events.push('files'); return files; },
+    loadTasks:async () => { events.push('tasks'); throw new Error('history offline'); },
+    updateBootCopy:() => {}, setBootProgress:() => {},
+    finishInitialWorkspaceSync:() => events.push('ready'),
+    showApp:() => events.push('workspace'), syncDesktopDeliveries:async () => {},
+    scheduleStartupDialogs:() => events.push('dialogs'),
+  });
+  vm.runInContext(extract('async function enterApp(user)', 'let accountSettingsRestoreFocus'), context);
+  const startup = vm.runInContext('enterApp({})', context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events.slice().sort(), ['config', 'credits', 'files', 'notifications', 'tasks'], 'all requests start together');
+  finishConfig();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(events.at(-1), 'workspace');
+  finishFiles();
+  await startup;
+  assert.deepEqual(events.slice(-3), ['workspace', 'ready', 'dialogs'], 'a failed background load still lets the workspace finish');
 });

@@ -16,7 +16,7 @@ import { createCreditPresentation } from './features/credits/presentation.js?v=6
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=8';
-import { resetAccountState } from './state/account-state.js?v=1';
+import { resetAccountState } from './state/account-state.js?v=2';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
 import { createVideoPreviews } from './features/media/video-previews.js?v=5';
@@ -31,7 +31,7 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const toggleClass = (element, className, force) => element?.classList.toggle(className, force);
 const assetPreviewUrl = file => file?.kind === 'image' ? (String(file.url || '').startsWith('gugu-media://') ? file.url : (file.previewUrl || file.url || '')) : (file?.url || '');
-const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], generationTab:'works', generationHistory:{ image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } }, files:[], credits:0, creditTransactions:[], creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, purchaseProvider:'wechat', wechatTopupAmount:'1', wechatCustomAmount:'', wechatPayRestoreFocus:null, alipayOrderNo:'', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
+const state = { user:null, route:'image', authMode:'sms', tasks:[], generationPreparations:[], generationTab:'works', generationHistory:{ image:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' }, video:{ items:[], cursor:'', hasMore:true, loaded:false, loading:false, error:'' } }, files:[], credits:0, creditTransactions:[], creditTransactionsLoaded:false, creditWallet:{ balance:0, held:0, available:0 }, creditDetailTab:'spend', creditDetailRestoreFocus:null, creditPurchaseRestoreFocus:null, alipayTopupCredits:10, purchaseProvider:'wechat', wechatTopupAmount:'1', wechatCustomAmount:'', wechatPayRestoreFocus:null, alipayOrderNo:'', notifications:[], unreadNotifications:0, pricing:{ image:1, videoPerSecond:1, signupBonus:50, yuanPerCredit:.1 }, modelQuote:null, config:{}, dramaAnalysis:null, dramaProject:null, dramaLoading:false, initialSyncReady:false, fileKind:'all', referenceTarget:'image', referenceKind:'all', refs:{ image:[], video:[] }, imagePromptMentions:[], videoPromptMentions:[], videoGenerationType:'TEXT', videoFrames:{ first:'', last:'' }, videoFrameTarget:'', dialogSelection:[], uploadJobs:[], detailTaskId:null, previewFileId:null };
 const accountScope = createAccountScope({ getUser: () => state.user });
 const alipayOrderStorageKey = user => `gugu_alipay_order:${encodeURIComponent(String(user?.id || user?.username || 'anonymous'))}`;
 let referenceDialogCommitted = false;
@@ -895,6 +895,12 @@ function renderCreditDetail() {
   $('#creditEarnTab').setAttribute('aria-selected', String(!spend));
   $('#creditSpendPanel').hidden = !spend;
   $('#creditEarnPanel').hidden = spend;
+  if (!state.creditTransactionsLoaded) {
+    const loading = columns => `<tr><td colspan="${columns}"><div class="credit-empty">正在加载记录…</div></td></tr>`;
+    $('#creditSpendBody').innerHTML = loading(5);
+    $('#creditEarnBody').innerHTML = loading(3);
+    return;
+  }
   const entries = state.creditTransactions.filter(entry => { const amount = creditEntryAmount(entry); return spend ? amount < 0 : amount > 0; });
   $('#creditSpendBody').innerHTML = renderCreditRows(spend ? entries : [], 'spend');
   $('#creditEarnBody').innerHTML = renderCreditRows(spend ? [] : entries, 'earn');
@@ -1099,14 +1105,19 @@ function setCreditBalance(balance) {
   renderCreditDetail();
   if ($('#creditPurchaseDialog')?.open) renderCreditPurchase();
 }
+// Only the open credit detail needs the history; other refreshes fetch the balance alone.
 async function loadCredits() {
   const requestAccount = accountScope.snapshot();
+  const withHistory = Boolean($('#creditDetailDialog')?.open);
   try {
-    const result = await api('/api/credits');
+    const result = await api(withHistory ? '/api/credits' : '/api/credits?view=summary');
     if (!accountScope.isCurrent(requestAccount)) return;
     state.pricing = result.pricing;
     state.creditWallet = { balance:Number(result.balance) || 0, held:Number(result.held) || 0, available:Number(result.available) || 0 };
-    state.creditTransactions = Array.isArray(result.transactions) ? result.transactions : [];
+    if (Array.isArray(result.transactions)) {
+      state.creditTransactions = result.transactions;
+      state.creditTransactionsLoaded = true;
+    }
     state.credits = state.creditWallet.balance;
     renderCreditBalance();
     updateImageCost();
@@ -1910,31 +1921,20 @@ async function enterApp(user) {
   }
   if (!isStartupCurrent()) return;
   navigate(routeFromPath(window.location.pathname), { historyMode:'replace' });
-  const initialLoadSteps = [
-    { label:'读取创作配置', run:loadConfig },
-    { label:'读取积分信息', run:loadCredits },
-    { label:'读取消息通知', run:loadNotifications },
-    { label:'读取素材', run:loadFiles },
-    { label:'读取生成记录', run:loadTasks },
-  ];
-  let completedLoadSteps = 0;
-  let startupFailed = false;
-  updateBootCopy('正在加载工作区', '正在准备创作数据，请稍候。');
-  await Promise.all(initialLoadSteps.map(async step => {
-    if (!isStartupCurrent()) return;
-    try { await step.run(); }
-    catch (error) { startupFailed = true; throw error; }
-    if (startupFailed || !isStartupCurrent()) return;
-    completedLoadSteps += 1;
-    const progress = 8 + ((100 - 8) * completedLoadSteps / initialLoadSteps.length);
-    setBootProgress(progress, completedLoadSteps === initialLoadSteps.length ? '工作区即将打开' : step.label);
-    updateBootCopy('正在加载工作区', `已准备 ${completedLoadSteps} / ${initialLoadSteps.length} 项创作数据。`);
-  }));
+  // Only the creation settings are needed before the workspace opens. Credits,
+  // messages, files and history start at the same time and fill in behind the
+  // workspace's own loading placeholders; each reports its own failures.
+  const backgroundLoads = Promise.allSettled([loadCredits, loadNotifications, loadFiles, loadTasks].map(run => Promise.resolve().then(run)));
+  updateBootCopy('正在加载工作区', '正在准备创作设置，请稍候。');
+  setBootProgress(40, '读取创作配置');
+  await loadConfig();
   if (!isStartupCurrent()) return;
-  finishInitialWorkspaceSync();
   setBootProgress(100, '工作区已准备好');
   await showApp(isStartupCurrent);
   if (!isStartupCurrent()) return;
+  await backgroundLoads;
+  if (!isStartupCurrent()) return;
+  finishInitialWorkspaceSync();
   void syncDesktopDeliveries().catch(error => console.warn('[desktop] 启动时同步本地投递确认失败', error.message));
   scheduleStartupDialogs(isStartupCurrent);
   // The price catalog is non-essential for the first interaction. It is
