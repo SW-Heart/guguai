@@ -1462,7 +1462,8 @@ import { createApiClient } from './api-client.js?v=4';
       const routeIds = routeIdsForModel(model.modelId, routeData);
       const groupRow = model.kind !== lastKind ? `<tr class="table-group-row"><td colspan="6">${esc(kindLabels[model.kind] || model.kind || '其他')}模型</td></tr>` : '';
       lastKind = model.kind;
-      return `${groupRow}<tr><td><b>${esc(model.modelId)}</b></td><td>${model.userVisible ? pill('显示', 'ok') : pill('隐藏', 'muted')}</td><td>${model.enabled ? pill('接收中', 'ok') : pill('已暂停', 'warn')}</td><td>${modelCheckMarkup(model, routeData)}</td><td class="is-num">${money(model.sortOrder)}</td><td class="is-actions"><div class="actions">${routeIds.length ? `<button class="btn btn-sm" data-check-model="${esc(model.modelId)}" type="button">检查线路</button>` : ''}<button class="btn btn-sm" data-model="${esc(model.modelId)}" type="button">编辑</button></div></td></tr>`;
+      const description = model.description || '';
+      return `${groupRow}<tr><td><b>${esc(model.modelId)}</b>${description ? `<small class="muted model-control-description">${esc(description)}</small>` : ''}</td><td>${model.userVisible ? pill('显示', 'ok') : pill('隐藏', 'muted')}</td><td>${model.enabled ? pill('接收中', 'ok') : pill('已暂停', 'warn')}</td><td>${modelCheckMarkup(model, routeData)}</td><td class="is-num">${money(model.sortOrder)}</td><td class="is-actions"><div class="actions">${routeIds.length ? `<button class="btn btn-sm" data-check-model="${esc(model.modelId)}" type="button">检查线路</button>` : ''}<button class="btn btn-sm" data-model="${esc(model.modelId)}" type="button">编辑</button></div></td></tr>`;
     }).join('')}</tbody></table></div>` : emptyMarkup('暂无模型配置')}`;
     $$('[data-model]', root).forEach(button => button.onclick = () => editModel(modelItems.find(item => item.modelId === button.dataset.model)));
     $$('[data-check-model]', root).forEach(button => button.onclick = () => checkRoutes(routeIdsForModel(button.dataset.checkModel, routeData), button));
@@ -1830,13 +1831,15 @@ import { createApiClient } from './api-client.js?v=4';
         { name: 'userVisible', type: 'checkbox', label: '在用户端展示', checked: model.userVisible, help: '关闭后，用户在客户端的模型列表中看不到它。' },
         { name: 'enabled', type: 'checkbox', label: '接收新任务', checked: model.enabled, help: '关闭后，服务端会拒绝该模型的新生成请求。' },
         { name: 'sortOrder', label: '排序值', type: 'number', value: String(model.sortOrder), min: 0, max: 100000, step: 1, inputmode: 'numeric', required: true, help: '0～100000 的整数，越小越靠前；与同类模型相同时，原模型依次后移。' },
+        { name: 'description', label: '模型描述', type: 'textarea', value: model.description || '', placeholder: '例如：支持 15 秒视频和多张参考图', maxLength: 120, span: 'full', help: '显示在用户端模型选择列表的模型名称下方，保存后立即生效。清空则不显示描述。' },
       ],
       validate: values => {
         const order = Number(values.sortOrder);
         if (!Number.isSafeInteger(order) || order < 0 || order > 100000) return '排序值必须是 0～100000 的整数。';
+        if (String(values.description || '').trim().length > 120) return '模型描述最多 120 个字。';
         return null;
       },
-      onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels({ refreshPricing: false }); },
+      onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), description: String(values.description || '').trim(), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels({ refreshPricing: false }); },
     });
   }
 

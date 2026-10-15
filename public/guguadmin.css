@@ -702,3 +702,5 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover { opacity:
   .announcement-editor-toolbar button { min-width: 44px; height: 44px; }
   .field input[type="datetime-local"] { max-width: 100%; appearance: none; -webkit-appearance: none; }
 }
+
+.model-control-description { display: block; margin-top: 2px; max-width: 360px; white-space: normal; line-height: 1.5; }

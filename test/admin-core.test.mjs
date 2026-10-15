@@ -9,8 +9,9 @@ import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { configureCursors } from '../lib/store.mjs';
 import { configureLedger, adjustCredits, grantSignupBonus, walletOf } from '../lib/ledger.mjs';
 import { createPricingVersion, currentPricing, pricingSnapshot, modelPrice, modelPriceFields, videoBillingUnit, liveLlmRates } from '../lib/pricing.mjs';
-import { isModelEnabled, publicVideoCapabilitiesWithControls, updateModelControl } from '../lib/model-controls.mjs';
+import { isModelEnabled, modelControl, publicVideoCapabilitiesWithControls, updateModelControl, withModelDescriptions } from '../lib/model-controls.mjs';
 import { registerUser, insertUser } from '../lib/store.mjs';
+import { IMAGE_MODEL_DESCRIPTIONS } from '../lib/model-descriptions.mjs';
 
 let workDir;
 
@@ -135,6 +136,36 @@ test('admin core controls', async t => {
     assert.equal(isModelEnabled('grok'), false);
     assert.equal(publicVideoCapabilitiesWithControls().models.some(model => model.id === 'grok'), false);
     assert.equal(sql('SELECT COUNT(*) AS count FROM audit_events WHERE action = \'model.update_control\'').get().count, 1);
+  });
+
+  await t.test('current model descriptions are written once and then kept for the admin console', () => {
+    const admin = makeUser('admin_description', 'admin');
+    const version = modelId => modelControl(modelId).version;
+    const original = IMAGE_MODEL_DESCRIPTIONS['gpt-image-2'];
+    assert.equal(modelControl('gpt-image-2').description, original);
+    assert.ok(modelControl('seedance-2.0').description);
+    // Writing descriptions is not an admin edit and leaves default tracking alone.
+    assert.equal(version('gpt-image-2'), 1);
+    updateModelControl('gpt-image-2', { description: '  适合快速出图\n  和草图探索 ' }, { actorUserId: admin.id, expectedVersion: version('gpt-image-2') });
+    assert.equal(modelControl('gpt-image-2').description, '适合快速出图 和草图探索');
+    assert.equal(withModelDescriptions([{ id: 'gpt-image-2', description: original }])[0].description, '适合快速出图 和草图探索');
+    assert.equal(modelControl('gpt-image-2').enabled, true);
+    assert.throws(() => updateModelControl('gpt-image-2', { description: '字'.repeat(121) }, { actorUserId: admin.id, expectedVersion: version('gpt-image-2') }), { statusCode: 400 });
+    assert.throws(() => updateModelControl('gpt-image-2', { description: 12 }, { actorUserId: admin.id, expectedVersion: version('gpt-image-2') }), { statusCode: 400 });
+    updateModelControl('gpt-image-2', { sortOrder: modelControl('gpt-image-2').sortOrder }, { actorUserId: admin.id, expectedVersion: version('gpt-image-2') });
+    assert.equal(modelControl('gpt-image-2').description, '适合快速出图 和草图探索');
+    // Restarting the service keeps the admin text instead of the built-in text.
+    closeDatabase({ checkpoint: false });
+    resetForTests();
+    openDatabase({ file: path.join(workDir, 'studio.db') });
+    assert.equal(modelControl('gpt-image-2').description, '适合快速出图 和草图探索');
+    // An empty description hides the text and also survives restarts.
+    updateModelControl('gpt-image-2', { description: '' }, { actorUserId: admin.id, expectedVersion: version('gpt-image-2') });
+    closeDatabase({ checkpoint: false });
+    resetForTests();
+    openDatabase({ file: path.join(workDir, 'studio.db') });
+    assert.equal(modelControl('gpt-image-2').description, '');
+    assert.equal(withModelDescriptions([{ id: 'gpt-image-2', description: original }])[0].description, '');
   });
 
   await t.test('model sort order stays unique inside a kind and other models make room', () => {

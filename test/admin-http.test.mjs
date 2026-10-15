@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=46/);
+  assert.match(adminHtml, /guguadmin\.js\?v=47/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -261,6 +261,19 @@ test('admin HTTP permissions and core workflows', async t => {
       const stale = await admin.call(`/api/admin/models/${modelId}`, options);
       assert.equal(stale.response.status, 409);
     }
+  });
+  await t.test('model descriptions saved by admins reach the public model list immediately', async () => {
+    const descriptionOf = async () => (await admin.call('/api/public/model-prices')).data.models.find(item => item.id === 'gpt-image-2').description;
+    const original = await descriptionOf();
+    const model = (await admin.call('/api/admin/models')).data.items.find(item => item.modelId === 'gpt-image-2');
+    assert.equal(model.description, original);
+    const headers = { Origin:base, 'X-CSRF-Token':csrf };
+    const saved = await admin.call('/api/admin/models/gpt-image-2', { method:'PATCH', headers, body:{ description:'适合快速出图', expectedVersion:model.version } });
+    assert.equal(saved.response.status, 200);
+    assert.equal(await descriptionOf(), '适合快速出图');
+    const restored = await admin.call('/api/admin/models/gpt-image-2', { method:'PATCH', headers, body:{ description:original, expectedVersion:saved.data.model.version } });
+    assert.equal(restored.data.model.description, original);
+    assert.equal(await descriptionOf(), original);
   });
   const noCsrf = await admin.call('/api/admin/pricing', { method: 'POST', headers: { Origin: base }, body: { imagePerRequest: '1.5', videoPerSecond: '0.8', expectedVersion: 1 } });
   assert.equal(noCsrf.response.status, 403);

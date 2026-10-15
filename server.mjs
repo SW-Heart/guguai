@@ -77,7 +77,7 @@ import { handleAdminRequest } from './lib/admin-api.mjs';
 import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendLimiter, normalizePhoneNumber } from './lib/auth.mjs';
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, videoBillingUnit, liveLlmRates } from './lib/pricing.mjs';
-import { isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls, validateControlledVideoRequest as validateVideoRequest } from './lib/model-controls.mjs';
+import { IMAGE_MODEL_DESCRIPTIONS, isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls, validateControlledVideoRequest as validateVideoRequest, withModelDescriptions } from './lib/model-controls.mjs';
 import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
@@ -282,10 +282,14 @@ const fixedModels = Object.freeze({ image: 'gpt-image-2.5' });
 const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
-  { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:'支持 1K、2K、4K 多画幅高清图像生成。', qualityOptions:['1K', '2K', '4K'] },
-  { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:'从文字或参考图快速探索画面。' },
-  { id:imageModelIds.midjourney, label:'Midjourney', description:'通过 Midjourney 参数精细控制艺术风格。' },
+  { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], qualityOptions:['1K', '2K', '4K'] },
+  { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2] },
+  { id:imageModelIds.midjourney, label:'Midjourney', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.midjourney] },
 ]);
+// Available image models with the descriptions written in the admin console.
+function availableImageModels() {
+  return withModelDescriptions(imageModelCatalog.filter(model => isImageModelAvailable(model.id)));
+}
 const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
 
@@ -671,7 +675,7 @@ function configState() {
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY || process.env.TUZI_DEFAULT_API_KEY),
-    imageModels: imageModelCatalog.filter(model => isImageModelAvailable(model.id)).map(model => ({ ...model, availability:'available', enabled:true })),
+    imageModels: availableImageModels().map(model => ({ ...model, availability:'available', enabled:true })),
     smsLogin: smsConfig.configured,
     mediaStorageReady: r2Configured,
     directUpload: r2Configured && directUploadEnabled,
@@ -694,9 +698,11 @@ function publicModelPriceState() {
   });
   const pricedModelIds = new Set(items.map(item => item.modelId));
   const models = [
-    { id: imageModelIds.gptImage2, label: 'GPT-Image-2', description: '从文字或参考图快速探索画面。', availability: 'available', qualityOptions: ['标准'] },
-    { id: imageModelIds.gptImage25, label: 'GPT Image 2.5', description: '支持 1K、2K、4K 多画幅高清图像生成。', availability: 'available', qualityOptions: ['1K', '2K', '4K'] },
-    { id: imageModelIds.midjourney, label: 'Midjourney', description: '通过 Midjourney 参数精细控制艺术风格。', availability: 'available', qualityOptions: ['标准'] },
+    ...withModelDescriptions([
+      { id: imageModelIds.gptImage2, label: 'GPT-Image-2', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2], availability: 'available', qualityOptions: ['标准'] },
+      { id: imageModelIds.gptImage25, label: 'GPT Image 2.5', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], availability: 'available', qualityOptions: ['1K', '2K', '4K'] },
+      { id: imageModelIds.midjourney, label: 'Midjourney', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.midjourney], availability: 'available', qualityOptions: ['标准'] },
+    ]),
     ...(videoCapabilities.models || []).map(model => ({
       id: model.id,
       label: model.label,
@@ -2854,7 +2860,7 @@ function apiModelCatalog() {
   const pricing = currentPricing();
   const videoCapabilities = publicVideoCapabilitiesWithControls();
   const value = buildApiModelCatalog({
-    imageModels:imageModelCatalog.filter(model => isImageModelAvailable(model.id)),
+    imageModels:availableImageModels(),
     videoModels:videoCapabilities.models || [],
     prices:publicPlatformPrices(pricing, videoCapabilities),
     imageAspectRatios:[...imageSizes],
@@ -2936,7 +2942,7 @@ async function saveAgentRenderedVideo(userId,scope,id,name,video,details={}){
 }
 function agentMediaCatalog() {
   const controls = new Map(listModelControls().map(item => [item.modelId, item]));
-  const images = imageModelCatalog.filter(m => isImageModelAvailable(m.id))
+  const images = availableImageModels()
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],
