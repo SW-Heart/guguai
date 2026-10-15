@@ -19,7 +19,7 @@ test('one binding is persisted and reused in later prepared and submitted reques
   const calls=[];
   const tools=createAgentTools({findAsset:(_user,id,actualScope)=>{assert.deepEqual(actualScope,scope);return findAsset(id);},generate:async args=>{calls.push(args);return args.previewOnly?{status:200,data:{credits:1,costMicro:1000000,quantity:1}}:{status:202,data:{id:'job'}};}});
   const session={userId:'u',scope,doc:{generations:[]}};
-  await tools.execute('references_bind',{references:[{id:'person',label:'阿宁'},{id:'scene',label:'客厅'}]},session);
+  await tools.execute('references_bind',{references:[{id:'person',label:'阿宁',category:'character'},{id:'scene',label:'客厅',category:'location'}]},session);
   // Simulate saving and restoring the conversation between shots.
   session.doc=JSON.parse(JSON.stringify(session.doc));
   const result=await tools.execute('media_prepare',{type:'video',modelId:'video',prompt:'@阿宁 走进 @客厅，@阿宁 坐下。'},session,{id:'prepare'});
@@ -37,7 +37,7 @@ test('unknown assets and ambiguous bindings fail before generation or persistenc
   let generated=false;
   const tools=createAgentTools({findAsset:(_user,id)=>findAsset(id),generate:async()=>{generated=true;}});
   const session={userId:'u',scope,doc:{}};
-  await assert.rejects(tools.execute('references_bind',{references:[{id:'person',label:'阿宁'},{id:'scene',label:'阿宁'}]},session),/多个素材/);
+  await assert.rejects(tools.execute('references_bind',{references:[{id:'person',label:'阿宁',category:'character'},{id:'scene',label:'阿宁',category:'location'}]},session),/多个素材/);
   assert.equal(session.doc.referenceBindings,undefined);
   await assert.rejects(tools.execute('media_prepare',{type:'image',modelId:'image',prompt:'@阿宁',assetMentions:[{id:'foreign',label:'阿宁'}]},session,{id:'prepare'}),/不属于当前工作空间/);
   assert.equal(generated,false);

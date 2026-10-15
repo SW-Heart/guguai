@@ -144,12 +144,12 @@ test('confirming red marks opens a separate dialog above the editor', async () =
 test('every submit entry passes through the check and versioned URLs are bumped together', () => {
   const app = read('app.js'), drama = read('drama-studio.js'), director = read('features/drama/director-workspace.js'), html = read('index.html');
   assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=3'/);
-  assert.match(html, /\/app\.js\?v=567"/);
-  assert.match(html, /\/styles\.css\?v=410"/);
-  assert.match(app, /\.\/drama-studio\.js\?v=283'/);
-  assert.match(app, /\.\/features\/agent\/workspace\.js\?v=150'/);
-  assert.match(drama, /director-workspace\.js\?v=176'/);
-  assert.match(read('features/agent/workspace.js'), /director-workspace\.js\?v=176'/);
+  assert.match(html, /\/app\.js\?v=575"/);
+  assert.match(html, /\/styles\.css\?v=416"/);
+  assert.match(app, /\.\/drama-studio\.js\?v=291'/);
+  assert.match(app, /\.\/features\/agent\/workspace\.js\?v=158'/);
+  assert.match(drama, /director-workspace\.js\?v=184'/);
+  assert.match(read('features/agent/workspace.js'), /director-workspace\.js\?v=184'/);
   // Every manual generation request in the app and the drama studio is preceded by a check.
   for (const [name, source] of [['app.js', app], ['drama-studio.js', drama]]) {
     const submits = source.match(/api\('\/api\/generations',\s*\{\s*method:'POST'/g) || [];

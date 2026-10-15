@@ -1,3 +1,4 @@
+import { normalizeProjectAssets } from './project-assets.js?v=4';
 import { normalizeLinks, entityKinds } from './canvas-links.js?v=2';
 // Persist only inert canvas attributes, never executable HTML or application state.
 function isMeaningfulRichText(node) {
@@ -65,6 +66,7 @@ export function normalizeNotes(value) {
 export function normalizeDirectorWorkspace(value = {}) {
   const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return { version:1, delegated:Boolean(object.delegated), autonomy:['assist','director','auto'].includes(object.autonomy)?object.autonomy:'director',
+    projectAssets:normalizeProjectAssets(object.projectAssets),
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
     generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,600).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
       id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),

@@ -60,7 +60,7 @@ test('wheel bursts align cards once per frame and copy node state only after the
 });
 
 test('panning aligns geometry only, and only document cards rebuild the project model',()=>{
-  assert.match(source,/function alignCardGeometry\(\)\{if\(!canvas\)return;nodes\(\)\.forEach\(n=>alignCard\(n\.id,undefined,true\)\);\}/);
+  assert.match(source,/function alignCardGeometry\(\)\{if\(!canvas\)return;nodes\(\)\.forEach\(n=>alignCard\(n\.id,undefined,true\)\);mediaNameEditor\?\.update\(\);\}/);
   const bind=source.slice(source.indexOf('  function bindDocumentCard('),source.indexOf('    let controller=documentCards.get(card);'));
   assert.ok(bind.indexOf("if(!card)return;")<bind.indexOf('nodes()'),'plain cards return before rebuilding nodes');
 });

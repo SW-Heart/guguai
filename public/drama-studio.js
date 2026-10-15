@@ -5,7 +5,7 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=5';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=176';
+import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=184';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -65,7 +65,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {} }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, renameCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {} }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   let projects = [];
@@ -1017,10 +1017,10 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       generationConfig:()=>state.config,
       generationPricing:()=>({config:state.config,pricing:state.pricing}),
       formatCredits:creditText,
-      imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
-      importAsset:async()=>{
+      imported:()=>project.projectAssetIds.map(id=>asset(id)).filter(f=>f&&['image','video','audio'].includes(f.kind)).map(f=>({...f,url:assetPreviewUrl(f)})),
+      importAsset:async({projectAssets=false}={})=>{
         const request=projectRequest();
-        const selected=importCanvasAsset?await importCanvasAsset({multiple:true}):null;
+        const selected=importCanvasAsset?await importCanvasAsset({multiple:true,projectAssets}):null;
         assertProjectRequest(request);
         const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
         if(!files.length)return [];
@@ -1053,6 +1053,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
         const byId=new Map(unique.map((id,index)=>[id,cloudIds[index]]));
         return list.map(file=>{const id=byId.get(file.id);return {...file,...(asset(id)||{}),id,previewUrl:file.previewUrl||assetPreviewUrl(file)};});
       },
+      renameFile:(file,name)=>renameCanvasFile(file,name),
       canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
       registerCanvasFile,
       importLocalMedia,

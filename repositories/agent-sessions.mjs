@@ -129,9 +129,9 @@ export function createAgentSessionRepository({ sql, tx }) {
   function listProjectSessions(userId,scope,agentProjectId){return sql("SELECT s.id,s.state,s.updated_at,(SELECT text FROM agent_inputs WHERE session_id=s.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions s WHERE s.user_id=:userId AND s.device_id=:deviceId AND s.workspace_id=:workspaceId AND s.agent_project_id=:agentProjectId AND EXISTS(SELECT 1 FROM agent_inputs WHERE session_id=s.id) ORDER BY s.updated_at DESC LIMIT 100").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId,agentProjectId}).map(row=>({id:row.id,title:messageTitle(row.title)||'新对话',state:row.state,updatedAt:row.updated_at}));}
   function artifacts(session) {
     const rows = sql('SELECT id,doc_json FROM agent_sessions WHERE user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND project_id=:projectId AND agent_project_id=:agentProjectId ORDER BY updated_at').all({userId:session.userId, deviceId:session.scope.deviceId, workspaceId:session.scope.workspaceId, projectId:session.projectId,agentProjectId:session.agentProjectId});
-    const documents=[], generations=[], compositions=[], storyboards=[];
-    for(const row of rows){ const doc=JSON.parse(row.doc_json); documents.push(...doc.documents.map(d=>({...d,conversationId:row.id}))); generations.push(...generationFrames(doc)); compositions.push(...(doc.compositions||[])); storyboards.push(...(doc.storyboards||[]).map(item=>({...item,conversationId:row.id}))); }
-    return {documents,generations,compositions,storyboards};
+    const documents=[], generations=[], compositions=[], storyboards=[], assetUpdates={};
+    for(const row of rows){ const doc=JSON.parse(row.doc_json); Object.assign(assetUpdates,doc.assetUpdates || {}); documents.push(...doc.documents.map(d=>({...d,conversationId:row.id}))); generations.push(...generationFrames(doc)); compositions.push(...(doc.compositions||[])); storyboards.push(...(doc.storyboards||[]).map(item=>({...item,conversationId:row.id}))); }
+    return {documents,generations,compositions,storyboards,assetUpdates};
   }
   function enqueue(session, input) {
     return tx(() => {

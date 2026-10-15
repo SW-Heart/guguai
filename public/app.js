@@ -2152,8 +2152,8 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=150').then(({createAgentWorkspace}) => {
-    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=158').then(({createAgentWorkspace}) => {
+    agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
   return agentControllerPromise;
@@ -2163,8 +2163,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=283').then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
+    dramaControllerPromise = import('./drama-studio.js?v=291').then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -3628,11 +3628,11 @@ async function registerCanvasFile(file) {
   notifyUploadSurfaceChanged();
   return fileById(file.id)||file;
 }
-function pickAndImportDramaCanvasAsset({ chat = false, generation = false, multiple = false, maxFiles = 30 } = {}) {
+function pickAndImportDramaCanvasAsset({ chat = false, generation = false, projectAssets = false, multiple = false, maxFiles = 30 } = {}) {
   return new Promise(resolve => {
     if (!$('#referenceDialog')) { resolve(null); return; }
     if (canvasAssetRequest) canvasAssetRequest.resolve(null);
-    canvasAssetRequest = { resolve, chat:chat||generation, generation, multiple:!generation&&multiple, limit:!generation&&multiple?(chat?Math.max(1,Math.min(30,maxFiles)):Infinity):1 };
+    canvasAssetRequest = { resolve, projectAssets, chat:chat||generation||projectAssets, generation, multiple:!generation&&multiple, limit:!generation&&multiple?(chat?Math.max(1,Math.min(30,maxFiles)):Infinity):1 };
     openReferenceDialog('canvas');
   });
 }
@@ -3862,6 +3862,7 @@ function resetReferenceDialogScroll() {
 }
 function renderReferenceDialog() {
   const isChat=Boolean(canvasAssetRequest?.chat);
+  const isProjectAssets=Boolean(canvasAssetRequest?.projectAssets);
   const isCanvas = state.referenceTarget === 'canvas';
   const isFrame = state.referenceTarget === 'video-frame';
   const isVideo = state.referenceTarget === 'video';
@@ -3876,11 +3877,11 @@ function renderReferenceDialog() {
   const selectedFiles = limitSelectionIds.map(id => referenceFileById(id)).filter(Boolean);
   const counts = Object.fromEntries(['image', 'video', 'audio'].map(kind => [kind, selectedFiles.filter(file => file.kind === kind).length]));
   const totalSelected = limitSelectionIds.length;
-  $('#referenceDialog h2').textContent = isCanvas ? (canvasAssetRequest?.generation?'添加参考素材':isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
-  $('#referenceDialog .dialog-help').textContent = isCanvas ? (canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；${isVideo ? '图片不超过 20 MB，视频或音频不超过 25 MB' : '单张图片需小于 10 MB'}。`;
+  $('#referenceDialog h2').textContent = isCanvas ? (isProjectAssets?'添加项目资产':canvasAssetRequest?.generation?'添加参考素材':isChat?'添加对话附件':'添加画布素材') : isFrame ? `选择${state.videoFrameTarget === 'first' ? '首帧' : '尾帧'}图片` : promptMentionMode ? '选择要引用的素材' : '选择参考素材';
+  $('#referenceDialog .dialog-help').textContent = isCanvas ? (isProjectAssets?'选择图片、视频或音频，也可以直接上传文件。':canvasAssetRequest?.generation?'选择一份图片、视频或音频作为参考，也可以直接上传文件。':isChat?`选择要发送的图片、视频或音频，最多添加 ${canvasLimit} 个，也可以直接上传文件。`:'选择要放到画布上的图片或视频，也可以直接上传文件。') : isFrame ? '选择一张图片作为视频画面，单张不超过 20 MB。' : `${promptMentionMode ? '选择后会放入创作描述中。' : ''}${referenceCapabilityText(limits)}；${isVideo ? '图片不超过 20 MB，视频或音频不超过 25 MB' : '单张图片需小于 10 MB'}。`;
   $('#dialogUpload').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span>${isCanvas ? '上传文件' : isFrame ? '上传首尾帧图片' : '上传素材'}</span>`;
   $('#selectionCount').textContent = isCanvas ? (Number.isFinite(canvasLimit)?`已选择 ${totalSelected} / ${canvasLimit}`:`已选择 ${totalSelected} 个`) : isFrame ? `已选择 ${totalSelected} / 1` : `已选择 ${totalSelected} / ${limits.total}（图片 ${counts.image}、视频 ${counts.video}、音频 ${counts.audio}）`;
-  const confirmLabel = isCanvas ? (canvasAssetRequest?.generation?'使用此素材':isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
+  const confirmLabel = isCanvas ? (isProjectAssets?'添加资产':canvasAssetRequest?.generation?'使用此素材':isChat?'添加到对话':'添加到画布') : isFrame ? '使用此图片' : promptMentionMode ? '插入并使用所选素材' : '使用所选素材';
   $('#confirmReference').textContent = confirmLabel;
   const kindLabels = { all:'全部', image:'图片', video:'视频', audio:'音频' };
   const uploadContext = isCanvas ? (isChat?'director-chat':'director-canvas') : 'reference';
@@ -4749,6 +4750,20 @@ function updatePreviewFileName(file, name) {
   }
   recordIndexes.invalidateFiles();
 }
+async function renameCanvasFile(file,name) {
+  const account=accountScope.snapshot();
+  const cloudId=file.cloudAssetId||(!file.localOnly?file.id:'');
+  if(cloudId)await api(`/api/files/${encodeURIComponent(cloudId)}`,{method:'PATCH',body:JSON.stringify({name})});
+  if(!accountScope.isCurrent(account))throw new Error('账号已切换，请重新打开项目');
+  if(window.guguDesktop?.media?.renameLocal&&(file.localId||file.localStatus==='saved'||String(file.url||'').startsWith('gugu-media://'))){
+    await window.guguDesktop.media.renameLocal({assetId:file.localId||file.id,name});
+  }else if(!cloudId){
+    await api(`/api/files/${encodeURIComponent(file.cloudAssetId||file.id)}`,{method:'PATCH',body:JSON.stringify({name})});
+  }
+  if(!accountScope.isCurrent(account))throw new Error('账号已切换，请重新打开项目');
+  updatePreviewFileName(file,name);
+  return {...file,name};
+}
 async function savePreviewName({ close = false } = {}) {
   if (!previewNameEditing || previewNameSaving) return false;
   const file = state.files.find(item => item.id === state.previewFileId);
@@ -4761,8 +4776,7 @@ async function savePreviewName({ close = false } = {}) {
   previewNameError();
   try {
     if (!window.guguDesktop?.media?.renameLocal) throw new Error('桌面文件能力尚未就绪，请重启客户端后再试');
-    await window.guguDesktop.media.renameLocal({ assetId:file.localId || file.id, name });
-    updatePreviewFileName(file, name);
+    await renameCanvasFile(file,name);
     $('#previewName').textContent = assetDisplayName(file);
     renderPreviewMeta(file, file.width, file.height);
     setPreviewNameEditing(false);

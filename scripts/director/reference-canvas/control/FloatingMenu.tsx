@@ -13,6 +13,7 @@ import {
   ImageDownIcon,
   ImageUpscaleIcon,
   MessageSquarePlusIcon,
+  PencilIcon,
   SquareUserRoundIcon,
   Trash2Icon,
 } from 'lucide-react'
@@ -45,11 +46,13 @@ export function FloatingMenu({
   const { sendMessage, isSending } = useSendMessage()
   const [curSelectionIsImg, setCurSelectionIsImg] = useState(false)
   const [showChatBtn, setShowChatBtn] = useState(false)
+  const [canRename, setCanRename] = useState(false)
 
   useEffect(() => {
     if (!whiteboardApi) return
     const state = whiteboardApi.getState()
     const handleState = (state: CanvasSnapshot) => {
+      setCanRename(state.selectedNodeIds?.length === 1 && Boolean((globalThis as any).__directorCanvasAdapter?.canRenameFile?.(state.selectedNodeIds[0])))
       if (state.selectedNodeIds?.length === 1) {
         const selID = state.selectedNodeIds[0]
         const selectedNodes = state.nodes?.find(node => selID === node.id)
@@ -147,6 +150,14 @@ export function FloatingMenu({
     <div className="floating-menu">
       <div className="flex items-center gap-2">
         <ButtonGroup>
+          {canRename && (
+            <MyTooltip content="编辑文件名称">
+              <Button variant="outline" size="icon" aria-label="编辑文件名称"
+                onClick={() => (globalThis as any).__directorCanvasAdapter?.renameFile?.(whiteboardApi?.getState().selectedNodeIds?.[0])}>
+                <PencilIcon />
+              </Button>
+            </MyTooltip>
+          )}
           {(globalThis as any).__directorCanvasAdapter?.attachFiles && (
             <MyTooltip content="发送到聊天">
               <Button variant="outline" size="icon" aria-label="发送到聊天"

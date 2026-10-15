@@ -5934,6 +5934,19 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .director-workspace .dw-generation-launcher button{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:38px;padding:8px 15px;border:0;border-radius:11px;background:transparent;color:var(--theme-ink-soft, #343854);font:600 13px var(--sans);cursor:pointer;transition:background .16s ease,color .16s ease,transform .12s ease}
 .director-workspace .dw-generation-launcher button:hover{background:var(--theme-brand-soft, #f0efff);color:var(--theme-brand, #4d47bb)}.director-workspace .dw-generation-launcher button:active{transform:scale(.97)}
 .director-workspace .dw-generation-launcher svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.director-workspace .dw-generation-launcher-divider{width:1px;height:22px;background:var(--theme-brand-soft, #e6e5f0)}
+.director-workspace .dw-generation-dock{gap:10px;align-items:flex-end}
+.director-workspace .dw-generation-dock .dw-generation-launcher{flex:none;height:44px;box-sizing:border-box;padding:4px;border-radius:14px}
+.director-workspace .dw-generation-dock .dw-generation-launcher button{min-height:34px;padding:6px 12px;gap:7px}
+.director-workspace .dw-generation-launcher button[aria-expanded=true]{background:var(--theme-brand-soft,#f0efff);color:var(--theme-brand,#4d47bb)}
+.director-workspace .dw-generation-dock .dw-project-tools{display:flex;align-items:center;justify-content:center;min-width:0;min-height:44px;padding:4px;box-sizing:border-box;border:1px solid var(--theme-line,#e4e6ef);border-radius:14px;background:rgb(var(--theme-panel-rgb,255 255 255) / .94);box-shadow:0 12px 32px #35335d21,0 2px 6px #35335d0c;backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%)}
+.director-workspace .dw-generation-dock .canvas-tools-row{flex-wrap:wrap;justify-content:center;gap:4px}
+.director-workspace .dw-generation-dock .director-labelled-tool span{display:none}
+.director-workspace .dw-generation-dock .reference-button-icon{flex:none;width:34px;min-width:34px;height:34px;min-height:34px;padding:6px}
+.director-workspace .dw-generation-dock .dw-project-tools .reference-tooltip{top:auto;bottom:calc(100% + 8px)}
+.director-workspace .dw-generation-dock .dw-project-tools :is(.reference-popover-content,.reference-dropdown-content){top:auto;bottom:calc(100% + 10px);left:auto;right:0;max-height:min(420px,calc(100dvh - 120px));overflow-y:auto}
+.dw-link-menu.dw-create-node-menu{width:180px;max-height:calc(100dvh - 100px);overflow-y:auto;padding:6px;border-radius:14px;background:rgb(var(--theme-panel-rgb,255 255 255) / .96);backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%)}
+.dw-link-menu.dw-create-node-menu button{width:100%;min-height:38px;text-align:left}
+.dw-link-menu.dw-create-node-menu button:focus-visible{background:var(--theme-brand-soft,#f0efff);color:var(--theme-brand,#4d47bb);outline:2px solid var(--theme-brand,#6366f1);outline-offset:-2px}
 .director-workspace .dw-generation-composer{position:absolute;z-index:21;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:10px;border:1px solid rgb(var(--theme-line-rgb, 255 255 255) / 0.85098);border-radius:18px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.94118);box-shadow:0 0 0 1px #5750c812,0 18px 44px #2c2a5826,0 3px 10px #2c2a580f;backdrop-filter:blur(22px) saturate(150%);-webkit-backdrop-filter:blur(22px) saturate(150%);color:var(--theme-ink-soft, #343854);font-family:var(--sans);animation:dw-gen-open .18s cubic-bezier(.2,.8,.2,1) both}
 .director-workspace .dw-generation-composer[hidden],.director-workspace .dw-gen-menu[hidden]{display:none}
 .director-workspace .dw-generation-composer svg,.director-workspace .dw-gen-menu svg{flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
@@ -6435,7 +6448,6 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #agentView .dw-agen
 body.desktop-runtime.desktop-win32 #agentView .dw-agent-page-header{padding-right:max(154px,calc(100vw - env(titlebar-area-width,calc(100vw - 154px))))}
 body.desktop-runtime.desktop-linux #agentView .dw-agent-page-header{padding-right:154px}
 body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .dw-project-chrome{right:318px}
-@container (min-width:1280px){#agentView .dw-project-tools .director-labelled-tool{width:auto;min-width:68px;padding-inline:9px}#agentView .dw-project-tools .director-labelled-tool span{display:inline}}
 @container (max-width:760px){#agentView .dw-project-tools .canvas-tools-row{gap:2px}#agentView .dw-project-tools .reference-button-icon{width:28px;min-width:28px;padding:4px}}
 
 /* The canvas fills the project; the project bar and the conversation float above it as glass panels. */
@@ -6450,7 +6462,7 @@ body.desktop-runtime:is(.desktop-win32,.desktop-linux) #agentView .agent-home .d
 #agentView .agent-space:not(.agent-home) :is(.dw-agent-project,.dw-project-tools:has(*)){box-sizing:border-box;height:44px;border:1px solid var(--dw-float-line);border-radius:14px;background:var(--dw-float-glass);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);box-shadow:var(--dw-float-shadow);pointer-events:auto}
 #agentView .agent-space:not(.agent-home) .dw-agent-project{justify-self:start;max-width:100%;padding:3px 16px 3px 3px;gap:4px}
 #agentView .agent-space:not(.agent-home) .dw-agent-project-title{font-size:14px}
-#agentView .agent-space:not(.agent-home) .dw-project-tools{padding:0 4px}
+#agentView .agent-space:not(.agent-home) .dw-project-tools{height:auto;padding:4px}
 #agentView .agent-space:not(.agent-home) .dw-generation-dock{left:calc((100% - var(--dw-agent-inset)) / 2);max-width:calc(100% - var(--dw-agent-inset) - 16px);transition:left 220ms cubic-bezier(.2,.8,.2,1)}
 #agentView .agent-space:not(.agent-home) .dw-canvas .bottom-4.right-6{right:calc(var(--dw-agent-inset) + 24px);transition:right 220ms cubic-bezier(.2,.8,.2,1)}
 #agentView .agent-space:not(.agent-home) .dw-canvas .reference-sheet-content{right:var(--dw-agent-inset)}
@@ -7061,10 +7073,10 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .dw-link-draft{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .dw-link-draft path{fill:none;stroke:var(--theme-brand, #6366f1);stroke-width:2;stroke-linecap:round;stroke-dasharray:6 5}
 .dw-link-layer .dw-link-port{position:absolute;left:0;top:0;box-sizing:border-box;width:34px;height:34px;min-width:0;min-height:0;margin:0;padding:0;display:grid;place-items:center;border:0;border-radius:50%;background:transparent;color:var(--theme-ink-soft,#4b4e5a);box-shadow:none;cursor:crosshair;touch-action:none;pointer-events:auto;outline:none}
-.dw-link-layer .dw-link-port::before{content:"";position:absolute;inset:8px;box-sizing:border-box;border:1px solid currentColor;border-radius:50%;background:var(--theme-panel,#fff);transition:border-color .15s ease,background .15s ease}
+.dw-link-layer .dw-link-port::before{content:"";position:absolute;inset:10px;box-sizing:border-box;border:1px solid currentColor;border-radius:50%;background:var(--theme-panel,#fff);transition:border-color .15s ease,background .15s ease}
 .dw-link-layer .dw-link-port:hover,.dw-link-layer .dw-link-port:focus-visible{background:transparent;border:0;color:var(--theme-ink,#252833);box-shadow:none;outline:none}
 .dw-link-layer .dw-link-port:focus-visible::before{outline:2px solid var(--theme-brand,#6366f1);outline-offset:3px}
-.dw-link-layer .dw-link-port svg{position:relative;width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
+.dw-link-layer .dw-link-port svg{position:relative;width:7px;height:7px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round}
 .dw-link-layer .dw-link-input-port{pointer-events:none;cursor:default}
 .dw-link-port[hidden],.dw-link-target[hidden],.dw-link-hint[hidden]{display:none}
 .dw-link-target{position:absolute;left:0;top:0;box-sizing:border-box;border:2px solid transparent;border-radius:var(--cv-radius, 14px);pointer-events:none}
@@ -7074,7 +7086,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .dw-link-menu{position:fixed;z-index:2300;display:flex;flex-direction:column;gap:2px;min-width:136px;padding:6px;border:1px solid var(--theme-line, #e4e6ef);border-radius:12px;background:rgb(var(--theme-panel-rgb, 255 255 255) / 0.96);box-shadow:0 16px 48px rgba(31,36,74,.18);backdrop-filter:blur(14px)}
 .dw-link-menu button{min-height:36px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--theme-ink-soft, #4c5070);font:500 13px/1 var(--sans);text-align:left;cursor:pointer}
 .dw-link-menu button:hover,.dw-link-menu button:focus-visible{background:rgb(var(--theme-brand-soft-rgb, 240 240 255) / 0.9);color:var(--theme-brand, #4f46e5);outline:0}
-@media(pointer:coarse){.dw-link-layer .dw-link-port{width:44px;height:44px}.dw-link-layer .dw-link-port::before{inset:13px}}
+@media(pointer:coarse){.dw-link-layer .dw-link-port{width:44px;height:44px}.dw-link-layer .dw-link-port::before{inset:15px}}
 
 /* Generation nodes keep their description; results sit beside them */
 .dw-gen-node-foot{display:flex;gap:10px;flex:none;color:var(--tone-ink, #6b7090);font:500 11px/1.4 var(--sans)}
@@ -7131,3 +7143,56 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .dw-input-picker .dw-input-kind-arrow{display:grid;place-items:center;flex:none;width:16px;height:16px;margin-left:auto}
 .dw-input-picker .dw-input-kind-arrow svg{width:16px;height:16px;transform:rotate(-90deg);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .director-workspace .dw-gen-reference-preview>video{flex:none;width:26px;height:26px;border-radius:7px;object-fit:cover;background:var(--theme-surface,#f1f0f8)}
+
+/* Project assets stay beside the canvas while tools remain available. */
+.director-workspace .dw-generation-dock .dw-generation-launcher{width:112px}
+.director-workspace .dw-generation-dock .dw-generation-launcher button{width:100%;padding-inline:8px}
+.director-workspace .dw-project-assets{position:absolute;z-index:22;top:76px;bottom:86px;left:16px;display:flex;flex-direction:column;box-sizing:border-box;width:304px;max-width:calc(100% - 32px);overflow:hidden;border:1px solid var(--theme-line,#e4e6ef);border-radius:18px;background:rgb(var(--theme-panel-rgb,255 255 255) / .95);color:var(--theme-ink,#292d47);box-shadow:0 16px 48px #35335d21,inset 0 1px #ffffff80;backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);animation:dw-assets-open .18s ease-out}
+.director-workspace .dw-project-assets[hidden]{display:none}
+.director-workspace .dw-project-assets>header{display:flex;align-items:center;justify-content:space-between;flex:none;padding:14px 16px;border-bottom:1px solid var(--theme-line,#e4e6ef)}
+.director-workspace .dw-project-assets h2{margin:0;font:600 15px/1.5 var(--sans)}
+.director-workspace .dw-project-assets button{min-height:32px;padding:5px 8px;border:0;border-radius:8px;background:transparent;color:inherit;font:500 12px/1.5 var(--sans);cursor:pointer}
+.director-workspace .dw-project-assets button:hover{background:var(--theme-brand-soft,#f0efff);color:var(--theme-brand,#4d47bb)}
+.director-workspace .dw-project-assets :is(button,input,summary):focus-visible{outline:2px solid var(--theme-brand,#6366f1);outline-offset:1px}
+.director-workspace .dw-project-assets svg{flex:none;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.director-workspace .dw-project-assets>header button,.director-workspace .dw-project-assets summary button{display:grid;place-items:center;width:30px;min-height:30px;padding:5px}
+.director-workspace .dw-project-assets-groups{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:8px}
+.director-workspace .dw-project-assets details{border-bottom:1px solid var(--theme-line,#e4e6ef)}
+.director-workspace .dw-project-assets details.is-assets-drop-target{border-radius:10px;background:var(--theme-brand-soft,#f0efff);box-shadow:inset 0 0 0 2px var(--theme-brand,#6366f1)}
+.director-workspace .dw-project-assets summary{display:flex;align-items:center;gap:7px;padding:7px 4px;list-style:none;cursor:pointer;user-select:none}
+.director-workspace .dw-project-assets summary::-webkit-details-marker{display:none}
+.director-workspace .dw-project-assets summary::before{content:"";width:5px;height:5px;margin:0 5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);opacity:.55}
+.director-workspace .dw-project-assets details[open]>summary::before{transform:rotate(45deg)}
+.director-workspace .dw-project-assets summary>span{flex:1;display:flex;align-items:center;gap:8px;font:600 13px var(--sans)}
+.director-workspace .dw-project-assets summary small{font:400 11px var(--sans);color:var(--theme-muted,#85879a)}
+.director-workspace .dw-project-assets-list{display:grid;gap:5px;padding:0 4px 10px}
+.director-workspace .dw-project-assets-empty{margin:3px 0 6px 22px;color:var(--theme-muted,#85879a);font:12px/1.5 var(--sans)}
+.director-workspace .dw-project-asset{min-width:0;overflow:hidden;border:1px solid var(--theme-line,#e4e6ef);border-radius:10px;background:rgb(var(--theme-panel-rgb,255 255 255) / .65)}
+.director-workspace .dw-project-asset>button{display:flex;align-items:center;gap:10px;width:100%;min-height:54px;padding:7px;text-align:left}
+.director-workspace .dw-project-asset>button[draggable=true]{cursor:grab}
+.director-workspace .dw-project-asset>button[draggable=true]:active{cursor:grabbing}
+.director-workspace .dw-project-asset>button>img{width:40px;height:40px;object-fit:cover;border-radius:7px;flex:none}
+.director-workspace .dw-project-asset>button>svg{width:24px;height:24px;margin:8px;color:var(--theme-brand,#6366f1)}
+.director-workspace .dw-project-asset>button>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.director-workspace .dw-project-asset audio{display:block;width:calc(100% - 12px);height:32px;margin:0 6px 7px}
+.director-workspace .dw-project-assets>footer{flex:none;padding:10px;border-top:1px solid var(--theme-line,#e4e6ef)}
+.director-workspace .dw-project-assets>footer>button{display:flex;align-items:center;justify-content:center;gap:7px;width:100%}
+.director-workspace .dw-project-assets form{padding:6px}
+.director-workspace .dw-project-assets form[hidden]{display:none}
+.director-workspace .dw-project-assets label{display:grid;gap:7px;font:500 12px var(--sans)}
+.director-workspace .dw-project-assets input{box-sizing:border-box;width:100%;min-height:34px;padding:6px 9px;border:1px solid var(--theme-line,#e4e6ef);border-radius:8px;background:var(--theme-panel,#fff);color:inherit;font:13px var(--sans)}
+.director-workspace .dw-project-assets form>div{display:flex;justify-content:flex-end;gap:6px;margin-top:8px}
+.director-workspace .dw-project-assets button[type=submit]{background:var(--theme-brand,#6366f1);color:white}
+@keyframes dw-assets-open{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:translateX(0)}}
+@media(max-width:580px){.director-workspace .dw-project-assets{top:68px;bottom:90px;left:8px;max-width:calc(100% - 16px)}.director-workspace .dw-generation-dock .dw-generation-launcher{width:104px}}
+@media(prefers-reduced-motion:reduce){.director-workspace .dw-project-assets{animation:none}}
+
+.dw-media-names{position:absolute;inset:0;z-index:12;pointer-events:none;overflow:visible}
+.dw-media-name{position:absolute;display:block;box-sizing:border-box;height:24px;padding:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--theme-muted,#6b7090);font:500 12px/20px var(--sans);pointer-events:none}
+.dw-media-name[hidden]{display:none}
+.director-workspace .dw-media-name-input{position:absolute;box-sizing:border-box;height:26px;min-height:26px;margin:0;padding:2px 6px;border:1px solid var(--theme-brand,#6366f1);border-radius:6px;background:var(--theme-panel,#fff);color:var(--theme-ink,#292d47);box-shadow:0 2px 8px #35335d15;font:500 12px/20px var(--sans);pointer-events:auto;outline:none;user-select:text;-webkit-app-region:no-drag}
+.director-workspace .dw-media-name-input:read-only{opacity:.7}
+.director-workspace .dw-imported-audio .dw-frame-caption{display:block}
+
+.director-workspace .reference-canvas-host .dw-cancelled-removing{opacity:0!important;pointer-events:none!important;transition:opacity 300ms ease-out}
+@media(prefers-reduced-motion:reduce){.director-workspace .reference-canvas-host .dw-cancelled-removing{transition:none}}

@@ -38,6 +38,7 @@ import { fetchWithTimeout } from './network.mjs';
 import { downloadUpdateToFile } from './update-download.mjs';
 import { runDesktopAction, sendToWindow } from './window-events.mjs';
 import { openWindowsUpdateInstaller } from './windows-update.mjs';
+import { renameMediaFile } from './media-rename.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -831,11 +832,14 @@ async function downloadRemoteAsset(payload = {}) {
 }
 
 async function renameLocalAsset({ assetId, name }) {
+  const targetWorkspace=workspace,targetEpoch=workspaceEpoch;
   const asset = libraryAsset(String(assetId || ''));
   if (!asset) throw new Error('本地素材不存在');
   const nextName = safeName(name, asset.name);
   if (!nextName) throw new Error('文件名不能为空');
-  asset.name = nextName;
+  const renamed=await renameMediaFile({workspace:targetWorkspace,asset,name:nextName,assertCurrent:()=>assertActiveWorkspace(targetWorkspace,targetEpoch)});
+  assertActiveWorkspace(targetWorkspace,targetEpoch);
+  Object.assign(asset,renamed);
   upsertLocalAsset(asset);
   return { ...asset, url: localMediaUrl(asset.id) };
 }

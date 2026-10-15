@@ -1,7 +1,7 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=4';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=5';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=176';
-import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=16';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=184';
+import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=20';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
@@ -10,7 +10,7 @@ import { mountModelPreferencePicker } from './model-preference-picker.js?v=14';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
-export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects}) {
+export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,renameCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
   let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,initialCanvasOpen=false,screen='',navigationEpoch=0,creating=false;
@@ -300,8 +300,8 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       imported:()=>project.assetIds.map(asset).filter(Boolean).map(file=>({...file,url:previewUrl(file)})),
       // Adding files only keeps the local copy. prepareCloudFiles uploads them
       // when a message is sent or a generation starts.
-      importAsset:async()=>{
-        const selected=await importCanvasAsset({multiple:true});
+      importAsset:async({projectAssets=false}={})=>{
+        const selected=await importCanvasAsset({multiple:true,projectAssets});
         if(!current()||!selected)return [];
         const files=(Array.isArray(selected)?selected:[selected]).filter(Boolean);
         if(!files.length)return [];
@@ -340,6 +340,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         }));
         return results;
       },
+      renameFile:(file,name)=>renameCanvasFile(file,name),
       canvasFile:({assetId,taskId})=>assetId?asset(assetId):taskAsset(taskId),
       registerCanvasFile,
       importLocalMedia,

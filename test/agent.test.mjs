@@ -86,6 +86,82 @@ function runtimeFixture(f, complete, tools, skills = {search:async()=>[]}, model
   return {runtime,counts};
 }
 
+test('runtime retries fabricated media completion and executes the corrected request through approval', async () => {
+  const f = fixture();
+  f.repo.enqueue(f.session, {clientId:'media',text:'生成林默角色三视图'});
+  let requests = 0, submissions = 0;
+  const tools = {
+    definitions:()=>[], images:async()=>[], generationEvidence:()=>submissions ? [{id:'job',status:'queued',assetId:''}] : [],
+    get:name=>({paid:name==='media_submit'}),
+    execute:async(name,_args,s)=>{
+      if (name === 'media_prepare') {
+        s.doc.prepared = {p:{input:{type:'image',modelId:'image-model'},quote:{costMicro:100,credits:1}}};
+        return {preparedRequestId:'p'};
+      }
+      submissions++;
+      return {jobIds:['job'],status:'queued'};
+    },
+  };
+  const {runtime,counts} = runtimeFixture(f, async request=>{
+    requests++;
+    if (requests === 1) return answer('全部图像资产生成完成！✅');
+    assert.match(request.messages[1].content, /generationEvidence/);
+    assert.ok(!request.messages.some(message=>message.content==='全部图像资产生成完成！✅'));
+    if (requests === 2) {
+      assert.match(request.messages[1].content, /真实任务记录不支持/);
+      return answer('先为林默准备一张角色三视图。',[call('media_prepare',{})]);
+    }
+    if (requests === 3) return answer('这次生成林默的三视图，用于后续镜头保持人物一致。',[call('media_submit',{preparedRequestId:'p'},'submit')]);
+    return answer('已提交图片生成。');
+  }, tools);
+  try {
+    await runtime.kick(f.session.id);
+    assert.equal(f.get().state,'waiting_approval');
+    assert.equal(submissions,0);
+    assert.equal(f.get().doc.lastInvalidOutput.reason,'unverified_generation_completion');
+    f.repo.approve(f.get(),f.get().doc.approval.id,true);
+    await runtime.kick(f.session.id);
+    assert.equal(f.get().state,'completed',f.get().doc.lastError);
+    assert.equal(submissions,1);
+    assert.equal(counts.settle,4);
+  } finally {await runtime.stop();f.db.close();}
+});
+
+test('runtime pauses after repeated unsupported generation claims without saving a success reply', async () => {
+  const f = fixture();
+  f.repo.enqueue(f.session,{clientId:'media',text:'生成一张图片'});
+  const tools = {definitions:()=>[],images:async()=>[],generationEvidence:()=>[],get:()=>({})};
+  const {runtime,counts} = runtimeFixture(f,async()=>answer('正在生成：图片。'),tools);
+  try {
+    await runtime.kick(f.session.id);
+    assert.equal(f.get().state,'paused');
+    assert.equal(f.get().doc.messages.filter(message=>message.role==='assistant').length,0);
+    assert.equal(f.get().doc.lastInvalidOutput.reason,'unverified_generation_submission');
+    assert.equal(f.get().doc.draft,undefined);
+    assert.equal(counts.settle,2);
+  } finally {await runtime.stop();f.db.close();}
+});
+
+test('asset metadata survives switching conversations and snapshot reads the latest scoped file names',async()=>{
+  const f=fixture();
+  try{
+    const project=f.repo.createProject('user-a',scope,'勿开门');
+    const first=f.repo.create('user-a',scope,'',{}, {agentProjectId:project.id});
+    const next=f.repo.create('user-a',scope,'',{}, {agentProjectId:project.id,fresh:true});
+    first.doc.assetUpdates={person:{id:'person',name:'旧名称.png',category:'other'},foreign:{id:'foreign',name:'不可见.png'}};
+    f.db.prepare('UPDATE agent_sessions SET doc_json=? WHERE id=?').run(JSON.stringify(first.doc),first.id);
+    const route=createAgentRouteHandler({repository:f.repo,gateway:{config:{model:'test-model'}},sendJson:(res,status,data)=>Object.assign(res,{status,data}),requireUser:()=>({id:'user-a'}),requireDesktopWorkspaceScope:()=>scope,walletOf:()=>({balance:10}),findGeneration:()=>null,publicGeneration:v=>v,findAsset:(_user,id,requestedScope)=>{
+      assert.equal(requestedScope.deviceId,scope.deviceId);assert.equal(requestedScope.workspaceId,scope.workspaceId);
+      return id==='person'?{id,name:'林默雨衣.png',category:'character'}:null;
+    }});
+    const res={};await route({method:'GET'},res,new URL(`http://localhost/api/agent/sessions/${next.id}`));
+    assert.equal(res.status,200);
+    assert.deepEqual(res.data.assetMetadata,[{id:'person',name:'林默雨衣.png',category:'character'}]);
+    const unrelated=f.repo.create('user-a',scope,'',{}, {agentProjectId:f.repo.createProject('user-a',scope,'其他项目').id});
+    assert.deepEqual(f.repo.artifacts(unrelated).assetUpdates,{});
+  }finally{f.db.close();}
+});
+
 test('30 inspected generation images reach the next model request with their asset identities', async () => {
   const f = fixture();
   const assets = Array.from({ length:30 }, (_, i) => ({ id:`generated-${i}`, kind:'image', sourceUrl:`https://provider.example/${i}`, remoteStatus:'local_only' }));
@@ -1204,7 +1280,7 @@ test('runtime keeps the sent preference while settings change and blocks a model
   const f=fixture(),generated=[];
   f.repo.settings(f.session,{...f.session.settings,autoGenerate:true,generationBudgetMicro:10000000,modelPreferences:imagePreference(['image-a'])});
   f.repo.enqueue(f.get(),{clientId:'model-pref-runtime',text:'生成一张图片',modelPreferences:imagePreference(['image-a'])});
-  const tools=createAgentTools({catalog:async()=>[],generate:async args=>{generated.push(args);return {status:200,data:args.previewOnly?{costMicro:1000000,credits:1,quantity:1}:{id:'generated-a',status:'queued'}};}});
+  const tools=createAgentTools({catalog:async()=>[],findGeneration:(_user,id)=>generated.some(args=>!args.previewOnly)&&id==='generated-a'?{id,status:'queued'}:null,generate:async args=>{generated.push(args);return {status:200,data:args.previewOnly?{costMicro:1000000,credits:1,quantity:1}:{id:'generated-a',status:'queued'}};}});
   let requests=0;
   const {runtime}=runtimeFixture(f,async request=>{
     assert.ok(request.messages[0].content.includes('image-a'));assert.ok(!request.messages[0].content.includes('image-b'));

@@ -1,3 +1,4 @@
+import { tuziImageRetryUrl } from './desktop/media-retry.mjs';
 import { editVideoLayers } from './services/agent-video-edit.mjs';
 import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
 import { createAgentGateway } from './lib/agent/gateway.mjs';
@@ -985,11 +986,13 @@ const videoProviderAdapters = createProviderAdapterRegistry({
 function downloadErrorDetail(error) { const cause = error?.cause; return [cause?.code, cause?.message || error?.message].filter(Boolean).join(' · ') || '未知网络错误'; }
 async function downloadToFile(url, target, attempts = 4, options = {}) {
   const partial = `${target}.part`;
-  let lastError;
+  let lastError,targetUrl=url;
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    let downloadUrl=targetUrl;
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(180_000), headers: { 'User-Agent': 'Model-Studio/1.0', Accept: '*/*', ...(options.headers || {}) } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const response = await fetch(targetUrl, { signal: AbortSignal.timeout(180_000), headers: { 'User-Agent': 'Model-Studio/1.0', Accept: '*/*', ...(targetUrl===url?options.headers || {}:{}) } });
+      downloadUrl=response.url||targetUrl;
+      if (!response.ok) { await response.body?.cancel().catch(() => {});throw new Error(`HTTP ${response.status}`); }
       if (!response.body) throw new Error('响应没有文件内容');
       const hash = createHash('sha256');
       let prefix = Buffer.alloc(0);
@@ -1005,6 +1008,7 @@ async function downloadToFile(url, target, attempts = 4, options = {}) {
       return { contentType: detectedType || response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream', size: stat.size, sha256:hash.digest('hex') };
     } catch (error) {
       lastError = error;
+      targetUrl=tuziImageRetryUrl(downloadUrl,options.kind)||targetUrl;
       await fs.unlink(partial).catch(() => {});
       if (attempt < attempts) await sleep(1500 * 2 ** (attempt - 1));
     }
@@ -1193,7 +1197,7 @@ async function applyLocalReadyAcknowledgement(userId, asset, { size, sha256, mim
 }
 async function deleteAssetRecord(userId, asset) { if (!asset) return; if (asset.objectKey) await deleteObject(asset.objectKey); deleteAsset(userId, asset.id); await fs.unlink(path.join(assetFilesDir(userId), asset.storageName)).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 const publicAssetFields = Object.freeze([
-  'id', 'name', 'kind', 'mimeType', 'size', 'sha256', 'width', 'height', 'source', 'createdAt', 'updatedAt', 'deliveryStatus', 'remoteStatus', 'sourceGenerationId', 'remoteExpiredAt',
+  'id', 'name', 'category', 'kind', 'mimeType', 'size', 'sha256', 'width', 'height', 'source', 'createdAt', 'updatedAt', 'deliveryStatus', 'remoteStatus', 'sourceGenerationId', 'remoteExpiredAt',
 ]);
 function publicAsset(asset) {
   const value = Object.fromEntries(publicAssetFields
@@ -2946,7 +2950,7 @@ function agentMediaCatalog() {
 const agentTools = createAgentTools({
   skills:agentSkills, catalog:agentMediaCatalog, generate:args => generationRoute.submit(args),
   loadProject:loadDramaProject, saveProject:saveDramaProject, publicProject:publicDramaProject,
-  findAsset, publicAsset, listAssets, findGeneration, publicGeneration, listGenerations,
+  findAsset, saveAsset, publicAsset, listAssets, findGeneration, publicGeneration, listGenerations,
   modelExperienceStore:modelExperienceRepository,
   observationStore:{read:(session,assetId)=>agentRepository.readObservation(session,assetId),list:session=>agentRepository.listObservations(session),write:(session,record,revision,invocationId)=>agentRepository.saveObservation(session,record,revision,invocationId)},
   transcriptStore:{list:(session,assetId)=>agentRepository.listTranscripts(session,assetId),write:(session,record)=>agentRepository.saveTranscript(session,record)},

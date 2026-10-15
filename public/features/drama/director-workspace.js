@@ -1,3 +1,7 @@
+import { createCancelledNodeCleanup } from './canvas-cancelled-cleanup.js?v=1';
+import { createAgentAssetMetadataSync } from './agent-asset-metadata.js?v=1';
+import { mountMediaNameEditor } from './media-name-editor.js?v=1';
+import { mountProjectAssetsDrawer } from './project-assets.js?v=4';
 import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=3';
 import { modelLogoMarkup } from '../../components/model-logo.js?v=5';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
@@ -18,8 +22,8 @@ import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds
 import { createCreativeAgentClient } from '../agent/client.js?v=13';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=39';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=16';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=40';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=20';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=15';
 import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=5';
@@ -251,11 +255,12 @@ export function createDirectorWorkspace(host, bridge) {
   let streamPacer=createStreamPacer(), settlingMessageId='', messageScroller=null, reasoning=null;
   let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, modelPreferencePicker=null, preferenceUpdating=false, connectionError='', conversations=[], historyOpen=false;
   let lastAgentCacheSignature='', generationApproval=null;
+  const syncAgentAssetMetadata=createAgentAssetMetadataSync({findFile:id=>bridge.canvasFile?.({assetId:id}),renameFile:(file,name)=>bridge.renameFile(file,name),current:()=>!stopped,onChange:()=>drawPanels(),onError:error=>bridge.toast(error.message)});
   let submissionQueue=[], drainingSubmissions=false;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
   let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
   const autoOpenedGenerations=new Set();
-  let canvasLibrary=null,lastCanvasMediaSignature='',connector=null,linkPopup=null;
+  let cancelledNodeCleanup=null,mediaNameEditor=null,projectAssetsDrawer=null,canvasLibrary=null,lastCanvasMediaSignature='',connector=null,linkPopup=null;
   let canvasContextMenu=null;
   let generationMentionEvents=null;
   const seenCanvasNodeIds=new Set(),pendingCanvasFocus=new Set(),automaticImageSizing=new Set();
@@ -342,7 +347,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(Array.isArray(deleted)&&deleted.length)scheduleCanvasSave();
   }
   function nodes() {
-    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId||displayedResult(workspace().generationDrafts,d)?.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))];
+    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId||displayedResult(workspace().generationDrafts,d)?.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))].map(node=>{const file=node.media||(node.taskId?bridge.canvasFile?.({taskId:node.taskId}):null);const name=workspace().projectAssets?.names?.[node.id]||workspace().projectAssets?.names?.[file?.id];return name?{...node,title:name}:node;});
   }
   function hasSavedCanvasContent() {
     const hidden=hiddenIds();
@@ -498,6 +503,7 @@ export function createDirectorWorkspace(host, bridge) {
     return {html:parts.join(''),running};
   }
   function nodeContent(n) {
+    const renamed=workspace().projectAssets?.names?.[n.id]||workspace().projectAssets?.names?.[n.taskId?bridge.canvasFile?.({taskId:n.taskId})?.id:''];
     if(isDocumentCard(n))return documentCardMarkup(n);
     const captionTrack=assetId=>assetId&&agentState?.id&&(agentState.sourceTranscripts||[]).some(item=>item.assetId===assetId&&item.cues?.length)?`<track kind="subtitles" src="/api/agent/sessions/${encodeURIComponent(agentState.id)}/captions/${encodeURIComponent(assetId)}.vtt" srclang="zh" label="台词" default>`:'';
     if(n.kind==='canvas-generation'){
@@ -505,7 +511,7 @@ export function createDirectorWorkspace(host, bridge) {
       if(draft.taskId){
         const state=generationFrameState(task?.status||draft.status||'queued',Boolean(media));
         const parent=draft.parentId?generationDraft(draft.parentId):null;
-        const caption=parent?describeSource(draft.id)?.label||generatorLabel(parent):draft.title||String(draft.prompt||'').trim()||n.title;
+        const caption=renamed||(parent?describeSource(draft.id)?.label||generatorLabel(parent):draft.title||String(draft.prompt||'').trim()||n.title);
         // A picture from a character, location or prop card can become its main picture.
         const primary=parent?.entity&&task?.status==='completed'?primaryResult(liveDrafts(),parent,id=>bridge.task(id))?.id===draft.id:null;
         const badge=primary===true?'<span class="dw-frame-badge">主图</span>':primary===false?`<button type="button" class="dw-frame-action" data-set-primary="${escape(draft.id)}">设为主图</button>`:'';
@@ -516,7 +522,7 @@ export function createDirectorWorkspace(host, bridge) {
         if(draft.status==='submitting'||output){
           const task=output&&bridge.task(output.taskId),media=draft.status==='submitting'?null:output&&bridge.media(output.taskId);
           const state=generationFrameState(draft.status==='submitting'?'queued':task?.status||output?.status||'queued',Boolean(media));
-          return resultFrame({state,kind:draft.type,media,caption:(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
+          return resultFrame({state,kind:draft.type,media,caption:renamed||(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
         }
       }
       // Description cards keep their text and display results beside them.
@@ -867,10 +873,10 @@ export function createDirectorWorkspace(host, bridge) {
       if(element)element.style.visibility=node.visible===false?'hidden':'visible';
     });
   }
-  function alignCards(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id));}
+  function alignCards(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id));mediaNameEditor?.update();}
   // Panning and zooming move cards without changing their content; skip media
   // and document binding, which only matter when a card's HTML is replaced.
-  function alignCardGeometry(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id,undefined,true));}
+  function alignCardGeometry(){if(!canvas)return;nodes().forEach(n=>alignCard(n.id,undefined,true));mediaNameEditor?.update();}
   function fitCanvas(ids){
     if(!canvas)return;
     const surface=canvas.getContainer();
@@ -971,6 +977,46 @@ export function createDirectorWorkspace(host, bridge) {
     persistLiveCanvasState();scheduleCanvasSave();
     if(movable.length)focusNewCanvasContent(movable.map(node=>node.id));
     queueCanvasMediaLibrary();
+  }
+  function canvasMediaNameEntries(){
+    if(!canvas)return [];
+    const items=new Map(nodes().map(item=>[item.id,item]));
+    return (canvas.getState().nodes||[]).flatMap(config=>{
+      if(config.visible===false||hiddenIds().has(config.id))return [];
+      const item=items.get(config.id),native=['image','video'].includes(config.$_type);
+      const media=native?{kind:config.$_type,url:config.$_imageUrl||config.$_videoUrl}:item?.media||(item?.taskId?bridge.media(item.taskId):null);
+      if(!media?.url||!['image','video','audio'].includes(media.kind))return [];
+      const node=canvas.getCanvasNodeById(config.id),shape=node?.getElement?.();if(!shape)return [];
+      let file=(config.$_assetId||item?.media?.id||item?.taskId?bridge.canvasFile?.({assetId:config.$_assetId||item?.media?.id,taskId:item?.taskId}):null)||item?.media;
+      if(native&&file?.url&&![file.url,file.previewUrl,file.remoteUrl].includes(media.url))file=null;
+      const name=workspace().projectAssets?.names?.[config.id]||workspace().projectAssets?.names?.[file?.id]||node.htmlElement?.querySelector('.dw-frame-caption')?.textContent||file?.name||item?.title||({image:'图片',video:'视频',audio:'音频'})[media.kind];
+      return [{id:config.id,name,rect:shape.getClientRect(),native,file,media}];
+    });
+  }
+  async function saveCanvasMediaName(id,name){
+    const token=epoch,entry=canvasMediaNameEntries().find(item=>item.id===id);if(!entry)throw new Error('文件已移除');
+    let file=entry.file;
+    if(!file?.id&&canvasLibrary)file=await canvasLibrary.add({id,kind:entry.media.kind,url:entry.media.url,name:entry.name});
+    if(token!==epoch)return;
+    if(!file?.id)throw new Error('文件尚未就绪，请稍后重试');
+    await bridge.renameFile(file,name);
+    if(token!==epoch)return;
+    workspace().projectAssets||={types:[],categories:{},collapsed:[],names:{}};
+    const names=workspace().projectAssets.names||={};names[id]=name;names[file.id]=name;
+    await save();if(token!==epoch)return;syncCanvas();mediaNameEditor?.update();
+  }
+  function projectAssetItems(){
+    const drafts=workspace().generationDrafts||[],byId=new Map(drafts.map(draft=>[draft.id,draft])),hidden=hiddenIds();
+    const entries=nodes().filter(node=>node.kind==='asset'||!hidden.has(node.id)).flatMap(node=>{
+      const draft=node.kind==='canvas-generation'?node.item:null,parent=draft?.parentId?byId.get(draft.parentId):null;
+      const entity=draft?.entity||parent?.entity,media=node.media||(node.taskId?bridge.media(node.taskId):null),file=(node.media?.id||node.taskId?bridge.canvasFile?.({assetId:node.media?.id,taskId:node.taskId}):null)||media,url=media?.previewUrl||media?.url;
+      if(!url||!['image','video','audio'].includes(file.kind))return [];
+      return [{id:node.id,assetId:file.id||'',name:workspace().projectAssets?.names?.[node.id]||workspace().projectAssets?.names?.[file.id]||entity?.name||file.name||node.title||'未命名资产',kind:file.kind,url,category:entity?.kind||(node.kind==='resource'?node.item.type:file.category||'')}];
+    });
+    const known=new Set(entries.map(item=>item.id));
+    for(const file of canvasLibraryMedia())if(!known.has(file.id)){entries.push({id:file.id,assetId:file.assetId||'',name:workspace().projectAssets?.names?.[file.id]||workspace().projectAssets?.names?.[file.assetId]||file.name,kind:file.kind,url:file.url,category:file.category});known.add(file.id);}
+    const seen=new Set(),metadata=new Map((agentState?.assetMetadata||[]).map(item=>[item.id,item]));
+    return entries.filter(item=>{const key=item.assetId||item.url||item.id;if(seen.has(key))return false;seen.add(key);return true;}).map(item=>{const saved=metadata.get(item.assetId)||metadata.get(item.id);return saved?{...item,name:saved.name,category:saved.category}:item;});
   }
   function canvasLibraryMedia(){
     return canvasMediaFiles(canvas?.getState(),nodes().map(item=>({...item,media:item.media||bridge.media(item.taskId)})),hiddenIds());
@@ -1130,6 +1176,9 @@ export function createDirectorWorkspace(host, bridge) {
     renderEdges(canvas.getState().nodes);
     if(canvasContentReady){const fresh=additions.filter(node=>!existing.has(node.id));if(fresh.length)focusNewCanvasContent(fresh.map(node=>node.id));}
     canvasContentReady=true;
+    projectAssetsDrawer?.update();
+    mediaNameEditor?.update();
+    cancelledNodeCleanup?.update();
   }
   function syncEdges(snapshotNodes=canvas?.getState().nodes||[]) {
     renderEdges(snapshotNodes,true);
@@ -1192,6 +1241,7 @@ export function createDirectorWorkspace(host, bridge) {
     return true;
   }
   function drawPanels() {
+    syncAgentAssetMetadata(agentState?.assetMetadata);
     const root=host.querySelector('.director-workspace');
     const messages=root?.querySelector('.dw-messages');
     if(!root||!messages)return;
@@ -1555,7 +1605,7 @@ export function createDirectorWorkspace(host, bridge) {
   }
   // Choose what an @ mention refers to: something already on the canvas, or a new file.
   function pickGenerationInput(draft,anchor){
-    linkPopup?.remove();
+    linkPopup?.dismiss?.();linkPopup?.remove();
     const linked=new Set(inputLinks(workspace().links,draft.id).map(link=>link.from));
     const candidates=canvasItems().map(item=>item.id).concat((canvas?.getState?.().nodes||[]).filter(node=>['image','video'].includes(node.$_type)&&node.$_assetId).map(node=>node.id))
       .filter((id,index,list)=>id!==draft.id&&list.indexOf(id)===index&&!hiddenIds().has(id))
@@ -1652,21 +1702,24 @@ export function createDirectorWorkspace(host, bridge) {
   }
   // A small menu at a screen point. Options that cannot take `from` as input
   // are left out, so a dropped link only offers nodes that accept it.
-  function showCreateMenu(client,{from='',kinds=createOptions.map(item=>item.kind),at=null,label='新建'}={}){
+  function showCreateMenu(client,{from='',kinds=createOptions.map(item=>item.kind),at=null,label='新建',trigger=null}={}){
     if(!canvas)return;
-    linkPopup?.remove();
+    linkPopup?.dismiss?.();linkPopup?.remove();
     const source=from?describeInput(from):null;
     const options=createOptions.filter(item=>kinds.includes(item.kind)&&(!from||item.type&&source&&!linkError({id:'new',type:item.type},{...source,id:from})));
     if(!options.length)return;
     const menu=linkPopup=document.createElement('div');
-    menu.className='dw-link-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label',label);
+    menu.className=trigger?'dw-link-menu dw-create-node-menu':'dw-link-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label',label);
     menu.innerHTML=options.map(item=>`<button type="button" role="menuitem" data-create-kind="${item.kind}">${canvasIcon(item.icon)}<span>${escape(item.label)}</span></button>`).join('');
     const point=at||(client.world?worldPoint(client):null);
     let done=false;
-    const close=()=>{if(done)return;done=true;menu.remove();document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',onKey,true);};
-    const outside=event=>{if(!menu.contains(event.target))close();};
+    const close=()=>{if(done)return;done=true;menu.remove();if(linkPopup===menu)linkPopup=null;trigger?.setAttribute('aria-expanded','false');document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',onKey,true);window.removeEventListener('resize',close);};
+    menu.dismiss=close;
+    trigger?.setAttribute('aria-expanded','true');
+    const outside=event=>{if(!menu.contains(event.target)&&!trigger?.contains(event.target))close();};
     const onKey=event=>{
-      if(event.key==='Escape'){event.preventDefault();close();return;}
+      if(event.key==='Escape'){event.preventDefault();close();trigger?.focus({preventScroll:true});return;}
+      if(event.key==='Tab'){close();return;}
       if(!['ArrowDown','ArrowUp'].includes(event.key))return;
       const items=[...menu.querySelectorAll('button')],index=items.indexOf(document.activeElement);
       event.preventDefault();items[(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();
@@ -1675,7 +1728,7 @@ export function createDirectorWorkspace(host, bridge) {
     document.body.append(menu);
     const left=client.anchor?client.anchor.left:client.clientX,top=client.anchor?client.anchor.top-menu.offsetHeight-8:client.clientY;
     Object.assign(menu.style,{left:`${Math.max(8,Math.min(left,window.innerWidth-menu.offsetWidth-8))}px`,top:`${Math.max(8,Math.min(top,window.innerHeight-menu.offsetHeight-8))}px`});
-    document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',onKey,true);
+    document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',onKey,true);window.addEventListener('resize',close);
     menu.querySelector('button')?.focus();
   }
   // Dropping a link on empty canvas offers a new node there, already linked.
@@ -2033,7 +2086,11 @@ export function createDirectorWorkspace(host, bridge) {
       if(inline)draft.primaryId=results.at(-1).id;
       workspace().generationDrafts.push(...results);
       if(draft.entity&&!draftResults(workspace().generationDrafts,draft.id).some(item=>item.id===draft.primaryId))draft.primaryId=results[0].id;
-      renderGenerationComposer();syncCanvas();scheduleCanvasSave(true);
+      const focusResults=draft.role==='shot'&&activeGenerationId===draft.id;
+      if(focusResults){activeGenerationId='';closeGenerationMenu();}
+      renderGenerationComposer();syncCanvas();
+      if(focusResults){canvas?.selectNodes([results[0].id]);focusNewCanvasContent(results.map(item=>item.id));}
+      scheduleCanvasSave(true);
       bridge.toast(tasks.length>1?`已开始生成 ${tasks.length} 个`:'已开始生成');
     }catch(error){if(token===epoch){draft.status='';bridge.toast(error.message);}}
     finally{if(token===epoch){generationSubmitting=false;renderGenerationComposer();syncCanvas();}}
@@ -2079,7 +2136,6 @@ export function createDirectorWorkspace(host, bridge) {
       const projectTitle=projectChrome.querySelector('.dw-agent-project-title');
       projectTitle.title=projectTitle.textContent;
       if(bridge.saveProjectTitle)bindProjectTitleEditor(projectTitle,{title:()=>bridge.projectTitle?.()||'新项目',save:bridge.saveProjectTitle,toast:bridge.toast});
-      projectChrome.insertAdjacentHTML('beforeend','<div class="dw-project-tools reference-canvas-host" role="toolbar" aria-label="画布工具"></div>');
       host.querySelector('.director-workspace').prepend(projectChrome);
     }
     host.querySelectorAll('.dw-agent>header button,.dw-project-chrome button').forEach(button=>{
@@ -2088,11 +2144,22 @@ export function createDirectorWorkspace(host, bridge) {
       button.setAttribute('aria-label',label);
       button.removeAttribute('title');
     });
-    host.querySelector('.dw-board').insertAdjacentHTML('beforeend',`<div class="dw-generation-composer" hidden></div><div class="dw-generation-dock"><div class="dw-generation-launcher" role="group" aria-label="在画布上新建内容"><button type="button" data-create-menu="text" aria-haspopup="menu">${canvasIcon('file-text')}<span>文字</span></button><button type="button" data-create-menu="entity" aria-haspopup="menu">${canvasIcon('user-round')}<span>设定</span></button><button type="button" data-create-node="shot">${canvasIcon('clapperboard')}<span>分镜</span></button><span class="dw-generation-launcher-divider" aria-hidden="true"></span><button type="button" data-create-generation="image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg><span>图像生成</span></button><span class="dw-generation-launcher-divider" aria-hidden="true"></span><button type="button" data-create-generation="video"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/></svg><span>视频生成</span></button></div><button type="button" class="dw-agent-reopen" data-show-agent aria-label="打开对话" title="打开对话" hidden>${agentLogoMarkup}</button></div>`);
-    host.querySelectorAll('[data-create-generation]').forEach(button=>button.onclick=()=>createGenerationArea(button.dataset.createGeneration));
-    host.querySelectorAll('[data-create-node]').forEach(button=>button.onclick=()=>createCanvasNode(button.dataset.createNode));
-    const createMenus={text:['script','text'],entity:['character','location','prop']};
-    host.querySelectorAll('[data-create-menu]').forEach(button=>button.onclick=()=>showCreateMenu({anchor:button.getBoundingClientRect()},{kinds:createMenus[button.dataset.createMenu],label:button.textContent.trim()}));
+    host.querySelector('.dw-board').insertAdjacentHTML('beforeend',`<div class="dw-generation-composer" hidden></div><div class="dw-generation-dock"><div class="dw-generation-launcher"><button type="button" data-project-assets aria-haspopup="dialog" aria-expanded="false">${canvasIcon('package')}<span>项目资产</span></button></div><div class="dw-project-tools reference-canvas-host" role="toolbar" aria-label="画布工具"></div><div class="dw-generation-launcher"><button type="button" data-create-menu aria-haspopup="menu" aria-expanded="false"><span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span><span>创建节点</span></button></div><button type="button" class="dw-agent-reopen" data-show-agent aria-label="打开对话" title="打开对话" hidden>${agentLogoMarkup}</button></div>`);
+    const assetsEpoch=epoch;
+    projectAssetsDrawer=mountProjectAssetsDrawer({
+      board:host.querySelector('.dw-board'),trigger:host.querySelector('[data-project-assets]'),
+      getState:()=>workspace().projectAssets,
+      setState:async state=>{if(assetsEpoch!==epoch)return;workspace().projectAssets=state;await save();},
+      items:projectAssetItems,
+      importAssets:async()=>{const files=await bridge.importAsset({projectAssets:true});if(assetsEpoch!==epoch)return [];syncCanvas();return (Array.isArray(files)?files:[files]).filter(Boolean);},
+      focusAsset:id=>{if(!canvas)return;revealCanvasItem(id);syncCanvas();canvas.selectNodes([id]);focusNewCanvasContent([id]);},
+      toast:bridge.toast,icon:name=>name==='x'?genIcons.x:name==='plus'?'<span class="gugu-lucide gugu-lucide-plus" aria-hidden="true"></span>':canvasIcon(name),
+    });
+    const createTrigger=host.querySelector('[data-create-menu]');
+    createTrigger.onclick=()=>{
+      if(createTrigger.getAttribute('aria-expanded')==='true'){linkPopup?.dismiss?.();return;}
+      showCreateMenu({anchor:createTrigger.getBoundingClientRect()},{label:'创建节点',trigger:createTrigger});
+    };
     const generationPanel=host.querySelector('.dw-generation-composer');
     generationPanel.addEventListener('input',event=>{
       const draft=generationDraft(activeGenerationId);if(!draft)return;
@@ -2221,6 +2288,20 @@ export function createDirectorWorkspace(host, bridge) {
     const bindCanvas=api=>{
       if(mountEpoch!==epoch){api.dispose?.();return;}
       canvas=api;
+      cancelledNodeCleanup=createCancelledNodeCleanup({
+        items:()=>canvas?(canvas.getState().nodes||[]).flatMap(node=>{
+          const element=canvas.getCanvasNodeById(node.id)?.htmlElement;
+          return element?[{id:node.id,element,cancelled:Boolean(element.querySelector('[data-phase="cancelled"],[data-state="cancelled"]'))}]:[];
+        }):[],
+        remove:id=>{
+          if(!canvas)return;
+          removeCanvasInputEdges([id]);markCanvasItemsHidden([id]);
+          if(activeGenerationId===id){activeGenerationId='';renderGenerationComposer();}
+          const selection=canvas.getState().selectedNodeIds||[];
+          if(selection.includes(id))canvas.selectNodes(selection.filter(selectedId=>selectedId!==id));
+          syncCanvas();scheduleCanvasSave(true);
+        },
+      });
       canvas.getContainer().addEventListener('wheel',forwardCanvasMediaWheel,{capture:true,passive:false});
       for(const type of ['pointerdown','mousedown','touchstart'])canvas.getContainer().addEventListener(type,forwardCanvasDocumentPan,{capture:true,passive:false});
       canvasLibrary=createCanvasMediaLibrary({api:bridge.agentApi,findFile:bridge.canvasFile,registerFile:bridge.registerCanvasFile,importLocal:bridge.importLocalMedia,
@@ -2281,6 +2362,7 @@ export function createDirectorWorkspace(host, bridge) {
         const ids=geometryIds(event);
         if(!ids.length)return;
         ids.forEach(id=>alignCard(id,undefined,true));
+        mediaNameEditor?.update();
         if(ids.includes(activeGenerationId))positionGenerationComposer();
         scheduleEdgeRender();
       };
@@ -2289,6 +2371,7 @@ export function createDirectorWorkspace(host, bridge) {
         if(!ids.length)return;
         if(event.type==='transformend')ids.forEach(id=>automaticImageSizing.delete(id));
         ids.forEach(id=>alignCard(id,undefined,true));
+        mediaNameEditor?.update();
         const snapshot=persistLiveCanvasState();
         if(event.type==='transformend')ids.forEach(id=>{
           if(canvas.getNodeConfigById(id)?.$_type==='html'&&workspace().positions[id])workspace().positions[id].manualSize=true;
@@ -2314,6 +2397,8 @@ export function createDirectorWorkspace(host, bridge) {
     };
     canvasMount=mountReferenceCanvas(host.querySelector('.dw-canvas'),{sessionKey:projectId,toolbarHost:host.querySelector('.dw-project-tools'),adapter:{
       workspaceToolbar:false,
+      canRenameFile:id=>canvasMediaNameEntries().some(item=>item.id===id),
+      renameFile:id=>mediaNameEditor?.begin(id),
       attachFiles:ids=>attachCanvasFiles(ids),
       imageAction:runImageAction,
       downloadFiles:downloadCanvasFiles,
@@ -2322,6 +2407,7 @@ export function createDirectorWorkspace(host, bridge) {
       saveUpload:payload=>bridge.saveUpload?.(payload)||URL.createObjectURL(new Blob([Uint8Array.from(atob(payload.base64),char=>char.charCodeAt(0))])),
       saveTemp:payload=>bridge.saveTemp?.(payload)||bridge.saveUpload?.(payload),
     },onReady:bindCanvas});
+    mediaNameEditor=mountMediaNameEditor(host.querySelector('.dw-canvas'),{entries:canvasMediaNameEntries,save:saveCanvasMediaName,error:bridge.toast});
     const workspaceElement=host.querySelector('.director-workspace');
     const handle=host.querySelector('.dw-agent-resizer');
     let preferredWidth=460;
@@ -2534,6 +2620,11 @@ export function createDirectorWorkspace(host, bridge) {
       }
       agentReady=Boolean(state?.id);
       agentState=state;agentConfig=config;connectionError=config.configured?'':'对话功能暂时无法使用，请稍后再试';
+      if(state?.assetMetadata?.length){
+        workspace().projectAssets||={types:[],categories:{},collapsed:[],names:{}};
+        const names=workspace().projectAssets.names||={};
+        for(const item of state.assetMetadata){const file=bridge.canvasFile?.({assetId:item.id});names[item.id]=item.name;if(file?.id)names[file.id]=item.name;}
+      }
       if(bridge.agentMode&&(sessionChanged||firstReadySession))chatMode=(hasSavedCanvasContent()||(firstReadySession&&bridge.initialCanvasOpen?.()))?'side':'full';
       drawPanels();
       if(bridge.agentMode&&agentReady&&!initialMessageSent){initialMessageSent=true;const initial=bridge.initialMessage?.()||'',files=bridge.initialAttachments?.()||[],documents=bridge.initialDocuments?.()||[];attachments=files;documentAttachments=documents;if(initial||files.length||documents.length){if(config.configured)void submit(initial||(documents.length?'请参考我附带的文件继续创作。':''),attachments,[],documentAttachments);else {const input=host.querySelector('#directorMessage');input.value=initial||'请参考我附带的文件继续创作。';resizeAgentComposer(input);}}}
@@ -2614,7 +2705,10 @@ export function createDirectorWorkspace(host, bridge) {
   function dispose(){
     queuedAssetLoads.clear();
     generationMentionEvents?.abort();generationMentionEvents=null;
-    connector?.dispose();connector=null;linkPopup?.remove();linkPopup=null;
+    cancelledNodeCleanup?.destroy();cancelledNodeCleanup=null;
+    mediaNameEditor?.destroy();mediaNameEditor=null;
+    projectAssetsDrawer?.destroy();projectAssetsDrawer=null;
+    connector?.dispose();connector=null;linkPopup?.dismiss?.();linkPopup?.remove();linkPopup=null;
     generationApproval?.destroy();generationApproval=null;
     // Invalidate callbacks before disconnecting clients or unmounting React.
     epoch++;workspaceActive=false;

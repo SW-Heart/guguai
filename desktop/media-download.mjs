@@ -1,3 +1,4 @@
+import { tuziImageRetryUrl } from './media-retry.mjs';
 import { validateDownloadedMedia } from './media-integrity.mjs';
 export { validateDownloadedMedia } from './media-integrity.mjs';
 
@@ -13,13 +14,13 @@ export async function fetchRemoteMedia(electronSession, url, { sameOriginHeaders
     // Resolve only same-origin hops with Node's standards-compliant fetch so
     // authentication headers can never follow a redirect to object storage.
     if (!sameOrigin) {
-      return electronSession.fetch(target.toString(), {
+      try { return await electronSession.fetch(target.toString(), {
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'follow',
         headers: {},
         ...(signal ? { signal } : {}),
-      });
+      }); } catch(error) { error.downloadUrl=target.toString();throw error; }
     }
     const response = await sameOriginFetch(target.toString(), {
       cache: 'no-store',
@@ -53,13 +54,15 @@ export function createDownloadDeadline({ timeoutMs = 60_000 } = {}) {
   return { signal:controller.signal, touch, close:() => clearTimeout(timer) };
 }
 
-export async function downloadMediaToFile(electronSession, url, target, { headers = {}, kind, mimeType, timeoutMs, fetchMedia = fetchRemoteMedia } = {}) {
+async function downloadMediaAttempt(electronSession, url, target, { headers = {}, kind, mimeType, timeoutMs, fetchMedia = fetchRemoteMedia } = {}) {
   const [{ createWriteStream }, fs, { Readable, Transform }, { pipeline }, { createHash }] = await Promise.all([
     import('node:fs'), import('node:fs/promises'), import('node:stream'), import('node:stream/promises'), import('node:crypto'),
   ]);
   const deadline = createDownloadDeadline({ timeoutMs });
+  let downloadUrl=url;
   try {
     const response = await fetchMedia(electronSession, url, { sameOriginHeaders:headers, signal:deadline.signal });
+    downloadUrl=response.url||url;
     if (!response.ok || !response.body) {
       await response.body?.cancel().catch(() => {});
       throw Object.assign(new Error(`媒体下载失败（${response.status}）`), { status:response.status });
@@ -83,7 +86,18 @@ export async function downloadMediaToFile(electronSession, url, target, { header
     return { size, sha256:hash.digest('hex'), mimeType:detectedType || (/^(image|video|audio)\//.test(declaredType) ? declaredType : mimeType || 'application/octet-stream') };
   } catch (error) {
     await fs.unlink(target).catch(() => {});
-    if (deadline.signal.aborted) throw deadline.signal.reason;
-    throw error;
+    const failure=deadline.signal.aborted?deadline.signal.reason:error;
+    failure.downloadUrl ||= error.downloadUrl||downloadUrl;
+    throw failure;
   } finally { deadline.close(); }
+}
+
+export async function downloadMediaToFile(electronSession,url,target,options={}) {
+  try { return await downloadMediaAttempt(electronSession,url,target,options); }
+  catch(error) {
+    if(['ENOSPC','EACCES','EPERM','EROFS'].includes(error.code))throw error;
+    const alternate=tuziImageRetryUrl(error.downloadUrl||url,options.kind);
+    if(!alternate)throw error;
+    return downloadMediaAttempt(electronSession,alternate,target,{...options,headers:{}});
+  }
 }

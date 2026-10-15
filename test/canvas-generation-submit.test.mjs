@@ -11,7 +11,7 @@ test('ordinary generators render pending, completed and failed outputs inside th
     const draft={id:'g',type,prompt:'画面描述'};
     const result={id:'r',parentId:'g',taskId:'t',status,prompt:'生成时的描述'};
     const media=status==='completed'?{kind:type,url:'/result'}:null;
-    const context=vm.createContext({...links,isDocumentCard:()=>false,liveDrafts:()=>[draft,result],
+    const context=vm.createContext({...links,workspace:()=>({}),isDocumentCard:()=>false,liveDrafts:()=>[draft,result],
       bridge:{task:()=>({status,progress:42}),media:()=>media},
       generationFrameState:(status,hasMedia)=>hasMedia?'completed':status,
       resultFrame:config=>config});
@@ -27,16 +27,30 @@ test('ordinary generators render pending, completed and failed outputs inside th
 function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
   const draft={id:'canvas-gen-draft',type:'image',prompt:'人物半身照',aspect:'3:4',attachments:[],taskId:'',...(entity?{entity}:{})};
   const workspace={generationDrafts:[draft],links:linked,positions:{[draft.id]:{x:10,y:20,width:280,height:320}}};
-  const requests=[],messages=[],saves=[],uploads=[];
+  const requests=[],messages=[],saves=[],uploads=[],focused=[],selected=[];
   const context=vm.createContext({activeGenerationId:draft.id,generationSubmitting:false,epoch:1,generationDraft:id=>workspace.generationDrafts.find(item=>item.id===id),workspace:()=>workspace,
     canvasGenerationPayload:request=>({type:request.type,prompt:request.prompt,referenceAssetIds:request.attachments.map(file=>file.id)}),generationConfig:()=>({}),renderGenerationComposer(){},syncCanvas(){},scheduleCanvasSave:now=>saves.push(now),crypto:{randomUUID},
+    closeGenerationMenu(){},canvas:{selectNodes:ids=>selected.push(...ids)},focusNewCanvasContent:ids=>focused.push(...ids),
     describeInput:describe,liveCanvasNodes:()=>[{id:'other',x:386,y:20,width:200,height:200}],nodeRect:node=>({x:node.x,y:node.y,width:node.width,height:node.height}),
     canvasGenerationFrameSize:()=>({width:240,height:320}),...links,
     bridge:{toast:message=>messages.push(message),prepareCloudFiles:async files=>{uploads.push(files.map(file=>file.id));return files.map(file=>({id:`cloud-${file.id}`}));},
       agentApi:async(url,options)=>{requests.push({url,options});if(url==='/api/model-quote')return {priceVersion:'price-v1'};if(result instanceof Error)throw result;return result;}}});
   vm.runInContext(source.slice(source.indexOf('  function generationRequest(draft){'),source.indexOf('  function mount()')),context);
-  return {context,draft,workspace,requests,messages,saves,uploads,submit:()=>context.submitGenerationArea()};
+  return {context,draft,workspace,requests,messages,saves,uploads,focused,selected,submit:()=>context.submitGenerationArea()};
 }
+test('storyboard submission closes the composer and focuses the new pending output',async()=>{
+  const f=fixture({id:'shot-task',status:'queued'});f.draft.role='shot';f.draft.type='video';
+  await f.submit();
+  const output=f.workspace.generationDrafts[1];
+  assert.equal(f.context.activeGenerationId,'');
+  assert.deepEqual(f.focused,[output.id]);assert.deepEqual(f.selected,[output.id]);
+  assert.ok(f.workspace.positions[output.id]);assert.equal(output.taskId,'shot-task');
+});
+test('failed storyboard submission retains the editable composer without moving the viewport',async()=>{
+  const f=fixture(new Error('余额不足'));f.draft.role='shot';
+  await f.submit();
+  assert.equal(f.context.activeGenerationId,f.draft.id);assert.deepEqual(f.focused,[]);assert.deepEqual(f.selected,[]);
+});
 for(const type of ['image','video'])test(`single ${type} response displays in place and keeps the generation node editable`,async()=>{
   const f=fixture({id:'accepted-task',status:'queued',balance:98});f.draft.type=type;
   await f.submit();
