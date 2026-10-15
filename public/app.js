@@ -1,7 +1,7 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=5';
-import { defaultVideoDuration } from './features/generation/video-defaults.js?v=2';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=7';
+import { defaultVideoDuration } from './features/generation/video-defaults.js?v=4';
 import { createConfigSync } from './state/config-sync.js?v=1';
-import { officialPriceDiscount } from './state/official-model-prices.js?v=3';
+import { officialPriceDiscount } from './state/official-model-prices.js?v=5';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';
@@ -1776,11 +1776,24 @@ function showAuth() {
   setupIntroCardInteraction();
   document.title = '登录 · GuGu AI';
 }
-function showApp() {
+async function showApp(isCurrent = () => true) {
+  const boot = $('#bootView');
+  const app = $('#appView');
+  // Paint the workspace under the loading surface before removing it. This
+  // avoids creating the rail's first paint in the same frame as the handoff.
+  boot.classList.add('is-revealing');
+  app.inert = true;
+  toggleClass(app, 'hidden', false);
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  app.inert = false;
+  if (!isCurrent()) {
+    boot.classList.remove('is-revealing');
+    return;
+  }
   setDesktopSurface('app');
-  toggleClass($('#bootView'), 'hidden', true);
+  toggleClass(boot, 'hidden', true);
+  boot.classList.remove('is-revealing');
   toggleClass($('#authView'), 'hidden', true);
-  toggleClass($('#appView'), 'hidden', false);
 }
 function loginReturnDestination() {
   if (window.location.pathname !== authPath) return '';
@@ -1920,7 +1933,8 @@ async function enterApp(user) {
   if (!isStartupCurrent()) return;
   finishInitialWorkspaceSync();
   setBootProgress(100, '工作区已准备好');
-  showApp();
+  await showApp(isStartupCurrent);
+  if (!isStartupCurrent()) return;
   void syncDesktopDeliveries().catch(error => console.warn('[desktop] 启动时同步本地投递确认失败', error.message));
   scheduleStartupDialogs(isStartupCurrent);
   // The price catalog is non-essential for the first interaction. It is
@@ -2152,7 +2166,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=158').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=160').then(({createAgentWorkspace}) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2163,7 +2177,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=291').then(({ createDramaStudio }) => {
+    dramaControllerPromise = import('./drama-studio.js?v=293').then(({ createDramaStudio }) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -4301,7 +4315,7 @@ async function submitGeneration(type, form, payload) {
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
-  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-mini','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
+  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
   const preparationGroupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -4521,7 +4535,7 @@ function updateVideoCost() {
   const sequence = ++videoQuoteSequence;
   const input = currentVideoQuoteInput();
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
-  const routed = ['seedance-2.0','seedance-2.0-mini','seedance-2.0-fast','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
+  const routed = ['seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }

@@ -629,8 +629,8 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     group.push(item);
     dynamicByModel.set(item.modelId, group);
   }
-  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2_MINI, VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_2_FAST, VIDEO_MODEL_IDS.SEEDANCE_25, VIDEO_MODEL_IDS.SEEDANCE_2_VALUE, VIDEO_MODEL_IDS.SEEDANCE_25_VALUE];
-  const modelOrder = { [VIDEO_MODEL_IDS.SEEDANCE_2_MINI]: 32, [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50, [VIDEO_MODEL_IDS.SEEDANCE_2_VALUE]: 31, [VIDEO_MODEL_IDS.SEEDANCE_25_VALUE]: 41 };
+  const seedanceIds = [VIDEO_MODEL_IDS.SEEDANCE_2_MINI, VIDEO_MODEL_IDS.SEEDANCE_2_MINI_VALUE, VIDEO_MODEL_IDS.SEEDANCE_2, VIDEO_MODEL_IDS.SEEDANCE_2_FAST, VIDEO_MODEL_IDS.SEEDANCE_2_FAST_VALUE, VIDEO_MODEL_IDS.SEEDANCE_25, VIDEO_MODEL_IDS.SEEDANCE_2_VALUE, VIDEO_MODEL_IDS.SEEDANCE_25_VALUE];
+  const modelOrder = { [VIDEO_MODEL_IDS.SEEDANCE_2_MINI]: 32, [VIDEO_MODEL_IDS.SEEDANCE_2_MINI_VALUE]: 33, [VIDEO_MODEL_IDS.MINIMAX_H3_15S]: 10, [VIDEO_MODEL_IDS.GROK]: 20, [VIDEO_MODEL_IDS.SEEDANCE_2]: 30, [VIDEO_MODEL_IDS.SEEDANCE_25]: 40, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST]: 50, [VIDEO_MODEL_IDS.SEEDANCE_2_FAST_VALUE]: 51, [VIDEO_MODEL_IDS.SEEDANCE_2_VALUE]: 31, [VIDEO_MODEL_IDS.SEEDANCE_25_VALUE]: 41 };
   const models = [...(videoCapabilities.models || [])].sort((a, b) => (modelOrder[a.id] ?? 100) - (modelOrder[b.id] ?? 100));
   const items = [];
   for (const model of models) {
@@ -1483,7 +1483,7 @@ async function resolveImageRefs(userId, ids, task = {}) {
   });
 }
 async function resolveRefs(userId, ids, task = {}) {
-  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_MINI || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
+  const mixed = task.routeId || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_MINI || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_MINI_VALUE || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_25 || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST || task.videoModelId === VIDEO_MODEL_IDS.SEEDANCE_2_FAST_VALUE || task.videoModelId === VIDEO_MODEL_IDS.MINIMAX_H3 || task.provider === 'autodl';
   const scope = { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId };
   const refs = mixed ? { images: [], videos: [], audios: [] } : [];
   // Image references use the dedicated reference bucket; video and audio

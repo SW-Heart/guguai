@@ -11,7 +11,10 @@ test('discounts compare the selected resolution and map special offers to the sa
   assert.equal(officialPriceDiscount('seedance-2.5-value', row('720P', 0.18)).label, '1.2折');
   assert.equal(officialPriceDiscount('seedance-2.0-value', row('720p', 0.15)).label, '1.6折');
   assert.equal(officialPriceDiscount('seedance-2.0-fast', row('720p', 0.15)).label, '1.9折');
+  assert.equal(officialPriceDiscount('seedance-2.0-fast-value', row('720p', 0.15)).label, '1.9折');
+  assert.equal(officialPriceDiscount('seedance-2.0-fast-value', row('480p', 0.15)).label, officialPriceDiscount('seedance-2.0-fast', row('480p', 0.15)).label);
   assert.equal(officialPriceDiscount('seedance-2.0-mini', row('480p', 0)).label, '0折');
+  assert.equal(officialPriceDiscount('seedance-2.0-mini-value', row('480p', 0.1)).label, officialPriceDiscount('seedance-2.0-mini', row('480p', 0.1)).label);
 });
 
 test('whole-number discounts omit decimal zero and explain the savings on hover', () => {
@@ -81,7 +84,7 @@ test('tier clicks update and hide the badge along with the displayed price', () 
 
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=575/);
-  assert.match(html, /\/styles\.css\?v=416/);
-  assert.match(app, /official-model-prices\.js\?v=3/);
+  assert.match(html, /\/app\.js\?v=578/);
+  assert.match(html, /\/styles\.css\?v=417/);
+  assert.match(app, /official-model-prices\.js\?v=5/);
 });

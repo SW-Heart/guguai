@@ -32,13 +32,15 @@ import { createApiClient } from './api-client.js?v=4';
     'wan-3.0': 'Wan 3.0',
     'seedance-2.0': 'Seedance 2.0',
     'seedance-2.0-mini': 'Seedance 2.0 Mini',
+    'seedance-2.0-mini-value': 'Seedance 2.0 Mini 特价',
     'seedance-2.0-fast': 'Seedance 2.0 Fast',
+    'seedance-2.0-fast-value': 'Seedance 2.0 Fast 特价',
     'seedance-2.0-value': 'Seedance 2.0 特价',
     'seedance-2.5-value': 'Seedance 2.5 特价',
     'seedance-2.5': 'Seedance 2.5',
     'minimax-h3-15s': 'Minimax H3',
   };
-  const routeModelQualities = { 'seedance-2.0-fast': ['720p'], 'minimax-h3-15s': ['480p', '768p', '1088p', '1440p'] };
+  const routeModelQualities = { 'seedance-2.0-fast': ['480p', '720p'], 'seedance-2.0-fast-value': ['480p', '720p'], 'minimax-h3-15s': ['480p', '768p', '1088p', '1440p'] };
   const logLabels = { generations: '生成任务', credits: '积分流水', llm: 'LLM 用量', audit: '管理员审计', system: '系统异常', client: '客户端日志' };
   // 每类日志后端实际支持的筛选项；不支持的字段不展示，避免“填了却不生效”。
   const logFilterSpec = {
@@ -1684,7 +1686,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 这样空分组（例如尚未配置的 1080p 线路池）也能稳定渲染“新增线路”和选路策略。
   function renderRoutePanel(data) {
     const root = $('#routePanel'); if (!root) return;
-    const families = ['wan-3.0', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
+    const families = ['wan-3.0', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-fast-value', 'seedance-2.0-mini', 'seedance-2.0-mini-value', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
     const normalizeModelId = id => /^seedance-?2\.0(?:[-_](?:text|img))$/.test(id) ? 'seedance-2.0' : id;
     const uniqueRoutes = new Map();
     const replacements = new Map();
@@ -1715,7 +1717,7 @@ import { createApiClient } from './api-client.js?v=4';
       const price = (data.prices || []).find(item => item.modelId === publicPriceModelId && item.quality === quality);
       const label = routeModelLabels[modelId] || modelId;
       const usable = routes.filter(route => route.adminEnabled && route.catalogStatus === 'available').length;
-      const hint = modelId === 'seedance-2.0-fast' ? '支持 9 图 / 3 视频 / 3 音频' : modelId === 'minimax-h3-15s' ? '支持 9 图 / 3 音频，仅横屏和竖屏' : '';
+      const hint = ['seedance-2.0-fast', 'seedance-2.0-fast-value'].includes(modelId) ? '支持 9 图 / 3 视频 / 3 音频' : modelId === 'minimax-h3-15s' ? '支持 9 图 / 3 音频，仅横屏和竖屏' : '';
       const priceText = price?.available ? `<span class="is-price">用户价 ¥${Number(price.yuan).toFixed(2)} / ${price.unit === 'request' ? '次' : '秒'} · ${money(price.credits)} 积分 / ${price.unit === 'request' ? '次' : '秒'}</span>` : '<span class="is-unavailable">暂无可用线路</span>';
       const isSelected = route => forcedRouteId === route.id || price?.selectedRouteId === route.id;
       return `<section class="route-group${activeFamily && activeFamily !== modelId ? ' route-group-hidden' : ''}" data-route-group="${esc(modelId)}">

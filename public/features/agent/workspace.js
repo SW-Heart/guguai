@@ -1,12 +1,12 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=4';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=5';
-import { createDirectorWorkspace } from '../drama/director-workspace.js?v=184';
+import { createDirectorWorkspace } from '../drama/director-workspace.js?v=186';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=20';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=7';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
-import { mountModelPreferencePicker } from './model-preference-picker.js?v=14';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=16';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 

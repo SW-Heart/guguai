@@ -19,7 +19,7 @@ const suppliedPrices = Object.freeze({
 });
 
 export function officialPriceDiscount(modelId, row) {
-  const baseModel = { 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
+  const baseModel = { 'seedance-2.0-mini-value':'seedance-2.0-mini', 'seedance-2.0-fast-value':'seedance-2.0-fast', 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
   const quality = String(row?.quality || '').toLowerCase();
   const supplied = suppliedPrices[baseModel];
   const officialYuan = supplied ? supplied.prices[quality] : seedancePrices[baseModel]?.[quality];

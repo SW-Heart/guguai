@@ -8,8 +8,8 @@ import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayloa
 
 const description = '价格低，稳定性和质量略低于满血版，生成时间稍长，适合对实效性和质量要求不高的任务';
 
-for (const version of ['2.0', '2.5']) {
-  test(`Seedance ${version} 特价 has matching capabilities and independent configurable routes`, () => {
+for (const [version, quality] of [['2.0', '1080p'], ['2.5', '1080p'], ['2.0-fast', '480p'], ['2.0-fast', '720p'], ['2.0-mini', '480p'], ['2.0-mini', '720p'], ['2.0-mini', '1080p']]) {
+  test(`Seedance ${version} 特价 ${quality} has matching capabilities and independent configurable routes`, () => {
     const originalKey = process.env.DIW_KEY;
     resetForTests();
     openDatabase({ file: ':memory:' });
@@ -20,34 +20,34 @@ for (const version of ['2.0', '2.5']) {
       const baseId = `seedance-${version}`;
       const catalog = publicVideoCapabilities().models;
       const value = catalog.find(model => model.id === modelId);
-      assert.equal(value.label, `Seedance ${version} 特价`);
+      assert.equal(value.label, `Seedance ${version.replace('-fast', ' Fast').replace('-mini', ' Mini')} 特价`);
       assert.equal(value.description, description);
       assert.deepEqual(value.modes, catalog.find(model => model.id === baseId).modes);
       assert.equal(modelControl(modelId).enabled, true);
       assert.equal(listModelRoutes().filter(route => route.logicalModelId === modelId).length, 0);
       assert.ok(publicModelPrices().filter(price => price.modelId === modelId).every(price => !price.available));
       const baseRoutes = listModelRoutes().filter(route => route.logicalModelId === baseId);
-      const route = createModelRoute({ logicalModelId:modelId, quality:'1080p', credentialId:'diw-main', upstreamModelId:`my-${version}-value`, priority:1, durations:[5,10,15,30], costYuan:0.1, salePriceYuan:0.2 });
+      const route = createModelRoute({ logicalModelId:modelId, quality, credentialId:'diw-main', upstreamModelId:`my-${version}-value`, priority:1, durations:[5,10,15,30], costYuan:0.1, salePriceYuan:0.2 });
       assert.ok(!publicVideoCapabilitiesWithControls().models.some(model => model.id === modelId));
       sql("UPDATE model_routes SET catalog_status='available' WHERE id=:id").run({id:route.id});
-      updateRoutePolicy(modelId, '1080p', route.id);
+      updateRoutePolicy(modelId, quality, route.id);
       for (const generationType of ['TEXT', 'REFERENCE']) {
-        const request = validateVideoRequest({modelId, generationType, quality:'1080p', duration:10, aspectRatio:'1:1'}, generationType === 'REFERENCE' ? 1 : 0);
+        const request = validateVideoRequest({modelId, generationType, quality, duration:10, aspectRatio:'1:1'}, generationType === 'REFERENCE' ? 1 : 0);
         assert.equal(request.modelId, modelId);
         assert.equal(request.provider, 'route');
-        assert.equal(request.referenceLimits.image, version === '2.0' ? 9 : 30);
-        assert.equal(selectModelRoute({logicalModelId:modelId, quality:'1080p', duration:10, aspectRatio:'1:1', referenceCounts:{image:generationType === 'REFERENCE' ? 1 : 0}}).id, route.id);
+        assert.equal(request.referenceLimits.image, version === '2.5' ? 30 : 9);
+        assert.equal(selectModelRoute({logicalModelId:modelId, quality, duration:10, aspectRatio:'1:1', referenceCounts:{image:generationType === 'REFERENCE' ? 1 : 0}}).id, route.id);
       }
       assert.equal(modelRouteCharge(route, 10).total, 20);
       const config = {videoCapabilities:publicVideoCapabilitiesWithControls()};
       assert.ok(canvasGenerationModels('video', config).some(model => model.id === modelId));
-      const draft = {type:'video', modelId, mode:'TEXT', prompt:'风吹树叶', aspect:'1:1', quality:'1080p', duration:10, attachments:[]};
-      assert.deepEqual(canvasGenerationOptions(draft, config).qualities, ['1080p']);
+      const draft = {type:'video', modelId, mode:'TEXT', prompt:'风吹树叶', aspect:'1:1', quality, duration:10, attachments:[]};
+      assert.deepEqual(canvasGenerationOptions(draft, config).qualities, [quality]);
       assert.equal(canvasGenerationPayload(draft, config).modelId, modelId);
-      assert.equal(publicModelPrices().find(price => price.modelId === modelId && price.quality === '1080p').yuan, 0.2);
+      assert.equal(publicModelPrices().find(price => price.modelId === modelId && price.quality === quality).yuan, 0.2);
       assert.deepEqual(listModelRoutes().filter(item => item.logicalModelId === baseId), baseRoutes);
       updateModelRoute(route.id, {adminEnabled:false});
-      assert.equal(selectModelRoute({logicalModelId:modelId, quality:'1080p'}), null);
+      assert.equal(selectModelRoute({logicalModelId:modelId, quality}), null);
       assert.ok(!publicVideoCapabilitiesWithControls().models.some(model => model.id === modelId));
     } finally {
       closeDatabase({checkpoint:false});

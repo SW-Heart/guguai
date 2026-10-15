@@ -79,15 +79,15 @@ test('generator hover and selection override local light tokens and remain disti
 
 test('logo and parameter fixes reach all current versioned frontend entries', () => {
   const entries = [
-    ['index.html', ['/app.js?v=575', '/styles/theme.css?v=3']],
-    ['app.js', ['./components/model-logo.js?v=5', './drama-studio.js?v=291', './features/agent/workspace.js?v=158']],
-    ['drama-studio.js', ['./components/model-logo.js?v=5', './features/drama/director-workspace.js?v=184']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=184', './model-preference-picker.js?v=14']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=15', '../agent/model-preference-picker.js?v=14', '../../components/model-logo.js?v=5']],
-    ['features/drama/canvas-generation.js', ['../../components/model-logo.js?v=5']],
-    ['features/drama/canvas-generation-references.js', ['./canvas-generation.js?v=15']],
-    ['features/drama/storyboard-drafts.js', ['./canvas-generation.js?v=15', './canvas-generation-references.js?v=7']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=15', '../../components/model-logo.js?v=5']],
+    ['index.html', ['/app.js?v=578', '/styles/theme.css?v=3']],
+    ['app.js', ['./components/model-logo.js?v=7', './drama-studio.js?v=293', './features/agent/workspace.js?v=160']],
+    ['drama-studio.js', ['./components/model-logo.js?v=7', './features/drama/director-workspace.js?v=186']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=186', './model-preference-picker.js?v=16']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=17', '../agent/model-preference-picker.js?v=16', '../../components/model-logo.js?v=7']],
+    ['features/drama/canvas-generation.js', ['../../components/model-logo.js?v=7']],
+    ['features/drama/canvas-generation-references.js', ['./canvas-generation.js?v=17']],
+    ['features/drama/storyboard-drafts.js', ['./canvas-generation.js?v=17', './canvas-generation-references.js?v=9']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=17', '../../components/model-logo.js?v=7']],
   ];
   for (const [path, urls] of entries) for (const url of urls) assert.ok(read(path).includes(url), `${path}: ${url}`);
 });

@@ -84,6 +84,6 @@ test('Wan admin route groups and cache version are available', () => {
   assert.match(source, /const families = \['wan-3\.0'/);
   assert.match(source, /wd-wan-3\.0-720p/);
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/guguadmin.js?v=44'));
+  assert.ok(html.includes('/guguadmin.js?v=46'));
   assert.ok(!html.includes('/guguadmin.js?v=41'));
 });

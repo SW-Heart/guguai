@@ -14,7 +14,7 @@ const extract = (source, start, end) => {
   assert.ok(until > offset, end);
   return source.slice(offset, until);
 };
-const defaults = [['minimax-h3-15s', 10], ['seedance-2.0', 15], ['seedance-2.5', 30]];
+const defaults = [['minimax-h3-15s', 10], ['seedance-2.0', 15], ['seedance-2.5', 30], ['seedance-2.0-fast-value', 15], ['seedance-2.0-mini-value', 15]];
 const config = { videoCapabilities:{ models:defaults.map(([id, max]) => ({
   id, availability:'available', modes:['TEXT', 'REFERENCE'].map(generationType => ({
     generationType, aspectRatios:['16:9', '9:16'], qualityOptions:['720p', '480p'],
@@ -105,12 +105,12 @@ test('defaults respect quality-specific duration limits and fixed-duration model
 
 test('video defaults refresh every versioned entry and shared import', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=575']],
-    ['app.js', ['./features/generation/video-defaults.js?v=2', './drama-studio.js?v=291', './features/agent/workspace.js?v=158']],
-    ['drama-studio.js', ['./features/generation/video-defaults.js?v=2', './features/drama/director-workspace.js?v=184']],
-    ['features/drama/canvas-generation.js', ['../generation/video-defaults.js?v=2']],
-    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=15', '../agent/model-preference-picker.js?v=14']],
-    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=15']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=184', './model-preference-picker.js?v=14']],
+    ['index.html', ['/app.js?v=578']],
+    ['app.js', ['./features/generation/video-defaults.js?v=4', './drama-studio.js?v=293', './features/agent/workspace.js?v=160']],
+    ['drama-studio.js', ['./features/generation/video-defaults.js?v=4', './features/drama/director-workspace.js?v=186']],
+    ['features/drama/canvas-generation.js', ['../generation/video-defaults.js?v=4']],
+    ['features/drama/director-workspace.js', ['./canvas-generation.js?v=17', '../agent/model-preference-picker.js?v=16']],
+    ['features/agent/model-preference-picker.js', ['../drama/canvas-generation.js?v=17']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=186', './model-preference-picker.js?v=16']],
   ]) for (const url of urls) assert.ok(read(file).includes(url), `${file}: ${url}`);
 });

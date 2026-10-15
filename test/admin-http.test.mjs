@@ -63,7 +63,7 @@ test('admin HTTP permissions and core workflows', async t => {
     res.end(JSON.stringify({ data: [
       ...DEFAULT_MODEL_ROUTES.map(route => ({ id: route.upstreamModelId })),
       { id: 'http-test-upstream' }, { id: 'http-test-1080p' },
-      ...['seedance-2.0-mini', 'seedance-2.0-value', 'seedance-2.5-value'].map(id => ({ id: `http-${id}` })),
+      ...['seedance-2.0-mini', 'seedance-2.0-mini-value', 'seedance-2.0-value', 'seedance-2.5-value', 'seedance-2.0-fast', 'seedance-2.0-fast-value'].map(id => ({ id: `http-${id}` })),
     ] }));
   });
   await new Promise(resolve => catalog.listen(0, '127.0.0.1', resolve));
@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=44/);
+  assert.match(adminHtml, /guguadmin\.js\?v=46/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -396,17 +396,18 @@ test('admin HTTP permissions and core workflows', async t => {
   const disable1080 = await admin.call('/api/admin/model-routes/' + route1080.data.route.id, { method:'PATCH', headers:{ Origin:base, 'X-CSRF-Token':csrf }, body:{ adminEnabled:false, expectedVersion:route1080.data.route.version } });
   assert.equal(disable1080.response.status, 200);
   assert.equal(qualities1080((await userClient.call('/api/config')).data), false);
-  for (const [modelId, label] of [['seedance-2.0-mini','Seedance 2.0 Mini'], ['seedance-2.0-value','Seedance 2.0 特价'], ['seedance-2.5-value','Seedance 2.5 特价']]) {
-    const added = await admin.call('/api/admin/model-routes', {method:'POST', headers:{Origin:base, 'X-CSRF-Token':csrf}, body:{logicalModelId:modelId, quality:'1080p', credentialId:'diw-main', upstreamModelId:`http-${modelId}`, durations:[5,10,15], priority:1, costYuan:0.1, salePriceYuan:0.2}});
+  for (const [modelId, label] of [['seedance-2.0-mini','Seedance 2.0 Mini'], ['seedance-2.0-mini-value','Seedance 2.0 Mini 特价'], ['seedance-2.0-value','Seedance 2.0 特价'], ['seedance-2.5-value','Seedance 2.5 特价'], ['seedance-2.0-fast','Seedance 2.0 Fast'], ['seedance-2.0-fast-value','Seedance 2.0 Fast 特价']]) {
+    const quality = modelId.includes('-fast') ? '480p' : '1080p';
+    const added = await admin.call('/api/admin/model-routes', {method:'POST', headers:{Origin:base, 'X-CSRF-Token':csrf}, body:{logicalModelId:modelId, quality, credentialId:'diw-main', upstreamModelId:`http-${modelId}`, durations:[5,10,15], priority:1, costYuan:0.1, salePriceYuan:0.2}});
     assert.equal(added.response.status, 201);
     markRouteAvailable(added.data.route.id);
     const config = (await userClient.call('/api/config')).data;
     assert.equal(config.videoCapabilities.models.find(model => model.id === modelId).label, label);
-    const quote = await userClient.call('/api/model-quote', {method:'POST',body:{modelId,generationType:'TEXT',quality:'1080p',duration:10,aspectRatio:'16:9'}});
+    const quote = await userClient.call('/api/model-quote', {method:'POST',body:{modelId,generationType:'TEXT',quality,duration:10,aspectRatio:'16:9'}});
     assert.equal(quote.response.status, 200);
     assert.equal(quote.data.credits, 20);
     const prices = (await userClient.call('/api/public/model-prices')).data.items;
-    assert.equal(prices.find(price => price.modelId === modelId && price.quality === '1080p').credits, 2);
+    assert.equal(prices.find(price => price.modelId === modelId && price.quality === quality).credits, 2);
   }
 
   const unavailable1080 = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'seedance-2.0', generationType:'TEXT', quality:'1080p', duration:10, aspectRatio:'16:9' } });

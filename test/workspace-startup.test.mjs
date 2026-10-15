@@ -6,6 +6,56 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 
+test('workspace paints behind the loading surface before the startup handoff', async () => {
+  const frames = [];
+  const element = (...initial) => {
+    const classes = new Set(initial);
+    return { inert:false, classList:{
+      add: value => classes.add(value), remove: value => classes.delete(value),
+      contains: value => classes.has(value),
+      toggle: (value, force) => force ? classes.add(value) : classes.delete(value),
+    } };
+  };
+  const boot = element();
+  const app = element('hidden');
+  const auth = element('hidden');
+  let current = true;
+  const surfaces = [];
+  const context = vm.createContext({
+    $: selector => ({ '#bootView':boot, '#appView':app, '#authView':auth })[selector],
+    toggleClass:(node, name, force) => node.classList.toggle(name, force),
+    setDesktopSurface:value => surfaces.push(value),
+    requestAnimationFrame:callback => frames.push(callback), isCurrent:() => current,
+  });
+  vm.runInContext(extract('async function showApp(', 'function loginReturnDestination()'), context);
+  const handoff = vm.runInContext('showApp(isCurrent)', context);
+  assert.equal(app.classList.contains('hidden'), false);
+  assert.equal(app.inert, true);
+  assert.equal(boot.classList.contains('is-revealing'), true);
+  frames.shift()();
+  assert.equal(boot.classList.contains('hidden'), false);
+  assert.deepEqual(surfaces, []);
+  frames.shift()();
+  await handoff;
+  assert.equal(app.inert, false);
+  assert.equal(boot.classList.contains('hidden'), true);
+  assert.equal(boot.classList.contains('is-revealing'), false);
+  assert.deepEqual(surfaces, ['app']);
+
+  // A logout during those frames must retain the newly shown login surface.
+  boot.classList.remove('hidden');
+  auth.classList.remove('hidden');
+  const cancelled = vm.runInContext('showApp(isCurrent)', context);
+  current = false;
+  app.classList.add('hidden');
+  frames.shift()(); frames.shift()();
+  await cancelled;
+  assert.equal(auth.classList.contains('hidden'), false);
+  assert.equal(app.classList.contains('hidden'), true);
+  assert.equal(boot.classList.contains('hidden'), false);
+  assert.deepEqual(surfaces, ['app']);
+});
+
 test('video model initialization preserves valid choices and excludes coming-soon defaults', () => {
   const select = { value:'existing' };
   const widget = { dataset:{} };
@@ -170,7 +220,7 @@ test('messages are scheduled only after notification loading and workspace start
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(source.includes('./features/notifications/controller.js?v=7'));
-  assert.ok(html.includes('/app.js?v=575'));
+  assert.ok(html.includes('/app.js?v=578'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=6\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });

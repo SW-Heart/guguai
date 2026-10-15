@@ -16,7 +16,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
-    'Wan 3.0', 'Seedance 2.0', 'Seedance 2.0 Mini', 'Seedance 2.5', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
+    'Wan 3.0', 'Seedance 2.0', 'Seedance 2.0 Mini', 'Seedance 2.5', 'Seedance 2.0 Mini 特价', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.0 Fast 特价', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
   ]);
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');
@@ -177,10 +177,10 @@ test('Seedance 2.0 validates 1080p for text and reference generation', () => {
 test('Seedance 2.0 Fast supports text and multimodal reference generation', () => {
   const model = publicVideoCapabilities().models.find(model => model.id === 'seedance-2.0-fast');
   assert.deepEqual(model.modes.map(mode => mode.generationType), ['TEXT', 'REFERENCE']);
-  assert.deepEqual(model.modes[1].qualityOptions, ['720p']);
+  assert.deepEqual(model.modes[1].qualityOptions, ['480p', '720p']);
   assert.deepEqual(model.modes[1].referenceLimits, { image:9, video:3, audio:3, total:15 });
-  for (const generationType of ['TEXT', 'REFERENCE']) {
-    const request = validateVideoRequest({ modelId:model.id, generationType, duration:15, quality:'720p' }, generationType === 'REFERENCE' ? 1 : 0);
+  for (const generationType of ['TEXT', 'REFERENCE']) for (const quality of ['480p', '720p']) {
+    const request = validateVideoRequest({ modelId:model.id, generationType, duration:15, quality }, generationType === 'REFERENCE' ? 1 : 0);
     assert.equal(request.provider, 'route');
   }
 });
