@@ -1,6 +1,7 @@
 const modelDurations = Object.freeze({
   'minimax-h3-15s': 10,
   'seedance-2.0': 15,
+  'wan-3.0-value': 15,
   'seedance-2.0-value': 15,
   'seedance-2.0-mini-value': 15,
   'seedance-2.0-fast-value': 15,

@@ -47,11 +47,13 @@ export function createAutodlProvider({
       retryableBusinessResponse: true,
     });
   }
-  // High-resolution workflows also need the exact frame size in the label.
-  function autodlResolution(task) {
+  // Text workflows require exact frame sizes at every quality. Image workflows
+  // retain their existing low-resolution labels.
+  function autodlResolution(task, textOnly) {
     const quality = task.quality || '768p';
     const portrait = task.aspectRatio === '9:16';
-    const size = { '1088p': ['1088*1920', '1920*1088'], '1440p': ['1440*2560', '2560*1440'] }[quality];
+    const sizes = { '480p': ['480*864', '864*480'], '768p': ['768*1376', '1376*768'], '1088p': ['1088*1920', '1920*1088'], '1440p': ['1440*2560', '2560*1440'] };
+    const size = textOnly || ['1088p', '1440p'].includes(quality) ? sizes[quality] : null;
     return `${quality}${portrait ? '竖' : '横'}${size ? `(${portrait ? size[0] : size[1]})` : ''}`;
   }
   function defaultPayload(task, refs) {
@@ -59,7 +61,7 @@ export function createAutodlProvider({
     const value = {
       prompt: task.prompt,
       duration: task.duration,
-      resolution: autodlResolution(task),
+      resolution: autodlResolution(task, !groups.images?.some(Boolean)),
     };
     groups.images?.slice(0, task.referenceLimits?.image || task.maxReferenceImages || 9).forEach((url, index) => { value[`ref_image_${index}`] = url; });
     groups.audios?.slice(0, task.referenceLimits?.audio || 3).forEach((url, index) => { value[`ref_audio_${index}`] = url; });
@@ -127,10 +129,19 @@ export function createAutodlProvider({
     const submit = runtime.fetchJson || fetchJson;
     let providerTaskId = '';
     try {
-      const created = await submit(`${baseUrl}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(workflowId)}`, {
+      const requestPayload = payload(task, refs);
+      // H3's image/audio workflow requires an image even when audio is supplied.
+      // Select by the images actually sent, so text-only and audio-only jobs
+      // both use the text workflow across routed and legacy submissions.
+      const isMinimaxH3 = task.videoModelId === 'minimax-h3-15s'
+        || task.videoProfile === 'minimax-h3-15s'
+        || workflowId === 'minimax_h3_image_audio_to_video_v2_15s';
+      const hasImage = Object.entries(requestPayload).some(([key, value]) => /^ref_image_\d+$/.test(key) && Boolean(value));
+      const submitWorkflowId = isMinimaxH3 && !hasImage ? 'minimax_h3_z0901' : workflowId;
+      const created = await submit(`${baseUrl}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(submitWorkflowId)}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload(task, refs)),
+        body: JSON.stringify(requestPayload),
         signal: AbortSignal.timeout(submitTimeoutMs),
       });
       providerTaskId = taskId(created);

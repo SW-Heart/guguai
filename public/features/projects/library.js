@@ -49,7 +49,7 @@ export async function openProjectTypeDialog(trigger = document.activeElement) {
     return rect.width && rect.height ? { x:rect.left + rect.width / 2, y:rect.top + rect.height / 2 } : null;
   };
   const origin = getOrigin();
-  const { openProjectTypeModal } = await import('../../vendor/ui/create-project.js?v=4');
+  const { openProjectTypeModal } = await import('../../vendor/ui/create-project.js?v=5');
   return openProjectTypeModal(['canvas', 'drama'].map(type => ({
     type, label:projectTypeLabels[type], description:projectTypeDescriptions[type], icon:projectTypeIcons[type],
   })), { origin, getOrigin });

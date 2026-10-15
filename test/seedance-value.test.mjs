@@ -8,19 +8,20 @@ import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayloa
 
 const description = '价格低，稳定性和质量略低于满血版，生成时间稍长，适合对实效性和质量要求不高的任务';
 
-for (const [version, quality] of [['2.0', '1080p'], ['2.5', '1080p'], ['2.0-fast', '480p'], ['2.0-fast', '720p'], ['2.0-mini', '480p'], ['2.0-mini', '720p'], ['2.0-mini', '1080p']]) {
-  test(`Seedance ${version} 特价 ${quality} has matching capabilities and independent configurable routes`, () => {
+for (const [version, quality] of [['wan-3.0', '480p'], ['wan-3.0', '720p'], ['wan-3.0', '1080p'], ['2.0', '1080p'], ['2.5', '1080p'], ['2.0-fast', '480p'], ['2.0-fast', '720p'], ['2.0-mini', '480p'], ['2.0-mini', '720p'], ['2.0-mini', '1080p']]) {
+  test(`${version === 'wan-3.0' ? 'Wan 3.0' : `Seedance ${version}`} 特价 ${quality} has matching capabilities and independent configurable routes`, () => {
     const originalKey = process.env.DIW_KEY;
     resetForTests();
     openDatabase({ file: ':memory:' });
     process.env.DIW_KEY = 'test-value-key';
     try {
       ensureDefaultModelRoutes();
-      const modelId = `seedance-${version}-value`;
-      const baseId = `seedance-${version}`;
+      const baseId = version === 'wan-3.0' ? version : `seedance-${version}`;
+      const modelId = `${baseId}-value`;
       const catalog = publicVideoCapabilities().models;
       const value = catalog.find(model => model.id === modelId);
-      assert.equal(value.label, `Seedance ${version.replace('-fast', ' Fast').replace('-mini', ' Mini')} 特价`);
+      assert.equal(value.label, version === 'wan-3.0' ? 'Wan 3.0 特价' : `Seedance ${version.replace('-fast', ' Fast').replace('-mini', ' Mini')} 特价`);
+      assert.equal(value.iconKey, version === 'wan-3.0' ? 'wan' : 'bytedance');
       assert.equal(value.description, description);
       assert.deepEqual(value.modes, catalog.find(model => model.id === baseId).modes);
       assert.equal(modelControl(modelId).enabled, true);

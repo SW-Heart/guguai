@@ -1,5 +1,5 @@
-import { createCanvasGenerationDraft, reconcileCanvasGenerationDraft, canvasGenerationFrameSize } from './canvas-generation.js?v=17';
-import { addGenerationReference, admitLinkedReference } from './canvas-generation-references.js?v=9';
+import { createCanvasGenerationDraft, reconcileCanvasGenerationDraft, canvasGenerationFrameSize } from './canvas-generation.js?v=18';
+import { addGenerationReference, admitLinkedReference } from './canvas-generation-references.js?v=10';
 import { addLink, normalizeLinks } from './canvas-links.js?v=2';
 
 // Turns the agent's storyboard plans into ordinary canvas generation cards.

@@ -103,8 +103,8 @@ test('desktop drama asset picker returns the complete batch when multiple is req
 
 test('batch upload changes reach the current versioned frontend entrypoints', async () => {
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/\/app\.js\?v=581\b/);
-  assert.match(app,/\.\/drama-studio\.js\?v=294\b/);
+  assert.match(html,/\/app\.js\?v=583\b/);
+  assert.match(app,/\.\/drama-studio\.js\?v=296\b/);
 });
 
 test('short-drama asset imports keep the local copy and skip cloud upload', async () => {

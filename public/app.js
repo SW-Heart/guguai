@@ -1,5 +1,5 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=7';
-import { defaultVideoDuration } from './features/generation/video-defaults.js?v=4';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
+import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
 import { officialPriceDiscount } from './state/official-model-prices.js?v=5';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
@@ -24,7 +24,7 @@ import { createOffscreenImages } from './features/media/offscreen-images.js?v=1'
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
-import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=3';
+import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=4';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 
 const $ = selector => document.querySelector(selector);
@@ -884,8 +884,11 @@ $('#authForm').onsubmit = async event => {
   } catch (error) { $('#authError').textContent = error.status === 404 ? '注册服务未启动，请重启后端服务' : error.message; }
   finally { button.disabled = false; }
 };
+let creditDetailPage = 1;
+const creditDetailPageSize = 50;
+const creditDetailRowMarkup = new WeakMap();
 function renderCreditDetail() {
-  const dialog = $('#creditDetailDialog'); if (!dialog) return;
+  const dialog = $('#creditDetailDialog'); if (!dialog?.open) return;
   const balance = Number(state.creditWallet.balance ?? state.credits) || 0;
   $('#creditDetailBalance').textContent = creditText(balance);
   const spend = state.creditDetailTab === 'spend';
@@ -895,15 +898,30 @@ function renderCreditDetail() {
   $('#creditEarnTab').setAttribute('aria-selected', String(!spend));
   $('#creditSpendPanel').hidden = !spend;
   $('#creditEarnPanel').hidden = spend;
+  const body = spend ? $('#creditSpendBody') : $('#creditEarnBody');
+  const inactiveBody = spend ? $('#creditEarnBody') : $('#creditSpendBody');
+  if (inactiveBody.innerHTML) inactiveBody.innerHTML = '';
+  creditDetailRowMarkup.delete(inactiveBody);
+  const updateRows = html => {
+    if (creditDetailRowMarkup.get(body) === html) return;
+    body.innerHTML = html;
+    creditDetailRowMarkup.set(body, html);
+    body.closest('.credit-table-wrap').scrollTop = 0;
+  };
+  $('#creditDetailPagination').hidden = !state.creditTransactionsLoaded;
   if (!state.creditTransactionsLoaded) {
     const loading = columns => `<tr><td colspan="${columns}"><div class="credit-empty">正在加载记录…</div></td></tr>`;
-    $('#creditSpendBody').innerHTML = loading(5);
-    $('#creditEarnBody').innerHTML = loading(3);
+    updateRows(loading(spend ? 5 : 3));
     return;
   }
   const entries = state.creditTransactions.filter(entry => { const amount = creditEntryAmount(entry); return spend ? amount < 0 : amount > 0; });
-  $('#creditSpendBody').innerHTML = renderCreditRows(spend ? entries : [], 'spend');
-  $('#creditEarnBody').innerHTML = renderCreditRows(spend ? [] : entries, 'earn');
+  const pages = Math.max(1, Math.ceil(entries.length / creditDetailPageSize));
+  creditDetailPage = Math.max(1, Math.min(creditDetailPage, pages));
+  const start = (creditDetailPage - 1) * creditDetailPageSize;
+  updateRows(renderCreditRows(entries.slice(start, start + creditDetailPageSize), spend ? 'spend' : 'earn'));
+  $('#creditDetailPageInfo').textContent = `第 ${creditDetailPage} / ${pages} 页 · 共 ${entries.length} 条`;
+  $('#creditDetailPrevious').disabled = creditDetailPage === 1;
+  $('#creditDetailNext').disabled = creditDetailPage === pages;
 }
 function selectedWechatAmount() {
   return state.wechatCustomAmount.trim() || state.wechatTopupAmount;
@@ -1087,7 +1105,7 @@ async function startAlipayTopup() {
     if (accountScope.isCurrent(requestAccount)) setAlipayStatus(error.message || '支付订单创建失败', 'error');
   } finally { for (const target of [button, retryButton]) { target.disabled = false; target.removeAttribute('aria-busy'); } }
 }
-function setCreditDetailTab(tab) { state.creditDetailTab = tab === 'earn' ? 'earn' : 'spend'; renderCreditDetail(); }
+function setCreditDetailTab(tab) { state.creditDetailTab = tab === 'earn' ? 'earn' : 'spend'; creditDetailPage = 1; renderCreditDetail(); }
 // The sidebar shows a short balance; the full value stays available to
 // assistive tech and the credit popover.
 function renderCreditBalance() {
@@ -1215,8 +1233,9 @@ async function openCreditDetail() {
   $('#accountMenu').classList.add('hidden');
   setCreditPopoverOpen(false);
   dialog.hidden = false;
-  renderCreditDetail();
+  creditDetailPage = 1;
   dialog.showModal();
+  renderCreditDetail();
   requestAnimationFrame(() => $('#closeCreditDetail').focus());
   await loadCredits();
 }
@@ -1246,6 +1265,8 @@ $('#creditDetailEntry').onclick = () => { void openCreditDetail(); };
 $('#creditDetailPurchase').onclick = () => { void openCreditPurchase(); };
 $('#creditSpendTab').onclick = () => setCreditDetailTab('spend');
 $('#creditEarnTab').onclick = () => setCreditDetailTab('earn');
+$('#creditDetailPrevious').onclick = () => { creditDetailPage -= 1; renderCreditDetail(); };
+$('#creditDetailNext').onclick = () => { creditDetailPage += 1; renderCreditDetail(); };
 // Radio-style card groups: click selects, arrow keys move selection like native radios.
 function bindPurchaseRadioGroup(selector, select) {
   const buttons = $$(selector).filter(button => !button.hidden);
@@ -2185,7 +2206,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=161'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
+  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=163'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2196,7 +2217,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = Promise.all([import('./drama-studio.js?v=294'), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
+    dramaControllerPromise = Promise.all([import('./drama-studio.js?v=296'), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -4334,7 +4355,7 @@ async function submitGeneration(type, form, payload) {
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
-  const routedVideo = type === 'video' && ['seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
+  const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
   const preparationGroupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -4554,7 +4575,7 @@ function updateVideoCost() {
   const sequence = ++videoQuoteSequence;
   const input = currentVideoQuoteInput();
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
-  const routed = ['seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
+  const routed = ['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }

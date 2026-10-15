@@ -8,7 +8,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=6">
-  <link rel="stylesheet" href="/styles.css?v=417">
+  <link rel="stylesheet" href="/styles.css?v=418">
   <link rel="stylesheet" href="/payment.css?v=3">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
 </head>
@@ -195,6 +195,7 @@
       <div class="credit-detail-tabs" role="tablist" aria-label="积分明细类型"><button id="creditSpendTab" class="active" type="button" role="tab" aria-selected="true" aria-controls="creditSpendPanel">消耗</button><button id="creditEarnTab" type="button" role="tab" aria-selected="false" aria-controls="creditEarnPanel">获取</button></div>
       <section id="creditSpendPanel" role="tabpanel" aria-labelledby="creditSpendTab"><div class="credit-table-wrap"><table class="credit-table"><thead><tr><th>时间</th><th>类型</th><th>使用模型</th><th>积分数</th><th>状态</th></tr></thead><tbody id="creditSpendBody"></tbody></table></div></section>
       <section id="creditEarnPanel" role="tabpanel" aria-labelledby="creditEarnTab" hidden><div class="credit-table-wrap"><table class="credit-table"><thead><tr><th>时间</th><th>类型</th><th>积分数</th></tr></thead><tbody id="creditEarnBody"></tbody></table></div></section>
+      <nav id="creditDetailPagination" class="credit-detail-pagination" aria-label="积分记录分页" hidden><span id="creditDetailPageInfo" role="status" aria-live="polite"></span><button id="creditDetailPrevious" type="button">上一页</button><button id="creditDetailNext" type="button">下一页</button></nav>
     </div>
   </dialog>
   <dialog id="creditPurchaseDialog" class="credit-purchase-dialog" aria-labelledby="creditPurchaseTitle" hidden>
@@ -285,6 +286,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=581"></script>
+  <script type="module" src="/app.js?v=583"></script>
 </body>
 </html>

@@ -220,17 +220,22 @@ test('the workspace opens after configuration while other data loads, and messag
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(source.includes('./features/notifications/controller.js?v=8'));
-  assert.ok(html.includes('/app.js?v=581'));
+  assert.ok(html.includes('/app.js?v=583'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=[67]\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });
 
-test('canvas bundle contains one React hook dispatcher shared by all canvas components',()=>{
-  const bundle=readFileSync(new URL('../public/vendor/director/reference-canvas.js',import.meta.url),'utf8');
-  const hooks=[...bundle.matchAll(/\.useRef=function\(/g)];
-  assert.equal(hooks.length,1,'two bundled React runtimes crash canvas initialization with a null useRef dispatcher');
-  const versions=new Set([...bundle.matchAll(/\.version="(19\.[0-9]+\.[0-9]+)"/g)].map(match=>match[1]));
-  assert.equal(versions.size,1,'React and its renderers must have the same version');
+test('canvas shares its React hook dispatcher with the project components',()=>{
+  const canvas=readFileSync(new URL('../public/vendor/director/reference-canvas.js',import.meta.url),'utf8');
+  const ui=readFileSync(new URL('../public/vendor/ui/create-project.js',import.meta.url),'utf8');
+  const runtimeUrl = /["'](\.\.\/react\/runtime-[a-f0-9]+\.js\?v=[a-f0-9]+)["']/;
+  const canvasUrl=canvas.match(runtimeUrl)?.[1];
+  assert.ok(canvasUrl, 'canvas must import the shared runtime');
+  assert.equal(ui.match(runtimeUrl)?.[1], canvasUrl);
+  assert.doesNotMatch(canvas, /\.useRef=function\(/);
+  assert.doesNotMatch(ui, /\.useRef=function\(/);
+  const runtime=readFileSync(new URL(canvasUrl, new URL('../public/vendor/director/reference-canvas.js',import.meta.url)),'utf8');
+  assert.equal([...runtime.matchAll(/\.useRef=function\(/g)].length,1);
 });
 
 test('background data starts with the configuration and marks the workspace ready only when it settles', async () => {

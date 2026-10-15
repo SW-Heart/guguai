@@ -12,10 +12,14 @@ const {
 
 test('AutoDL payload maps every supported resolution and caps typed references', () => {
   for (const [quality, aspectRatio, resolution] of [
-    ['480p', '16:9', '480p横'],
-    ['480p', '9:16', '480p竖'],
-    ['768p', '16:9', '768p横'],
-    ['768p', '9:16', '768p竖'],
+    ['480p', '16:9', '480p横(864*480)'],
+    ['480p', '9:16', '480p竖(480*864)'],
+    ['768p', '16:9', '768p横(1376*768)'],
+    ['768p', '9:16', '768p竖(768*1376)'],
+    ['1088p', '16:9', '1088p横(1920*1088)'],
+    ['1088p', '9:16', '1088p竖(1088*1920)'],
+    ['1440p', '16:9', '1440p横(2560*1440)'],
+    ['1440p', '9:16', '1440p竖(1440*2560)'],
   ]) {
     const payload = buildAutodlPayload({ prompt: '测试', duration: 5, quality, aspectRatio }, []);
     assert.equal(payload.resolution, resolution);
@@ -34,6 +38,29 @@ test('AutoDL payload maps every supported resolution and caps typed references',
   assert.equal(payload.ref_audio_0, 'audio-0');
   assert.equal(payload.ref_audio_2, 'audio-2');
   assert.equal(payload.ref_audio_3, undefined);
+});
+
+test('MiniMax text submissions send all eight resolution labels to the text workflow', async () => {
+  for (const [quality, width, height] of [['480p', 480, 864], ['768p', 768, 1376], ['1088p', 1088, 1920], ['1440p', 1440, 2560]]) {
+    for (const portrait of [true, false]) {
+      let request;
+      await createAutodlVideo({ videoModelId:'minimax-h3-15s', prompt:'测试', duration:5, quality, aspectRatio:portrait ? '9:16' : '16:9' },
+        { images:[], audios:['https://ref.example/audio.mp3'] }, { deferPolling:true }, {
+          fetchJson:async (url, options) => {
+            request = { url, body:JSON.parse(options.body) };
+            return { code:'Success', data:{ task_id:'text-task' } };
+          },
+        });
+      assert.match(request.url, /\/minimax_h3_z0901$/);
+      assert.equal(request.body.resolution, `${quality}${portrait ? '竖' : '横'}(${portrait ? width : height}*${portrait ? height : width})`);
+      assert.equal(request.body.ref_audio_0, 'https://ref.example/audio.mp3');
+    }
+  }
+  assert.equal(buildAutodlPayload({ prompt:'p' }, []).resolution, '768p横(1376*768)');
+  for (const quality of ['480p', '768p']) {
+    assert.equal(buildAutodlPayload({ quality, aspectRatio:'9:16' }, ['image']).resolution, `${quality}竖`);
+    assert.equal(buildAutodlPayload({ quality, aspectRatio:'16:9' }, ['image']).resolution, `${quality}横`);
+  }
 });
 
 test('AutoDL only classifies a non-success code with null data as retryable', () => {
@@ -112,7 +139,23 @@ test('AutoDL submit persists the provider task before polling and does not resub
 
   assert.deepEqual(submitted, [{ provider: 'autodl', taskId: 'provider-task-1' }]);
   assert.deepEqual(calls.map(call => call.method), ['POST', 'GET']);
+  assert.match(calls[0].url, /\/minimax_h3_z0901$/);
   assert.equal(result.url, 'https://example.com/final.mp4');
+});
+
+test('legacy MiniMax submissions retain the configured image workflow when an image is present', async () => {
+  const calls = [];
+  await createAutodlVideo({ videoModelId:'minimax-h3-15s', prompt:'参考创作', duration:5 }, {
+    images:['https://ref.example/image.png'], audios:['https://ref.example/audio.mp3'],
+  }, { deferPolling:true }, {
+    fetchJson:async (url, options) => {
+      calls.push({ url, payload:JSON.parse(options.body) });
+      return { code:'Success', data:{ task_id:'image-task' } };
+    },
+  });
+  assert.doesNotMatch(calls[0].url, /\/minimax_h3_z0901$/);
+  assert.equal(calls[0].payload.ref_image_0, 'https://ref.example/image.png');
+  assert.equal(calls[0].payload.ref_audio_0, 'https://ref.example/audio.mp3');
 });
 
 test('resumed AutoDL polling only queries the existing provider task', async () => {
