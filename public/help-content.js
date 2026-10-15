@@ -2005,7 +2005,7 @@ export const helpArticles = [
       "mentions"
     ],
     "screenshot": {
-      "src": "/home-preview-image.png",
+      "src": "/home-preview-image-1470.webp",
       "alt": "GuGu AI 图像生成界面，左侧填写描述与参数，右侧查看作品",
       "caption": "图像生成界面参考：先完成左侧描述和设置，再在右侧查看作品。布局与可选参数以当前客户端为准。"
     }
@@ -2284,7 +2284,7 @@ export const helpArticles = [
       "production-workflow"
     ],
     "screenshot": {
-      "src": "/home-preview-video.png",
+      "src": "/home-preview-video-1470.webp",
       "alt": "GuGu AI 视频生成界面，展示参考素材、模型、画幅和时长设置",
       "caption": "视频生成界面参考：先选模型和参考方式，再确认画幅、时长与费用。布局与可选参数以当前客户端为准。"
     }
@@ -2838,7 +2838,7 @@ export const helpArticles = [
       "drama-example"
     ],
     "screenshot": {
-      "src": "/home-preview-drama.png",
+      "src": "/home-preview-drama-1470.webp",
       "alt": "GuGu AI 短剧工作台界面，展示项目素材和分镜制作区域",
       "caption": "短剧工作台界面参考：素材、分镜内容与视频预览分别查看。已有项目的布局可能不同，请以当前页面为准。"
     }

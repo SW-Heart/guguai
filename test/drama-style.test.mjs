@@ -45,10 +45,10 @@ test('content stays intact, snapshots survive selection changes, and overflow is
 
 test('changed frontend entry points use matching cache keys',()=>{
   const read=name=>readFileSync(new URL(`../public/${name}`,import.meta.url),'utf8');
-  assert.ok(read('index.html').includes('/app.js?v=578'));
+  assert.ok(read('index.html').includes('/app.js?v=579'));
   assert.ok(read('index.html').includes('/styles.css?v=417'));
-  assert.ok(read('app.js').includes('./drama-studio.js?v=293'));
-  assert.ok(read('drama-studio.js').includes('./features/drama/style-dialog.js?v=2'));
+  assert.ok(read('app.js').includes('./drama-studio.js?v=294'));
+  assert.ok(read('drama-studio.js').includes('./features/drama/style-dialog.js?v=3'));
   assert.ok(read('drama-studio.js').includes('./resource-prompt.js?v=4'));
   assert.ok(read('drama-studio.js').includes('./features/drama/merge.js?v=2'));
 });
@@ -87,7 +87,7 @@ test('existing projects keep their private recipe until the actual selection cha
 test('every public preset has its own 3:4 cover without text or private metadata',()=>{
   const allowedChunks=new Set(['IHDR','PLTE','IDAT','IEND','tRNS','gAMA','sRGB','iCCP','cHRM','sBIT','pHYs']);
   for(const style of dramaStyleCatalog()){
-    const data=readFileSync(new URL(`../public${style.coverUrl}`,import.meta.url));
+    const data=readFileSync(new URL(`../public${style.coverUrl.replace(/\.webp$/,'.png')}`,import.meta.url));
     assert.equal(data.subarray(0,8).toString('hex'),'89504e470d0a1a0a',style.id);
     const width=data.readUInt32BE(16),height=data.readUInt32BE(20);
     assert.equal(width*4,height*3,style.id);
@@ -98,5 +98,19 @@ test('every public preset has its own 3:4 cover without text or private metadata
       at+=12+size;
     }
     assert.equal(at,data.length,style.id);
+  }
+});
+
+test('style picker covers are small 3:4 WebP pictures without metadata',()=>{
+  for(const style of dramaStyleCatalog()){
+    assert.match(style.coverUrl,/^\/images\/drama-styles\/\d{2}-[a-z0-9-]+\.webp$/,style.id);
+    const data=readFileSync(new URL(`../public${style.coverUrl}`,import.meta.url));
+    assert.equal(data.toString('ascii',0,4),'RIFF',style.id);
+    assert.equal(data.toString('ascii',8,12),'WEBP',style.id);
+    assert.equal(data.toString('ascii',12,16),'VP8 ',`${style.id}: cover must be a plain lossy WebP`);
+    const width=data.readUInt16LE(26)&0x3fff,height=data.readUInt16LE(28)&0x3fff;
+    assert.equal(width*4,height*3,style.id);
+    assert.ok(width<=600,style.id);
+    assert.ok(data.length<120_000,`${style.id}: cover is ${data.length} bytes`);
   }
 });

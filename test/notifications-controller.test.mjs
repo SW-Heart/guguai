@@ -152,6 +152,8 @@ function startupHarness(items, { failRead = false } = {}) {
     state,
     api: async (url, options) => {
       calls.push({ url, options });
+      const detail = url.match(/^\/api\/notifications\/([^/?]+)$/);
+      if (detail && !options) return { item:{ ...items.find(item => item.id === decodeURIComponent(detail[1])), contentHtml:'<p>完整图文</p>', summary:false } };
       if (!options) return { items:structuredClone(items), unreadCount:items.filter(item => !item.isRead).length };
       if (failRead) throw new Error('offline');
       return { ok:true };
@@ -209,4 +211,19 @@ test('a failed startup read receipt restores unread state for the next launch', 
   assert.equal(state.notifications[0].isRead, false);
   assert.equal(state.unreadNotifications, 1);
   assert.equal(toasts.length, 1);
+});
+
+test('opening a summarized message fetches its full body once', async () => {
+  const items = [{ id:'summary', title:'图文公告', contentText:'预览', summary:true, updatedAt:'v1', isRead:false }];
+  const { state, calls, controller } = startupHarness(items);
+  const api = calls;
+  await controller.load();
+  assert.equal(api[0].url, '/api/notifications?limit=200&view=summary');
+  assert.equal(controller.openLatestUnread(), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(api.some(call => call.url === '/api/notifications/summary' && !call.options));
+  assert.equal(globalThis.document.querySelector('#notificationDialogBody').innerHTML, '<p>完整图文</p>');
+  assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>');
+  await controller.load();
+  assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>', 'a later summary refresh keeps the loaded body');
 });

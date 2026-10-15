@@ -1,4 +1,4 @@
-import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=2';
+import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=3';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=4';
@@ -143,10 +143,10 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     priceRefreshAt=Date.now();
     let timeout;
     priceRefreshPromise=Promise.race([
-      api('/api/config'),
+      api(state.config?.configVersion?`/api/config?known=${encodeURIComponent(state.config.configVersion)}`:'/api/config'),
       new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Price refresh timeout')),10000);}),
     ]).then(config=>{
-      if(epoch!==priceRefreshEpoch||!isAccountCurrent(account)||state.route!=='drama')return;
+      if(epoch!==priceRefreshEpoch||!isAccountCurrent(account)||state.route!=='drama'||config?.unchanged)return;
       // Keep the last usable catalog on failed/incomplete refreshes. Never clear the button.
       if(Array.isArray(config.modelPrices)&&config.modelPrices.length){
         state.config={...state.config,...config,modelPrices:config.modelPrices};

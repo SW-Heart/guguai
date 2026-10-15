@@ -25,7 +25,7 @@ export function renderHelpBlocks() {
     });
     return `<article class="help-article" id="${article.id}" aria-labelledby="${article.id}-title">
 <h1 id="${article.id}-title" tabindex="-1">${escape(article.title)}</h1><p class="article-intro">${escape(article.intro)}</p><div class="article-meta"><span>约 ${minutes} 分钟阅读</span></div>
-${article.screenshot ? `<figure class="article-example preview-panel"><img src="${escape(article.screenshot.src)}" alt="${escape(article.screenshot.alt)}" width="2940" height="1846" loading="lazy" decoding="async"><figcaption>${escape(article.screenshot.caption)}</figcaption></figure>` : ''}
+${article.screenshot ? `<figure class="article-example preview-panel"><img src="${escape(article.screenshot.src)}"${/-1470\.webp$/.test(article.screenshot.src) ? ` srcset="${escape(article.screenshot.src)} 1470w, ${escape(article.screenshot.src.replace(/-1470\.webp$/, '.webp'))} 2940w" sizes="(min-width: 1200px) 860px, 100vw"` : ''} alt="${escape(article.screenshot.alt)}" width="2940" height="1846" loading="lazy" decoding="async"><figcaption>${escape(article.screenshot.caption)}</figcaption></figure>` : ''}
 ${article.sections.map((section, index) => `<section id="${article.id}--${index}" aria-labelledby="${article.id}-heading-${index}"><h2 id="${article.id}-heading-${index}">${escape(section.title)}</h2>
 ${(section.paragraphs || []).map(text => `<p>${escape(text)}</p>`).join('\n')}
 ${section.steps ? `<ol>${section.steps.map(text => `<li>${escape(text)}</li>`).join('\n')}</ol>` : ''}

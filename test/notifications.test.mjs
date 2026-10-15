@@ -1,7 +1,7 @@
 import test, { afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeDatabase, openDatabase, resetForTests } from '../lib/db.mjs';
-import { createAnnouncement, listAdminAnnouncements, listNotifications, markAllNotificationsRead, markNotificationRead, updateAnnouncement } from '../lib/notifications.mjs';
+import { createAnnouncement, getNotification, listAdminAnnouncements, listNotifications, markAllNotificationsRead, markNotificationRead, unreadNotificationCount, updateAnnouncement } from '../lib/notifications.mjs';
 import { insertUser } from '../lib/store.mjs';
 
 const createdAt = new Date().toISOString();
@@ -54,4 +54,28 @@ test('rich announcement content is sanitized and exposes a plain-text preview', 
   assert.equal(announcement.contentText, '重点');
   assert.equal(listNotifications('notification-user-a').items[0].contentHtml, announcement.contentHtml);
   assert.equal(listNotifications('notification-user-a').items[0].contentText, '重点');
+});
+
+test('background summaries leave out full bodies and inline pictures', () => {
+  const picture = `data:image/png;base64,${'A'.repeat(40_000)}`;
+  const body = `<p>${'很长的公告内容'.repeat(80)}</p><img src="${picture}">`;
+  const announcement = createAnnouncement({ title: '图文公告', content: body, status: 'published' }, { actorUserId: 'notification-admin' });
+  const full = listNotifications('notification-user-a');
+  assert.ok(JSON.stringify(full).includes(picture));
+  assert.equal(Object.hasOwn(full.items[0], 'content'), false, 'the same markup is not sent twice');
+  const summary = listNotifications('notification-user-a', { summary: true });
+  assert.equal(summary.unreadCount, 1);
+  assert.equal(summary.items[0].summary, true);
+  assert.equal(summary.items[0].contentHtml, undefined);
+  assert.ok(Array.from(summary.items[0].contentText).length <= 241);
+  assert.ok(JSON.stringify(summary).length < 2_000);
+  const detail = getNotification('notification-user-a', announcement.id);
+  assert.equal(detail.contentHtml, full.items[0].contentHtml);
+  assert.equal(detail.isRead, false);
+  markNotificationRead('notification-user-a', announcement.id);
+  assert.equal(unreadNotificationCount('notification-user-a'), 0);
+  assert.equal(getNotification('notification-user-a', announcement.id).isRead, true);
+  updateAnnouncement(announcement.id, { content: '<p>已更新</p>' }, { actorUserId: 'notification-admin' });
+  assert.equal(getNotification('notification-user-a', announcement.id).contentHtml, '<p>已更新</p>', 'edited announcements are not served from the old cached body');
+  assert.throws(() => getNotification('notification-user-a', 'missing'), /消息不存在/);
 });

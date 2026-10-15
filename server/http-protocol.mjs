@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 
 export function mutationAllowed(req) {
   if (!['POST', 'PATCH', 'DELETE'].includes(req.method)) return true;
@@ -34,9 +35,24 @@ export async function bodyForm(req, limit = 1_000_000) {
   return Object.fromEntries(new URLSearchParams(body.toString('utf8')));
 }
 
-export function sendJson(res, status, value) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
-  res.end(JSON.stringify(value));
+const minCompressedBodyBytes = 1024;
+
+export function acceptsGzip(req) {
+  return /\bgzip\b/i.test(String(req?.headers?.['accept-encoding'] || ''));
+}
+
+// API bodies are generated per request, so a fast gzip level keeps polling light without holding the event loop.
+export function sendJson(res, status, value, extraHeaders = {}) {
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders };
+  const body = JSON.stringify(value);
+  if (Buffer.byteLength(body) >= minCompressedBodyBytes && acceptsGzip(res.req)) {
+    const compressed = gzipSync(body, { level:4 });
+    res.writeHead(status, { ...headers, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding', 'Content-Length': compressed.length });
+    res.end(compressed);
+    return;
+  }
+  res.writeHead(status, headers);
+  res.end(body);
 }
 
 export function sendText(res, status, value, contentType = 'text/plain; charset=utf-8') {

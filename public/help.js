@@ -1,4 +1,4 @@
-import { helpArticles, helpCategories } from './help-content.js?v=9';
+import { helpArticles, helpCategories } from './help-content.js?v=10';
 import { searchHelp, highlightHelp, escapeHelpHtml as escape, resolveHelpLocation } from './help-search.js?v=3';
 import { initHelpCopies } from './help-copy.js?v=2';
 

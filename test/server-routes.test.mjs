@@ -57,7 +57,16 @@ test('account routes preserve public payment callbacks and authenticated respons
 
   const configResponse = response();
   assert.equal(await route({ method:'GET', headers:{} }, configResponse, new URL('http://localhost/api/config')), true);
-  assert.deepEqual(configResponse.value, { models:[] });
+  const { configVersion, ...config } = configResponse.value;
+  assert.deepEqual(config, { models:[] });
+  assert.match(configVersion, /^[\w-]{20}$/);
+
+  const unchangedResponse = response();
+  await route({ method:'GET', headers:{} }, unchangedResponse, new URL(`http://localhost/api/config?known=${configVersion}`));
+  assert.deepEqual(unchangedResponse.value, { unchanged:true, configVersion }, 'a current page receives a tiny unchanged answer');
+  const staleResponse = response();
+  await route({ method:'GET', headers:{} }, staleResponse, new URL('http://localhost/api/config?known=old'));
+  assert.deepEqual(staleResponse.value, { models:[], configVersion });
 });
 
 test('auth me keeps its explicit unauthenticated error shape', async () => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createWechatOrder, queryWechatOrder, wechatOrderForUser, handleWechatNotification, refundWechatOrder } from '../../lib/wechat-payments.mjs';
 
 export function createAccountRouteHandler({
@@ -27,6 +28,8 @@ export function createAccountRouteHandler({
   creditPricing,
   llmRates,
   listNotifications,
+  getNotification,
+  unreadNotificationCount,
   markNotificationRead,
   markAllNotificationsRead,
 } = {}) {
@@ -72,7 +75,9 @@ export function createAccountRouteHandler({
     if (url.pathname === '/api/config' && req.method === 'GET') {
       const user = requireUser(req, res);
       if (!user) return true;
-      sendJson(res, 200, configState());
+      const config = configState();
+      const configVersion = createHash('sha1').update(JSON.stringify(config)).digest('base64url').slice(0, 20);
+      sendJson(res, 200, url.searchParams.get('known') === configVersion ? { unchanged:true, configVersion } : { ...config, configVersion });
       return true;
     }
     if (url.pathname === '/api/credits' && req.method === 'GET') {
@@ -154,7 +159,14 @@ export function createAccountRouteHandler({
     if (url.pathname === '/api/notifications' && req.method === 'GET') {
       const user = requireUser(req, res);
       if (!user) return true;
-      sendJson(res, 200, listNotifications(user.id, { limit:url.searchParams.get('limit') }));
+      sendJson(res, 200, listNotifications(user.id, { limit:url.searchParams.get('limit'), summary:url.searchParams.get('view') === 'summary' }));
+      return true;
+    }
+    const notificationMatch = url.pathname.match(/^\/api\/notifications\/([\w-]+)$/);
+    if (notificationMatch && notificationMatch[1] !== 'read-all' && req.method === 'GET') {
+      const user = requireUser(req, res);
+      if (!user) return true;
+      sendJson(res, 200, { item:getNotification(user.id, notificationMatch[1]) });
       return true;
     }
     const notificationReadMatch = url.pathname.match(/^\/api\/notifications\/([\w-]+)\/read$/);
@@ -162,14 +174,14 @@ export function createAccountRouteHandler({
       const user = requireUser(req, res);
       if (!user) return true;
       markNotificationRead(user.id, notificationReadMatch[1]);
-      sendJson(res, 200, listNotifications(user.id));
+      sendJson(res, 200, { ok:true, unreadCount:unreadNotificationCount(user.id) });
       return true;
     }
     if (url.pathname === '/api/notifications/read-all' && req.method === 'POST') {
       const user = requireUser(req, res);
       if (!user) return true;
       markAllNotificationsRead(user.id);
-      sendJson(res, 200, listNotifications(user.id));
+      sendJson(res, 200, { ok:true, unreadCount:unreadNotificationCount(user.id) });
       return true;
     }
     return false;

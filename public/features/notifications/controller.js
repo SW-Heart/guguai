@@ -26,6 +26,7 @@ export function createNotificationController({ state, api, esc, toast, accountSn
   }
 
   let notificationDialogRestoreFocus = null;
+  let openNotificationId = '';
 
   function closeNotificationDialog() {
     const dialog = query('#notificationDialog');
@@ -41,13 +42,27 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     const body = query('#notificationDialogBody');
     if (!title || !time || !body) { markRead(item.id); return; }
     notificationDialogRestoreFocus = trigger || globalThis.document?.activeElement || null;
+    openNotificationId = item.id;
     title.textContent = item.title || '消息通知';
     time.textContent = dateText(item.publishedAt);
     body.innerHTML = contentMarkup(item);
+    if (item.summary && !item.contentHtml) void loadFullNotification(item, body);
     dialog.hidden = false;
     dialog.setAttribute('aria-hidden', 'false');
     if (!dialog.open) dialog.showModal();
     markRead(item.id);
+  }
+
+  // Background refreshes only carry previews; the full message is fetched when it is opened.
+  async function loadFullNotification(item, body) {
+    const requestAccount = accountSnapshot();
+    try {
+      const result = await api(`/api/notifications/${encodeURIComponent(item.id)}`);
+      const full = result?.item;
+      if (!full?.contentHtml || !isAccountCurrent(requestAccount)) return;
+      Object.assign(item, { contentHtml:full.contentHtml, contentText:full.contentText, summary:false });
+      if (openNotificationId === item.id && query('#notificationDialog')?.open) body.innerHTML = contentMarkup(item);
+    } catch {}
   }
 
   function openLatestUnread() {
@@ -110,9 +125,13 @@ export function createNotificationController({ state, api, esc, toast, accountSn
   async function load() {
     const requestAccount = accountSnapshot();
     try {
-      const result = await api('/api/notifications?limit=200');
+      const result = await api('/api/notifications?limit=200&view=summary');
       if (!isAccountCurrent(requestAccount)) return;
-      state.notifications = Array.isArray(result.items) ? result.items : [];
+      const loaded = new Map(state.notifications.filter(item => item.contentHtml).map(item => [item.id, item]));
+      state.notifications = (Array.isArray(result.items) ? result.items : []).map(item => {
+        const previous = loaded.get(item.id);
+        return item.summary && previous?.updatedAt === item.updatedAt ? { ...item, contentHtml:previous.contentHtml, contentText:previous.contentText, summary:false } : item;
+      });
       state.unreadNotifications = Number(result.unreadCount) || 0;
       render();
     } catch (error) {
@@ -172,6 +191,7 @@ export function createNotificationController({ state, api, esc, toast, accountSn
   query('#notificationDialog')?.addEventListener('close', () => {
     const dialog = query('#notificationDialog');
     dialog?.setAttribute('aria-hidden', 'true');
+    openNotificationId = '';
     requestAnimationFrame(() => { if (notificationDialogRestoreFocus?.isConnected && !notificationDialogRestoreFocus.disabled) notificationDialogRestoreFocus.focus(); });
     notificationDialogRestoreFocus = null;
   });

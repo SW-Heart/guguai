@@ -82,7 +82,7 @@ import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRouteP
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
-import { listNotifications, markAllNotificationsRead, markNotificationRead } from './lib/notifications.mjs';
+import { getNotification, listNotifications, markAllNotificationsRead, markNotificationRead, unreadNotificationCount } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
 import { notifyGenerationFailure } from './lib/feishu.mjs';
 import { putSupportLogObject, supportLogMaxBytes, supportLogObjectKey, supportLogStorageReady, SUPPORT_LOG_MIME } from './lib/support-logs.mjs';
@@ -2620,6 +2620,8 @@ const accountRoute = createAccountRouteHandler({
   creditPricing,
   llmRates,
   listNotifications,
+  getNotification,
+  unreadNotificationCount,
   markNotificationRead,
   markAllNotificationsRead,
 });

@@ -1,6 +1,6 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=7';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=4';
-import { createConfigSync } from './state/config-sync.js?v=1';
+import { createConfigSync } from './state/config-sync.js?v=2';
 import { officialPriceDiscount } from './state/official-model-prices.js?v=5';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
@@ -15,7 +15,7 @@ import { createVideoUpscaleController, isVideoUpscaleTask } from './features/gen
 import { createCreditPresentation } from './features/credits/presentation.js?v=6';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
-import { createNotificationController } from './features/notifications/controller.js?v=7';
+import { createNotificationController } from './features/notifications/controller.js?v=8';
 import { resetAccountState } from './state/account-state.js?v=1';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
@@ -2162,11 +2162,30 @@ async function deleteAgentProject(item) {
   }
 }
 
+// Canvas styles are large and only needed by the canvas workspaces, so they load
+// alongside those modules instead of with every page. Failures never block the page.
+const referenceCanvasStylesUrl = '/vendor/director/reference-canvas.css?v=6';
+let referenceCanvasStylesPromise = null;
+function loadReferenceCanvasStyles() {
+  if (referenceCanvasStylesPromise) return referenceCanvasStylesPromise;
+  referenceCanvasStylesPromise = new Promise(resolve => {
+    const existing = document.querySelector(`link[href="${referenceCanvasStylesUrl}"]`);
+    if (existing) { resolve(); return; }
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = referenceCanvasStylesUrl;
+    link.addEventListener('load', () => resolve(), { once:true });
+    link.addEventListener('error', () => { referenceCanvasStylesPromise = null; link.remove(); resolve(); }, { once:true });
+    document.head.append(link);
+  });
+  return referenceCanvasStylesPromise;
+}
+
 let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = import('./features/agent/workspace.js?v=160').then(({createAgentWorkspace}) => {
+  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=160'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});
@@ -2177,7 +2196,7 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = import('./drama-studio.js?v=293').then(({ createDramaStudio }) => {
+    dramaControllerPromise = Promise.all([import('./drama-studio.js?v=294'), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
       dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
@@ -2419,7 +2438,7 @@ function applyLiveConfig(config) {
   if ($('#modelPriceDialog')?.open) renderModelPrices(config.modelPrices || []);
 }
 const refreshConfig = createConfigSync({
-  fetchConfig: () => api('/api/config', { cache:'no-store' }),
+  fetchConfig: ({ knownVersion = '' } = {}) => api(knownVersion ? `/api/config?known=${encodeURIComponent(knownVersion)}` : '/api/config', { cache:'no-store' }),
   getConfig: () => state.config,
   applyConfig: applyLiveConfig,
   accountScope,

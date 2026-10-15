@@ -219,9 +219,9 @@ test('messages are scheduled only after notification loading and workspace start
 
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(source.includes('./features/notifications/controller.js?v=7'));
-  assert.ok(html.includes('/app.js?v=578'));
-  assert.doesNotMatch(source, /notifications\/controller\.js\?v=6\b/);
+  assert.ok(source.includes('./features/notifications/controller.js?v=8'));
+  assert.ok(html.includes('/app.js?v=579'));
+  assert.doesNotMatch(source, /notifications\/controller\.js\?v=[67]\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });
 

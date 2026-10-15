@@ -68,13 +68,14 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(admin.includes('/guguadmin.css?v=22'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=578\b/);
+  assert.match(index, /\/app\.js\?v=579\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
   assert.match(index, /\/styles\.css\?v=417/);
-  assert.match(index, /\/vendor\/director\/reference-canvas\.css\?v=6/);
+  assert.doesNotMatch(index, /reference-canvas\.css/, 'canvas styles load with the canvas workspaces');
+  assert.match(app, /'\/vendor\/director\/reference-canvas\.css\?v=6'/);
   assert.match(index, /\/styles\/base\.css\?v=6\b/);
   assert.match(app, /\.\/desktop-media-sync\.js\?v=15/);
-  assert.match(app, /\.\/drama-studio\.js\?v=293/);
+  assert.match(app, /\.\/drama-studio\.js\?v=294/);
   assert.match(app, /\.\/features\/generation\/polling\.js\?v=5/);
   assert.match(app, /\.\/state\/account-scope\.js\?v=2/);
   assert.match(app, /\.\/features\/media\/controller\.js\?v=13/);
