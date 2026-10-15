@@ -4,15 +4,15 @@ import {readFileSync} from 'node:fs';
 import {createAgentSkills} from '../lib/agent/skills.mjs';
 import {galleryItems, skillCardMarkup, skillDetailMarkup, mountSkillGallery} from '../public/features/agent/skill-gallery.js';
 
-test('gallery covers built-in skills, with local full-size and thumbnail JPEGs', async () => {
+test('gallery covers built-in skills, with local full-size and thumbnail WebP pictures', async () => {
   const skills = await createAgentSkills({roots: [new URL('../agent-skills/', import.meta.url).pathname]}).search();
   const items = galleryItems(skills);
   assert.equal(items.length, 10);
   for (const item of items) {
     if (item.name === 'minimax-creation-bible') {
       assert.equal(item.title, 'MiniMax 创作圣经');
-      assert.equal(item.media.src, '/images/skills/minimax-creation-bible-v1.jpg');
-      assert.equal(item.media.thumbnail, '/images/skills/minimax-creation-bible-thumb-v1.jpg');
+      assert.equal(item.media.src, '/images/skills/minimax-creation-bible-v1.webp');
+      assert.equal(item.media.thumbnail, '/images/skills/minimax-creation-bible-thumb-v1.webp');
       assert.ok(skillCardMarkup(item).includes('data-skill-quick-use="minimax-creation-bible"'));
     }
     if (item.name === 'seedance-creation-bible') {
@@ -22,7 +22,8 @@ test('gallery covers built-in skills, with local full-size and thumbnail JPEGs',
     assert.ok(item.prompt && item.input && item.output && item.alt, item.name);
     for (const path of [item.media.src, item.media.thumbnail]) {
       const bytes = readFileSync(new URL(`../public${path}`, import.meta.url));
-      assert.equal(bytes.readUInt16BE(0), 0xffd8, path);
+      assert.equal(bytes.toString('ascii', 0, 4), 'RIFF', path);
+      assert.equal(bytes.toString('ascii', 8, 12), 'WEBP', path);
     }
     assert.ok(skillDetailMarkup(item).includes('使用此技能'));
     assert.ok(!skillDetailMarkup(item).includes('<video'), 'stills are not presented as playable videos');
@@ -95,9 +96,9 @@ test('preview, use, retry and disposal keep skill selection inside the current e
 
 test('skill gallery cache versions are connected through HTML and the app entry', () => {
   for (const [path, refs] of [
-    ['index.html', ['/app.js?v=579', '/styles.css?v=417']],
-    ['app.js', ['./features/agent/workspace.js?v=160']],
-    ['features/agent/workspace.js', ['./skill-gallery.js?v=7']],
+    ['index.html', ['/app.js?v=580', '/styles.css?v=417']],
+    ['app.js', ['./features/agent/workspace.js?v=161']],
+    ['features/agent/workspace.js', ['./skill-gallery.js?v=8']],
   ]) {
     const source = readFileSync(new URL(`../public/${path}`, import.meta.url), 'utf8');
     for (const ref of refs) assert.ok(source.includes(ref), `${path}: ${ref}`);

@@ -2185,7 +2185,7 @@ let agentController = null;
 let agentControllerPromise = null;
 function ensureAgentController() {
   if (agentController) return Promise.resolve(agentController);
-  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=160'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
+  if (!agentControllerPromise) agentControllerPromise = Promise.all([import('./features/agent/workspace.js?v=161'), loadReferenceCanvasStyles()]).then(([{createAgentWorkspace}]) => {
     agentController = createAgentWorkspace({api,state,toast,importCanvasAsset:pickAndImportDramaCanvasAsset,registerCanvasFile,importLocalMedia,renameCanvasFile,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot:accountScope.snapshot,isAccountCurrent:accountScope.isCurrent,onProjectTitleChanged:(id,title)=>projectLibrary.renamed('canvas',id,title),onCreateProject:trigger=>void startProjectCreation(trigger),renderRecentProjects:(root,options)=>projectLibrary.renderRecent(root,options)});
     return agentController;
   }).catch(error=>{agentControllerPromise=null;throw error;});

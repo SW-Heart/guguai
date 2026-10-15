@@ -105,8 +105,8 @@ test('defaults respect quality-specific duration limits and fixed-duration model
 
 test('video defaults refresh every versioned entry and shared import', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=579']],
-    ['app.js', ['./features/generation/video-defaults.js?v=4', './drama-studio.js?v=294', './features/agent/workspace.js?v=160']],
+    ['index.html', ['/app.js?v=580']],
+    ['app.js', ['./features/generation/video-defaults.js?v=4', './drama-studio.js?v=294', './features/agent/workspace.js?v=161']],
     ['drama-studio.js', ['./features/generation/video-defaults.js?v=4', './features/drama/director-workspace.js?v=186']],
     ['features/drama/canvas-generation.js', ['../generation/video-defaults.js?v=4']],
     ['features/drama/director-workspace.js', ['./canvas-generation.js?v=17', '../agent/model-preference-picker.js?v=16']],

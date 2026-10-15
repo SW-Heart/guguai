@@ -117,7 +117,7 @@ export function galleryItems(skills = []) {
       category: '创作', introduction: skill.summary || '结合你的需求，一起完成创作。',
       input: '描述你的目标，并添加相关参考资料。',
       ...example,
-      media: example ? {type: 'image', src: `${imageRoot}${skill.name}-v1.jpg`, thumbnail: `${imageRoot}${skill.name}-thumb-v1.jpg`} : null,
+      media: example ? {type: 'image', src: `${imageRoot}${skill.name}-v1.webp`, thumbnail: `${imageRoot}${skill.name}-thumb-v1.webp`} : null,
     };
   });
 }
