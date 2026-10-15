@@ -24,7 +24,7 @@ import { createOffscreenImages } from './features/media/offscreen-images.js?v=1'
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
-import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=4';
+import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=5';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 
 const $ = selector => document.querySelector(selector);
@@ -2205,7 +2205,7 @@ function loadReferenceCanvasStyles() {
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
 const importAgentWorkspace = () => import('./features/agent/workspace.js?v=164');
-const importDramaStudio = () => import('./drama-studio.js?v=296');
+const importDramaStudio = () => import('./drama-studio.js?v=297');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2225,8 +2225,8 @@ let dramaControllerPromise = null;
 function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
-    dramaControllerPromise = Promise.all([importDramaStudio(), loadReferenceCanvasStyles()]).then(([{ createDramaStudio }]) => {
-      dramaController = createDramaStudio({ api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
+    dramaControllerPromise = importDramaStudio().then(({ createDramaStudio }) => {
+      dramaController = createDramaStudio({ loadCanvasStyles:loadReferenceCanvasStyles, api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
@@ -2306,6 +2306,10 @@ function scheduleRouteContentRender(route, routeChanged) {
         return;
       }
       if (route === 'drama') {
+        // The list is drawn by the shared project library, so it appears while
+        // the module that edits an opened project is still loading.
+        const projectsRoot = $('#dramaProjects');
+        if (!dramaController && !dramaProjectIdFromPath() && projectsRoot) projectLibrary.renderPage(projectsRoot);
         void ensureDramaController().then(async controller => {
           if (epoch !== routeRenderEpoch || state.route !== 'drama') return;
           controller.modelState();

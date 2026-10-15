@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createProjectListRouteHandler, projectSummaries } from '../server/routes/projects.mjs';
-import { filterProjects, projectCardMarkup, projectTypeLabels } from '../public/features/projects/library.js';
+import { createProjectLibrary, filterProjects, projectCardMarkup, projectTypeLabels } from '../public/features/projects/library.js';
 import { staticEntryFile } from '../server/static.mjs';
 
 const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
@@ -100,8 +100,8 @@ test('the 创作 home offers project creation, a quiet one-line start and a side
 
 test('changed frontend modules are reachable through current cache keys', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=584', '/styles.css?v=418']],
-    ['app.js', ['./features/projects/library.js?v=4', './features/agent/workspace.js?v=164', './drama-studio.js?v=296']],
+    ['index.html', ['/app.js?v=585', '/styles.css?v=418']],
+    ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=164', './drama-studio.js?v=297']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8', '../../vendor/ui/create-project.js?v=5']],
     ['features/projects/library.js', ['../../vendor/ui/create-project.js?v=5']],
   ]) {
@@ -126,4 +126,43 @@ test('the website leads with 智能画布 and 短剧工作台 and shows the real
     assert.doesNotMatch(page, /创作助手|<h2>短剧创作<\/h2>|<\/span><h3>短剧创作</);
     assert.match(page, /\/marketing\.css\?v=16/);
   }
+});
+
+test('showing the project list again refreshes its cards without clearing the search box', async () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = { addEventListener() {} };
+  try {
+    const node = () => ({ attributes:{}, innerHTML:'', textContent:'', classList:{ add() {}, remove() {} }, setAttribute(name, value) { this.attributes[name] = value; }, querySelectorAll:() => [] });
+    const parts = {};
+    let rebuilds = 0, html = '';
+    const root = {
+      isConnected:true,
+      get innerHTML() { return html; },
+      set innerHTML(value) { html = value; rebuilds++; for (const key of Object.keys(parts)) delete parts[key]; },
+      querySelector(selector) { if (!html) return null; return parts[selector] ||= node(); },
+      querySelectorAll:() => [],
+    };
+    let requests = 0;
+    const library = createProjectLibrary({ api:async () => { requests++; return { projects:[{ source:'canvas', id:'a', type:'canvas', title:'海报', updatedAt:1 }] }; }, accountSnapshot:() => ({ epoch:1, userId:'u' }), isAccountCurrent:() => true });
+    library.renderPage(root);
+    await new Promise(resolve => setImmediate(resolve));
+    const search = root.querySelector('[data-project-search]');
+    search.value = '海';
+    library.renderPage(root);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(rebuilds, 1, 'the toolbar is built once');
+    assert.equal(root.querySelector('[data-project-search]'), search);
+    assert.equal(search.value, '海');
+    assert.equal(requests, 2, 'the cards still refresh from the server');
+    assert.match(root.querySelector('.project-library-grid').innerHTML, /海报/);
+  } finally { globalThis.document = previousDocument; }
+});
+
+test('the project page draws its list before the module for opened projects loads', () => {
+  const app = read('app.js'), drama = read('drama-studio.js');
+  assert.match(app, /if \(!dramaController && !dramaProjectIdFromPath\(\) && projectsRoot\) projectLibrary\.renderPage\(projectsRoot\);\n        void ensureDramaController\(\)/);
+  assert.match(app, /dramaControllerPromise = importDramaStudio\(\)\.then/, 'the project page does not wait for canvas styles');
+  assert.doesNotMatch(drama, /^import[^;]*director-workspace\.js/m, 'only smart projects load the canvas engine');
+  assert.match(drama, /import\('\.\/features\/drama\/director-workspace\.js\?v=\d+'\)/);
+  assert.match(drama, /function renderDirectorWorkspace\(\)\{\n    if\(!createDirectorWorkspace\)\{/);
 });

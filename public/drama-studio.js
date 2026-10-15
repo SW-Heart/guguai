@@ -5,7 +5,6 @@ import { defaultVideoDuration } from './features/generation/video-defaults.js?v=
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
-import { createDirectorWorkspace } from './features/drama/director-workspace.js?v=188';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -65,9 +64,25 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, renameCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {} }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, renameCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {}, loadCanvasStyles = async () => {} }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
+  // Only smart projects use the canvas engine, the largest part of this page's
+  // code, so it is fetched when one opens and warmed up while the list is idle.
+  let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=188'), loadCanvasStyles()]).then(([module]) => {
+    createDirectorWorkspace = module.createDirectorWorkspace;
+    return module;
+  }).catch(error => {
+    canvasModule = null;
+    console.warn('[drama] 画布模块加载失败', error);
+    throw new Error('画布加载失败，请检查网络后重试');
+  });
+  function warmCanvas() {
+    if (canvasModule || canvasWarmup) return;
+    const idle = globalThis.requestIdleCallback || (callback => setTimeout(callback, 1500));
+    canvasWarmup = idle(() => { canvasWarmup = 0; if (!project) void loadCanvas().catch(() => {}); }, { timeout:4000 });
+  }
   let projects = [];
   let renameProjectId = '';
   // A newly created project is shown even when creation started on another page.
@@ -700,6 +715,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     if (!projectsRoot) return;
     setStudioVisible(false);
     renderProjectList(projectsRoot);
+    warmCanvas();
   }
   async function deleteProject(id) {
     const targetId = String(id || '');
@@ -1012,6 +1028,12 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     renderDirectorWorkspace(); return;
   }
   function renderDirectorWorkspace(){
+    if(!createDirectorWorkspace){
+      const projectId=project?.id;
+      if(!root.querySelector('.agent-project-loading'))root.innerHTML='<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true"><span class="button-spinner" aria-hidden="true"></span><strong>正在打开项目…</strong><span>正在准备画布，请稍候</span></div>';
+      void loadCanvas().then(()=>{if(project?.id===projectId&&!professional()&&state.route==='drama')renderDirectorWorkspace();}).catch(error=>{if(project?.id===projectId)toast(error.message);});
+      return;
+    }
     directorWorkspaceView ||= createDirectorWorkspace(root, {
       project:()=>project, task, toast, images:()=>imageAssets(),
       generationConfig:()=>state.config,

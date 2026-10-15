@@ -130,6 +130,13 @@ export function createProjectLibrary({ api, accountSnapshot, isAccountCurrent, t
   }
 
   function renderPage(root) {
+    // Redrawing a list that is already on screen would clear what the user is
+    // typing into its search box; only its cards and data need refreshing.
+    if (pageRoot === root && root.querySelector('[data-project-search]')) {
+      drawCards();
+      void fetchProjects({ force:true }).then(list => { if (list && pageRoot === root) drawCards(); }).catch(error => { if (pageRoot === root && root.isConnected) toast?.(error.message); });
+      return;
+    }
     pageRoot = root;
     menuKey = '';
     root.innerHTML = `<div class="project-library-toolbar"><label class="project-library-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg><span class="sr-only">搜索项目</span><input type="search" value="${escape(query)}" placeholder="搜索项目" autocomplete="off" data-project-search></label><div class="project-library-filter" role="radiogroup" aria-label="项目类型">${filterOptions.map(([value, label]) => `<button type="button" role="radio" data-project-filter="${value}" aria-checked="${value === type}" tabindex="${value === type ? 0 : -1}">${label}</button>`).join('')}</div><span class="project-library-count"></span></div><div class="project-library-grid" aria-busy="true"></div>`;
