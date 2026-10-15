@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {generationVisualStates,generationFrameState,renderGenerationPlaceholder} from '../public/features/drama/generation-status.js';
+import {generationVisualStates,generationFrameState,generationTaskStatus,renderGenerationPlaceholder} from '../public/features/drama/generation-status.js';
 
 test('every canvas generation state has a distinct visible status treatment',()=>{
   assert.deepEqual(generationVisualStates,[
@@ -56,7 +56,7 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   const read=path=>readFileSync(new URL(`../public/${path}`,import.meta.url),'utf8');
   const source=read('features/drama/director-workspace.js');
   const css=read('styles.css');
-  assert.ok(source.includes("./generation-status.js?v=2"));
+  assert.ok(source.includes("./generation-status.js?v=3"));
   assert.ok(source.includes("./canvas-icons.js?v=1"));
   assert.ok(read('features/drama/generation-status.js').includes("./canvas-icons.js?v=1"));
   for(const tone of ['waiting','active','done','danger','locked'])assert.ok(css.includes(`[data-tone=${tone}]`),tone);
@@ -65,8 +65,15 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   assert.match(css,/\.dw-frame-caption\{position:absolute;left:0;right:0;top:auto;bottom:calc\(100% \+ 6px\)/);
   assert.ok(Number(read('index.html').match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
   assert.ok(Number(read('index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('app.js').includes("./drama-studio.js?v=301"));
-  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=168"));
-  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=193"));
-  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=193"));
+  assert.ok(read('app.js').includes("./drama-studio.js?v=302"));
+  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=169"));
+  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=194"));
+  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=194"));
+});
+
+test('an automatically retried job keeps showing as running instead of queued',()=>{
+  assert.equal(generationTaskStatus({status:'queued',progressStage:'retrying'}),'running');
+  assert.equal(generationTaskStatus({status:'queued',progressStage:'queued'}),'queued');
+  assert.equal(generationTaskStatus({status:'failed'}),'failed');
+  assert.equal(generationTaskStatus(null),undefined);
 });

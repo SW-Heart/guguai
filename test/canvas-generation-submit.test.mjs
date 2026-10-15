@@ -13,7 +13,7 @@ test('ordinary generators render pending, completed and failed outputs inside th
     const media=status==='completed'?{kind:type,url:'/result'}:null;
     const context=vm.createContext({...links,workspace:()=>({}),isDocumentCard:()=>false,liveDrafts:()=>[draft,result],
       bridge:{task:()=>({status,progress:42}),media:()=>media},
-      generationFrameState:(status,hasMedia)=>hasMedia?'completed':status,
+      generationFrameState:(status,hasMedia)=>hasMedia?'completed':status,generationTaskStatus:task=>task?.status,
       resultFrame:config=>config});
     vm.runInContext(source.slice(source.indexOf('  function nodeContent(n) {'),source.indexOf('  function nodeBounds(')),context);
     const rendered=context.nodeContent({kind:'canvas-generation',title:'生成',item:draft});

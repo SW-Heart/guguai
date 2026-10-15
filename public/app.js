@@ -2204,8 +2204,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=168');
-const importDramaStudio = () => import('./drama-studio.js?v=301');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=169');
+const importDramaStudio = () => import('./drama-studio.js?v=302');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2515,6 +2515,12 @@ function dramaProjectGenerationIds(project) {
   ].map(value => String(value || '')).filter(Boolean));
 }
 
+// The works list omits failures, so every open canvas re-reads its own
+// results by ID. Otherwise a failed card falls back to the queued placeholder.
+function canvasGenerationIds() {
+  if (state.route === 'drama') return dramaProjectGenerationIds(state.dramaProject);
+  return new Set(agentController?.generationIds?.() || []);
+}
 async function loadTasks({ background=false, activeOnly=false, projectOnly=false }={}) {
   if (tasksRequest) {
     const pending = tasksRequest;
@@ -2527,9 +2533,7 @@ async function loadTasks({ background=false, activeOnly=false, projectOnly=false
   if (activeOnly && !activeIds.length) return state.tasks;
   const request = (async () => {
     try {
-      const projectTaskIds = projectOnly
-        ? dramaProjectGenerationIds(state.dramaProject)
-        : !activeOnly && state.route === 'drama' ? dramaProjectGenerationIds(state.dramaProject) : new Set();
+      const projectTaskIds = projectOnly || !activeOnly ? canvasGenerationIds() : new Set();
       const targetedIds = projectOnly ? [...projectTaskIds] : activeIds;
       const responseTasks = activeOnly || projectOnly
         ? (targetedIds.length

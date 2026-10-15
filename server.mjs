@@ -144,6 +144,12 @@ const cntcnRequestTimeoutMs = 60_000;
 const cntcnPollIntervalMs = 5_000;
 const routedVideoSubmitTimeoutMs = Math.max(30_000, Number(process.env.VIDEO_ROUTE_SUBMIT_TIMEOUT_MS || 10 * 60_000));
 const providerTaskIdTimeoutMs = Math.max(60_000, Number(process.env.VIDEO_PROVIDER_TASK_ID_TIMEOUT_MS || 10 * 60_000));
+// Tuzi can take minutes to return the task ID. Keep the submit window inside
+// the task-ID deadline so a slow but successful submission is never failed first.
+const tuziImageSubmitTimeoutMs = Math.max(30_000, Math.min(
+  Number(process.env.TUZI_IMAGE_SUBMIT_TIMEOUT_MS || 6 * 60_000),
+  providerTaskIdTimeoutMs - 60_000,
+));
 const autodlPollIntervalMs = Math.max(5_000, Number(process.env.AUTODL_POLL_INTERVAL_MS || 10_000));
 const autodlRequestTimeoutMs = Math.max(30_000, Number(process.env.AUTODL_REQUEST_TIMEOUT_MS || 60_000));
 const autodlMaxPollDurationMs = Math.max(autodlPollIntervalMs, Number(process.env.AUTODL_MAX_POLL_DURATION_MS || videoMaxPollDurationMs));
@@ -523,6 +529,8 @@ function publicGeneration(task) {
     .map(field => [field, field === 'prompt' ? visibleGenerationPrompt(task) : task[field]]));
   const failure = task.status === 'failed' ? generationFailure(task) : null;
   const progressStage = task.awaitingReferences ? 'preparing_references'
+    // An automatic retry re-queues a job the user already saw running.
+    : task.status === 'queued' && Number(task.generationRetryCount) > 0 ? 'retrying'
     : task.status !== 'running' ? task.status
     : task.submissionUncertain ? 'awaiting_reconciliation'
       : task.archivePending ? 'archiving'
@@ -763,6 +771,7 @@ const tuziProvider = createTuziProvider({
   videoPollTimeoutError,
   videoPollStartedAt,
   imageMaxPollDurationMs,
+  imageSubmitTimeoutMs:tuziImageSubmitTimeoutMs,
   errorMessage,
 });
 const ttapiProvider = createTtapiProvider({

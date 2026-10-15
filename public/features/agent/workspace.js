@@ -17,7 +17,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   // The canvas engine is most of this page's code but the home view never uses
   // it, so it loads with the project data and is warmed up once the home is idle.
   let canvasModule=null,canvasWarmup=0;
-  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=193'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
+  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=194'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
     canvasModule=null;
     console.warn('[agent] 画布模块加载失败',error);
     throw new Error('画布加载失败，请检查网络后重试');
@@ -248,6 +248,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   }
   const asset=id=>state.files.find(file=>file.id===id&&file.localStatus!=='missing');
   const task=id=>state.tasks.find(item=>item.id===id);
+  const canvasGenerationIds=()=>project.id?[...new Set((project.directorWorkspace?.generationDrafts||[]).map(item=>String(item?.taskId||'')).filter(Boolean))]:[];
   const taskAsset=id=>asset(task(id)?.assetId);
   const current=()=>isAccountCurrent(account);
   async function cloudFile(file){
@@ -300,6 +301,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         if(keepCanvas)return;
         project.directorWorkspace=normalizeDirectorWorkspace(session?.canvas?.directorWorkspace);
         project.assetIds=Array.isArray(session?.canvas?.assetIds)?session.canvas.assetIds:[];
+        if(canvasGenerationIds().length)void loadTasks({background:true,projectOnly:true}).then(()=>view?.refresh()).catch(()=>{});
       },
       project:()=>project,task,toast,
       messageAttachment:file=>{
@@ -421,5 +423,5 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const heading=host?.querySelector('.dw-agent-project-title');
     if(heading){heading.textContent=title;heading.title=title;}
   }
-  return {load,showHome,createProject:()=>createProject(),loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
+  return {load,showHome,generationIds:canvasGenerationIds,createProject:()=>createProject(),loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
 }

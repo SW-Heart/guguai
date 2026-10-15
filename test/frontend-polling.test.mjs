@@ -25,7 +25,7 @@ test('faster polling reaches the app through fresh versioned URLs',()=>{
   const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
   assert.ok(read('app.js').includes("./features/generation/polling.js?v=5"));
   assert.match(read('app.js'),/const activePollDelay = 2000;/);
-  assert.ok(read('index.html').includes('/app.js?v=588'));
+  assert.ok(read('index.html').includes('/app.js?v=589'));
 });
 
 test('task poller schedules one active request and can stop both loops', async () => {
@@ -172,4 +172,14 @@ test('hiding during an active request cannot restart a renderer timer', async ()
   assert.equal(timers.size, 0);
   poller.stop();
   assert.equal(timers.size, 0);
+});
+
+test('agent canvas re-reads its own results so failed cards are not shown as queued', () => {
+  const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
+  const app = read('app.js'), workspace = read('features/agent/workspace.js');
+  assert.match(app, /return new Set\(agentController\?\.generationIds\?\.\(\) \|\| \[\]\);/);
+  assert.match(app, /const projectTaskIds = projectOnly \|\| !activeOnly \? canvasGenerationIds\(\) : new Set\(\);/);
+  assert.match(workspace, /generationIds:canvasGenerationIds,/);
+  assert.match(workspace, /loadTasks\(\{background:true,projectOnly:true\}\)\.then\(\(\)=>view\?\.refresh\(\)\)/);
+  assert.ok(app.includes("./features/agent/workspace.js?v=169"));
 });

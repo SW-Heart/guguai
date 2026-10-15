@@ -11,6 +11,7 @@ export function createTuziProvider({
   videoPollTimeoutError,
   videoPollStartedAt,
   imageMaxPollDurationMs,
+  imageSubmitTimeoutMs = 360_000,
   errorMessage,
   upstreamRequestErrorDetail,
 } = {}) {
@@ -80,7 +81,7 @@ export function createTuziProvider({
     if (task.size) form.append('size', task.size);
     for (const reference of refs) form.append('input_reference', reference);
     const submission = await trackProviderSubmission((async () => {
-      const signal = AbortSignal.timeout(180_000);
+      const signal = AbortSignal.timeout(imageSubmitTimeoutMs);
       const maxSubmitAttempts = 5;
       let created;
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {

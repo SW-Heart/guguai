@@ -221,7 +221,9 @@ test('switching project sessions preserves unsaved canvas nodes, asset IDs and v
   const workspaceSource=readFileSync(new URL('../public/features/agent/workspace.js',import.meta.url),'utf8');
   const start=workspaceSource.indexOf('sessionChanged:session=>')+'sessionChanged:'.length;
   const end=workspaceSource.indexOf('\n      project:()=>project',start);
-  const context={sessionId:'',project:{id:'project'},normalizeDirectorWorkspace:value=>value||{}};
+  const hydrations=[];
+  const context={sessionId:'',project:{id:'project'},normalizeDirectorWorkspace:value=>value||{},view:null,
+    canvasGenerationIds:()=>['task-1'],loadTasks:async options=>{hydrations.push(options);}};
   vm.createContext(context);
   const change=vm.runInContext(`(${workspaceSource.slice(start,end).trim().replace(/,$/, '')})`,context);
   change({id:'first',agentProjectId:'project',canvas:{directorWorkspace:{canvasNodes:[{id:'saved'}],viewport:{x:5}},assetIds:['saved']}});
@@ -232,4 +234,6 @@ test('switching project sessions preserves unsaved canvas nodes, asset IDs and v
   assert.equal(context.sessionId,'second');assert.equal(context.project.directorWorkspace,live);
   assert.equal(live.viewport.x,120);assert.equal(live.canvasNodes.length,2);
   assert.deepEqual(context.project.assetIds,['saved','new-file']);
+  // Only a newly loaded canvas re-reads its results by ID.
+  assert.equal(JSON.stringify(hydrations),JSON.stringify([{background:true,projectOnly:true}]));
 });
