@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
-import { ensureDefaultModelRoutes, modelRoute, selectModelRoute, updateModelRoute, updateRoutePolicy } from '../lib/model-routes.mjs';
-import { ROUTE_AUTO_DISABLE_THRESHOLD, recordModelRouteFailure, recordModelRouteSuccess, routeAvailabilityFailure } from '../lib/model-route-health.mjs';
+import { ensureDefaultModelRoutes, modelRoute, modelRouteUsable, selectAndClaimModelRoute, selectModelRoute, updateModelRoute, updateRoutePolicy } from '../lib/model-routes.mjs';
+import { ROUTE_AUTO_DISABLE_THRESHOLD, modelRoutePauseCooldownMs, recordModelRouteFailure, recordModelRouteSuccess, routeAvailabilityFailure } from '../lib/model-route-health.mjs';
 import { createRoutedProvider } from '../providers/routed.mjs';
 
 const envNames = ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET'];
@@ -89,7 +89,7 @@ test('channel model auto-disable after consecutive availability failures', async
     const disabled = modelRoute(first.id);
     assert.equal(disabled.adminEnabled, false);
     assert.equal(disabled.autoDisabled, true);
-    assert.match(disabled.autoDisabledReason, /连续 3 次生成失败/);
+    assert.match(disabled.autoDisabledReason, /连续 3 个生成任务失败，已暂停，10 分钟后自动试用/);
     assert.ok(disabled.autoDisabledAt);
     assert.equal(disabled.version, first.version + 1);
 
@@ -159,5 +159,81 @@ test('channel model auto-disable after consecutive availability failures', async
     const disabled = updateModelRoute(route.id, { adminEnabled: false }, { expectedVersion: route.version });
     assert.equal(disabled.adminEnabled, false);
     assert.equal(disabled.autoDisabled, false);
+  });
+
+  const pause = (route, at = new Date().toISOString()) => {
+    for (let index = 0; index < ROUTE_AUTO_DISABLE_THRESHOLD; index++) recordModelRouteFailure({ routeId: route.id, error: routeError('503 service unavailable', { upstreamStatus: 503 }), at });
+    return modelRoute(route.id);
+  };
+  const expireCooldown = route => sql('UPDATE model_routes SET auto_retry_at=:at WHERE id=:id').run({ id: route.id, at: new Date(Date.now() - 1000).toISOString() });
+
+  await t.test('a paused channel stays skipped until its cooldown passes, then one job takes its trial', () => {
+    const route = selectModelRoute(request);
+    const paused = pause(route);
+    assert.equal(paused.autoDisableCount, 1);
+    assert.equal(Date.parse(paused.autoRetryAt) - Date.parse(paused.autoDisabledAt), modelRoutePauseCooldownMs(1));
+    assert.notEqual(selectAndClaimModelRoute(request).id, route.id);
+    assert.equal(modelRouteUsable(route.id), false);
+
+    expireCooldown(route);
+    assert.equal(selectModelRoute(request).id, route.id, 'price checks see the channel again');
+    assert.equal(selectAndClaimModelRoute(request).id, route.id, 'the next job takes the trial');
+    assert.notEqual(selectAndClaimModelRoute(request).id, route.id, 'other jobs keep skipping it during the trial');
+    assert.equal(modelRoute(route.id).adminEnabled, false);
+  });
+
+  await t.test('a successful trial restores the channel and resets its pauses', () => {
+    const route = selectModelRoute(request);
+    pause(route);
+    expireCooldown(route);
+    selectAndClaimModelRoute(request);
+    recordModelRouteSuccess(route.id, { generationId: 'trial' });
+    const restored = modelRoute(route.id);
+    assert.equal(restored.adminEnabled, true);
+    assert.equal(restored.autoDisabled, false);
+    assert.equal(restored.autoDisableCount, 0);
+    assert.equal(restored.autoRetryAt, null);
+    assert.equal(selectModelRoute(request).id, route.id);
+    assert.equal(sql("SELECT COUNT(*) AS count FROM system_events WHERE category='model_route.auto_restored'").get().count, 1);
+  });
+
+  await t.test('a failed trial pauses the channel again for longer, earlier jobs do not', () => {
+    const route = selectModelRoute(request);
+    const paused = pause(route);
+    // A job that was already running before the pause fails afterwards.
+    const before = new Date(Date.parse(paused.autoDisabledAt) - 60_000).toISOString();
+    assert.equal(recordModelRouteFailure({ routeId: route.id, error: routeError('503 service unavailable', { upstreamStatus: 503 }), attemptStartedAt: before }).autoDisabled, false);
+    assert.equal(modelRoute(route.id).autoDisableCount, 1);
+
+    expireCooldown(route);
+    selectAndClaimModelRoute(request);
+    const at = new Date().toISOString();
+    const outcome = recordModelRouteFailure({ routeId: route.id, error: routeError('503 service unavailable', { upstreamStatus: 503 }), attemptStartedAt: at, at });
+    assert.equal(outcome.autoDisabled, true);
+    const repaused = modelRoute(route.id);
+    assert.equal(repaused.autoDisableCount, 2);
+    assert.equal(Date.parse(repaused.autoRetryAt) - Date.parse(at), modelRoutePauseCooldownMs(2));
+    assert.match(repaused.autoDisabledReason, /试用仍然失败，已暂停，30 分钟后自动试用/);
+    assert.equal(modelRoutePauseCooldownMs(9), 60 * 60_000);
+  });
+
+  await t.test('a trial failure caused by the request does not pause the channel again', () => {
+    const route = selectModelRoute(request);
+    pause(route);
+    expireCooldown(route);
+    selectAndClaimModelRoute(request);
+    const outcome = recordModelRouteFailure({ routeId: route.id, error: routeError('400 prompt contains prohibited content', { upstreamStatus: 400 }), attemptStartedAt: new Date().toISOString() });
+    assert.equal(outcome.counted, false);
+    assert.equal(modelRoute(route.id).autoDisableCount, 1);
+  });
+
+  await t.test('a channel switched off by an administrator never takes a trial', () => {
+    const route = selectModelRoute(request);
+    updateModelRoute(route.id, { adminEnabled: false });
+    sql('UPDATE model_routes SET auto_retry_at=:at WHERE id=:id').run({ id: route.id, at: new Date(Date.now() - 1000).toISOString() });
+    for (let index = 0; index < 5; index++) assert.equal(recordModelRouteFailure({ routeId: route.id, error: routeError('503 service unavailable', { upstreamStatus: 503 }), attemptStartedAt: new Date().toISOString() }).autoDisabled, false);
+    assert.notEqual(selectAndClaimModelRoute(request).id, route.id);
+    recordModelRouteSuccess(route.id);
+    assert.equal(modelRoute(route.id).adminEnabled, false);
   });
 });

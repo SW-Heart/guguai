@@ -78,8 +78,9 @@ import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendL
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, videoBillingUnit, liveLlmRates } from './lib/pricing.mjs';
 import { IMAGE_MODEL_DESCRIPTIONS, isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls, validateControlledVideoRequest as validateVideoRequest, withModelDescriptions } from './lib/model-controls.mjs';
-import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, routeCredential, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
+import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, modelRouteUsable, routeCredential, selectAndClaimModelRoute, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
+import { placeholderReferenceImage } from './lib/placeholder-image.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { getNotification, listNotifications, markAllNotificationsRead, markNotificationRead, unreadNotificationCount } from './lib/notifications.mjs';
@@ -1445,6 +1446,26 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
   assetRestores.set(restoreKey, restore);
   return restore;
 }
+// Image-to-video-only channels need an image even for a text request. The
+// placeholder only satisfies that requirement; it is never shown to users.
+async function stagePlaceholderReference(userId, task, targetDir) {
+  if (!r2Reference) throw storageUnavailable('r2-reference');
+  const image = placeholderReferenceImage(task.aspectRatio);
+  const sourceFile = path.join(targetDir, `placeholder-${image.width}x${image.height}.png`);
+  await fs.writeFile(sourceFile, image.buffer);
+  const key = r2ReferenceImageKey(userId, task.id, { mimeType:image.mimeType });
+  try {
+    await putR2ReferenceObject(key, sourceFile, image.mimeType, ({ attempt, error }) => {
+      console.warn('[image-reference] 占位参考图上传重试', { generationId:task.id, attempt, message:error.message });
+    });
+    const url = publicR2ReferenceUrl(key) || await getSignedUrl(r2Reference, new GetObjectCommand({ Bucket: r2ReferenceBucket, Key: key, ResponseCacheControl: 'private, no-store' }), { expiresIn: Math.ceil(r2ReferenceImageTtlMs / 1_000) });
+    scheduleR2ReferenceImageCleanup(key);
+    return url;
+  } catch (error) {
+    console.error('[image-reference] 占位参考图暂存失败', { generationId:task.id, message:error.message });
+    throw new Error(`参考图片准备失败：${error.message}`, { cause:error });
+  }
+}
 async function stageImageReference(userId, task, asset, targetDir) {
   if (!r2Reference) throw storageUnavailable('r2-reference');
   let sourceFile;
@@ -1522,6 +1543,9 @@ async function resolveRefs(userId, ids, task = {}) {
       const url = staged.get(id);
       if (mixed) refs[`${asset.kind}s`].push(url);
       else refs.push(url);
+    }
+    if (task.routeId && task.routeTextPlaceholderImage && !refs.images.length) {
+      refs.images.push(await stagePlaceholderReference(userId, task, jobDir));
     }
     return refs;
   });
@@ -2001,13 +2025,15 @@ function dispatchGenerationFailureNotification(userId, task, error) {
 const recordedRouteFailures = new Set();
 function trackModelRouteFailure(task, error) {
   if (!task?.routeId) return;
-  // One generation attempt counts at most once for its channel model.
-  const key = `${task.id}:${Number(task.generationRetryCount) || 0}:${task.routeId}`;
+  // A job counts at most once per channel model: its retry on the same
+  // channel is not new evidence, so one job alone can never pause a channel.
+  if ((task.generationAttempts || []).some(attempt => attempt.routeId === task.routeId)) return;
+  const key = `${task.id}:${task.routeId}`;
   if (recordedRouteFailures.has(key)) return;
   if (recordedRouteFailures.size >= 10_000) recordedRouteFailures.delete(recordedRouteFailures.values().next().value);
   recordedRouteFailures.add(key);
   try {
-    const outcome = recordModelRouteFailure({ routeId:task.routeId, error, generationId:task.id });
+    const outcome = recordModelRouteFailure({ routeId:task.routeId, error, generationId:task.id, attemptStartedAt:task.attemptStartedAt });
     if (outcome.autoDisabled) console.warn('[model-routes] route auto-disabled', { routeId:task.routeId, generationId:task.id, failures:outcome.failures, code:outcome.code });
   } catch (healthError) {
     console.error('[model-routes] route failure tracking failed', { routeId:task.routeId, generationId:task.id, message:healthError.message });
@@ -2015,13 +2041,13 @@ function trackModelRouteFailure(task, error) {
 }
 function trackModelRouteSuccess(task) {
   if (!task?.routeId) return;
-  try { recordModelRouteSuccess(task.routeId); }
+  try { recordModelRouteSuccess(task.routeId, { generationId:task.id }); }
   catch (healthError) { console.error('[model-routes] route success tracking failed', { routeId:task.routeId, generationId:task.id, message:healthError.message }); }
 }
 async function failGeneration(userId, task, error) {
   assertGenerationJobLease(task);
-  // Update health for new jobs; this paid job still finishes its three primary
-  // retries before trying the next channel once.
+  // Update channel health first; the job then retries its channel once and
+  // moves on to the next one while it is still inside its retry window.
   trackModelRouteFailure(task, error);
   if (prepareGenerationRetry(task, error)) {
     clearProviderTaskIdTimeout(task.id);
@@ -2115,7 +2141,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       if (task.routeId && Number(task.generationRetryCount) > 0) {
         const referenceCounts = referenceAssetCounts(userId, task.referenceAssetIds, { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId });
         const previousRouteId = task.routeId;
-        const route = refreshGenerationRetryRoute(task, { selectModelRoute, referenceCounts });
+        const route = refreshGenerationRetryRoute(task, { selectModelRoute:selectAndClaimModelRoute, routeUsable:modelRouteUsable, referenceCounts });
         console.info('[generation] retry route selected', {
           generationId: task.id,
           retryCount: task.generationRetryCount,
@@ -2780,6 +2806,7 @@ const generationRoute = createGenerationRouteHandler({
   normalizeQuoteReferenceCounts,
   assertReferenceCountsWithinLimits,
   selectModelRoute,
+  selectAndClaimModelRoute,
   publicRoutePriceVersion,
   currentPricing,
   pricingSnapshot,

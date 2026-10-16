@@ -2,15 +2,31 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const generationAttemptContext = new AsyncLocalStorage();
 export const maxGenerationRetries = 3;
-export const maxRoutedGenerationRetries = maxGenerationRetries + 1;
+// Routed jobs try each channel twice (one retry), then move to the next
+// channel. A new attempt may only start within this window after the job was
+// submitted; an attempt already running is never cut short by it.
+export const routedRetryWindowMs = 600_000;
+export const attemptsPerRoute = 2;
+// Jobs saved without a usable submission time keep the former attempt cap.
+const legacyRoutedRetryLimit = maxGenerationRetries + 1;
 
-export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceCounts = {} } = {}) {
+function attemptsOnCurrentRoute(task) {
+  return (task.generationAttempts || []).filter(attempt => attempt.routeId === task.routeId).length;
+}
+
+function routedRetryAllowed(task, at) {
+  const startedAt = Date.parse(task.createdAt);
+  const failedAt = Date.parse(at);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(failedAt)) return (Number(task.generationRetryCount) || 0) < legacyRoutedRetryLimit;
+  return failedAt - startedAt < routedRetryWindowMs;
+}
+
+export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsable = () => true, referenceCounts = {} } = {}) {
   if (!task?.routeId || (Number(task.generationRetryCount) || 0) < 1) return null;
-  // Keep the accepted channel snapshot for all three primary retries. Route
-  // health changes affect new jobs, not the retry budget of this paid job.
-  if (Number(task.generationRetryCount) <= maxGenerationRetries || task.generationFallbackRouteId === task.routeId) {
-    return { id:task.routeId, version:task.routeVersion };
-  }
+  // The failed attempts are persisted on the job, so a restart resumes on the
+  // same channel until it has used its retry and only then moves on. A channel
+  // paused or switched off meanwhile gives up its retry.
+  if (attemptsOnCurrentRoute(task) < attemptsPerRoute && routeUsable(task.routeId)) return { id:task.routeId, version:task.routeVersion };
   if (typeof selectModelRoute !== 'function') throw new TypeError('重新选择生成渠道缺少选路器');
   const route = selectModelRoute({
     logicalModelId: task.videoModelId || task.modelId,
@@ -28,11 +44,11 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, referenceC
     routeId: route.id,
     routeVersion: route.version,
     routePriority: route.priority,
-    generationFallbackRouteId: route.id,
     routeDisplayName: route.displayName,
     routeAdapter: route.adapterType,
     routeBaseUrl: route.baseUrl,
     routeCredentialId: route.credentialId,
+    routeTextPlaceholderImage: Boolean(route.textPlaceholderImage),
     referenceLimits: {
       image: Number(route.capabilities?.image || 0),
       video: Number(route.capabilities?.video || 0),
@@ -47,8 +63,7 @@ export function prepareGenerationRetry(task, error, at = new Date().toISOString(
   if (!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
     || error.submissionUncertain || error.pollTimedOut || error.retryable === false || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
-    || (Number(task.generationRetryCount) || 0) >= (task.routeId ? maxRoutedGenerationRetries : maxGenerationRetries)
-    || task.generationFallbackRouteId) return false;
+    || (task.routeId ? !routedRetryAllowed(task, at) : (Number(task.generationRetryCount) || 0) >= maxGenerationRetries)) return false;
   task.generationAttempts = [...(task.generationAttempts || []), {
     attempt: (Number(task.generationRetryCount) || 0) + 1,
     providerTaskId: task.providerTaskId || '',
