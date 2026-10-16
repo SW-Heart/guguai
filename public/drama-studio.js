@@ -70,7 +70,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   // Only smart projects use the canvas engine, the largest part of this page's
   // code, so it is fetched when one opens and warmed up while the list is idle.
   let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
-  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=202'), loadCanvasStyles()]).then(([module]) => {
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=203'), loadCanvasStyles()]).then(([module]) => {
     createDirectorWorkspace = module.createDirectorWorkspace;
     return module;
   }).catch(error => {

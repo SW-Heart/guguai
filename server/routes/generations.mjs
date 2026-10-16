@@ -24,6 +24,7 @@ export function createGenerationRouteHandler({
   normalizeQuoteReferenceCounts,
   assertReferenceCountsWithinLimits,
   selectModelRoute,
+  selectAndClaimModelRoute = selectModelRoute,
   publicRoutePriceVersion,
   currentPricing,
   pricingSnapshot,
@@ -363,7 +364,9 @@ export function createGenerationRouteHandler({
       return sendJson(res, 409, { error:'描述中有内容很可能导致生成失败，请确认后再提交', code:'PROMPT_PRECHECK_REQUIRED',
         precheck:{ counts:precheckResult.counts, hits:publicPrecheckHits(precheckResult.hits) } }), true;
     }
-    const routeSelection = type === 'video' && videoRequest.provider === 'route' ? selectModelRoute({ logicalModelId:modelId, availableOnly:true, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
+    // A real submission may take a paused channel's single trial; a price
+    // preview only looks.
+    const routeSelection = type === 'video' && videoRequest.provider === 'route' ? (previewOnly ? selectModelRoute : selectAndClaimModelRoute)({ logicalModelId:modelId, availableOnly:true, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
     const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;
@@ -419,7 +422,7 @@ export function createGenerationRouteHandler({
           midjourneyPrimaryId:outputIds[0],
         } : {}),
         ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
-        ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routePriority:routeSelection.priority, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId } : {}),
+        ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routePriority:routeSelection.priority, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId, routeTextPlaceholderImage:routeSelection.textPlaceholderImage } : {}),
         ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),
         creditCost:isIncludedOutput ? 0 : pricingSnapshotValue.total,
         creditCostMicro:isIncludedOutput ? 0 : pricingSnapshotValue.totalMicro,

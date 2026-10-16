@@ -220,9 +220,9 @@ test('the workspace opens after configuration while other data loads, and messag
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.ok(source.includes('./features/notifications/controller.js?v=8'));
-  assert.ok(html.includes('/app.js?v=597'));
+  assert.ok(html.includes('/app.js?v=598'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=[67]\b/);
-  assert.doesNotMatch(html, /app\.js\?v=596\b/);
+  assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });
 
 test('canvas shares its React hook dispatcher with the project components',()=>{

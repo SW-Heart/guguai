@@ -18,6 +18,12 @@ const measured=new Set(['running','processing','saving']);
 // Phases where work is under way, shown with a moving track when no value is known.
 const busy=new Set(['submitting','running','processing','saving']);
 
+// A retried job goes back to the queue on the server, but the user already saw
+// it running; keep showing it as running instead of jumping back to queued.
+export function generationTaskStatus(task){
+  return task?.status==='queued'&&task.progressStage==='retrying'?'running':task?.status;
+}
+
 export function generationFrameState(status,hasMedia=false){
   if(hasMedia)return 'completed';
   if(status==='completed')return 'saving';

@@ -260,7 +260,7 @@ test('purchase dialogs use the WeChat icon with a fresh stylesheet cache key', (
   assert.equal((html.match(/src="\/icons\/wechat\.svg\?v=1"/g) || []).length, 2);
   assert.ok(read('icons/wechat.svg').includes('viewBox="0 0 24 24"'));
   assert.ok(Number(html.match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
-  assert.ok(!html.includes('/styles.css?v=427'));
+  assert.ok(!html.includes('/styles.css?v=338'));
 });
 
 test('custom input takes precedence, clearing it restores preset, and invalid input never falls back', () => {

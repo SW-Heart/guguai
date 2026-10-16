@@ -28,7 +28,7 @@ import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=43';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=21';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=20';
-import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=3';
+import { generationFrameState, generationTaskStatus, renderGenerationPlaceholder } from './generation-status.js?v=4';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=5';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=12';
@@ -512,7 +512,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(n.kind==='canvas-generation'){
       const draft=n.item,task=draft.taskId?bridge.task(draft.taskId):null,media=draft.taskId?bridge.media(draft.taskId):null;
       if(draft.taskId){
-        const state=generationFrameState(task?.status||draft.status||'queued',Boolean(media));
+        const state=generationFrameState(generationTaskStatus(task)||draft.status||'queued',Boolean(media));
         const parent=draft.parentId?generationDraft(draft.parentId):null;
         const caption=renamed||(parent?describeSource(draft.id)?.label||generatorLabel(parent):draft.title||String(draft.prompt||'').trim()||n.title);
         // A picture from a character, location or prop card can become its main picture.
@@ -524,7 +524,7 @@ export function createDirectorWorkspace(host, bridge) {
         const output=displayedResult(liveDrafts(),draft);
         if(draft.status==='submitting'||output){
           const task=output&&bridge.task(output.taskId),media=draft.status==='submitting'?null:output&&bridge.media(output.taskId);
-          const state=generationFrameState(draft.status==='submitting'?'queued':task?.status||output?.status||'queued',Boolean(media));
+          const state=generationFrameState(draft.status==='submitting'?'queued':generationTaskStatus(task)||output?.status||'queued',Boolean(media));
           return resultFrame({state,kind:draft.type,media,caption:renamed||(draft.type==='audio'&&task?.speechMode==='design'?task.voiceName:'')||(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
         }
       }
@@ -550,7 +550,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(n.kind==='asset'&&n.media?.kind==='audio')return `<div class="dw-generation-frame dw-imported-audio" data-state="completed"><span class="dw-audio-head"><span class="dw-audio-icon" aria-hidden="true">${canvasIcon('music')}</span><span class="dw-audio-name">${escape(n.title)}</span></span><audio controls preload="none" data-canvas-src="${escape(n.media.url)}" aria-label="${escape(n.title)}"></audio><span class="dw-frame-caption">${escape(n.title)}</span></div>`;
     if(n.kind==='generation'){
       const task=bridge.task(n.taskId),media=bridge.media(n.taskId);
-      const status=n.item.placeholder?n.item.status:task?.status||'queued';
+      const status=n.item.placeholder?n.item.status:generationTaskStatus(task)||'queued';
       return resultFrame({state:generationFrameState(status,Boolean(media)),kind:n.item.type,media,caption:n.title,progress:task?.progress});
     }
     // Characters, locations, props and shots from older projects.

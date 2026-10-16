@@ -70,24 +70,31 @@ test('request logs retain full payloads and mark retries without exposing creden
   await Promise.all([1, 2].map(id => generationAttemptContext.run({ id }, async () => { await Promise.resolve(); assert.equal(generationAttemptContext.getStore().id, id); })));
 });
 
-test('a routed fallback selects the next channel once without changing its charge', () => {
-  const task = {
-    id:'g', type:'video', generationRetryCount:4, routeId:'route-1', routePriority:1, videoModelId:'seedance-2.5',
-    model:'old-upstream', provider:'old-provider', quality:'720p', duration:30, aspectRatio:'9:16',
-    pricingSnapshot:{ routeId:'route-1', totalMicro:1230000 }, creditCostMicro:1230000,
-  };
+const routedTask = (extra = {}) => ({
+  id:'g', type:'video', createdAt:'2026-01-01T00:00:00Z', generationRetryCount:0,
+  routeId:'route-1', routeVersion:6, routePriority:1, videoModelId:'seedance-2.5',
+  model:'old-upstream', provider:'old-provider', quality:'720p', duration:30, aspectRatio:'9:16',
+  creditStatus:'charged', creditCostMicro:1230000, pricingSnapshot:{ routeId:'route-1', totalMicro:1230000 },
+  ...extra,
+});
+const secondRoute = {
+  id:'route-2', version:7, priority:2, displayName:'当前最优渠道', provider:'new-provider', adapterType:'new-video',
+  baseUrl:'https://new.example.com', credentialId:'credential-2', upstreamModelId:'new-upstream',
+  capabilities:{ image:3, video:1, audio:1 },
+};
+const seconds = value => new Date(Date.parse('2026-01-01T00:00:00Z') + value * 1000).toISOString();
+
+test('a routed job retries its channel once, then moves to the next one without changing its charge', () => {
+  let task = routedTask();
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(60)), true);
+  task = JSON.parse(JSON.stringify(task));
+  assert.equal(refreshGenerationRetryRoute(task, { selectModelRoute:() => assert.fail('the retry stays on the same channel') }).id, 'route-1');
+  assert.equal(task.routeVersion, 6);
+
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(120)), true);
+  task = JSON.parse(JSON.stringify(task));
   let request;
-  const route = refreshGenerationRetryRoute(task, {
-    referenceCounts:{ image:2, video:1, audio:0 },
-    selectModelRoute(value) {
-      request = value;
-      return {
-        id:'route-2', version:7, priority:2, displayName:'当前最优渠道', provider:'new-provider', adapterType:'new-video',
-        baseUrl:'https://new.example.com', credentialId:'credential-2', upstreamModelId:'new-upstream',
-        capabilities:{ image:3, video:1, audio:1 },
-      };
-    },
-  });
+  const route = refreshGenerationRetryRoute(task, { referenceCounts:{ image:2, video:1, audio:0 }, selectModelRoute(value) { request = value; return secondRoute; } });
   assert.equal(route.id, 'route-2');
   assert.deepEqual(request, {
     logicalModelId:'seedance-2.5', quality:'720p', duration:30, aspectRatio:'9:16',
@@ -95,45 +102,55 @@ test('a routed fallback selects the next channel once without changing its charg
     excludeRouteIds:['route-1'], afterPriority:1,
   });
   assert.deepEqual({
-    routeId:task.routeId, routeVersion:task.routeVersion, provider:task.provider, model:task.model,
+    routeId:task.routeId, routeVersion:task.routeVersion, routePriority:task.routePriority, provider:task.provider, model:task.model,
     routeDisplayName:task.routeDisplayName, routeAdapter:task.routeAdapter, routeBaseUrl:task.routeBaseUrl,
     routeCredentialId:task.routeCredentialId, referenceLimits:task.referenceLimits,
   }, {
-    routeId:'route-2', routeVersion:7, provider:'new-provider', model:'new-upstream',
+    routeId:'route-2', routeVersion:7, routePriority:2, provider:'new-provider', model:'new-upstream',
     routeDisplayName:'当前最优渠道', routeAdapter:'new-video', routeBaseUrl:'https://new.example.com',
     routeCredentialId:'credential-2', referenceLimits:{ image:3, video:1, audio:1, total:5 },
   });
   assert.deepEqual(task.pricingSnapshot, { routeId:'route-1', totalMicro:1230000 });
   assert.equal(task.creditCostMicro, 1230000);
-  assert.equal(task.generationFallbackRouteId, 'route-2');
-  assert.equal(task.routePriority, 2);
-  const persisted = JSON.parse(JSON.stringify(task));
-  assert.equal(refreshGenerationRetryRoute(persisted, { selectModelRoute:() => assert.fail('fallback must stay pinned after a restart') }).id, 'route-2');
-  assert.equal(prepareGenerationRetry(persisted, { upstreamTerminal:true }), false);
+
+  // After a restart the new channel still has its own retry left.
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(180)), true);
+  task = JSON.parse(JSON.stringify(task));
+  assert.equal(refreshGenerationRetryRoute(task, { selectModelRoute:() => assert.fail('the new channel keeps its retry') }).id, 'route-2');
+  assert.deepEqual(task.generationAttempts.map(attempt => attempt.routeId), ['route-1', 'route-1', 'route-2']);
 });
 
-test('all three primary retries keep the original channel snapshot and charge', () => {
-  let task = {
-    id:'g', type:'video', routeId:'route-1', routeVersion:6, routePriority:1,
-    model:'bd-seedance-2.5-720p', routeBaseUrl:'https://original.example.com',
-    creditStatus:'charged', creditCost:108, creditCostMicro:108000000,
-    pricingSnapshot:{ routeId:'route-1', totalMicro:108000000 },
-  };
-  for (let retry = 1; retry <= 3; retry++) {
-    task.providerTaskId = `primary-${retry}`;
-    assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true, message:'UPSTREAM_ATTEMPTS_EXHAUSTED' }), true);
-    task = JSON.parse(JSON.stringify(task));
-    assert.equal(refreshGenerationRetryRoute(task, { selectModelRoute:() => assert.fail('primary retries must not reselect') }).id, 'route-1');
-    assert.equal(task.generationRetryCount, retry);
-    assert.equal(task.routeVersion, 6);
-    assert.equal(task.model, 'bd-seedance-2.5-720p');
-    assert.equal(task.creditCostMicro, 108000000);
-    assert.deepEqual(task.pricingSnapshot, { routeId:'route-1', totalMicro:108000000 });
-  }
-  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), true);
-  assert.equal(task.generationRetryCount, 4);
-  assert.throws(() => refreshGenerationRetryRoute(task, { selectModelRoute:() => null }), /暂无其他可用/);
+test('a routed job may start new attempts only within 600 seconds of its submission', () => {
+  const task = routedTask();
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(599)), true);
+  // A long attempt is never cut short; it just cannot be followed by another.
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(700)), false);
+  assert.equal(prepareGenerationRetry(routedTask(), { upstreamTerminal:true }, seconds(600)), false);
+  // Many fast failures keep trying channels while time is left.
+  const fast = routedTask();
+  for (let attempt = 1; attempt <= 12; attempt++) assert.equal(prepareGenerationRetry(fast, { upstreamTerminal:true }, seconds(attempt * 10)), true);
+});
+
+test('jobs without a submission time keep the former routed attempt limit', () => {
+  const task = routedTask({ createdAt:undefined });
+  for (let attempt = 1; attempt <= 4; attempt++) assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), true);
   assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), false);
+});
+
+test('a channel paused or switched off during the job gives up its retry', () => {
+  const task = routedTask();
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(30)), true);
+  assert.equal(refreshGenerationRetryRoute(task, { routeUsable:id => id !== 'route-1', selectModelRoute:() => secondRoute }).id, 'route-2');
+});
+
+test('no remaining channel ends the routed job', () => {
+  const task = routedTask();
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(30)), true);
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(60)), true);
+  let error;
+  try { refreshGenerationRetryRoute(task, { selectModelRoute:() => null }); } catch (failure) { error = failure; }
+  assert.match(error.message, /暂无其他可用/);
+  assert.equal(prepareGenerationRetry(task, error, seconds(61)), false);
   assert.equal(task.routeId, 'route-1');
 });
 

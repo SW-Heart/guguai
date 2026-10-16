@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { createTuziProvider } from '../providers/tuzi.mjs';
 import { createProviderTransport, isPreconnectFailure } from '../providers/transport.mjs';
 
-function provider(fetchJson) {
+function provider(fetchJson, options = {}) {
   return createTuziProvider({
+    ...options,
     baseUrl:'https://tuzi.example', apiKey:'tuzi-test-key', fetchJson,
     trackProviderSubmission:operation => operation, sleep:async () => {},
     videoPollRemainingMs:() => 1000, videoPollRequestSignal:() => undefined,
@@ -159,4 +160,25 @@ test('transport response body failures cannot authorize POST replay', async () =
     assert.equal(isPreconnectFailure(error), false);
     return true;
   });
+});
+
+test('Tuzi waits for slow task IDs up to the configured submit timeout', async () => {
+  const slow = provider(async (_url, options) => {
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(options.signal.aborted, false);
+    return { id:'slow-task' };
+  }, { imageSubmitTimeoutMs:200 });
+  const result = await slow.createImage({ prompt:'test' }, [], { deferPolling:true });
+  assert.equal(result.taskId, 'slow-task');
+
+  const expired = provider((_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once:true });
+  }), { imageSubmitTimeoutMs:20 });
+  // AbortSignal.timeout does not keep the event loop alive on its own.
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    await assert.rejects(expired.createImage({ prompt:'test' }, []), error => error.submissionUncertain === true);
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
