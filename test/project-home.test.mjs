@@ -100,8 +100,8 @@ test('the 创作 home offers project creation, a quiet one-line start and a side
 
 test('changed frontend modules are reachable through current cache keys', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=598', '/styles.css?v=429']],
-    ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=178', './drama-studio.js?v=311']],
+    ['index.html', ['/app.js?v=599', '/styles.css?v=430']],
+    ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=179', './drama-studio.js?v=312']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8', '../../vendor/ui/create-project.js?v=5']],
     ['features/projects/library.js', ['../../vendor/ui/create-project.js?v=5']],
   ]) {

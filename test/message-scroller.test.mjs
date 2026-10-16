@@ -229,3 +229,70 @@ test('minimizing the conversation flies it into the reopen button and the button
   assert.match(css, /\.dw-agent-reopen\.is-arriving::after\{[^}]*animation:dw-agent-reopen-ripple/);
   assert.match(css, /@media\(prefers-reduced-motion:reduce\)\{\.director-workspace \.dw-agent-reopen\.is-arriving::after\{animation:none\}\}/);
 });
+
+test('reading history shows the back-to-latest button; clicking it or sending a message returns to the end', () => {
+  const originals = Object.fromEntries(['window', 'requestAnimationFrame', 'cancelAnimationFrame'].map(key => [key, globalThis[key]]));
+  const frames = new Map();
+  let nextFrame = 0;
+  globalThis.window = { matchMedia: () => ({ matches: true }) };
+  globalThis.requestAnimationFrame = callback => { frames.set(++nextFrame, callback); return nextFrame; };
+  globalThis.cancelAnimationFrame = id => frames.delete(id);
+  const flush = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(16)); };
+  const listeners = new Map();
+  let top = 0;
+  const viewport = {
+    scrollHeight: 1000, clientHeight: 300,
+    get scrollTop() { return top; },
+    set scrollTop(value) { top = Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)); },
+    classList: { toggle() {} },
+    querySelectorAll: () => [],
+    addEventListener(name, callback) { listeners.set(name, callback); },
+    focus() {},
+  };
+  const rail = { hidden: true, addEventListener() {}, querySelectorAll: () => [], replaceChildren() {} };
+  const classes = new Set();
+  let jumpClick;
+  const jump = {
+    inert: true,
+    classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) },
+    addEventListener: (name, callback) => { if (name === 'click') jumpClick = callback; },
+  };
+  let scroller;
+  try {
+    scroller = createMessageScroller(viewport, rail, null, jump);
+    flush();
+    assert.equal(viewport.scrollTop, 700);
+    assert.equal(classes.has('is-visible'), false);
+    assert.equal(jump.inert, true);
+
+    listeners.get('wheel')({ type: 'wheel', deltaY: -80 });
+    viewport.scrollTop = 200;
+    listeners.get('scroll')();
+    assert.equal(classes.has('is-visible'), true);
+    assert.equal(jump.inert, false);
+
+    jumpClick();
+    flush();
+    assert.equal(viewport.scrollTop, 700);
+    listeners.get('scroll')();
+    assert.equal(classes.has('is-visible'), false);
+
+    listeners.get('wheel')({ type: 'wheel', deltaY: -80 });
+    viewport.scrollTop = 100;
+    listeners.get('scroll')();
+    viewport.scrollHeight = 1200;
+    scroller.refresh({ follow: true, immediate: true });
+    flush();
+    assert.equal(viewport.scrollTop, 900);
+    assert.equal(classes.has('is-visible'), false);
+  } finally {
+    scroller?.destroy();
+    Object.assign(globalThis, originals);
+  }
+});
+
+test('sending a message brings the conversation back to the newest message', () => {
+  const source = readFileSync(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
+  assert.match(source, /redrawComposer\(\);\n\s*\/\/ Sending always[^\n]*\n\s*messageScroller\?\.refresh\(\{follow:true,immediate:true\}\);/);
+  assert.match(source, /class="dw-message-jump" data-message-jump aria-label="回到最新消息"[^>]*><span class="gugu-lucide gugu-lucide-arrow-down"/);
+});

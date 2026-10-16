@@ -2204,8 +2204,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=178');
-const importDramaStudio = () => import('./drama-studio.js?v=311');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=179');
+const importDramaStudio = () => import('./drama-studio.js?v=312');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});

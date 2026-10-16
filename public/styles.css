@@ -6108,6 +6108,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .gugu-lucide-folder-open{--gugu-icon:url('/icons/lucide/folder-open.svg?v=1')}
 .gugu-lucide-upload{--gugu-icon:url('/icons/lucide/upload.svg?v=1')}
 .gugu-lucide-arrow-up{--gugu-icon:url('/icons/lucide/arrow-up.svg?v=1')}
+.gugu-lucide-arrow-down{--gugu-icon:url('/icons/lucide/arrow-down.svg?v=1')}
 .gugu-lucide-x{--gugu-icon:url('/icons/lucide/x.svg?v=1')}
 .gugu-lucide-paperclip{--gugu-icon:url('/icons/lucide/paperclip.svg?v=1')}
 .gugu-lucide-layers-2{--gugu-icon:url('/icons/lucide/layers-2.svg?v=1')}
@@ -6460,6 +6461,12 @@ body:has(.app-shell.agent-project-open) .desktop-titlebar-logo{display:none!impo
 .dw-message-tick:focus-visible .dw-message-preview{opacity:1;transform:translate(0,-50%)}
 @media(hover:hover){.dw-message-tick:hover .dw-message-preview{opacity:1;transform:translate(0,-50%)}}
 @media(prefers-reduced-motion:reduce){.dw-message-tick-line,.dw-message-preview{transition:none}}
+.dw-message-jump{position:absolute;z-index:3;bottom:12px;left:50%;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--theme-line, #e6e3ef);border-radius:50%;background:rgb(var(--theme-panel-rgb, 255 254 250) / 0.9);box-shadow:0 8px 24px #2520451f,inset 0 1px var(--theme-highlight, #fff);color:var(--theme-ink, #39354c);cursor:pointer;opacity:0;pointer-events:none;transform:translate(-50%,6px);transition:opacity .18s,transform .18s cubic-bezier(.16,1,.3,1),color .15s,border-color .15s;backdrop-filter:blur(14px)}
+.dw-message-jump.is-visible{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.dw-message-jump .gugu-lucide{width:18px;height:18px}
+.dw-message-jump:focus-visible{outline:2px solid #7163c1;outline-offset:2px}
+@media(hover:hover){.dw-message-jump:hover{color:var(--theme-brand, #7163c1);border-color:var(--theme-brand-line, #b0a4df)}}
+@media(prefers-reduced-motion:reduce){.dw-message-jump{transition:none}}
 #agentView .dw-agent .dw-composer{box-shadow:0 3px 14px #30325d08}
 body.desktop-runtime #agentView .dw-project-chrome,body.desktop-runtime #agentView .dw-agent-page-header{-webkit-app-region:drag;user-select:none}
 body.desktop-runtime #agentView .dw-agent-project,body.desktop-runtime #agentView .dw-project-chrome button,body.desktop-runtime #agentView .dw-project-tools,body.desktop-runtime #agentView .dw-agent-page-header button{-webkit-app-region:no-drag}

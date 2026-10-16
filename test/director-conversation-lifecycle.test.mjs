@@ -8,7 +8,7 @@ const source=readFileSync(new URL('../public/features/drama/director-workspace.j
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 function setup(){
   const input={value:'',style:{},scrollTop:0,get scrollHeight(){return 84+Math.ceil(this.value.length/30)*20;}},form={},sent=[],toasts=[];
-  const context={crypto:globalThis.crypto,pendingMessages:[],retrySubmission:null,normalizeModelPreferences,preferenceUpdating:false,epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},connectionError:'',historyOpen:true,
+  const context={crypto:globalThis.crypto,pendingMessages:[],retrySubmission:null,normalizeModelPreferences,preferenceUpdating:false,epoch:1,sending:false,switchingConversation:false,skillUpdating:false,uploading:false,documentAttachments:[],submissionQueue:[],drainingSubmissions:false,attachments:[],selected:'',skillSelection:null,agentConfig:{configured:true,skills:[]},agentState:{id:'first'},messageScroller:null,connectionError:'',historyOpen:true,
     host:{querySelector:selector=>selector==='#directorMessage'?input:selector==='.dw-composer'?form:{hidePopover(){}}},
     bridge:{toast:message=>toasts.push(message)},drawPanels(){},save:async()=>{},
     agentClient:{send:async text=>sent.push(text),open:async()=>{},newConversation:async()=>{}},

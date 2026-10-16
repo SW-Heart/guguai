@@ -36,7 +36,7 @@ export function nearestMessageTurn(targets, middle) {
   return middle - bottom <= nextTop - middle ? previous : low;
 }
 
-export function createMessageScroller(viewport, rail, surface = null) {
+export function createMessageScroller(viewport, rail, surface = null, jumpButton = null) {
   let following = true;
   let programmatic = false;
   let scrollFrame = 0;
@@ -89,7 +89,16 @@ export function createMessageScroller(viewport, rail, surface = null) {
     return nearestMessageTurn(targets, middle);
   }
 
+  // Offer a way back once the reader has left the latest message.
+  function syncJump() {
+    if (!jumpButton) return;
+    const away = !following && distanceFromEnd() > FOLLOW_THRESHOLD;
+    jumpButton.classList.toggle('is-visible', away);
+    jumpButton.inert = !away;
+  }
+
   function markActive() {
+    syncJump();
     const active = activeItem();
     const buttons = [...rail.querySelectorAll('button')];
     const hovered = buttons.indexOf(hoveredButton);
@@ -149,11 +158,13 @@ export function createMessageScroller(viewport, rail, surface = null) {
     markActive();
   }
 
-  function refresh({ reset = false, immediate = false } = {}) {
+  function refresh({ reset = false, immediate = false, follow = false } = {}) {
     if (reset) { stopAnimation(); following = true; signature = ''; }
+    else if (follow && !following) { stopAnimation(); following = true; }
     if (syncFrame) cancelAnimationFrame(syncFrame);
     syncFrame = requestAnimationFrame(syncRail);
     followEnd(immediate || reset);
+    syncJump();
   }
 
   function readerInput(event) {
@@ -218,6 +229,11 @@ export function createMessageScroller(viewport, rail, surface = null) {
       behavior: reducedMotion.matches ? 'instant' : 'smooth',
     });
     window.setTimeout(() => { programmatic = false; markActive(); }, reducedMotion.matches ? 0 : 350);
+  }, { signal });
+
+  jumpButton?.addEventListener('click', () => {
+    refresh({ follow: true });
+    viewport.focus({ preventScroll: true });
   }, { signal });
 
   const mutationObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => refresh());

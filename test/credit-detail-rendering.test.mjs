@@ -85,8 +85,8 @@ test('tab changes release hidden rows and loading hides pagination', () => {
 test('credit detail ships fresh entry versions and avoids full window backdrop blur', () => {
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=598"/);
-  assert.match(html, /\/styles\.css\?v=429"/);
+  assert.match(html, /\/app\.js\?v=599"/);
+  assert.match(html, /\/styles\.css\?v=430"/);
   assert.match(css, /\.credit-detail-dialog::backdrop\s*\{[^}]*backdrop-filter: none/);
   for (const id of ['creditDetailPagination', 'creditDetailPrevious', 'creditDetailNext', 'creditDetailPageInfo']) {
     assert.ok(html.includes(`id="${id}"`));
