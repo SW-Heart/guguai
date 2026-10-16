@@ -1,3 +1,4 @@
+import { speechModels,speechDesignModel,systemVoices } from '../speech/catalog.js?v=2';
 import { modelLogoUrl } from '../../components/model-logo.js?v=8';
 import { defaultVideoDuration } from '../generation/video-defaults.js?v=5';
 import { replaceAssetMentions } from '../../video-prompt.js?v=6';
@@ -22,17 +23,20 @@ export function canvasGenerationQualityLabel(draft,value){
   return ({low:'低画质',medium:'中画质',high:'高画质'})[value]||String(value??'').toUpperCase();
 }
 export function canvasGenerationFrameSize(type,aspect){
+  if(type==='audio')return {width:360,height:190};
   const [wide,tall]=String(aspect||'1:1').split(':').map(Number),ratio=wide>0&&tall>0?wide/tall:1;
   const side=type==='image'?280:320;
   return ratio>=1?{width:side,height:Math.round(side/ratio)}:{width:Math.round(side*ratio),height:side};
 }
 
 export function canvasGenerationModels(type,config={}){
+  if(type==='audio')return config.speech?.enabled===false?[]:speechModels;
   if(type==='image')return (Array.isArray(config.imageModels)?config.imageModels:[]).filter(model=>model.enabled!==false&&model.availability!=='coming-soon'&&model.availability!=='unavailable');
   return (config.videoCapabilities?.models||[]).filter(model=>!['minimax-h3'].includes(model.id)&&model.enabled!==false&&model.availability!=='coming-soon'&&model.availability!=='unavailable'&&model.modes?.some(mode=>mode.qualityOptions?.length&&mode.durations?.length&&mode.aspectRatios?.length)).map(model=>model.id==='grok'?{...model,modes:model.modes?.map(mode=>({...mode,durations:mode.durations?.filter(value=>Number(value)!==30)}))}:model);
 }
 
 export function createCanvasGenerationDraft(type,config={}){
+  if(type==='audio')return {id:`canvas-gen-${crypto.randomUUID()}`,type:'audio',speechMode:'tts',prompt:'',modelId:speechModels[0].id,duration:0,voiceId:systemVoices[0].id,voiceName:'我的音色',previewText:'你好，很高兴认识你。让我们一起把故事讲给更多人听。',speed:1,emotion:'auto',aspect:'',quality:'标准',mode:'',quantity:1,attachments:[],taskId:'',status:''};
   const model=canvasGenerationModels(type,config).find(item=>item.availability!=='coming-soon');
   const mode=type==='video'?(model?.modes?.find(item=>item.generationType==='TEXT')||model?.modes?.[0]):null;
   const draft={id:`canvas-gen-${crypto.randomUUID()}`,type,prompt:'',modelId:model?.id||'',aspect:type==='image'?'1:1':mode?.aspectRatios?.includes('16:9')?'16:9':mode?.aspectRatios?.[0]||'',quality:type==='image'?'1k':mode?.qualityOptions?.[0]||'',mode:mode?.generationType||'',duration:0,quantity:1,attachments:[],midjourney:{version:'8.2',stylize:100,chaos:0,weird:0,seed:'',negativePrompt:'',imageWeight:1,raw:false,tile:false,draft:false},taskId:'',status:''};
@@ -40,6 +44,7 @@ export function createCanvasGenerationDraft(type,config={}){
 }
 
 export function canvasGenerationOptions(draft,config={}){
+  if(draft.type==='audio')return {model:speechModels.find(m=>m.id===draft.modelId),modes:[],parameters:null,aspects:[],qualities:[]};
   const model=canvasGenerationModels(draft.type,config).find(item=>item.id===draft.modelId);
   if(draft.type==='image')return {model,modes:[],parameters:null,aspects:imageRatios,qualities:draft.modelId==='midjourney'?['0.25','0.5','1','2','4']:draft.modelId==='gpt-image-2.5'?['1k','2k','4k']:['low','medium','high']};
   const modes=model?.modes||[];
@@ -51,6 +56,7 @@ export function canvasGenerationOptions(draft,config={}){
 }
 
 export function reconcileCanvasGenerationDraft(draft,config={}, {resetDuration=false}={}){
+  if(draft.type==='audio'){draft.speechMode=draft.speechMode==='design'?'design':'tts';if(draft.speechMode==='design')draft.modelId=speechDesignModel.id;else if(!speechModels.some(m=>m.id===draft.modelId))draft.modelId=speechModels[0].id;draft.duration=0;return draft;}
   const previousModelId=draft.modelId;
   const models=canvasGenerationModels(draft.type,config);
   if(!models.some(item=>item.id===draft.modelId&&item.availability!=='coming-soon'))draft.modelId=models.find(item=>item.availability!=='coming-soon')?.id||'';
@@ -72,6 +78,7 @@ export function reconcileCanvasGenerationDraft(draft,config={}, {resetDuration=f
 
 export function canvasGenerationPayload(draft,config={}){
   reconcileCanvasGenerationDraft(draft,config);
+  if(draft.type==='audio'){const prompt=String(draft.prompt||'').trim();if(!prompt)throw new Error(draft.speechMode==='design'?'请填写声音描述':'请填写配音文本');return {type:'audio',modelId:draft.modelId,speechMode:draft.speechMode,prompt,voiceId:draft.voiceId,voiceName:draft.voiceName,previewText:draft.previewText,speed:Number(draft.speed??1),emotion:draft.emotion||'auto'};}
   let prompt=draft.type==='video'?replaceAssetMentions(draft.prompt,draft.attachments.map(file=>({id:file.id,label:file.name,kind:file.kind}))):String(draft.prompt||'').trim();
   if(draft.type==='video'&&Array.isArray(draft.promptSegments)&&draft.promptSegments.map(segment=>typeof segment==='string'?segment:`@${segment.label}`).join('')===draft.prompt){
     const counts={image:0,video:0,audio:0},tokens=new Map();

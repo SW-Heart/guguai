@@ -1578,7 +1578,7 @@ import { createApiClient } from './api-client.js?v=4';
       <form id="pricingForm" novalidate>
         <div class="panel-body">
           <section class="price-section"><h4>通用价格</h4><p>未单独设置价格的图片、视频任务按此计费，单位为积分。</p><div class="price-grid">${priceInput('imagePerRequest', '图片', current.imagePerRequest, '积分 / 次')}${priceInput('videoPerSecond', '视频', current.videoPerSecond, '积分 / 秒')}</div></section>
-          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片和视频单位为积分，文本模型单位为人民币。视频按次生成时，每个视频收费相同；按秒生成时，按所选秒数计费。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid is-models">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5>${billingSelect(items[0])}<div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
+          ${groups.length ? `<section class="price-section"><h4>按模型设置</h4><p>图片、视频和语音单位为积分，文本模型单位为人民币。语音和音色设计试听按万字符计费；新音色首次用于配音时收取音色费用。视频按次生成时，每个视频收费相同；按秒生成时，按所选秒数计费。缓存读取、缓存创建按各自单价计费，普通输入不含这两类用量。Seedance 各线路的价格在“调用线路”中设置。</p><div class="price-grid is-models">${groups.map(([label, items]) => `<div class="price-model"><h5>${esc(label)}</h5>${billingSelect(items[0])}<div class="price-grid">${items.map(field => priceInput(`modelPrice:${field.key}`, priceLabel(field), field.amount, `/ ${field.unit}`)).join('')}</div></div>`).join('')}</div></section>` : ''}
         </div>
         <div class="sticky-bar"><span class="muted" data-price-dirty>价格未修改</span><div class="actions"><button class="btn" type="button" data-price-reset disabled>还原</button><button class="btn btn-primary" type="submit" disabled>发布新价格</button></div></div>
       </form>

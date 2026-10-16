@@ -41,16 +41,18 @@ export function primaryResult(drafts,generator,task){
 export function generatorLabel(draft){
   if(draft?.entity?.name)return draft.entity.name;
   if(draft?.title)return draft.title;
+  if(draft?.type==='audio'&&draft.speechMode==='design'&&draft.voiceName)return draft.voiceName;
   const prompt=String(draft?.prompt||'').replace(/\s+/g,' ').trim();
-  return prompt?Array.from(prompt).slice(0,16).join(''):draft?.type==='video'?'视频生成':'图像生成';
+  return prompt?Array.from(prompt).slice(0,16).join(''):draft?.type==='audio'?(draft.speechMode==='design'?'音色设计':'语音生成'):draft?.type==='video'?'视频生成':'图像生成';
 }
 
 // Which inputs a generation node can take. Returns an error message or ''.
 export function linkError(target,source){
-  if(!isGenerator(target))return '只能连接到图像生成或视频生成';
+  if(!isGenerator(target))return '只能连接到生成节点';
   if(!source)return '这个内容不能作为输入';
   if(source.id===target.id)return '不能连接到自身';
   if(source.kind==='text')return '';
+  if(target.type==='audio')return target.speechMode!=='design'&&source.voiceId?'':'语音生成只能连接文字或已生成的音色';
   if(target.type==='image'&&source.kind!=='image')return '图像生成只能使用图片作为参考';
   if(!mediaNames[source.kind])return '这个内容不能作为输入';
   return '';
@@ -75,10 +77,11 @@ export function removeLinks(workspace,match){
 // end up as the same file share one reference slot, so mentioning a character
 // card and its chosen picture never uploads the picture twice.
 export function resolveGenerationInputs(draft,links,describe){
-  const texts=[],linked=[],missing=[];
+  const texts=[],linked=[],missing=[];let voiceId='';
   for(const link of inputLinks(links,draft.id)){
     const source=describe(link.from);
     if(!source)continue;
+    if(draft.type==='audio'&&source.voiceId){if(voiceId&&voiceId!==source.voiceId)throw new Error('每个配音节点只能选择一个音色');voiceId=source.voiceId;continue;}
     if(source.kind==='text'){const text=String(source.text||'').trim();if(text)texts.push({id:link.from,label:source.label,text});continue;}
     if(!source.file?.id){missing.push(source.label);continue;}
     linked.push({sourceId:link.from,label:source.label,file:source.file});
@@ -95,7 +98,7 @@ export function resolveGenerationInputs(draft,links,describe){
     attachments.push({id:item.file.id,kind:item.file.kind,name:unique(item.label),url:item.file.url||''});
     aliases.set(item.sourceId,item.file.id);
   }
-  return {texts,attachments,aliases,missing};
+  return {texts,attachments,aliases,missing,voiceId};
 }
 
 // Build the draft that is actually submitted: linked text first, then the
@@ -113,7 +116,7 @@ export function generationRequestDraft(draft,inputs){
   }):[];
   const own=consistent?joinSegments(segments):String(draft.prompt||'');
   const text=inputs.texts.map(item=>item.text).join('\n\n');
-  const request={...draft,attachments:inputs.attachments,promptSegments:segments,prompt:own};
+  const request={...draft,...(inputs.voiceId?{voiceId:inputs.voiceId}:{}),attachments:inputs.attachments,promptSegments:segments,prompt:own};
   if(!text)return request;
   if(!own.trim())return {...request,prompt:text,promptSegments:[text]};
   const prefix=`${text}\n\n`;
@@ -252,7 +255,7 @@ export function summarizeCanvas(workspace,task=()=>null){
   return {
     cards:generators.filter(item=>item.entity).map(item=>({...common(item),kind:entityKinds[item.entity.kind],name:item.entity.name,mainAssetId:assetOf(primaryResult(drafts,item,task))})),
     shots:generators.filter(item=>!item.entity&&item.role==='shot').map(item=>({...common(item),title:item.title||'',duration:item.duration,aspect:item.aspect,latestAssetId:assetOf(primaryResult(drafts,item,task))})),
-    generators:generators.filter(item=>!item.entity&&item.role!=='shot').map(item=>({...common(item),type:item.type==='video'?'视频':'图像',latestAssetId:assetOf(primaryResult(drafts,item,task))})),
+    generators:generators.filter(item=>!item.entity&&item.role!=='shot').map(item=>({...common(item),type:item.type==='audio'?'语音':item.type==='video'?'视频':'图像',latestAssetId:assetOf(primaryResult(drafts,item,task))})),
     notes:notes.map(note=>({id:note.id,kind:note.role==='script'?'剧本':'文字',title:note.title,text:short(note.text,4000),length:note.text.length})),
   };
 }

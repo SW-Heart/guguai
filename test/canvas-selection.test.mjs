@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import { selectPointerNode, patchWhiteboardSelection } from '../scripts/director/whiteboard-resize.mjs';
+import { selectPointerNode, nativeArrowAnchorSelected, patchWhiteboardSelection } from '../scripts/director/whiteboard-resize.mjs';
 
 const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
 const context=vm.createContext({});
@@ -24,30 +24,97 @@ test('starting a drag on a selected component preserves all selected nodes',()=>
   assert.ok(/selectedNodeIds\?\?\[\]\)\.includes\(\w+\)\|\|\w+\._selectNodes/.test(bundle));
 });
 
+test('generated connections never leave native endpoint circles after a nested selection change',()=>{
+  const state={selectedNodeIds:['picture','shot','edge-link-picture--shot']};
+  const core={getState:()=>state};
+  const original=[...state.selectedNodeIds];
+  assert.equal(nativeArrowAnchorSelected(core,'edge-link-picture--shot',original),false);
+  state.selectedNodeIds=['picture','shot'];
+  assert.equal(nativeArrowAnchorSelected(core,'edge-link-picture--shot',original),false);
+  for(const id of ['edge-link-picture--shot','edge-result-shot','edge-story']){
+    state.selectedNodeIds=[id];
+    assert.equal(nativeArrowAnchorSelected(core,id,[id]),false,id);
+  }
+  state.selectedNodeIds=['drawing-arrow'];
+  assert.equal(nativeArrowAnchorSelected(core,'drawing-arrow',['drawing-arrow']),true);
+  state.selectedNodeIds=['picture','shot'];
+  assert.equal(nativeArrowAnchorSelected(core,'drawing-arrow',['drawing-arrow']),false);
+  const engine='o && r(this, L)._selectNodes([o], i.evt.shiftKey); const s = n.includes(this.config.id);';
+  const patched=patchWhiteboardSelection(engine);
+  assert.ok(patched.includes(nativeArrowAnchorSelected.toString()));
+  const bundle=readFileSync(new URL('../public/vendor/director/reference-canvas.js',import.meta.url),'utf8');
+  assert.match(bundle,/!String\(\w+\)\.startsWith\("edge-"\)&&\w+\.includes\(\w+\)&&\(\w+\.getState\(\)\.selectedNodeIds\?\?\[\]\)\.includes/);
+});
+
 function selectionHandlers(){
   const handlers={};
   const context=vm.createContext({
-    canvas:{on:(name,fn)=>{handlers[name]=fn;},getStage:()=>({on:(name,fn)=>{handlers[name]=fn;}}),getState:()=>({selectedNodeIds:context.ids}),getToolType:()=> 'select',getNodeConfigById:()=>({$_type:'html'})},
+    canvas:{selectNodes(ids){context.ids=Array.from(ids);handlers['nodes:selected'](context.ids);},on:(name,fn)=>{handlers[name]=fn;},getStage:()=>({on:(names,fn)=>{for(const name of names.split(' '))handlers[name]=fn;}}),getState:()=>({selectedNodeIds:context.ids}),getToolType:()=> 'select',getNodeConfigById:()=>({$_type:'html'})},
     host:{querySelector:()=>({classList:{toggle(){}},hidden:false,innerHTML:''})},
     generationDraft:id=>id?{id}:null,selected:'',activeGenerationId:'',inspectorOpen:false,
     renderGenerationComposer(){},drawInspector(){},syncCanvas(){},renderEdges(){},liveCanvasNodes:()=>[],nativeTransformer:{},window:{setTimeout(){}},mountEpoch:1,epoch:1,
   });
   vm.runInContext(source.slice(source.indexOf("      canvas.on('nodes:selected',ids=>"),source.indexOf("      canvas.on('nodes:deleted'")),context);
-  return {context,select:ids=>{context.ids=ids;handlers['nodes:selected'](ids);},click:event=>handlers['pointerclick.director-selection'](event)};
+  return {context,select:ids=>{context.ids=ids;handlers['nodes:selected'](ids);},fire:(type,event={})=>handlers[`${type}.director-selection`]({evt:{button:0,clientX:20,clientY:30,pointerId:1},...event})};
 }
 
-test('marquee selection never opens parameters; clicking a single component does',()=>{
-  const {context,select,click}=selectionHandlers();
-  select(['first','second']);
+test('connected storyboard and picture selections exclude generated edges from the drag group',()=>{
+  const {context,select}=selectionHandlers();
+  for(const ids of [
+    ['shot','edge-link-picture--shot','picture'],
+    ['edge-result-shot','shot','picture','edge-link-picture--shot'],
+    ['text','drawing-arrow','edge-link-text--shot','shot','picture'],
+  ]){
+    select(ids);
+    assert.deepEqual(Array.from(context.ids),ids.filter(id=>!id.startsWith('edge-')));
+    assert.equal(context.activeGenerationId,'');
+  }
+  // A connection stays selectable on its own for deletion and context actions.
+  select(['edge-link-picture--shot']);
+  assert.deepEqual(Array.from(context.ids),['edge-link-picture--shot']);
   assert.equal(context.selected,'');
+  select(['shot','edge-link-picture--shot']);
+  assert.deepEqual(Array.from(context.ids),['shot']);
   assert.equal(context.activeGenerationId,'');
-  click({target:{id:()=> 'first'}});
-  assert.equal(context.activeGenerationId,'');
+});
+
+test('first click opens parameters even when the new selection overlay receives pointerup',()=>{
+  const {context,select,fire}=selectionHandlers();
   select(['first']);
   assert.equal(context.activeGenerationId,'');
-  click({target:{id:()=> 'first'}});
+  fire('pointerdown',{target:{id:()=> 'first'}});
+  fire('pointerup',{target:{getParent:()=>context.nativeTransformer,hasName:()=>true}});
   assert.equal(context.activeGenerationId,'first');
-  select(['first','second']);
+  select(['second']);
+  fire('pointerdown',{target:{id:()=> 'second'}});
+  fire('pointerup');
+  assert.equal(context.activeGenerationId,'second');
+});
+
+test('marquee selection stays closed even when it selects only one generatable node',()=>{
+  for(const ids of [['first'],['first','second']]){
+    const {context,select,fire}=selectionHandlers();
+    select([]);
+    fire('pointerdown',{target:{id:()=> ''}});
+    select(ids);
+    fire('pointerup',{target:{id:()=> 'first'}});
+    assert.equal(context.activeGenerationId,'');
+  }
+});
+
+test('multi-selection, dragging, resizing and cancelled presses never open parameters',()=>{
+  for(const type of ['pointermove','dragstart','transformstart','pointercancel','multi']){
+    const {context,select,fire}=selectionHandlers();
+    select(type==='multi'?['first','second']:['first']);
+    fire('pointerdown',{target:{id:()=> 'first'}});
+    if(type!=='multi')fire(type,{evt:{clientX:40,clientY:30,pointerId:1}});
+    fire('pointerup');
+    assert.equal(context.activeGenerationId,'',type);
+  }
+  const {context,select,fire}=selectionHandlers();
+  select(['first']);
+  fire('pointerdown',{target:{id:()=> 'first'}});
+  fire('pointerup',{evt:{clientX:40,clientY:30,pointerId:1}});
   assert.equal(context.activeGenerationId,'');
 });
 

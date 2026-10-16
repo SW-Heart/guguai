@@ -1,3 +1,4 @@
+@import url("/styles/speech.css?v=7");
 /* Brand */
 .brand-gem { position: relative; display: block; width: 28px; height: 28px; border-radius: 7px; background: var(--ink); }
 .brand-gem::before, .brand-gem::after { content: ""; position: absolute; border-radius: 2px; background: white; }
@@ -5838,6 +5839,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .director-workspace .reference-canvas-host .dw-document-card .dw-frame-caption[hidden]{display:none}
 .director-workspace .reference-canvas-host .dw-document-editor{display:block;flex:1;min-height:0;width:100%;box-sizing:border-box;resize:none;overflow:auto;overscroll-behavior:contain;pointer-events:auto;touch-action:pan-y;cursor:text;white-space:pre-wrap;padding:10px 12px;border:1px solid var(--cv-line);border-radius:10px;background:rgb(var(--theme-panel-rgb,255 255 255) / .55);color:var(--cv-ink);font:14px/1.8 var(--sans);outline:none}
 .director-workspace .reference-canvas-host .dw-document-editor:focus-visible{border-color:var(--cv-brand);box-shadow:0 0 0 2px rgba(99,102,241,.12)}
+.director-workspace .reference-canvas-host .dw-document-card:not(.is-editing) .dw-document-editor{cursor:grab;touch-action:none}
 .director-workspace .reference-canvas-host .dw-document-card.is-editing .dw-document-editor{background:var(--cv-surface);border-color:var(--cv-brand)}
 .director-workspace .reference-canvas-host .dw-document-actions{display:flex;flex:none;flex-wrap:wrap;gap:6px}
 .director-workspace .reference-canvas-host .dw-document-actions button{pointer-events:auto;cursor:pointer;min-height:32px;padding:5px 10px;border:1px solid var(--cv-line);border-radius:9px;background:var(--cv-surface);color:var(--cv-ink);font:500 12px/1.4 var(--sans)}

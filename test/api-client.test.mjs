@@ -115,8 +115,8 @@ test('all versioned API-client entries use the new module and HTML cache keys', 
     ['app.js', './api-client.js?v=4'],
     ['guguadmin.js', './api-client.js?v=4'],
     ['marketing.js', './api-client.js?v=4'],
-    ['index.html', '/app.js?v=588'],
-    ['guguadmin.html', '/guguadmin.js?v=49'],
+    ['index.html', '/app.js?v=597'],
+    ['guguadmin.html', '/guguadmin.js?v=50'],
     ['home.html', '/marketing.js?v=21'],
     ['features.html', '/marketing.js?v=21'],
     ['pricing.html', '/marketing.js?v=21'],
@@ -124,6 +124,6 @@ test('all versioned API-client entries use the new module and HTML cache keys', 
   ]) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
     assert.ok(source.includes(expected), `${file} must reference ${expected}`);
-    assert.doesNotMatch(source, /(?:api-client\.js\?v=3|app\.js\?v=459|guguadmin\.js\?v=27|marketing\.js\?v=15)(?:['"\s]|$)/);
+    assert.doesNotMatch(source, /(?:api-client\.js\?v=3|app\.js\?v=596|guguadmin\.js\?v=27|marketing\.js\?v=15)(?:['"\s]|$)/);
   }
 });

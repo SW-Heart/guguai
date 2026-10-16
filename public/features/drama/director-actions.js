@@ -1,5 +1,5 @@
 import { normalizeProjectAssets } from './project-assets.js?v=4';
-import { normalizeLinks, entityKinds } from './canvas-links.js?v=2';
+import { normalizeLinks, entityKinds } from './canvas-links.js?v=3';
 // Persist only inert canvas attributes, never executable HTML or application state.
 function isMeaningfulRichText(node) {
  const html=typeof node?.$_htmlContent==='string'?node.$_htmlContent:(typeof node?.text==='string'?node.text:'');
@@ -68,7 +68,8 @@ export function normalizeDirectorWorkspace(value = {}) {
   return { version:1, delegated:Boolean(object.delegated), autonomy:['assist','director','auto'].includes(object.autonomy)?object.autonomy:'director',
     projectAssets:normalizeProjectAssets(object.projectAssets),
     canvasNodes:normalizeCanvasNodes(object.canvasNodes),
-    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,600).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video'].includes(item.type)).map(item=>({
+    generationDrafts:(Array.isArray(object.generationDrafts)?object.generationDrafts:[]).slice(0,600).filter(item=>item&&typeof item.id==='string'&&/^canvas-gen-[\w-]{1,100}$/.test(item.id)&&['image','video','audio'].includes(item.type)).map(item=>({
+      ...(item.type==='audio'?{speechMode:item.speechMode==='design'?'design':'tts',speechPrompts:{tts:String(item.speechPrompts?.tts||'').slice(0,4000),design:String(item.speechPrompts?.design||'').slice(0,2000)},voiceId:String(item.voiceId||'').slice(0,200),voiceName:String(item.voiceName||'我的音色').slice(0,40),previewText:String(item.previewText||'').slice(0,500),speed:Number(item.speed)||1,emotion:String(item.emotion||'auto').slice(0,20)}:{}),
       id:item.id,type:item.type,prompt:String(item.prompt||'').slice(0,10000),modelId:String(item.modelId||'').slice(0,100),
       promptSegments:(Array.isArray(item.promptSegments)?item.promptSegments:[]).slice(0,1000).flatMap(segment=>typeof segment==='string'?[segment.slice(0,10000)]:segment&&typeof segment.id==='string'&&typeof segment.label==='string'?[{id:segment.id.slice(0,200),label:segment.label.slice(0,200)}]:[]),
       aspect:String(item.aspect||'').slice(0,20),quality:String(item.quality||'').slice(0,20),mode:String(item.mode||'').slice(0,20),

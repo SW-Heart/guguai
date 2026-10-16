@@ -2204,8 +2204,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=168');
-const importDramaStudio = () => import('./drama-studio.js?v=301');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=177');
+const importDramaStudio = () => import('./drama-studio.js?v=310');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -4624,7 +4624,7 @@ $('#videoDuration').onchange = () => { syncVideoModelParameters(); updateVideoCo
 $('#videoResolution').onchange = () => syncVideoModelParameters();
 $('#videoAspect').onchange = () => syncVideoModelParameters();
 
-const priceUnitLabels = Object.freeze({ request:'次', second:'秒' });
+const priceUnitLabels = Object.freeze({request:'次',second:'秒',ten_thousand_characters:'万字符',voice:'音色（首次配音）'});
 function priceUnitLabel(unit) { return priceUnitLabels[unit] || '秒'; }
 // Sorts quality tiers the way people read them (480p < 720p < 2k) so the card
 // always opens on the cheapest tier without relying on upstream ordering.
@@ -4645,7 +4645,7 @@ function modelPriceCard(modelId, rows, kind) {
   const tiers = [...rows].sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
   const active = tiers.reduce((cheapest, item) => (Number(item.yuan) < Number(cheapest.yuan) ? item : cheapest), tiers[0]);
   const discount = officialPriceDiscount(modelId, active);
-  const meta = kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · ' + (tiers.every(item => item.unit === 'request') ? '按次计费' : tiers.every(item => item.unit === 'second') ? '按秒计费' : '按所选清晰度计费');
+  const meta = kind === 'audio' ? '语音生成 · 按字符或音色计费' : kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · ' + (tiers.every(item => item.unit === 'request') ? '按次计费' : tiers.every(item => item.unit === 'second') ? '按秒计费' : '按所选清晰度计费');
   const tierRow = tiers.length > 1
     ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-discount="${esc(officialPriceDiscount(modelId, item)?.label || '')}" data-discount-detail="${esc(officialPriceDiscount(modelId, item)?.detail || '')}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
     : `<div class="price-tier-row"><span class="price-tier price-tier-static">${esc(tiers[0].quality)}</span></div>`;
@@ -4660,9 +4660,9 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
   const videoModelOrderMap = new Map(videoModelOptions().map((model, index) => [model.id, index]));
   const groups = [...new Set(visibleItems.map(item => item.modelId))].map(modelId => {
     const rows = visibleItems.filter(item => item.modelId === modelId);
-    return { modelId, rows, kind: videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
+    return { modelId, rows, kind: rows[0]?.kind === 'audio' ? 'audio' : videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
   });
-  const sections = [{ kind:'video', title:'视频模型', hint:'按次或按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
+  const sections = [{kind:'audio',title:'语音模型',hint:'按字符或音色计费'}, { kind:'video', title:'视频模型', hint:'按次或按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
   body.innerHTML = sections.map(section => {
     const cards = groups.filter(group => group.kind === section.kind);
     if (section.kind === 'video') cards.sort((left, right) => {

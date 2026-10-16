@@ -1,3 +1,6 @@
+import { createSpeechService } from './services/speech-generation.mjs';
+import { generateMinimaxSpeech } from './providers/minimax-speech.mjs';
+import { speechModels } from './public/features/speech/catalog.js';
 import { tuziImageRetryUrl } from './desktop/media-retry.mjs';
 import { editVideoLayers } from './services/agent-video-edit.mjs';
 import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
@@ -461,11 +464,17 @@ function videoUpscaleFailure(task) {
   return task.creditStatus === 'refund_failed' ? { code:'REFUND_PENDING', ...generationFailureCatalog.REFUND_PENDING } : failure;
 }
 function generationFailure(task) {
+  if(task.type==='audio'&&task.creditStatus!=='refund_failed')return {code:'SPEECH_FAILED',message:'语音生成失败',suggestion:'请检查文本或更换音色后重新生成。',action:'edit_input'};
   if (task.modelId === VIDEO_UPSCALE_MODEL_ID) return videoUpscaleFailure(task);
   const code = generationFailureCode(task);
   const base = { code, ...(generationFailureCatalog[code] || generationFailureCatalog.UNKNOWN) };
   const raw = String(task.error || '');
   if (code === 'REFERENCE_REQUIRED') {
+    const minimum = raw.match(/requires?\s+at least\s+([1-9]\d*)\s+(?:reference images?|image references?)/i);
+    if (minimum) {
+      const count = minimum[1] === '1' ? '一' : minimum[1];
+      return { ...base, message: `当前模型至少需要${count}张参考图`, suggestion: '请添加参考图后重试；如果要纯文本生成，请切换到支持纯文本生成的模型。' };
+    }
     const range = raw.match(/requires?\s+(\d+)\s+to\s+(\d+)\s+reference images?/i);
     const requirement = range ? `${range[1]}～${range[2]} 张` : '至少 1 张';
     return { ...base, message: '当前视频服务要求参考图片', suggestion: `本次要求 ${requirement}参考图片，请添加后重试；如果要纯文本生成，请切换到支持纯文本的视频服务。` };
@@ -511,6 +520,7 @@ function generationFailure(task) {
 }
 const publicGenerationFields = Object.freeze([
   'id', 'type', 'status', 'prompt', 'referenceAssetIds', 'modelId', 'size', 'quality', 'aspectRatio', 'duration',
+  'speechMode', 'characters', 'voiceId', 'voiceName', 'previewText', 'speed', 'emotion',
   'videoModelId', 'generationType', 'midjourneyOptions', 'assetId', 'creditCost', 'creditStatus', 'createdAt', 'updatedAt', 'submittedAt',
   'finishedAt', 'progress', 'awaitingReferences', 'batchSize', 'midjourneyOutputIndex', 'midjourneyOutputCount',
 ]);
@@ -667,6 +677,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
       items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
+  for(const model of speechModels) {const credits=modelPrice(pricing,model.id,'标准',model.creditsPerTenThousand??model.creditsPerVoice);items.push({modelId:model.id,label:model.label,kind:'audio',quality:'标准',unit:model.creditsPerVoice===undefined?'ten_thousand_characters':'voice',credits,yuan:credits*.1,available:Boolean(process.env.MINIMAX_API_KEY),enabled:Boolean(process.env.MINIMAX_API_KEY)});}
   return items;
 }
 
@@ -676,6 +687,7 @@ function configState() {
   return {
     imageGeneration: Boolean(process.env.DUOMI_API_KEY || process.env.TUZI_DEFAULT_API_KEY),
     imageModels: availableImageModels().map(model => ({ ...model, availability:'available', enabled:true })),
+    speech:{enabled:Boolean(process.env.MINIMAX_API_KEY),designEnabled:false,models:speechModels},
     smsLogin: smsConfig.configured,
     mediaStorageReady: r2Configured,
     directUpload: r2Configured && directUploadEnabled,
@@ -1588,7 +1600,7 @@ function generationSourceHeaders(task, resultUrl) {
   if (contentUrl && resultUrl === contentUrl) return { Authorization: `Bearer ${oaiProvider.keyForTask(task)}` };
   return {};
 }
-function generationAssetExtension(task) { return task?.type === 'image' ? '.png' : '.mp4'; }
+function generationAssetExtension(task) { return task?.type === 'audio' ? '.wav' : task?.type === 'image' ? '.png' : '.mp4'; }
 function generationAssetName(task, extension = generationAssetExtension(task)) {
   const kind = task?.type === 'image' ? '生成图片' : task?.modelId === VIDEO_UPSCALE_MODEL_ID ? `高清视频 ${task.quality || ''}`.trim() : '生成视频';
   return `${kind} ${new Date(task?.createdAt || Date.now()).toLocaleString('zh-CN')}${extension}`;
@@ -2026,6 +2038,7 @@ async function failGeneration(userId, task, error) {
   }
   task.status = 'failed';
   task.error = error.message;
+  if(task.type==='audio'){speech.releaseVoice(userId,task);const source=path.join(assetFilesDir(userId),`${task.id}.speech-source`);await Promise.all([fs.unlink(source).catch(()=>{}),fs.unlink(`${source}.json`).catch(()=>{})]);}
   const includedOutput = isMidjourneyGridChild(task);
   if (!includedOutput) dispatchGenerationFailureNotification(userId, task, error);
   if (isMidjourneyGridTask(task) && !includedOutput) {
@@ -2099,6 +2112,37 @@ function scheduleProviderTaskIdTimeout(userId, task) {
   runtimeLifecycle.registerTimer(timer);
   providerTaskIdTimeoutTimers.set(task.id, timer);
 }
+async function runSpeechGeneration(userId,task) {
+  await ensureUserDirs(userId);
+  const source=path.join(assetFilesDir(userId),`${task.id}.speech-source`),checkpoint=`${source}.json`;
+  let generated;
+  try {generated={data:await fs.readFile(source),...JSON.parse(await fs.readFile(checkpoint,'utf8'))};}
+  catch(error) {
+    if(task.speechStartedAt)throw new Error('本次语音生成已中断，请重新生成');
+    task.speechStartedAt=now();await saveGenerationWithRetry(userId,task,'speech-started');
+    generated=await generateMinimaxSpeech(task,task.speechMode==='tts'?speech.voice(userId,task.voiceId):'');
+    await fs.writeFile(source,generated.data);
+    await fs.writeFile(checkpoint,JSON.stringify({providerVoiceId:generated.providerVoiceId||'',format:generated.format,durationSeconds:generated.durationSeconds||0,usageCharacters:generated.usageCharacters||0}));
+  }
+  if(task.speechMode==='design') {
+    task.voiceId=speech.saveVoice(userId,task,generated.providerVoiceId);
+    await saveGenerationWithRetry(userId,task,'speech-voice-created');
+  }
+  speech.activateVoice(userId,task);
+  const metadata=await probeAudioTrack(source);
+  if(!metadata.hasAudio||!metadata.durationSeconds)throw new Error('生成结果没有可播放的声音');
+  const format=generated.data.toString('ascii',0,4)==='RIFF'?'wav':'mp3';
+  const audio={data:generated.data,mimeType:format==='wav'?'audio/wav':'audio/mpeg',durationSeconds:metadata.durationSeconds};
+  task.duration=metadata.durationSeconds;task.upstreamUsageCharacters=generated.usageCharacters||0;
+  const assetId=`audio-${task.id}`,storageName=`${assetId}.${format}`,target=path.join(assetFilesDir(userId),storageName);
+  await fs.writeFile(target,audio.data);
+  const asset={id:assetId,ownerId:userId,name:`${task.speechMode==='design'?task.voiceName:'配音'} ${new Date(task.createdAt).toLocaleTimeString('zh-CN').replace(/:/g,'-')}.${format}`,kind:'audio',mimeType:audio.mimeType,size:audio.data.length,duration:audio.durationSeconds,sha256:createHash('sha256').update(audio.data).digest('hex'),storageName,source:'generation',deliveryStatus:'awaiting_local',sourceGenerationId:task.id,createdAt:task.createdAt,updatedAt:now(),originDeviceId:task.originDeviceId,originWorkspaceId:task.originWorkspaceId};
+  assertGenerationJobLease(task);
+  if(r2Configured)await uploadAsset(userId,asset);else await saveAsset(userId,asset);
+  task.assetId=assetId;task.status='completed';task.finishedAt=now();
+  await saveGenerationWithRetry(userId,task,'speech-completed');
+  await Promise.all([fs.unlink(source).catch(()=>{}),fs.unlink(checkpoint).catch(()=>{})]);
+}
 function startGeneration(userId, task, { deferPolling = false } = {}) {
   if (activeGenerations.has(task.id)) return activeGenerations.get(task.id);
   const promise = (async () => {
@@ -2118,6 +2162,10 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       generationLifecycle.markRunning(task);
       await saveGenerationWithRetry(userId, task, 'generation-running');
       await markMidjourneyGridOutputsRunning(userId, task);
+      if(task.type==='audio') {
+        await runSpeechGeneration(userId,task);
+        return;
+      }
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
@@ -2310,6 +2358,7 @@ function processGenerationTask(userId, task, kind = 'generation') {
   if (task.awaitingReferences) return Promise.resolve();
   if (task.archivePending && task.sourceUrl && !task.localReadyAt) return resumeGenerationArchive(userId, task);
   const pollOnce = kind === 'poll' || Boolean(task.providerTaskId);
+  if (task.type === 'audio' && ['queued','running'].includes(task.status)) return startGeneration(userId,task);
   if (task.status === 'queued' && !task.awaitingReferences) return startGeneration(userId, task, { deferPolling:true });
   if (task.type === 'image' && task.provider === 'duomi' && task.providerTaskId) return resumeDuomiImageGeneration(userId, task, { pollOnce });
   if (task.type === 'image' && task.provider === 'tuzi' && task.providerTaskId) return resumeTuziImageGeneration(userId, task, { pollOnce });
@@ -2751,8 +2800,10 @@ const videoUpscale = createVideoUpscaleService({
 const promptPrecheckMode = ['off', 'shadow', 'enforce'].includes(process.env.PROMPT_PRECHECK_MODE) ? process.env.PROMPT_PRECHECK_MODE : 'enforce';
 const promptPrecheck = { mode:() => promptPrecheckMode, scan:(prompt, { modelId }) => scanPromptRisk(prompt, { modelId }), record:recordPromptPrecheckEvent };
 const promptPrecheckRoute = createPromptPrecheckRouteHandler({ bodyJson, sendJson, requireUser, promptPrecheck });
+const speech=createSpeechService({sql,currentPricing});
 const generationRoute = createGenerationRouteHandler({
   videoUpscale,
+  speech,
   bodyJson,
   sendJson,
   requireUser,
@@ -3045,7 +3096,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

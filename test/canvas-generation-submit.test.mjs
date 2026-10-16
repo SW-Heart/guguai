@@ -7,7 +7,7 @@ const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8
 const source=read('features/drama/director-workspace.js');
 const links=await import('../public/features/drama/canvas-links.js');
 test('ordinary generators render pending, completed and failed outputs inside their own frame',()=>{
-  for(const type of ['image','video'])for(const status of ['queued','running','completed','failed']){
+  for(const type of ['image','video','audio'])for(const status of ['queued','running','completed','failed']){
     const draft={id:'g',type,prompt:'画面描述'};
     const result={id:'r',parentId:'g',taskId:'t',status,prompt:'生成时的描述'};
     const media=status==='completed'?{kind:type,url:'/result'}:null;
@@ -24,7 +24,7 @@ test('ordinary generators render pending, completed and failed outputs inside th
     assert.equal(pending.media,null);assert.equal(pending.caption,'画面描述');
   }
 });
-function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
+function fixture(result,{entity=null,links:linked=[],describe=()=>null,quote={priceVersion:'price-v1'}}={}){
   const draft={id:'canvas-gen-draft',type:'image',prompt:'人物半身照',aspect:'3:4',attachments:[],taskId:'',...(entity?{entity}:{})};
   const workspace={generationDrafts:[draft],links:linked,positions:{[draft.id]:{x:10,y:20,width:280,height:320}}};
   const requests=[],messages=[],saves=[],uploads=[],focused=[],selected=[];
@@ -34,7 +34,7 @@ function fixture(result,{entity=null,links:linked=[],describe=()=>null}={}){
     describeInput:describe,liveCanvasNodes:()=>[{id:'other',x:386,y:20,width:200,height:200}],nodeRect:node=>({x:node.x,y:node.y,width:node.width,height:node.height}),
     canvasGenerationFrameSize:()=>({width:240,height:320}),...links,
     bridge:{toast:message=>messages.push(message),prepareCloudFiles:async files=>{uploads.push(files.map(file=>file.id));return files.map(file=>({id:`cloud-${file.id}`}));},
-      agentApi:async(url,options)=>{requests.push({url,options});if(url==='/api/model-quote')return {priceVersion:'price-v1'};if(result instanceof Error)throw result;return result;}}});
+      agentApi:async(url,options)=>{requests.push({url,options});if(url==='/api/model-quote')return quote;if(result instanceof Error)throw result;return result;}}});
   vm.runInContext(source.slice(source.indexOf('  function generationRequest(draft){'),source.indexOf('  function mount()')),context);
   return {context,draft,workspace,requests,messages,saves,uploads,focused,selected,submit:()=>context.submitGenerationArea()};
 }
@@ -139,4 +139,22 @@ test('returning to works refreshes the gallery to recover previously unregistere
   vm.runInContext(text.slice(text.indexOf('function setGenerationTab('),text.indexOf('function renderTasks()')),context);
   context.setGenerationTab('works');assert.equal(loads,1);assert.equal(renders,1);
   assert.match(text,/renderTasks\(\);\s*if\(routeChanged\)void loadTasks\(\{background:true\}\);/);
+});
+
+test('speech submits the price the user saw and keeps its audio result editable',async()=>{
+  const quote={priceVersion:'speech-price-1',credits:.014};
+  const f=fixture({id:'audio-task',type:'audio',status:'queued'},{quote});
+  Object.assign(f.draft,{type:'audio',speechMode:'tts',speechQuote:quote});
+  await f.submit();
+  assert.equal(f.requests.length,2);assert.equal(f.requests[0].url,'/api/model-quote');
+  assert.equal(JSON.parse(f.requests[1].options.body).expectedPriceVersion,quote.priceVersion);
+  assert.equal(f.workspace.generationDrafts[1].type,'audio');assert.equal(f.draft.taskId,'');
+});
+test('speech blocks submission until quoted and asks for renewed confirmation after a price change',async()=>{
+  const f=fixture({id:'unexpected-task'},{quote:{priceVersion:'new',credits:99.014}});
+  Object.assign(f.draft,{type:'audio',speechMode:'tts'});
+  await f.submit();assert.equal(f.requests.length,0);
+  f.draft.speechQuote={priceVersion:'old',credits:.014};await f.submit();
+  assert.equal(f.requests.length,1);assert.equal(f.workspace.generationDrafts.length,1);
+  assert.match(f.messages.at(-1),/费用已更新/);assert.equal(f.context.generationSubmitting,false);
 });

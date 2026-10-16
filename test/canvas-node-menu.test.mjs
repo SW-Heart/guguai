@@ -21,8 +21,8 @@ function fixture(){
   return {context,document,window,trigger,created,open};
 }
 
-test('the unified menu opens upward and creates each of the eight node types once',()=>{
-  const f=fixture(),kinds=['script','text','character','location','prop','shot','image','video'];
+test('the unified menu opens upward and creates each of the nine node types once',()=>{
+  const f=fixture(),kinds=['script','text','character','location','prop','shot','image','video','audio'];
   for(const kind of kinds){
     const menu=f.open();
     assert.deepEqual(menu.buttons.map(button=>button.dataset.createKind),kinds);

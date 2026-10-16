@@ -39,7 +39,7 @@ function fixture(type, anchor = {left:250,top:450,bottom:486}, viewport = {width
   };
   const panel = {hidden:false,querySelectorAll:()=>Object.values(triggers),querySelector:selector=>triggers[selector.match(/data-gen-menu="([^"]+)"/)?.[1]]};
   const context = vm.createContext({...generation,console,
-    activeGenerationId:'draft',generationMenu:'',generationMenuElement:menu,
+    activeGenerationId:'draft',generationMenu:'',generationMenuElement:menu,speechLanguagePopover:null,speechVoiceFilters:null,
     generationDraft:()=>draft,generationConfig:()=>config,
     host:{querySelector:selector=>selector==='.dw-generation-composer'?panel:panel.querySelector(selector)},
     document:{activeElement:null,documentElement:{clientWidth:viewport.width}},
@@ -172,4 +172,35 @@ test('file menu opening and document clicks never hide unrelated menus', () => {
   assert.equal(fileMenu.classList.contains('hidden'),true);
   assert.equal(menu.classList.contains('hidden'),false);
   assert.equal(foreignMenu.classList.contains('hidden'),false);
+});
+
+test('menu reposition preserves scrolling and unchanged background updates do not rebuild options',()=>{
+  const f=fixture('image');f.click('model');
+  f.menu.scrollTop=180;let writes=0,content=f.menu.innerHTML;
+  Object.defineProperty(f.menu,'innerHTML',{get:()=>content,set:value=>{writes++;content=value;f.menu.scrollTop=0;},configurable:true});
+  f.run('positionGenerationMenu()');assert.equal(f.menu.scrollTop,180);
+  f.run('renderGenerationMenu()');assert.equal(writes,0);assert.equal(f.menu.scrollTop,180);
+});
+
+test('language dropdown floats independently with fixed height and closes before the voice menu',()=>{
+  const ui=fixture('image');
+  ui.run(`
+    generationMenu='speech-voiceId';speechVoiceFilters={open:true,query:'',selected:{language:null}};
+    speechVoices=[];systemVoices=[];speechLanguageFilterMarkup=()=>'<label>普通话</label>';
+    const languageList={scrollTop:64};
+    speechLanguagePopover={hidden:true,style:{},innerHTML:'',querySelector:()=>languageList};
+    const filterTrigger={getBoundingClientRect:()=>({right:700,bottom:200}),setAttribute(){},focus(){this.focused=true;}};
+    generationMenuElement.querySelector=()=>filterTrigger;
+    positionSpeechLanguageFilter();
+  `);
+  assert.equal(ui.run('speechLanguagePopover.hidden'),false);
+  assert.equal(ui.run('speechLanguagePopover.style.height'),'300px');
+  assert.equal(ui.run('speechLanguagePopover.style.top'),'208px');
+  assert.equal(ui.menu.innerHTML,'');
+  ui.run('languageList.scrollTop=96;positionSpeechLanguageFilter()');
+  assert.equal(ui.run('languageList.scrollTop'),96);
+  ui.run('closeSpeechLanguageFilter(true)');
+  assert.equal(ui.run('speechLanguagePopover.hidden'),true);
+  assert.equal(ui.run('filterTrigger.focused'),true);
+  assert.equal(ui.run('generationMenu'),'speech-voiceId');
 });

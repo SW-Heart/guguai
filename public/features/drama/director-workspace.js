@@ -1,3 +1,6 @@
+import { createVoiceFilterState,voiceFilterOptions,toggleVoiceFilter,voiceMatchesFilters } from '../speech/voice-filters.js?v=2';
+import { speechComposerMarkup,speechParameterOptions,speechVoiceMenuMarkup,speechLanguageFilterMarkup } from '../speech/composer.js?v=5';
+import { systemVoices,speechCharacters } from '../speech/catalog.js?v=2';
 import { createCancelledNodeCleanup } from './canvas-cancelled-cleanup.js?v=1';
 import { createAgentAssetMetadataSync } from './agent-asset-metadata.js?v=1';
 import { mountMediaNameEditor } from './media-name-editor.js?v=1';
@@ -22,20 +25,20 @@ import { placeCanvasNodes, placeCanvasRow, focusCanvasViewport, canvasNodeBounds
 import { createCreativeAgentClient } from '../agent/client.js?v=15';
 import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
-import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=42';
-import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=20';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=18';
-import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=2';
+import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=43';
+import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=21';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=20';
+import { generationFrameState, renderGenerationPlaceholder } from './generation-status.js?v=3';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=5';
 import { canvasIcon } from './canvas-icons.js?v=1';
-import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=10';
-import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, isInlineGenerator, displayedResult, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=2';
+import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=12';
+import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, isInlineGenerator, displayedResult, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=3';
 import { mountCanvasConnector, rectAt } from './canvas-connect.js?v=3';
-import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=5';
-import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=9';
+import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=7';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=11';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=17';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=19';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 import { mountCanvasContextMenu } from './canvas-context-menu.js?v=2';
@@ -258,7 +261,7 @@ export function createDirectorWorkspace(host, bridge) {
   const syncAgentAssetMetadata=createAgentAssetMetadataSync({findFile:id=>bridge.canvasFile?.({assetId:id}),renameFile:(file,name)=>bridge.renameFile(file,name),current:()=>!stopped,onChange:()=>drawPanels({syncBoard:true}),onError:error=>bridge.toast(error.message)});
   let submissionQueue=[], drainingSubmissions=false, pendingMessages=[], retrySubmission=null;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
-  let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null;
+  let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null, speechLanguagePopover=null;
   const autoOpenedGenerations=new Set();
   let cancelledNodeCleanup=null,mediaNameEditor=null,projectAssetsDrawer=null,canvasLibrary=null,lastCanvasMediaSignature='',connector=null,linkPopup=null;
   let canvasContextMenu=null;
@@ -347,7 +350,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(Array.isArray(deleted)&&deleted.length)scheduleCanvasSave();
   }
   function nodes() {
-    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId||displayedResult(workspace().generationDrafts,d)?.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))].map(node=>{const file=node.media||(node.taskId?bridge.canvasFile?.({taskId:node.taskId}):null);const name=workspace().projectAssets?.names?.[node.id]||workspace().projectAssets?.names?.[file?.id];return name?{...node,title:name}:node;});
+    const p=get(),imported=bridge.imported(),importedIds=new Set(imported.map(file=>file.id));return [...(agentState?.documents||[]).map(d=>({id:d.id,kind:'document',title:d.title,text:d.text,item:d})),...(agentState?.sourceObservations||[]).map(o=>({id:`source-${o.assetId}`,kind:'source-observation',title:`原片分析 · ${o.assetName}`,text:o.overview||'已记录原片时间线',item:o})),...(agentState?.sourceTranscripts||[]).map(t=>({id:t.id,kind:'source-transcript',title:`台词 · ${t.assetName}`,text:t.text||'未识别到台词',item:t})),...(agentState?.generations||[]).filter(g=>!g.attachedTo).map(g=>({id:g.canvasId||g.id,kind:'generation',title:g.title,text:'',taskId:g.id,item:g})),...(workspace().notes||[]).map(note=>({id:note.id,kind:'note',title:note.title||(note.role==='script'?'剧本':'文字'),text:note.text,item:note})),...(workspace().generationDrafts||[]).map(d=>({id:d.id,kind:'canvas-generation',title:d.title||(d.type==='audio'?'语音生成':d.type==='image'?'图像生成':'视频生成'),text:d.prompt,taskId:d.taskId||displayedResult(workspace().generationDrafts,d)?.taskId,item:d})),...imported.map(f=>({id:f.id,kind:'asset',title:f.name||'参考素材',text:'已导入素材',item:f,media:f})),...(agentState?.audioAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'提取音频',text:'提取的音轨',item:f,media:f})),...(agentState?.composedAssets||[]).filter(f=>!importedIds.has(f.id)).map(f=>({id:f.id,kind:'asset',title:f.name||'复刻成片',text:'已合成视频',item:f,media:f})),...((p.synopsis?.trim()||p.script?.trim())?[{id:'story',kind:'story',title:'剧本',text:p.script||p.synopsis,item:{}}]:[]),...p.resources.map(x=>({id:x.id,kind:'resource',title:x.name,text:x.description||x.prompt,item:x,taskId:x.selectedTaskId||x.versions?.at(-1)})),...p.shots.map((x,i)=>({id:x.id,kind:'shot',title:`${String(i+1).padStart(2,'0')} · ${x.title}`,text:x.script||x.prompt||'等待导演设计这一镜',item:x,taskId:x.selectedVideoTaskId||x.videoVersions?.at(-1)}))].map(node=>{const file=node.media||(node.taskId?bridge.canvasFile?.({taskId:node.taskId}):null);const name=workspace().projectAssets?.names?.[node.id]||workspace().projectAssets?.names?.[file?.id];return name?{...node,title:name}:node;});
   }
   function hasSavedCanvasContent() {
     const hidden=hiddenIds();
@@ -484,7 +487,7 @@ export function createDirectorWorkspace(host, bridge) {
   }
   // Every generated picture or clip uses the same frame, whoever asked for it.
   function resultFrame({state,kind,media,caption,progress,extra=''}){
-    const body=media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} ${media.kind==='video'?'data-preview-src':'data-canvas-src'}="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:renderGenerationPlaceholder(state,{kind,progress});
+    const body=media?.kind==='audio'?`<div class="dw-speech-result"><span class="gugu-lucide gugu-lucide-music" aria-hidden="true"></span><audio controls preload="none" data-canvas-src="${escape(media.url)}" aria-label="${escape(caption)}"></audio></div>`:media?`<${media.kind==='video'?'video controls playsinline preload="none"':'img'} ${media.kind==='video'?'data-preview-src':'data-canvas-src'}="${escape(media.url)}" ${media.kind==='image'?`alt="${escape(caption)}"`:''}>${media.kind==='video'?'</video>':''}`:renderGenerationPlaceholder(state,{kind,progress});
     return `<div class="dw-generation-frame dw-manual-frame" data-state="${escape(state)}" data-kind="${escape(kind)}" aria-label="${escape(caption)}">${body}${extra}<span class="dw-frame-caption">${escape(caption)}</span></div>`;
   }
   const entityIcons={character:'user-round',location:'map-pin',prop:'package'};
@@ -522,12 +525,12 @@ export function createDirectorWorkspace(host, bridge) {
         if(draft.status==='submitting'||output){
           const task=output&&bridge.task(output.taskId),media=draft.status==='submitting'?null:output&&bridge.media(output.taskId);
           const state=generationFrameState(draft.status==='submitting'?'queued':task?.status||output?.status||'queued',Boolean(media));
-          return resultFrame({state,kind:draft.type,media,caption:renamed||(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
+          return resultFrame({state,kind:draft.type,media,caption:renamed||(draft.type==='audio'&&task?.speechMode==='design'?task.voiceName:'')||(draft.status==='submitting'?draft.prompt:output?.prompt)||draft.prompt||n.title,progress:task?.progress});
         }
       }
       // Description cards keep their text and display results beside them.
       const drafts=liveDrafts(),foot=generatorFoot(draft,drafts);
-      const meta=[draft.type==='video'&&draft.duration?`${draft.duration} 秒`:'',draft.aspect].filter(Boolean).join(' · ');
+      const meta=[['video','audio'].includes(draft.type)&&draft.duration?`${draft.duration} 秒`:'',draft.aspect].filter(Boolean).join(' · ');
       const state=draft.status==='submitting'||foot.running?'processing':'draft';
       if(draft.entity){
         const main=primaryResult(drafts,draft,id=>bridge.task(id));
@@ -613,10 +616,10 @@ export function createDirectorWorkspace(host, bridge) {
         const siblings=parent?draftResults(liveDrafts(),parent.id):[];
         const primary=parent&&primaryResult(liveDrafts(),parent,taskId=>bridge.task(taskId));
         const label=parent?(primary?.id===draft.id?generatorLabel(parent):`${generatorLabel(parent)} ${siblings.indexOf(draft)+1}`):generatorLabel(draft);
-        return {kind:draft.type,label,file:fileOf(draft.taskId,draft.type)};
+        return {kind:draft.type,label,file:fileOf(draft.taskId,draft.type),...(bridge.task(draft.taskId)?.speechMode==='design'&&bridge.task(draft.taskId)?.status==='completed'?{voiceId:bridge.task(draft.taskId).voiceId}:{})};
       }
       const primary=primaryResult(liveDrafts(),draft,taskId=>bridge.task(taskId));
-      return {kind:draft.type,label:generatorLabel(draft),file:primary?fileOf(primary.taskId,draft.type):null,generator:true};
+      return {kind:draft.type,label:generatorLabel(draft),file:primary?fileOf(primary.taskId,draft.type):null,generator:true,...(primary&&bridge.task(primary.taskId)?.speechMode==='design'?{voiceId:bridge.task(primary.taskId).voiceId}:{})};
     }
     const item=nodes().find(n=>n.id===id);
     if(item){
@@ -669,13 +672,13 @@ export function createDirectorWorkspace(host, bridge) {
       const from=byId.get(link.from),to=byId.get(link.to);
       if(!from||!to)return;
       const points=edgePointsFor(link,from,to),id=link.id;
-      if(persist&&canvas.getNodeConfigById(id))canvas.updateNodes([id],{points});
+      if(persist&&canvas.getNodeConfigById(id))canvas.updateNodes([id],{x:0,y:0,points});
       const shape=findLayerNode(id);
       // The native arrow normalizer forces closed paths and theme colors.
       // Repair the live shape after every update so curves never fill or close.
       const scale=Math.abs(Number(canvas.getState().viewport?.scale)||1);
       const selected=(canvas.getState().selectedNodeIds||[]).includes(id);
-      shape?.setAttrs?.({closed:false,fillEnabled:false,listening:true,draggable:false,hitStrokeWidth:14/scale,stroke:selected?'#4f46e5':edgeStyles[link.style].stroke,strokeWidth:edgeStyles[link.style].strokeWidth+(selected?1.5:0)});
+      shape?.setAttrs?.({x:0,y:0,closed:false,fillEnabled:false,listening:true,draggable:false,hitStrokeWidth:14/scale,stroke:selected?'#4f46e5':edgeStyles[link.style].stroke,strokeWidth:edgeStyles[link.style].strokeWidth+(selected?1.5:0)});
       shape?.points?.(points);
     });
     mainLayer.batchDraw?.();
@@ -754,8 +757,17 @@ export function createDirectorWorkspace(host, bridge) {
     }));
   }
   function forwardCanvasDocumentPan(event) {
-    if(!canvas||!event.target?.closest?.('.dw-document-card'))return;
-    if(canvas.getToolType?.()!=='hand'&&event.button!==1)return;
+    const card=event.target?.closest?.('.dw-document-card');
+    if(!canvas||!card)return;
+    const tool=canvas.getToolType?.();
+    const panning=tool==='hand'||event.button===1;
+    // Read-only text covers the native hit rectangle. Forward its press to
+    // Konva so the existing selection and group-drag behavior apply to cards
+    // just as they do to images. Editing fields and action buttons stay native.
+    const dragging=tool==='select'&&!card.classList?.contains('is-editing')&&
+      event.target?.closest?.('[data-document-body]')&&
+      (event.button===0||event.type==='touchstart');
+    if(!panning&&!dragging)return;
     const surface=canvas.getStage()?.content;
     if(!surface)return;
     event.stopPropagation();
@@ -1423,7 +1435,7 @@ export function createDirectorWorkspace(host, bridge) {
       const file=media[index],response=await fetch(file.url);
       if(!response.ok)throw new Error(`下载失败（${response.status}）`);
       const blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');
-      const extension=blob.type==='video/webm'?'webm':blob.type.startsWith('video/')?'mp4':blob.type==='image/jpeg'?'jpg':'png';
+      const extension=blob.type.startsWith('audio/')?(blob.type.includes('wav')?'wav':blob.type.includes('mpeg')?'mp3':'m4a'):blob.type==='video/webm'?'webm':blob.type.startsWith('video/')?'mp4':blob.type==='image/jpeg'?'jpg':'png';
       const name=(items[index].title||'素材').replace(/[\\/:*?"<>|]/g,'_');
       link.href=url;link.download=/\.[a-z0-9]{2,5}$/i.test(name)?name:`${name}.${extension}`;
       document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -1498,6 +1510,7 @@ export function createDirectorWorkspace(host, bridge) {
   // Lucide line icons used by the canvas generation composer.
   const genIcon=paths=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   const genIcons={
+    filter:genIcon('<path d="M4 7h16M7 12h10M10 17h4"/>'),
     paperclip:genIcon('<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l10-10a4 4 0 0 1 5.66 5.66l-10 10a2 2 0 0 1-2.83-2.83l9.19-9.19"/>'),
     upload:genIcon('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>'),
     chevron:genIcon('<path d="m6 9 6 6 6-6"/>'),
@@ -1555,7 +1568,7 @@ export function createDirectorWorkspace(host, bridge) {
     if(!shape||!bounds)return;
     const {width:boardWidth,offsetX,offsetY,minTop,maxBottom}=bounds;
     const client=shape.getClientRect(),rect={x:client.x+offsetX,y:client.y+offsetY,width:client.width,height:client.height};
-    const type=generationDraft(activeGenerationId)?.type,width=Math.min(type==='video'?680:600,boardWidth-24);
+    const type=generationDraft(activeGenerationId)?.type,width=Math.min(['video','audio'].includes(type)?680:600,boardWidth-24);
     panel.classList.toggle('is-narrow',width<500);
     panel.style.width=`${width}px`;
     panel.style.maxHeight=`${Math.max(160,maxBottom-minTop)}px`;
@@ -1591,8 +1604,9 @@ export function createDirectorWorkspace(host, bridge) {
     const target=generationDraft(to),source=describeSource(from);
     const error=linkError(target,source&&{...source,id:from});
     if(error)throw new Error(error);
+    if(target.type==='audio'&&source.voiceId&&linkedGenerationInputs(target).some(item=>item.id!==from&&item.voiceId))throw new Error('每个配音节点只能选择一个音色');
     if(inputLinks(workspace().links,to).some(link=>link.from===from))return false;
-    if(source.kind!=='text'){
+    if(source.kind!=='text'&&!(target.type==='audio'&&source.voiceId)){
       const kinds=linkedGenerationInputs(target).filter(item=>item.kind!=='text').map(item=>item.kind);
       admitLinkedReference(target,source.kind,kinds,generationConfig());
       reconcileCanvasGenerationDraft(target,generationConfig());
@@ -1701,7 +1715,7 @@ export function createDirectorWorkspace(host, bridge) {
   const createOptions=[
     {kind:'script',label:'剧本',icon:'book-open'},{kind:'text',label:'文字',icon:'file-text'},
     {kind:'character',label:'角色',icon:'user-round',type:'image'},{kind:'location',label:'场景',icon:'map-pin',type:'image'},{kind:'prop',label:'道具',icon:'package',type:'image'},
-    {kind:'shot',label:'分镜',icon:'clapperboard',type:'video'},{kind:'image',label:'图像生成',icon:'image',type:'image'},{kind:'video',label:'视频生成',icon:'video',type:'video'},
+    {kind:'shot',label:'分镜',icon:'clapperboard',type:'video'},{kind:'image',label:'图像生成',icon:'image',type:'image'},{kind:'video',label:'视频生成',icon:'video',type:'video'},{kind:'audio',label:'语音生成',icon:'music',type:'audio'},
   ];
   function worldPoint(client){
     const box=canvas.getContainer().getBoundingClientRect(),viewport=canvas.getState().viewport;
@@ -1769,7 +1783,7 @@ export function createDirectorWorkspace(host, bridge) {
       createGenerationArea('video',{at,point,from,setup:draft=>{draft.role='shot';draft.title=title;}});
       return;
     }
-    if(kind==='image'||kind==='video')createGenerationArea(kind,{at,point,from});
+    if(kind==='image'||kind==='video'||kind==='audio')createGenerationArea(kind,{at,point,from});
   }
   function toggleResults(id){
     const draft=generationDraft(id);
@@ -1810,10 +1824,22 @@ export function createDirectorWorkspace(host, bridge) {
     }catch(error){if(token===epoch&&!error.stale)bridge.toast(error.message);}
     finally{if(token===epoch){generationUploading=false;renderGenerationComposer();}}
   }
+  function filterSpeechVoiceMenu(menu,query){
+    const text=String(query||'').trim().toLocaleLowerCase();let count=0;
+    menu.querySelectorAll('[data-speech-voice-option]').forEach(option=>{option.hidden=!option.dataset.search.includes(text)||!voiceMatchesFilters({language:option.dataset.filterLanguage,source:option.dataset.filterSource,recommendation:option.dataset.filterRecommendation,description:option.dataset.filterDescription},speechVoiceFilters?.selected||{});if(!option.hidden)count++;});
+    menu.querySelectorAll('[data-speech-voice-group]').forEach(group=>{const visible=[...group.querySelectorAll('[data-speech-voice-option]')].filter(option=>!option.hidden).length;group.hidden=!visible;const counter=group.querySelector('[data-speech-group-count]');if(counter)counter.textContent=String(visible);});
+    const empty=menu.querySelector('[data-speech-voice-empty]');if(empty)empty.hidden=Boolean(count);
+  }
   function generationMenuMarkup(draft){
     const config=generationConfig(),options=canvasGenerationOptions(draft,config);
     const choice=(field,value,label,current,extra='')=>`<button type="button" class="dw-gen-choice" role="radio" aria-checked="${String(value)===String(current)}" data-gen-set="${field}" data-value="${escape(value)}" data-focus-key="${field}:${escape(value)}">${extra}<span>${escape(label)}</span></button>`;
     const section=(title,body,extra='')=>`<section class="dw-gen-menu-section${extra}"><h4>${title}</h4>${body}</section>`;
+    if(draft.type==='audio'&&generationMenu.startsWith('speech-')){
+      const field=generationMenu.slice(7),config=field==='primaryId'?{label:'生成结果',options:draftResults(liveDrafts(),draft.id).map((item,index)=>[item.id,`第 ${index+1} 个`])}:speechParameterOptions(field,speechVoices||systemVoices);
+      if(!config)return '';
+      if(field==='voiceId'){speechVoiceFilters||=createVoiceFilterState();return speechVoiceMenuMarkup(speechVoices||systemVoices,draft.voiceId,{check:genIcons.check,filter:genIcons.filter,state:speechVoiceFilters});}
+      return `<div class="dw-gen-menu-title">${escape(config.label)}</div>${field==='voiceId'?'<label class="dw-speech-voice-search"><input type="search" data-speech-voice-search aria-label="搜索音色" placeholder="搜索音色名称或特点" autocomplete="off"></label>':''}<div class="dw-gen-option-list">${config.options.map(([value,label,description])=>`<button type="button" class="dw-gen-option" role="option" aria-selected="${String(value)===String(draft[field])}" data-gen-set="${escape(field)}" ${field==='voiceId'?`data-speech-voice-option data-search="${escape(`${label} ${description||''} ${value}`.toLocaleLowerCase())}"`: ''} data-value="${escape(value)}" data-focus-key="${escape(field)}:${escape(value)}"><span class="dw-gen-option-copy"><b>${escape(label)}</b>${description?`<small>${escape(description)}</small>`:''}</span><span class="dw-gen-option-check">${genIcons.check}</span></button>`).join('')}</div>${field==='voiceId'?'<p class="dw-speech-voice-empty" data-speech-voice-empty hidden>没有匹配的音色</p>':''}`;
+    }
     if(generationMenu==='model'){
       const models=canvasGenerationModels(draft.type,config).filter(item=>item.availability!=='coming-soon');
       return `<div class="dw-gen-menu-title">${draft.type==='image'?'图像模型':'视频模型'}</div><div class="dw-gen-option-list">${models.map(model=>`<button type="button" class="dw-gen-option" role="option" aria-selected="${model.id===draft.modelId}" data-gen-set="modelId" data-value="${escape(model.id)}" data-focus-key="modelId:${escape(model.id)}">${genModelIcon(model)}<span class="dw-gen-option-copy"><b>${escape(model.label||model.id)}</b>${model.description?`<small>${escape(model.description)}</small>`:''}</span><span class="dw-gen-option-check">${genIcons.check}</span></button>`).join('')}</div>`;
@@ -1843,15 +1869,40 @@ export function createDirectorWorkspace(host, bridge) {
     if(!trigger)return;
     const anchor=trigger.getBoundingClientRect(),viewWidth=document.documentElement.clientWidth||window.innerWidth,viewHeight=window.innerHeight;
     const width=Math.min(generationMenu==='model'?340:generationMenu==='mode'?280:320,viewWidth-24);
-    menu.style.width=`${width}px`;menu.style.maxHeight='none';
+    const scrollTop=menu.scrollTop;
+    menu.style.width=`${width}px`;
     const spaceBelow=viewHeight-anchor.bottom-16,spaceAbove=anchor.top-16;
     const natural=menu.scrollHeight,below=natural<=spaceBelow||spaceBelow>=spaceAbove;
     const maxHeight=Math.max(140,below?spaceBelow:spaceAbove),height=Math.min(natural,maxHeight);
     const left=Math.max(12,Math.min(viewWidth-width-12,anchor.left));
     Object.assign(menu.style,{maxHeight:`${maxHeight}px`,left:`${left}px`,top:`${Math.max(8,below?anchor.bottom+8:anchor.top-8-height)}px`});
     menu.dataset.placement=below?'bottom':'top';
+    menu.scrollTop=scrollTop;
+    positionSpeechLanguageFilter();
+  }
+  function closeSpeechLanguageFilter(restoreFocus=false){
+    if(speechVoiceFilters)speechVoiceFilters.open=false;
+    if(speechLanguagePopover)speechLanguagePopover.hidden=true;
+    const trigger=generationMenuElement?.querySelector('[data-speech-filter-toggle]');
+    trigger?.setAttribute('aria-expanded','false');
+    if(restoreFocus)trigger?.focus({preventScroll:true});
+  }
+  function positionSpeechLanguageFilter(){
+    if(!speechLanguagePopover)return;
+    const trigger=generationMenuElement?.querySelector('[data-speech-filter-toggle]');
+    if(generationMenu!=='speech-voiceId'||!speechVoiceFilters?.open||!trigger){speechLanguagePopover.hidden=true;return;}
+    const markup=speechLanguageFilterMarkup(speechVoices||systemVoices,speechVoiceFilters);
+    if(speechLanguagePopover.__markup!==markup){
+      const list=speechLanguagePopover.querySelector('.dw-speech-language-list'),scrollTop=list?.scrollTop||0;
+      speechLanguagePopover.innerHTML=markup;speechLanguagePopover.__markup=markup;
+      speechLanguagePopover.querySelector('.dw-speech-language-list').scrollTop=scrollTop;
+    }
+    const anchor=trigger.getBoundingClientRect(),width=Math.min(210,window.innerWidth-24),height=Math.min(300,window.innerHeight-24);
+    Object.assign(speechLanguagePopover.style,{width:`${width}px`,height:`${height}px`,left:`${Math.max(12,Math.min(window.innerWidth-width-12,anchor.right-width))}px`,top:`${Math.max(12,Math.min(window.innerHeight-height-12,anchor.bottom+8))}px`});
+    speechLanguagePopover.hidden=false;trigger.setAttribute('aria-expanded','true');
   }
   function hideGenerationMenu(menu){
+    closeSpeechLanguageFilter();
     menu.hidden=true;
     menu.innerHTML='';delete menu.dataset.generationMenu;
   }
@@ -1870,17 +1921,21 @@ export function createDirectorWorkspace(host, bridge) {
       panel?.querySelectorAll('[data-gen-menu]').forEach(button=>button.setAttribute('aria-expanded','false'));
       hideGenerationMenu(menu);return;
     }
+    if(menu.__generationMarkup===markup&&menu.dataset.generationMenu===generationMenu&&menu.dataset.generationDraft===draft.id){positionGenerationMenu();panel.querySelectorAll('[data-gen-menu]').forEach(button=>button.setAttribute('aria-expanded',String(button===trigger)));return;}
     const focusKey=menu.contains(document.activeElement)?document.activeElement.dataset?.focusKey||'':'';
+    const search=menu.querySelector('[data-speech-voice-search]'),searchState=search?{value:search.value,focused:document.activeElement===search,start:search.selectionStart,end:search.selectionEnd}:null;
     const advancedOpen=menu.querySelector('.dw-gen-advanced')?.open;
     const scrollTop=menu.dataset.generationMenu===generationMenu?menu.scrollTop:0;
     menu.dataset.generationMenu=generationMenu;
-    menu.setAttribute('role',generationMenu==='params'?'dialog':'listbox');
-    menu.setAttribute('aria-label',generationMenu==='model'?'选择模型':generationMenu==='mode'?'选择生成方式':'生成参数');
-    menu.innerHTML=markup;
+    menu.setAttribute('role',['params','speech-voiceId'].includes(generationMenu)?'dialog':'listbox');
+    menu.setAttribute('aria-label',generationMenu==='speech-voiceId'?'选择音色':generationMenu==='model'?'选择模型':generationMenu==='mode'?'选择生成方式':'生成参数');
+    menu.innerHTML=markup;menu.__generationMarkup=markup;menu.dataset.generationDraft=draft.id;
+    if(generationMenu==='speech-voiceId')filterSpeechVoiceMenu(menu,speechVoiceFilters.query);
+    if(searchState){const input=menu.querySelector('[data-speech-voice-search]');if(input){input.value=searchState.value;filterSpeechVoiceMenu(menu,input.value);if(searchState.focused){input.focus({preventScroll:true});input.setSelectionRange(searchState.start,searchState.end);}}}
     if(advancedOpen)menu.querySelector('.dw-gen-advanced')?.setAttribute('open','');
     bindGenModelIcons(menu);
     // Clear stale coordinates before measuring an opened or switched menu.
-    Object.assign(menu.style,{left:'0px',top:'0px',maxHeight:'none'});
+    Object.assign(menu.style,{left:'0px',top:'0px'});
     menu.hidden=false;
     positionGenerationMenu();
     panel.querySelectorAll('[data-gen-menu]').forEach(button=>button.setAttribute('aria-expanded',String(button===trigger&&generationMenuOpen(menu))));
@@ -1892,7 +1947,7 @@ export function createDirectorWorkspace(host, bridge) {
     renderGenerationMenu();
     const menu=generationMenuElement;
     if(!generationMenu||!menu)return;
-    const target=menu.querySelector('[aria-selected="true"],[aria-checked="true"]')||menu.querySelector('button:not(:disabled),input');
+    const target=menu.querySelector('[data-speech-voice-search]')||menu.querySelector('[aria-selected="true"],[aria-checked="true"]')||menu.querySelector('button:not(:disabled),input');
     target?.focus({preventScroll:true});
   }
   function closeGenerationMenu(restoreFocus=false){
@@ -1921,12 +1976,28 @@ export function createDirectorWorkspace(host, bridge) {
     if(['aspect','modelId','mode'].includes(field))resizeGenerationArea(draft);
     scheduleCanvasSave();renderGenerationComposer();
   }
+  let speechVoices=null,speechVoiceLoading=false,speechVoicesFetched=false,speechVoiceFilters=null;
+  function renderSpeechComposer(panel,draft){
+    if(draft.speechMode==='design'){draft.speechPrompts||={};draft.speechPrompts.design=draft.prompt;draft.speechMode='tts';draft.prompt=draft.speechPrompts?.tts||'';draft.promptSegments=[];scheduleCanvasSave();}
+    const keepMenu=generationMenu.startsWith('speech-')&&generationMenuElement?.dataset.generationDraft===draft.id;
+    if(!keepMenu)closeGenerationMenu();
+    const active=panel.contains(document.activeElement)?document.activeElement:null,field=active?.dataset.speechField,selection=active&&typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null;
+    reconcileCanvasGenerationDraft(draft,generationConfig());
+    const results=draftResults(liveDrafts(),draft.id),output=displayedResult(liveDrafts(),draft);
+    panel.dataset.genType='audio';panel.setAttribute('role','group');panel.setAttribute('aria-label','语音生成');
+    panel.innerHTML=speechComposerMarkup(draft,{voices:speechVoices||systemVoices,results,selectedResult:output?.id,linked:linkedGenerationInputs(draft),busy:generationSubmitting,enabled:generationConfig().speech?.enabled===true,icons:genIcons});
+    panel.classList.toggle('is-submitting',generationSubmitting);panel.classList.remove('is-uploading');
+    panel.hidden=false;if(field){const input=panel.querySelector(`[data-speech-field="${field}"]`);input?.focus({preventScroll:true});if(selection)input?.setSelectionRange?.(...selection);}
+    positionGenerationComposer();updateGenerationCost(draft);if(keepMenu)renderGenerationMenu();
+    if(!speechVoiceLoading&&!speechVoicesFetched){speechVoiceLoading=true;const token=epoch;bridge.agentApi('/api/speech/voices').then(result=>{if(token!==epoch)return;const nextVoices=result.voices||systemVoices,changed=JSON.stringify(nextVoices)!==JSON.stringify(speechVoices);speechVoices=nextVoices;speechVoicesFetched=true;if(activeGenerationId===draft.id){const trigger=panel.querySelector('[data-gen-menu="speech-voiceId"]'),voice=speechVoices.find(item=>item.id===draft.voiceId);if(trigger&&voice){trigger.querySelector('.dw-gen-chip-label').textContent=voice.name;trigger.setAttribute('aria-label',`音色：${voice.name}`);trigger.title=voice.name;}if(changed&&generationMenu.startsWith('speech-'))renderGenerationMenu();}}).catch(()=>{}).finally(()=>{speechVoiceLoading=false;});}
+  }
   function renderGenerationComposer(){
     generationMentionEvents?.abort();generationMentionEvents=null;
     const panel=host.querySelector('.dw-generation-composer');
     if(!panel)return;
     const draft=generationDraft(activeGenerationId);
     if(!draft||draft.taskId||hiddenIds().has(draft.id)){panel.hidden=true;panel.innerHTML='';renderGenerationMenu();return;}
+    if(draft.type==='audio'){renderSpeechComposer(panel,draft);return;}
     hydrateGenerationDraft(draft);
     reconcileCanvasGenerationDraft(draft,generationConfig());
     const options=canvasGenerationOptions(draft,generationConfig()),models=canvasGenerationModels(draft.type,generationConfig());
@@ -2009,8 +2080,17 @@ export function createDirectorWorkspace(host, bridge) {
     if(!draft||!cost)return;
     const sequence=++generationCostSequence;
     clearTimeout(generationCostTimer);
-    const format=value=>bridge.formatCredits?.(value)??Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2});
+    const format=value=>draft.type==='audio'?Number(value).toLocaleString('zh-CN',{maximumFractionDigits:6}):bridge.formatCredits?.(value)??Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2});
     const show=value=>{if(sequence!==generationCostSequence||generationDraft(draft.id)!==draft)return;cost.innerHTML=`<b>${escape(format(value))}</b><small>积分</small>`;};
+    if(draft.type==='audio'){
+      draft.speechQuote=null;
+      const button=panel.querySelector('[data-gen-submit]');if(button)button.disabled=true;
+      cost.textContent='估算中…';
+      let resolved;try{resolved=generationRequest(draft);}catch{cost.textContent='暂不可估';return;}
+      if(draft.speechMode!=='design'&&!resolved.prompt.trim()){show(0);return;}
+      const request={type:'audio',modelId:draft.modelId,speechMode:draft.speechMode,prompt:resolved.prompt.trim()||'试听',previewText:draft.previewText,voiceId:resolved.voiceId,speed:Number(draft.speed??1),emotion:draft.emotion||'auto'};
+      generationCostTimer=setTimeout(async()=>{try{const quote=await bridge.agentApi('/api/model-quote',{method:'POST',body:JSON.stringify(request)});show(quote.credits);if(sequence===generationCostSequence){draft.speechQuote={credits:quote.credits,priceVersion:quote.priceVersion};if(button)button.disabled=generationSubmitting||!generationConfig().speech?.enabled||(!resolved.prompt.trim());}if(sequence===generationCostSequence&&quote.voiceCredits>0)cost.insertAdjacentHTML('beforeend',`<small>含首次音色费用 ${escape(format(quote.voiceCredits))} 积分</small>`);}catch{if(sequence===generationCostSequence)cost.textContent='暂不可估';}},160);return;
+    }
     if(draft.type==='image'){
       const {config,pricing}=bridge.generationPricing?.()||{config:generationConfig(),pricing:{}};
       const quality=draft.modelId==='gpt-image-2.5'?draft.quality==='1k'?'1K':draft.quality.toUpperCase():'标准';
@@ -2045,7 +2125,7 @@ export function createDirectorWorkspace(host, bridge) {
     activeGenerationId=draft.id;
     syncCanvas();canvas.selectNodes([draft.id]);
     renderGenerationComposer();
-    queueWorkspaceFrame(()=>{positionGenerationComposer();const field=host.querySelector(focus==='name'?'[data-gen-name]':'[data-gen-prompt]');field?.focus();if(focus==='name')field?.select?.();});
+    queueWorkspaceFrame(()=>{positionGenerationComposer();const field=host.querySelector(draft.type==='audio'?'[data-speech-field="prompt"]':focus==='name'?'[data-gen-name]':'[data-gen-prompt]');field?.focus();if(focus==='name')field?.select?.();});
     scheduleCanvasSave(true);
   }
   // The request a generation node would send right now: its own settings and
@@ -2061,6 +2141,8 @@ export function createDirectorWorkspace(host, bridge) {
     let payload,request;
     try{request=generationRequest(draft);payload=canvasGenerationPayload(request,generationConfig());}
     catch(error){bridge.toast(error.message);return;}
+    const speechPrice=draft.type==='audio'?draft.speechQuote:null;
+    if(draft.type==='audio'&&!speechPrice){bridge.toast('正在确认费用，请稍后再试');return;}
     const token=epoch;generationSubmitting=true;draft.status='submitting';renderGenerationComposer();syncCanvas();
     try{
       // References stay local until now; upload them only for this generation.
@@ -2069,18 +2151,21 @@ export function createDirectorWorkspace(host, bridge) {
         if(token!==epoch)return;
         payload.referenceAssetIds=ready.map(file=>file.id);
       }
-      if(payload.type==='video'){
+      if(payload.type==='video'||payload.type==='audio'){
         const counts={image:0,video:0,audio:0};request.attachments.forEach(file=>{if(Object.hasOwn(counts,file.kind))counts[file.kind]++;});
         const quote=await bridge.agentApi('/api/model-quote',{method:'POST',body:JSON.stringify({...payload,referenceCounts:counts})});
+        if(payload.type==='audio'&&(quote.priceVersion!==speechPrice.priceVersion||quote.credits!==speechPrice.credits))throw new Error('费用已更新，请确认后重新生成');
         if(quote.priceVersion)payload.expectedPriceVersion=quote.priceVersion;
       }
-      const requestId=crypto.randomUUID();
+      const payloadKey=JSON.stringify(payload);
+      const requestId=payload.type==='audio'&&draft.pendingPayloadKey===payloadKey?draft.pendingRequestId||crypto.randomUUID():crypto.randomUUID();
+      if(payload.type==='audio'){draft.pendingRequestId=requestId;draft.pendingPayloadKey=payloadKey;}
       const result=await bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':requestId},body:JSON.stringify({...payload,precheckSource:'agent',requestId})});
       if(token!==epoch)return;
       const tasks=Array.isArray(result?.tasks)?result.tasks:result?.id?[result]:[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');
       // Keep the generator editable; ordinary generators show their output in place.
-      draft.status='';
+      draft.status='';delete draft.pendingRequestId;delete draft.pendingPayloadKey;
       const size=canvasGenerationFrameSize(draft.type,draft.aspect);
       const parent=workspace().positions[draft.id]||{x:0,y:0,...size};
       // Folded results keep their place, so new ones never land on top of them.
@@ -2173,9 +2258,11 @@ export function createDirectorWorkspace(host, bridge) {
       if(createTrigger.getAttribute('aria-expanded')==='true'){linkPopup?.dismiss?.();return;}
       showCreateMenu({anchor:createTrigger.getBoundingClientRect()},{label:'创建节点',trigger:createTrigger});
     };
+    speechVoices=systemVoices;speechVoiceLoading=false;speechVoicesFetched=false;speechVoiceFilters=null;
     const generationPanel=host.querySelector('.dw-generation-composer');
     generationPanel.addEventListener('input',event=>{
       const draft=generationDraft(activeGenerationId);if(!draft)return;
+      if(event.target.matches('[data-speech-field]')){const field=event.target.dataset.speechField;if(['prompt','previewText','voiceName'].includes(field)){draft[field]=event.target.value;const count=generationPanel.querySelector('[data-speech-count]');if(count)count.textContent=speechCharacters(draft.speechMode==='design'?draft.previewText.trim():generationRequest(draft).prompt.trim());scheduleCanvasSave();updateGenerationCost(draft);const button=generationPanel.querySelector('[data-gen-submit]');if(button)button.disabled=!draft.speechQuote||generationSubmitting||!generationConfig().speech?.enabled||(!draft.prompt.trim()&&!linkedGenerationInputs(draft).some(item=>item.kind==='text'&&item.text?.trim()));}return;}
       if(event.target.matches('[data-gen-name]')){
         if(draft.role==='shot'){draft.title=event.target.value.replace(/[\r\n]/g,' ').slice(0,80);syncCanvas();scheduleCanvasSave();}
         return;
@@ -2202,6 +2289,7 @@ export function createDirectorWorkspace(host, bridge) {
     // A card name is what @ mentions use: apply it once typing is done.
     generationPanel.addEventListener('change',event=>{
       const draft=generationDraft(activeGenerationId);
+      if(draft&&event.target.matches('[data-speech-field]')){const field=event.target.dataset.speechField;if(['modelId','duration','voiceId','speed','emotion','primaryId'].includes(field)){draft[field]=['duration','speed'].includes(field)?Number(event.target.value):event.target.value;syncCanvas();scheduleCanvasSave();renderGenerationComposer();}return;}
       if(draft&&event.target.matches('[data-gen-result]')){
         if(draftResults(liveDrafts(),draft.id).some(item=>item.id===event.target.value)){draft.primaryId=event.target.value;syncCanvas();scheduleCanvasSave();}
         return;
@@ -2219,7 +2307,12 @@ export function createDirectorWorkspace(host, bridge) {
     generationMenuElement=document.createElement('div');
     generationMenuElement.className='dw-gen-menu';
     generationMenuElement.hidden=true;
-    generationMenuLayer.append(generationMenuElement);
+    speechLanguagePopover=document.createElement('div');
+    speechLanguagePopover.id='canvasSpeechVoiceFilters';
+    speechLanguagePopover.className='dw-gen-menu dw-speech-language-popover';
+    speechLanguagePopover.setAttribute('role','dialog');speechLanguagePopover.setAttribute('aria-label','筛选语言');
+    speechLanguagePopover.hidden=true;
+    generationMenuLayer.append(generationMenuElement,speechLanguagePopover);
     document.body.append(generationMenuLayer);
     canvasContextMenu=mountCanvasContextMenu(host.querySelector('.dw-canvas'),{
       layer:generationMenuLayer,
@@ -2233,9 +2326,12 @@ export function createDirectorWorkspace(host, bridge) {
     const generationMenuPanel=generationMenuElement;
     generationMenuPanel.addEventListener('click',event=>{
       const draft=generationDraft(activeGenerationId);if(!draft)return;
+      const filterToggle=event.target.closest('[data-speech-filter-toggle]');
+      if(filterToggle){speechVoiceFilters.open=!speechVoiceFilters.open;filterToggle.setAttribute('aria-expanded',String(speechVoiceFilters.open));positionSpeechLanguageFilter();return;}
       const option=event.target.closest('[data-gen-set]'),step=event.target.closest('[data-gen-step]');
       if(option&&!option.disabled){
-        const field=option.dataset.genSet,value=field==='duration'?Number(option.dataset.value):option.dataset.value;
+        const field=option.dataset.genSet,value=['duration','speed'].includes(field)?Number(option.dataset.value):option.dataset.value;
+        if(draft.type==='audio'){closeGenerationMenu();if(String(draft[field])!==String(value))applyGenerationField(draft,field,value);host.querySelector(`[data-gen-menu="speech-${field}"]`)?.focus({preventScroll:true});return;}
         if(String(draft[field])!==String(value))applyGenerationField(draft,field,value);
         if(['modelId','mode'].includes(field))closeGenerationMenu(true);
         return;
@@ -2250,11 +2346,37 @@ export function createDirectorWorkspace(host, bridge) {
       draft.midjourney[mj]=event.target.type==='checkbox'?event.target.checked:['seed','negativePrompt'].includes(mj)?event.target.value:Number(event.target.value);
       reconcileCanvasGenerationDraft(draft,generationConfig());scheduleCanvasSave();
     });
+    const applySpeechLanguageFilter=()=>{
+      const scrollTop=generationMenuPanel.scrollTop;
+      filterSpeechVoiceMenu(generationMenuPanel,speechVoiceFilters.query);
+      generationMenuPanel.querySelector('[data-speech-filter-toggle]')?.classList.toggle('is-active',speechVoiceFilters.selected.language!==null);
+      positionGenerationMenu();generationMenuPanel.scrollTop=scrollTop;
+    };
+    speechLanguagePopover.addEventListener('click',event=>{
+      if(!event.target.closest('[data-speech-filter-all]'))return;
+      speechVoiceFilters.selected.language=null;applySpeechLanguageFilter();
+    });
+    speechLanguagePopover.addEventListener('change',event=>{
+      if(event.target.dataset.speechFilter!=='language')return;
+      toggleVoiceFilter(speechVoiceFilters,'language',event.target.value,voiceFilterOptions(speechVoices||systemVoices).language.options);
+      // Preserve the focused checkbox while updating selection.
+      speechLanguagePopover.querySelectorAll('[data-speech-filter]').forEach(input=>{input.checked=speechVoiceFilters.selected.language===null||speechVoiceFilters.selected.language.includes(input.value);});
+      speechLanguagePopover.__markup=speechLanguageFilterMarkup(speechVoices||systemVoices,speechVoiceFilters);
+      applySpeechLanguageFilter();
+    });
+    speechLanguagePopover.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeSpeechLanguageFilter(true);}
+    });
     generationMenuPanel.addEventListener('toggle',event=>{if(event.target.matches?.('.dw-gen-advanced'))positionGenerationMenu();},true);
+    generationMenuPanel.addEventListener('input',event=>{
+      if(!event.target.matches('[data-speech-voice-search]'))return;
+      speechVoiceFilters.query=event.target.value;filterSpeechVoiceMenu(generationMenuPanel,event.target.value);positionGenerationMenu();
+    });
     generationMenuPanel.addEventListener('keydown',event=>{
-      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeGenerationMenu(true);return;}
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(speechVoiceFilters?.open)closeSpeechLanguageFilter(true);else closeGenerationMenu(true);return;}
+      if(event.target.matches('[data-speech-voice-search]')&&event.key==='ArrowDown'){event.preventDefault();event.stopPropagation();generationMenuPanel.querySelector('[data-speech-voice-option]:not([hidden])')?.focus();return;}
       if(!['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Home','End'].includes(event.key)||event.target.matches('input'))return;
-      const items=[...generationMenuPanel.querySelectorAll('[data-focus-key]:not(:disabled)')];
+      const items=[...generationMenuPanel.querySelectorAll('[data-focus-key]:not(:disabled):not([hidden])')];
       const index=items.indexOf(document.activeElement);if(!items.length)return;
       event.preventDefault();event.stopPropagation();
       const next=event.key==='Home'?0:event.key==='End'?items.length-1:['ArrowDown','ArrowRight'].includes(event.key)?(index+1)%items.length:(index-1+items.length)%items.length;
@@ -2341,6 +2463,14 @@ export function createDirectorWorkspace(host, bridge) {
       brandSelectionTransformer(nativeTransformer);
       if(workspace().viewport)canvas.updateViewport(workspace().viewport);
       canvas.on('nodes:selected',ids=>{
+        // Marquee selection includes the arrows between connected cards.
+        // They follow their endpoints and must not join Konva's group drag:
+        // moving their points while attached changes the selection bounds.
+        const contentIds=ids.filter(id=>!id.startsWith('edge-'));
+        if(contentIds.length&&contentIds.length!==ids.length){
+          canvas.selectNodes(contentIds);
+          return;
+        }
         const next=ids.length===1&&!ids[0].startsWith('edge-')?ids[0]:'';
         const isRichText=Boolean(next&&canvas.getNodeConfigById?.(next)?.$_type==='rich-text');
         host.querySelector('.director-workspace')?.classList.toggle('rich-text-selected',isRichText);
@@ -2354,7 +2484,17 @@ export function createDirectorWorkspace(host, bridge) {
         else drawInspector();
         renderEdges(liveCanvasNodes());
       });
-      canvas.getStage()?.on('pointerclick.director-selection',event=>{
+      // Selecting a node installs the Transformer under the pointer. The
+      // release can therefore hit its background instead of the pressed node,
+      // so Konva's pointerclick is not reliable on the first selection.
+      let parameterPress=null;
+      const parameterPoint=event=>({x:event.evt?.clientX,y:event.evt?.clientY});
+      const parameterMoved=event=>{
+        const point=parameterPoint(event);
+        return parameterPress&&Math.hypot(point.x-parameterPress.x,point.y-parameterPress.y)>4;
+      };
+      canvas.getStage()?.on('pointerdown.director-selection',event=>{
+        parameterPress=null;
         if(event.evt?.button!==undefined&&event.evt.button!==0)return;
         if(canvas.getToolType?.()!=='select')return;
         const ids=canvas.getState().selectedNodeIds||[];
@@ -2363,7 +2503,22 @@ export function createDirectorWorkspace(host, bridge) {
         const onNode=target?.id?.()===selected||target?.findAncestor?.(node=>node.id?.()===selected);
         const onSelection=target?.getParent?.()===nativeTransformer&&target?.hasName?.('back');
         if(!onNode&&!onSelection)return;
-        const draft=generationDraft(selected);
+        parameterPress={id:selected,...parameterPoint(event),pointerId:event.evt?.pointerId};
+      });
+      canvas.getStage()?.on('pointermove.director-selection',event=>{
+        if(parameterMoved(event))parameterPress=null;
+      });
+      canvas.getStage()?.on('dragstart.director-selection transformstart.director-selection pointercancel.director-selection',()=>{parameterPress=null;});
+      canvas.getStage()?.on('pointerup.director-selection',event=>{
+        const press=parameterPress;
+        if(!press)return;
+        const moved=parameterMoved(event);
+        parameterPress=null;
+        if(moved||press.pointerId!==event.evt?.pointerId)return;
+        if(canvas.getToolType?.()!=='select')return;
+        const ids=canvas.getState().selectedNodeIds||[];
+        if(ids.length!==1||ids[0]!==press.id)return;
+        const draft=generationDraft(press.id);
         activeGenerationId=draft&&!draft.taskId?draft.id:'';
         renderGenerationComposer();
       });
@@ -2533,6 +2688,8 @@ export function createDirectorWorkspace(host, bridge) {
     document.addEventListener('pointerdown',event=>{
       if(!generationMenu)return;
       const menu=generationMenuElement;
+      if(speechLanguagePopover?.contains(event.target))return;
+      if(speechVoiceFilters?.open&&!event.target.closest?.('[data-speech-filter-toggle]'))closeSpeechLanguageFilter();
       if(menu?.contains(event.target)||event.target.closest?.('.dw-generation-composer [data-gen-menu]'))return;
       closeGenerationMenu(false);
     },{capture:true,signal:popoverEvents.signal});
@@ -2769,7 +2926,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());pendingMessages=[];retrySubmission=null;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';lastCanvasContentSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;speechLanguagePopover=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());pendingMessages=[];retrySubmission=null;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';lastCanvasContentSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

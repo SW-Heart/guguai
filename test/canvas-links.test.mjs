@@ -214,11 +214,11 @@ test('connections snap near compatible input cards and preserve invalid-target f
 
 test('existing and persisted connections stay open and unfilled after native arrow normalization',()=>{
   const source=readFileSync(new URL('../public/features/drama/director-workspace.js',import.meta.url),'utf8');
-  const attrs={closed:true,fillEnabled:true,stroke:'#000000'};
-  let points,draws=0,updates=0;
+  const attrs={x:85,y:-30,closed:true,fillEnabled:true,stroke:'#000000'};
+  let points,persisted,draws=0,updates=0;
   const shape={setAttrs:value=>Object.assign(attrs,value),points:value=>{points=value;}};
   const nodes=[{id:'from'},{id:'to'}];
-  const context=vm.createContext({canvas:{getState:()=>({nodes}),getNodeConfigById:()=>({}),updateNodes(){updates++;Object.assign(attrs,{closed:true,fillEnabled:true,stroke:'#000000'});}},
+  const context=vm.createContext({canvas:{getState:()=>({nodes}),getNodeConfigById:()=>({}),updateNodes(ids,config){persisted=config;updates++;Object.assign(attrs,{closed:true,fillEnabled:true,stroke:'#000000'});}},
     mainLayer:{batchDraw(){draws++;}},edgeLinks:()=>[{id:'edge',from:'from',to:'to',style:'input'}],edgeStyles:{input:{stroke:'#6366f1'}},
     edgePointsFor:()=>[100,50,180,50,220,80,300,80],findLayerNode:()=>shape});
   vm.runInContext(source.slice(source.indexOf('  function renderEdges('),source.indexOf('  function scheduleEdgeRender(')),context);
@@ -227,6 +227,9 @@ test('existing and persisted connections stay open and unfilled after native arr
   context.renderEdges(nodes,true);
   assert.equal(attrs.closed,false);assert.equal(attrs.fillEnabled,false);assert.equal(attrs.stroke,'#6366f1');
   assert.equal(updates,1);assert.equal(draws,2);assert.equal(points.length,8);
+  assert.equal(attrs.x,0);assert.equal(attrs.y,0);
+  assert.equal(persisted.x,0);assert.equal(persisted.y,0);
+  assert.deepEqual(Array.from(persisted.points),points);
   assert.equal(attrs.listening,true);assert.equal(attrs.draggable,false);
   assert.equal(attrs.hitStrokeWidth,14);
   context.canvas.getState=()=>({nodes,viewport:{scale:.25},selectedNodeIds:['edge']});

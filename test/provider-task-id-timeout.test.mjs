@@ -131,6 +131,21 @@ test('historical upstream failures expose actionable public diagnostics', () => 
   }
 });
 
+test('minimum reference requirements expose the required count without upstream diagnostics', () => {
+  for (const [error, message] of [
+    ['status_code=400, model hd-seedance-2.0-720p requires at least 1 image references', '当前模型至少需要一张参考图'],
+    ['400 model requires at least 1 reference image', '当前模型至少需要一张参考图'],
+    ['422 model requires at least 2 reference images', '当前模型至少需要2张参考图'],
+  ]) {
+    const value = __test.publicGeneration({ type:'video', status:'failed', creditStatus:'refunded', error });
+    assert.equal(value.failure.code, 'REFERENCE_REQUIRED');
+    assert.equal(value.failure.message, message);
+    assert.match(value.failure.suggestion, /请添加参考图后重试/);
+    assert.match(value.failure.suggestion, /本次预扣积分已退回/);
+    assert.doesNotMatch(value.error, /status_code|hd-seedance|requires at least/);
+  }
+});
+
 test('reference content-policy failures identify the affected image', () => {
   const failure = __test.publicGeneration({
     status:'failed',

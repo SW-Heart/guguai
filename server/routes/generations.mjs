@@ -5,6 +5,7 @@ import { applyDramaStyle, projectDramaStyleSnapshot } from '../../lib/drama-styl
 
 export function createGenerationRouteHandler({
   videoUpscale,
+  speech,
   bodyJson,
   sendJson,
   requireUser,
@@ -124,6 +125,11 @@ export function createGenerationRouteHandler({
     const user = await requireUser(req, res); if (!user) return true;
     const scope = requireDesktopWorkspaceScope(req, res); if (!scope) return true;
     const input = await bodyJson(req);
+    if(input.type==='audio') {
+      await speech.refreshVoices();
+      const quote=speech.quote(user.id,input);
+      return sendJson(res,200,{credits:quote.credits,priceVersion:quote.priceVersion,characters:quote.characters,textCredits:quote.textCredits,voiceCredits:quote.voiceCredits,unit:'character'}),true;
+    }
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds)
       ? input.referenceAssetIds.map(safeId).filter(Boolean).length
       : 0;
@@ -273,6 +279,20 @@ export function createGenerationRouteHandler({
       const wallet = walletOf(user.id);
       if (replayTasks.length === 1) return sendJson(res, 202, { ...publicGeneration(replayTasks[0]), balance:wallet.balance, ...replayProjectData }), true;
       return sendJson(res, 202, { tasks:replayTasks.map(publicGeneration), quantity:replayTasks.length, balance:wallet.balance, ...replayProjectData }), true;
+    }
+    if(type==='audio') {
+      await speech.refreshVoices();
+      const quote=speech.quote(user.id,input),request=quote.request;
+      if(input.expectedPriceVersion&&input.expectedPriceVersion!==quote.priceVersion)return sendJson(res,409,{error:'当前价格已变化，请重新确认后生成',code:'PRICE_CHANGED'}),true;
+      if(previewOnly)return sendJson(res,200,{type,modelId:request.modelId,credits:quote.credits,costMicro:quote.costMicro,priceVersion:quote.priceVersion,characters:quote.characters}),true;
+      if(quote.costMicro>maxCostMicro)return sendJson(res,409,{error:'费用超过本次预算',code:'AGENT_BUDGET_EXCEEDED'}),true;
+      if(input.dramaProjectId&&!await loadDramaProject(user.id,safeId(input.dramaProjectId),scope))return sendJson(res,404,{error:'项目不存在'}),true;
+      const task={...taskExtras,...request,activateVoice:quote.activateVoice,characters:quote.characters,id:generationRequestId||randomId(),ownerId:user.id,originDeviceId:scope.deviceId,originWorkspaceId:scope.workspaceId,type:'audio',provider:'minimax-speech',model:request.modelId,referenceAssetIds:[],creditCost:quote.credits,creditCostMicro:quote.costMicro,pricingVersion:quote.snapshot.version,pricingSnapshot:quote.snapshot,creditStatus:'charged',status:'queued',assetId:'',providerTaskId:'',createdAt:now(),updatedAt:now(),finishedAt:null,requestFingerprint,...(input.dramaProjectId?{dramaProjectId:safeId(input.dramaProjectId)}:{})};
+      const existing=findGeneration(user.id,task.id,scope);
+      if(existing)return sendJson(res,409,{error:'生成请求已存在，请刷新后查看结果'}),true;
+      const charged=await chargeGenerationMicro(user.id,task.id,task.creditCostMicro,{modelId:task.modelId,contentType:'audio',provider:task.provider,pricingVersion:task.pricingVersion,onCharged:()=>{speech.reserveVoice(user.id,task);saveGeneration(user.id,task);if(generationRequestId)createGenerationRequest({userId:user.id,idempotencyKey:generationRequestId,requestHash:requestFingerprint,generationIds:[task.id]});enqueueGenerationJob({userId:user.id,generationId:task.id});}});
+      if(charged.error)return sendJson(res,charged.status,{error:charged.error,balance:charged.balance}),true;
+      return sendJson(res,202,{...publicGeneration(task),balance:charged.balance}),true;
     }
     if (!['image','video'].includes(type)) return sendJson(res, 400, { error:'只支持图片或视频生成' }), true;
     let prompt = String(input.prompt ?? '');
@@ -445,6 +465,12 @@ export function createGenerationRouteHandler({
   const generationRoute = async function generationRoute(req, res, url) {
     if (await handleModelQuote(req, res, url)) return true;
     if (url.pathname === '/api/generations' && req.method === 'POST') return handleGenerationSubmit(req, res);
+    if(url.pathname==='/api/speech/voices'&&req.method==='GET') {
+      const user=await requireUser(req,res);if(!user)return true;
+      if(!requireDesktopWorkspaceScope(req,res))return true;
+      await speech.refreshVoices();
+      return sendJson(res,200,{voices:speech.voices(user.id)}),true;
+    }
     return handleGenerations(req, res, url);
   };
   generationRoute.submit = submitGeneration;

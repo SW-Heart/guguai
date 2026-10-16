@@ -27,13 +27,27 @@ export function selectPointerNode(core, id, shiftKey) {
   core._selectNodes([id], shiftKey);
 }
 
+// Generated links are positioned by their endpoint cards, not by editable
+// arrow handles. A nested selection change can also leave an earlier event
+// in flight, so validate against the current selection before showing handles.
+export function nativeArrowAnchorSelected(core, id, ids) {
+  return !String(id).startsWith('edge-') && ids.includes(id) &&
+    (core.getState().selectedNodeIds ?? []).includes(id);
+}
+
 export function patchWhiteboardSelection(source) {
   const pointerSelection = 'o && r(this, L)._selectNodes([o], i.evt.shiftKey);';
   if (source.split(pointerSelection).length !== 2) {
     throw new Error('Unable to locate the whiteboard pointer selection');
   }
+  const anchorSelection = 'const s = n.includes(this.config.id);';
+  if (source.split(anchorSelection).length !== 2) {
+    throw new Error('Unable to locate the whiteboard arrow anchor selection');
+  }
   return source.replace(pointerSelection,
-    `(${selectPointerNode.toString()})(r(this, L), o, i.evt.shiftKey);`);
+    `(${selectPointerNode.toString()})(r(this, L), o, i.evt.shiftKey);`)
+    .replace(anchorSelection,
+      `const s = (${nativeArrowAnchorSelected.toString()})(this.core, this.config.id, n);`);
 }
 
 // GuGu paints canvas pictures from a display-sized copy (see director-workspace).

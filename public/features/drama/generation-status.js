@@ -27,7 +27,7 @@ export function generationFrameState(status,hasMedia=false){
 export function renderGenerationPlaceholder(state,{kind='image',progress=null}={}){
   const phase=Object.hasOwn(presentation,state)?state:'queued';
   const {label,icon}=presentation[phase];
-  const glyph=canvasIcon(phase==='draft'?(kind==='video'?'video':'image'):icon);
+  const glyph=canvasIcon(phase==='draft'?(kind==='audio'?'music':kind==='video'?'video':'image'):icon);
   const value=Number(progress);
   const percentage=measured.has(phase)&&Number.isFinite(value)&&value>0?Math.min(99,Math.round(value)):null;
   const meter=percentage!==null

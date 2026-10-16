@@ -12,12 +12,18 @@ test('right-click placement accounts for the canvas offset, pan and zoom', () =>
 test('the context menu is reachable through fresh script and stylesheet cache versions', () => {
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=588', '/styles.css?v=421']],
-    ['app.js', ['./drama-studio.js?v=301', './features/agent/workspace.js?v=168']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=193']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=193']],
+    ['index.html', ['/app.js?v=597', '/styles.css?v=429']],
+    ['app.js', ['./drama-studio.js?v=310', './features/agent/workspace.js?v=177']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=202']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=202']],
     ['features/drama/director-workspace.js', ['./canvas-context-menu.js?v=2']],
-  ]) for (const url of urls) assert.ok(read(file).includes(url), `${file}: ${url}`);
+  ]) for (const url of urls) {
+    const [path,version]=url.split('?v=');
+    const refs=[...read(file).matchAll(/(?:src|href)=["']([^"']+)|(?:from\s*|import\()["']([^"']+)/g)]
+      .map(match=>match[1]||match[2]).filter(ref=>ref.split('?v=')[0]===path);
+    assert.ok(refs.length, `${file}: missing ${path}`);
+    assert.ok(refs.every(ref=>Number(ref.split('?v=')[1])>=Number(version)), `${file}: stale ${path}`);
+  }
 });
 
 test('context menu selects all three actions at the saved point and supports dismissal and keyboard navigation', async () => {

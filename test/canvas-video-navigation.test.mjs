@@ -62,7 +62,7 @@ test('hand and middle-button drags start over text without consuming normal text
     const forwarded=[];
     const context=vm.createContext({canvas:{getToolType:()=>tool,getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}});
     vm.runInContext(source.slice(source.indexOf('  function forwardCanvasDocumentPan('),source.indexOf('  function alignCard(')),context);
-    const event=new Wheel(type,{target:{closest:()=>({})},button,buttons:button===1?4:1,clientX:40,clientY:60});
+    const event=new Wheel(type,{target:{closest:selector=>selector==='.dw-document-card'?{}:null},button,buttons:button===1?4:1,clientX:40,clientY:60});
     context.forwardCanvasDocumentPan(event);
     const panning=tool==='hand'||button===1;
     assert.equal(forwarded.length,panning?1:0);
@@ -70,5 +70,26 @@ test('hand and middle-button drags start over text without consuming normal text
     // Let the browser emit mousedown after pointerdown for the canvas engine.
     assert.equal(Boolean(event.prevented),panning&&type!=='pointerdown');
     if(panning){assert.equal(forwarded[0].bubbles,true);assert.equal(forwarded[0].clientX,40);assert.equal(forwarded[0].button,button);}
+  }
+});
+
+test('read-only document bodies forward group-drag presses while editing and buttons stay native',()=>{
+  for(const editing of [false,true])for(const onBody of [false,true])for(const tool of ['select','hand','rectangle'])for(const type of ['pointerdown','mousedown','touchstart']){
+    const forwarded=[];
+    const card={classList:{contains:name=>name==='is-editing'&&editing}};
+    const target={closest:selector=>selector==='.dw-document-card'?card:selector==='[data-document-body]'&&onBody?target:null};
+    const context=vm.createContext({canvas:{getToolType:()=>tool,getStage:()=>({content:{dispatchEvent:event=>forwarded.push(event)}})}});
+    vm.runInContext(source.slice(source.indexOf('  function forwardCanvasDocumentPan('),source.indexOf('  function alignCard(')),context);
+    const event=new Wheel(type,{target,button:type==='touchstart'?undefined:0,buttons:1,clientX:120,clientY:160,shiftKey:true,
+      pointerId:7,pointerType:'mouse',touches:[{clientX:120,clientY:160}]});
+    context.forwardCanvasDocumentPan(event);
+    const expected=tool==='hand'||(tool==='select'&&onBody&&!editing);
+    assert.equal(forwarded.length,expected?1:0,`${tool} ${type} editing=${editing} body=${onBody}`);
+    assert.equal(Boolean(event.stopped),expected);
+    assert.equal(Boolean(event.prevented),expected&&type!=='pointerdown');
+    if(expected){
+      for(const key of ['type','clientX','clientY','shiftKey','pointerId','pointerType','touches'])assert.equal(forwarded[0][key],event[key],key);
+      assert.equal(forwarded[0].bubbles,true);
+    }
   }
 });
