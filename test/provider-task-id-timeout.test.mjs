@@ -83,7 +83,7 @@ test('historical upstream failures expose actionable public diagnostics', () => 
     },
     {
       task: { type:'video', error:'402 {"detail":{"error":"insufficient_credits","required":150,"current":23}}', routeDisplayName:'DIW · ED Fast 720p' },
-      code: 'UPSTREAM_BILLING', message: '当前视频生成服务额度不足', suggestion: /稍后重试或联系支持/,
+      code: 'UPSTREAM_BILLING', message: '当前视频生成服务暂时不可用', suggestion: /稍后重试/,
     },
     {
       task: { type:'video', error:'400 prepare CD reference image 2 failed: download CD image failed with status 404' },
@@ -120,6 +120,44 @@ test('historical upstream failures expose actionable public diagnostics', () => 
     {
       task: { type:'image', error:'任务执行失败: API Error: openai returned 451: The generated images appear to be unsafe.' },
       code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
+    },
+    // Seen in production: users must get a clear, normalized hint, never the upstream text.
+    {
+      task: { type:'video', error:"上游任务失败: task failed with status: FAIL, message: The request failed because the input text 'content[0]' may contain sensitive information. Request id: 0217923955" },
+      code: 'CONTENT_REJECTED', message: '画面描述未通过内容安全检查', suggestion: /修改画面描述/,
+    },
+    {
+      task: { type:'video', error:'上游拒绝生成,请修改提示词后重试' },
+      code: 'CONTENT_REJECTED', message: '画面描述未通过内容安全检查', suggestion: /修改画面描述/,
+    },
+    {
+      task: { type:'video', error:'返回错误码 710082022，疑似包含侵权/违规内容' },
+      code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
+    },
+    {
+      task: { type:'image', error:'400 download async image reference 2: file size exceeds maximum allowed size: 10485760 bytes' },
+      code: 'INVALID_REFERENCE', message: '第 2 张参考图超过 10 MB', suggestion: /小于 10 MB/,
+    },
+    // Upstream account and model trouble is the service's problem, not the user's.
+    {
+      task: { type:'video', error:'400 [model hidden] 720p 30s 需要 8,520 积分，超过单号最大可用余额 2,508（请缩短时长或换低分辨率）' },
+      code: 'UPSTREAM_BILLING', message: '当前视频生成服务暂时不可用', suggestion: /稍后重试/,
+    },
+    {
+      task: { type:'video', error:'no synced account with 105 credits' },
+      code: 'UPSTREAM_BILLING', message: '当前视频生成服务暂时不可用', suggestion: /稍后重试/,
+    },
+    {
+      task: { type:'image', error:'upstream image request failed status=404 body={"error":{"message":"{\\"detail\\":\\"Model not found\\"}"}}' },
+      code: 'MODEL_UNAVAILABLE', message: '当前模型服务暂时不可用', suggestion: /稍后重试/,
+    },
+    {
+      task: { type:'video', error:'AutoDL 拒绝了请求：缺少必填参数：ref_image_0' },
+      code: 'SERVICE_UNAVAILABLE', message: '生成服务暂时不可用', suggestion: /稍后重试/,
+    },
+    {
+      task: { type:'video', error:'当前模型暂无其他可用生成渠道，请稍后重试' },
+      code: 'SERVICE_UNAVAILABLE', message: '生成服务暂时不可用', suggestion: /稍后重试/,
     },
   ];
 

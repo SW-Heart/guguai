@@ -17,9 +17,10 @@ test('any Chinese prompt mention triggers repair alongside existing explicit rej
 test('only a refused description counts as a content rejection that ends the job without retry', () => {
   for (const message of [
     "上游任务失败: task failed with status: FAIL, message: The request failed because the input text 'content[0]' may contain sensitive information. Request id: 021792395528712b",
-    '输入文本可能包含敏感内容，请修改后重试', '输入的提示词包含违禁词', 'prompt rejected by safety filter',
+    '输入文本可能包含敏感内容，请修改后重试', '输入的提示词包含违禁词', 'prompt rejected by safety filter', '上游拒绝生成,请修改提示词后重试',
   ]) assert.equal(isPromptContentRejection(new Error(message)), true, message);
-  for (const message of ['提示词过长', '参考图审核拒绝，请调整提示词', '视频生成失败，请凭任务编号联系客服', 'The generated images appear to be unsafe', '503 service unavailable'])
+  // 710082022 names no side and often passes on a plain retry, so it keeps retrying.
+  for (const message of ['提示词过长', '参考图审核拒绝，请调整提示词', '视频生成失败，请凭任务编号联系客服', 'The generated images appear to be unsafe', '503 service unavailable', '返回错误码 710082022，疑似包含侵权/违规内容'])
     assert.equal(isPromptContentRejection(new Error(message)), false, message);
 });
 
@@ -206,7 +207,8 @@ test('generation retry wires repair into the shared failure path without custome
   // A refused description is retried only after it was actually rewritten.
   assert.match(server.slice(start, end), /if \(!repaired && isPromptContentRejection\(error\)\) retry = false;/);
   assert.match(server.slice(start, end), /if \(retry && prepareGenerationRetry\(task, error, at\)\)/);
-  assert.match(server.slice(end, end + 200), /task\.error = isPromptContentRejection\(error\) \? promptContentRejectionMessage : error\.message;/);
+  // The raw upstream text stays on the record for support; users only see the mapped failure.
+  assert.match(server.slice(end, end + 200), /task\.error = error\.message;/);
   assert.match(server, /autoPromptRepairEnabled = user => user\?\.preferences\?\.autoPromptRepair !== false/);
   assert.doesNotMatch(server.slice(start, end), /reserveLlmCredits|settleLlmCredits/);
 });

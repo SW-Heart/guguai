@@ -114,3 +114,12 @@ test('failed reference upload does not create a charged task', async () => {
   assert.deepEqual(requests, []);
   assert.deepEqual(state.tasks, []);
 });
+
+test('image generation refuses references of 10 MB or more before charging, from every entry point', async () => {
+  const routes = await readFile(new URL('../server/routes/generations.mjs', import.meta.url), 'utf8');
+  assert.match(backend, /const maxImageGenerationReferenceBytes = 10 \* 1024 \* 1024;/);
+  assert.match(backend, /asset\.kind === 'image' && Number\(asset\.size\) >= maxImageBytes\) throw Object\.assign\(new Error\(`参考图“\$\{asset\.name\}”超过/);
+  // Only image generation tightens the cap; video references keep 20 MB.
+  assert.match(routes, /validateReferenceAssets\(user\.id, input\.referenceAssetIds, videoRequest\?\.referenceLimits, \{ scope, \.\.\.\(type === 'image' \? \{ maxImageBytes:maxImageGenerationReferenceBytes \} : \{\}\) \}\)/);
+  assert.ok(routes.indexOf('maxImageBytes:maxImageGenerationReferenceBytes') < routes.indexOf('chargeGenerationBatchMicro(', routes.indexOf('maxImageBytes:maxImageGenerationReferenceBytes')));
+});
