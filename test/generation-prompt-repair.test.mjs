@@ -2,7 +2,7 @@ import { normalizeDramaStyle, dramaStyleSnapshot, applyDramaStyle } from '../lib
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { applyPromptRepair, collectPromptRepairCues, isPromptRejection, loadPromptRepairGuidance, repairGenerationPrompt } from '../services/generation-prompt-repair.mjs';
+import { applyPromptRepair, collectPromptRepairCues, isPromptContentRejection, isPromptRejection, loadPromptRepairGuidance, repairGenerationPrompt } from '../services/generation-prompt-repair.mjs';
 import { prepareGenerationRetry } from '../services/generation-retry.mjs';
 
 const prompt = '夜晚，摄影师拍摄街头的人群，暖色灯光，固定机位。';
@@ -12,6 +12,15 @@ const rejection = new Error('输入的提示词包含违禁词');
 test('any Chinese prompt mention triggers repair alongside existing explicit rejections', () => {
   for (const message of ['上游拒绝生成,请修改提示词后重试', '提示词过长', '参考图审核拒绝，请调整提示词', '输入的提示词包含违禁词', '包含违禁词', 'banned keywords detected', 'prompt rejected by safety filter', 'sensitive prompt blocked']) assert.equal(isPromptRejection(new Error(message)), true, message);
   for (const message of ['content_policy_violation', 'content review failed', 'The generated images appear to be unsafe', '视频内容审核未通过', 'prompt too long', '503 service unavailable']) assert.equal(isPromptRejection(new Error(message)), false, message);
+});
+
+test('only a refused description counts as a content rejection that ends the job without retry', () => {
+  for (const message of [
+    "上游任务失败: task failed with status: FAIL, message: The request failed because the input text 'content[0]' may contain sensitive information. Request id: 021792395528712b",
+    '输入文本可能包含敏感内容，请修改后重试', '输入的提示词包含违禁词', 'prompt rejected by safety filter',
+  ]) assert.equal(isPromptContentRejection(new Error(message)), true, message);
+  for (const message of ['提示词过长', '参考图审核拒绝，请调整提示词', '视频生成失败，请凭任务编号联系客服', 'The generated images appear to be unsafe', '503 service unavailable'])
+    assert.equal(isPromptContentRejection(new Error(message)), false, message);
 });
 
 test('real rejection skill documents are fully loaded, including Seedance guidance', async () => {
@@ -190,9 +199,14 @@ test('non-prompt failures and other media types never call the LLM', async () =>
 
 test('generation retry wires repair into the shared failure path without customer LLM billing', async () => {
   const server = await readFile(new URL('../server.mjs', import.meta.url), 'utf8');
-  const start = server.indexOf('if (prepareGenerationRetry(task, error))');
+  const start = server.indexOf('let retry = generationRetryAllowed(task, error, at)');
   const end = server.indexOf("task.status = 'failed'", start);
-  assert.match(server.slice(start, end), /if \(autoPromptRepairEnabled\(findUserById\(userId\)\)\) await repairGenerationPrompt\(task, error/);
+  assert.ok(start > 0);
+  assert.match(server.slice(start, end), /autoPromptRepairEnabled\(findUserById\(userId\)\) && await repairGenerationPrompt\(task, error/);
+  // A refused description is retried only after it was actually rewritten.
+  assert.match(server.slice(start, end), /if \(!repaired && isPromptContentRejection\(error\)\) retry = false;/);
+  assert.match(server.slice(start, end), /if \(retry && prepareGenerationRetry\(task, error, at\)\)/);
+  assert.match(server.slice(end, end + 200), /task\.error = isPromptContentRejection\(error\) \? promptContentRejectionMessage : error\.message;/);
   assert.match(server, /autoPromptRepairEnabled = user => user\?\.preferences\?\.autoPromptRepair !== false/);
   assert.doesNotMatch(server.slice(start, end), /reserveLlmCredits|settleLlmCredits/);
 });

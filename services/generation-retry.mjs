@@ -37,7 +37,13 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsabl
     excludeRouteIds: [...new Set([task.routeId, ...(task.generationAttempts || []).map(attempt => attempt.routeId).filter(Boolean)])],
     afterPriority: task.routePriority,
   });
-  if (!route) throw new Error('当前模型暂无其他可用生成渠道，请稍后重试');
+  if (!route) {
+    // Every channel has had its turn: report what actually went wrong last
+    // rather than a generic "try again later".
+    const error = new Error(task.generationAttempts?.at(-1)?.error || '当前模型暂无其他可用生成渠道，请稍后重试');
+    error.retryable = false;
+    throw error;
+  }
   Object.assign(task, {
     provider: route.provider,
     model: route.upstreamModelId,
@@ -59,11 +65,15 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsabl
   return route;
 }
 
-export function prepareGenerationRetry(task, error, at = new Date().toISOString()) {
-  if (!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
+export function generationRetryAllowed(task, error, at = new Date().toISOString()) {
+  return !(!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
     || error.submissionUncertain || error.pollTimedOut || error.retryable === false || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
-    || (task.routeId ? !routedRetryAllowed(task, at) : (Number(task.generationRetryCount) || 0) >= maxGenerationRetries)) return false;
+    || (task.routeId ? !routedRetryAllowed(task, at) : (Number(task.generationRetryCount) || 0) >= maxGenerationRetries));
+}
+
+export function prepareGenerationRetry(task, error, at = new Date().toISOString()) {
+  if (!generationRetryAllowed(task, error, at)) return false;
   task.generationAttempts = [...(task.generationAttempts || []), {
     attempt: (Number(task.generationRetryCount) || 0) + 1,
     providerTaskId: task.providerTaskId || '',

@@ -50,8 +50,8 @@ import { VIDEO_UPSCALE_MODEL_ID, VIDEO_UPSCALE_PROVIDER } from './public/feature
 import { createVideoUpscaleService } from './services/video-upscale.mjs';
 import { createMediaRetentionService } from './services/media-retention.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
-import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
-import { repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
+import { generationAttemptContext, generationRetryAllowed, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
+import { isPromptContentRejection, promptContentRejectionMessage, repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
@@ -2061,18 +2061,25 @@ async function failGeneration(userId, task, error) {
   // Update channel health first; the job then retries its channel once and
   // moves on to the next one while it is still inside its retry window.
   trackModelRouteFailure(task, error);
-  if (prepareGenerationRetry(task, error)) {
-    clearProviderTaskIdTimeout(task.id);
-    if (autoPromptRepairEnabled(findUserById(userId))) await repairGenerationPrompt(task, error, {
+  const at = now();
+  let retry = generationRetryAllowed(task, error, at);
+  if (retry) {
+    const repaired = autoPromptRepairEnabled(findUserById(userId)) && await repairGenerationPrompt(task, error, {
       callLlm, config: llmConfig,
       save: task => saveGenerationWithRetry(userId, task, 'generation-prompt-repair'),
     });
+    // A refused description sent again unchanged is only refused again, on
+    // any channel: tell the user right away instead.
+    if (!repaired && isPromptContentRejection(error)) retry = false;
+  }
+  if (retry && prepareGenerationRetry(task, error, at)) {
+    clearProviderTaskIdTimeout(task.id);
     await saveGenerationWithRetry(userId, task, 'generation-retry-scheduled');
     console.info('[generation] retry scheduled', { generationId:task.id, retryCount:task.generationRetryCount, error:error.message });
     return;
   }
   task.status = 'failed';
-  task.error = error.message;
+  task.error = isPromptContentRejection(error) ? promptContentRejectionMessage : error.message;
   if(task.type==='audio'){speech.releaseVoice(userId,task);const source=path.join(assetFilesDir(userId),`${task.id}.speech-source`);await Promise.all([fs.unlink(source).catch(()=>{}),fs.unlink(`${source}.json`).catch(()=>{})]);}
   const includedOutput = isMidjourneyGridChild(task);
   if (!includedOutput) dispatchGenerationFailureNotification(userId, task, error);

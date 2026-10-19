@@ -14,6 +14,16 @@ export function isPromptRejection(error) {
   return /(?:prompt|input text|提示词|创作描述|画面描述|输入文本).{0,100}(?:reject|block|violat|prohibit|sensitive|unsafe|moderation|safety|违禁|违规|敏感|拦截|审核|不合规)|(?:reject|block|violat|prohibit|sensitive|违禁|违规|敏感|拦截|审核).{0,100}(?:prompt|input text|提示词|创作描述|画面描述|输入文本)/i.test(text);
 }
 
+// Narrower than isPromptRejection: the description itself was refused by
+// content review, so sending it again unchanged can only be refused again.
+export function isPromptContentRejection(error) {
+  const text = String(error?.message || '');
+  if (/reference|参考|generated (?:images?|videos?)|output|生成结果|成品|视频内容|图像内容/i.test(text)) return false;
+  if (/违禁词|禁用词|banned (?:words?|keywords?)|prohibited (?:words?|keywords?)/i.test(text)) return true;
+  return /(?:prompt|input text|提示词|创作描述|画面描述|输入文本).{0,100}(?:reject|block|violat|prohibit|sensitive|unsafe|moderation|safety|违禁|违规|敏感|拦截|审核|不合规)|(?:reject|block|violat|prohibit|sensitive|违禁|违规|敏感|拦截|审核).{0,100}(?:prompt|input text|提示词|创作描述|画面描述|输入文本)/i.test(text);
+}
+export const promptContentRejectionMessage = '画面描述可能包含敏感内容，请修改后重试';
+
 export async function loadPromptRepairGuidance(task, source = skills) {
   const resources = [['prompt-optimization', 'SKILL.md'], ['prompt-optimization', 'references/rejection-and-clarification.md'], ['prompt-optimization', 'references/content-risk-reference.md']];
   if ([task.videoModelId, task.modelId, task.model].some(model => /seedance/i.test(model || ''))) {
