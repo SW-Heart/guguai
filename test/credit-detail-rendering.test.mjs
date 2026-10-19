@@ -86,7 +86,7 @@ test('credit detail ships fresh entry versions and avoids full window backdrop b
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
   assert.match(html, /\/app\.js\?v=599"/);
-  assert.match(html, /\/styles\.css\?v=430"/);
+  assert.match(html, /\/styles\.css\?v=431"/);
   assert.match(css, /\.credit-detail-dialog::backdrop\s*\{[^}]*backdrop-filter: none/);
   for (const id of ['creditDetailPagination', 'creditDetailPrevious', 'creditDetailNext', 'creditDetailPageInfo']) {
     assert.ok(html.includes(`id="${id}"`));
