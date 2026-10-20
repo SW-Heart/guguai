@@ -4,11 +4,19 @@ import {readFileSync} from 'node:fs';
 import {createAgentSkills} from '../lib/agent/skills.mjs';
 import {galleryItems, skillCardMarkup, skillDetailMarkup, mountSkillGallery} from '../public/features/agent/skill-gallery.js';
 
-test('gallery covers built-in skills, with local full-size and thumbnail WebP pictures', async () => {
+test('gallery covers built-in skills, with pictures or the text-only skill fallback', async () => {
   const skills = await createAgentSkills({roots: [new URL('../agent-skills/', import.meta.url).pathname]}).search();
   const items = galleryItems(skills);
-  assert.equal(items.length, 10);
+  assert.equal(items.length, 11);
   for (const item of items) {
+    if (item.name === 'fight-choreography') {
+      assert.equal(item.title, '打戏创作');
+      assert.equal(item.media, null);
+      assert.ok(skillCardMarkup(item).includes('data-skill-quick-use="fight-choreography"'));
+      assert.ok(skillDetailMarkup(item).includes('兵器交锋、攻防回合与连贯的打斗分镜'));
+      assert.ok(skillDetailMarkup(item).includes('使用此技能'));
+      continue;
+    }
     if (item.name === 'minimax-creation-bible') {
       assert.equal(item.title, 'MiniMax 创作圣经');
       assert.equal(item.media.src, '/images/skills/minimax-creation-bible-v1.webp');
@@ -96,7 +104,7 @@ test('preview, use, retry and disposal keep skill selection inside the current e
 
 test('skill gallery cache versions are connected through HTML and the app entry', () => {
   for (const [path, refs] of [
-    ['index.html', ['/app.js?v=599', '/styles.css?v=431']],
+    ['index.html', ['/app.js?v=600', '/styles.css?v=431']],
     ['app.js', ['./features/agent/workspace.js?v=179']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8']],
   ]) {

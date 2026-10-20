@@ -4666,7 +4666,7 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
     const rows = visibleItems.filter(item => item.modelId === modelId);
     return { modelId, rows, kind: rows[0]?.kind === 'audio' ? 'audio' : videoModelIds.has(modelId) || rows.some(row => row.unit !== 'request') ? 'video' : 'image' };
   });
-  const sections = [{kind:'audio',title:'语音模型',hint:'按字符或音色计费'}, { kind:'video', title:'视频模型', hint:'按次或按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }];
+  const sections = [{ kind:'video', title:'视频模型', hint:'按次或按秒计费' }, { kind:'image', title:'图像模型', hint:'按次计费' }, { kind:'audio', title:'语音模型', hint:'按字符或音色计费' }];
   body.innerHTML = sections.map(section => {
     const cards = groups.filter(group => group.kind === section.kind);
     if (section.kind === 'video') cards.sort((left, right) => {
