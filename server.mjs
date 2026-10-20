@@ -2932,6 +2932,9 @@ const generationRoute = createGenerationRouteHandler({
 // OpenAI-compatible API and its console (api.guguai.xyz). Same accounts,
 // balance, pricing and generation pipeline as the desktop client.
 const apiPlatform = createApiPlatformRepository({ sql, tx, now });
+// The API is paused for now; API_PLATFORM_ENABLED=true turns it back on.
+const apiPlatformEnabled = process.env.API_PLATFORM_ENABLED === 'true';
+const apiPausedMessage = 'API 服务暂停使用，请使用 GuGu AI 客户端';
 const apiSiteHosts = new Set(String(process.env.API_SITE_HOSTS || 'api.guguai.xyz').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
 // Outside production there is no separate domain, so the API site also
 // listens on its own local port (PORT + 1 unless API_SITE_PORT says otherwise;
@@ -3174,8 +3177,13 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (await systemRoute(req, res, url)) return;
     // API-key requests carry no cookies, so cross-origin calls are allowed.
-    if (await openAiRoute(req, res, url)) return;
+    if (!apiPlatformEnabled && (url.pathname === '/v1' || url.pathname.startsWith('/v1/'))) return sendJson(res, 503, { error:{ message:apiPausedMessage, type:'service_unavailable', code:'api_paused' } });
+    if (apiPlatformEnabled && await openAiRoute(req, res, url)) return;
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
+    if (!apiPlatformEnabled && isApiSiteRequest(req)) {
+      if (url.pathname.startsWith('/api/')) return sendJson(res, 503, { error:apiPausedMessage });
+      return sendText(res, 503, apiPausedMessage);
+    }
     if (isApiSiteRequest(req)) {
       if (url.pathname.startsWith('/api/') && !apiSiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '接口不存在' });
       if (await apiConsoleRoute(req, res, url)) return;
@@ -3188,8 +3196,8 @@ const server = http.createServer(async (req, res) => {
     // guard so website visitors can inspect prices before signing in.
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
-    if (url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
-    if (url.pathname === '/api/public/site-links' && req.method === 'GET') return sendJson(res, 200, { apiSiteUrl:apiSiteUrl(req) });
+    if (apiPlatformEnabled && url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
+    if (apiPlatformEnabled && url.pathname === '/api/public/site-links' && req.method === 'GET') return sendJson(res, 200, { apiSiteUrl:apiSiteUrl(req) });
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
     if (await authRoute(req, res, url)) return;
     if (await accountRoute(req, res, url)) return;

@@ -92,6 +92,7 @@ test('OpenAI-compatible API: keys, async image tasks, billing, logs and isolatio
       PORT:String(port),
       DUOMI_API_KEY:'test-duomi-key',
       DUOMI_API_BASE:upstreamBase,
+      API_PLATFORM_ENABLED:'true',
       API_SITE_HOSTS:'127.0.0.1',
       API_PUBLIC_BASE_URL:'',
       API_SITE_PORT:String(apiSitePort),
@@ -276,4 +277,31 @@ test('OpenAI-compatible API: keys, async image tasks, billing, logs and isolatio
   const removed = await call('DELETE', `/v1/images/${task.body.id}`, { bearer:secret });
   assert.deepEqual(removed.body, { id:task.body.id, object:'image.deleted', deleted:true });
   assert.equal((await call('GET', `/v1/images/${task.body.id}`, { bearer:secret })).status, 404);
+});
+
+test('API platform stays paused unless explicitly enabled', { timeout:30_000 }, async t => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'api-paused-'));
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, NODE_ENV:'development', DATA_DIR:dataDir, PORT:String(port), API_SITE_HOSTS:'api.example.test', API_SITE_PORT:'0', MEDIA_RETENTION_ENABLED:'0' };
+  delete env.API_PLATFORM_ENABLED;
+  const child = spawn(process.execPath, ['server.mjs'], { cwd:path.resolve(import.meta.dirname, '..'), env, stdio:['ignore', 'pipe', 'pipe'] });
+  t.after(async () => {
+    child.kill('SIGTERM');
+    await new Promise(resolve => child.once('exit', resolve));
+    rmSync(dataDir, { recursive:true, force:true });
+  });
+  await waitForServer(child, base);
+
+  const models = await rawRequest(base, '/v1/models', { host:`127.0.0.1:${port}`, headers:{ Authorization:'Bearer sk-anything' } });
+  assert.equal(models.status, 503);
+  assert.equal(JSON.parse(models.body).error.code, 'api_paused');
+  const consolePage = await rawRequest(base, '/keys', { host:'api.example.test' });
+  assert.equal(consolePage.status, 503);
+  assert.match(consolePage.body, /API 服务暂停使用/);
+  const consoleApi = await rawRequest(base, '/api/console/keys', { host:'api.example.test' });
+  assert.equal(consoleApi.status, 503);
+  assert.equal((await rawRequest(base, '/api/public/site-links', { host:`127.0.0.1:${port}` })).status, 404);
+  assert.equal((await rawRequest(base, '/api/public/api-models', { host:`127.0.0.1:${port}` })).status, 404);
+  assert.equal((await rawRequest(base, '/', { host:`127.0.0.1:${port}` })).status, 200, 'the website itself keeps working');
 });
