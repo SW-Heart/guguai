@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=51/);
+  assert.match(adminHtml, /guguadmin\.js\?v=52/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -146,6 +146,10 @@ test('admin HTTP permissions and core workflows', async t => {
 
   const overviewAfterRefund = await admin.call('/api/admin/overview');
   assert.equal(overviewAfterRefund.data.credits.spent, 0.01725);
+  const insights = await admin.call('/api/admin/insights');
+  assert.equal(insights.response.status, 200);
+  assert.equal(typeof insights.data.funnel.registered, 'number');
+  assert.ok(Array.isArray(insights.data.models));
   const paidOrders = await admin.call('/api/admin/payment-orders');
   assert.equal(paidOrders.response.status, 200);
   assert.deepEqual(paidOrders.data.items.map(item => item.orderNo), ['ORDER-REFUNDED-1', 'ORDER-PAID-1']);
@@ -427,6 +431,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(unavailable1080.response.status, 503);
   const forbidden = await userClient.call('/api/admin/overview');
   assert.equal(forbidden.response.status, 401);
+  assert.equal((await userClient.call('/api/admin/insights')).response.status, 401);
   const userLoginAsAdmin = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_user', password: 'user-password-123' } });
   assert.equal(userLoginAsAdmin.response.status, 401);
 
