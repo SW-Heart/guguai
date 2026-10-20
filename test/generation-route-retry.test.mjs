@@ -81,7 +81,8 @@ test('routed generation retry order and fixed billing', async t => {
     assert.equal(modelRoute(first.id).runtimeFailures, 1);
     let exhausted;
     try { refreshGenerationRetryRoute(task, { selectModelRoute, referenceCounts:request.referenceCounts }); } catch (error) { exhausted = error; }
-    assert.match(exhausted.message, /暂无其他可用/);
+    // The job ends with the last real failure, not a generic "try later".
+    assert.equal(exhausted.message, '503 service unavailable');
     assert.equal(prepareGenerationRetry(task, exhausted), false);
     assert.equal(modelRouteCharge(next, 30).total, 258);
     await refundGenerationMicro('u', task.id, task.creditCostMicro);

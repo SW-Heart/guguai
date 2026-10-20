@@ -54,5 +54,5 @@ test('video loading and every changed entrypoint have current cache keys',()=>{
   assert.match(read('features/drama/video-generation-loading.js'),/prompt-optimization-loading\.js\?v=1/);
   assert.match(read('app.js'),/drama-studio\.js\?v=312\b/);
   assert.match(read('index.html'),/app\.js\?v=600\b/);
-  assert.match(read('index.html'),/styles\.css\?v=430\b/);
+  assert.match(read('index.html'),/styles\.css\?v=431\b/);
 });

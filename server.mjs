@@ -50,8 +50,8 @@ import { VIDEO_UPSCALE_MODEL_ID, VIDEO_UPSCALE_PROVIDER } from './public/feature
 import { createVideoUpscaleService } from './services/video-upscale.mjs';
 import { createMediaRetentionService } from './services/media-retention.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
-import { generationAttemptContext, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
-import { repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
+import { generationAttemptContext, generationRetryAllowed, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
+import { isPromptContentRejection, repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
 import { createGenerationJobPolicy } from './jobs/generation-policy.mjs';
@@ -242,6 +242,8 @@ const supportLogAttempts = new Map();
 const sessionMaxAge = 60 * 60 * 24 * 14;
 const maxUploadBytes = 25 * 1024 * 1024;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
+// Image models download references themselves and refuse files of 10 MB or more.
+const maxImageGenerationReferenceBytes = 10 * 1024 * 1024;
 
 const activeGenerations = new Map();
 const activeGenerationJobs = new Map();
@@ -441,11 +443,11 @@ const generationFailureCatalog = Object.freeze({
   RATE_LIMITED: Object.freeze({ message: '当前生成请求较多', suggestion: '请稍等几分钟再试，不要连续重复提交。', action: 'retry_later' }),
   TIMEOUT: Object.freeze({ message: '生成等待超时', suggestion: '本次任务已停止，可重新生成；若持续发生，请稍后再试。', action: 'retry' }),
   MODEL_UNRESPONSIVE: Object.freeze({ message: '模型无响应', suggestion: '生成服务未在规定时间内返回任务编号，本次任务已停止，请稍后重试。', action: 'retry_later' }),
-  MODEL_UNAVAILABLE: Object.freeze({ message: '当前生成服务不支持所选模型', suggestion: '请稍后重试；若持续出现，请联系支持检查模型配置。', action: 'retry_later' }),
+  MODEL_UNAVAILABLE: Object.freeze({ message: '当前模型服务暂时不可用', suggestion: '请稍后重试，或切换其他模型；若持续出现，请联系支持。', action: 'retry_later' }),
   SERVICE_UNAVAILABLE: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
   SERVICE_NOT_CONFIGURED: Object.freeze({ message: '生成服务尚未配置', suggestion: '请联系支持处理当前生成服务配置后再试。', action: 'contact_support' }),
   NETWORK_ERROR: Object.freeze({ message: '生成服务连接失败', suggestion: '平台暂时无法连接生成服务，请稍后重试；若持续失败，请联系支持。', action: 'retry_later' }),
-  UPSTREAM_BILLING: Object.freeze({ message: '生成服务额度不足', suggestion: '当前服务暂时无法提交本次任务，请稍后重试或联系支持。', action: 'contact_support' }),
+  UPSTREAM_BILLING: Object.freeze({ message: '生成服务暂时不可用', suggestion: '请稍后重试；若持续失败，请联系支持并提供本平台任务编号。', action: 'retry_later' }),
   UPSTREAM_REJECTED: Object.freeze({ message: '生成服务拒绝了本次任务', suggestion: '请调整提示词或参考素材后重试；若仍失败，请联系支持并提供本平台任务编号。', action: 'edit_input' }),
   RESULT_INVALID: Object.freeze({ message: '生成结果暂不可用', suggestion: '服务没有返回完整成品，请重新生成；若重复出现，请联系支持。', action: 'retry' }),
   ARCHIVE_FAILED: Object.freeze({ message: '成品归档暂未完成', suggestion: '模型已完成生成，请稍后刷新，不要重复提交；持续未恢复时请联系支持。', action: 'wait' }),
@@ -505,6 +507,16 @@ function generationFailure(task) {
     const label = number ? `第 ${number} 张参考图` : '参考图片';
     return { ...base, message: `${label}未通过内容安全检查`, suggestion: `请更换或移除触发检查的${label}后重试。` };
   }
+  if (code === 'CONTENT_REJECTED' && isPromptContentRejection({ message: raw })) {
+    return { ...base, message: '画面描述未通过内容安全检查', suggestion: '请修改画面描述中可能涉及敏感、违规或侵权的内容后重试。' };
+  }
+  if (code === 'INVALID_REFERENCE' && /file size exceeds/i.test(raw)) {
+    const number = referenceNumber(raw);
+    const label = number ? `第 ${number} 张参考图` : '参考图片';
+    const limit = Number(raw.match(/maximum allowed size:?\s*(\d+)\s*bytes/i)?.[1]) || 0;
+    const size = limit ? `${Math.round(limit / 1024 / 1024)} MB` : '';
+    return { ...base, message: size ? `${label}超过 ${size}` : `${label}超过大小上限`, suggestion: size ? `请换用小于 ${size} 的图片后重试。` : '请压缩或更换图片后重试。' };
+  }
   if (code === 'PROMPT_TOO_LONG') {
     const limit = raw.match(/maximum allowed length of\s*(\d+)/i)?.[1] || '允许上限';
     return { ...base, suggestion: `请将创作描述压缩到 ${limit} 个字符以内后重试。` };
@@ -518,7 +530,7 @@ function generationFailure(task) {
     return { ...base, message: '当前视频生成服务暂时繁忙', suggestion: '请稍后重试，或切换其他可用模型。' };
   }
   if (code === 'UPSTREAM_BILLING') {
-    return { ...base, message: task.type === 'image' ? '当前图像生成服务额度不足' : '当前视频生成服务额度不足', suggestion: '当前服务暂时无法提交本次任务，请稍后重试或联系支持。' };
+    return { ...base, message: task.type === 'image' ? '当前图像生成服务暂时不可用' : '当前视频生成服务暂时不可用' };
   }
   if (code === 'INTERRUPTED' && /服务重启/.test(raw)) {
     return { ...base, message: '任务在提交前被服务重启中断', suggestion: '本次任务没有提交到模型服务，可以直接重新生成。' };
@@ -1562,7 +1574,7 @@ async function resolveRefs(userId, ids, task = {}) {
     return refs;
   });
 }
-async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true, scope = {} } = {}) {
+async function validateReferenceAssets(userId, value, limits = null, { requireReadable = true, scope = {}, maxImageBytes = maxReferenceImageBytes } = {}) {
   if (value !== undefined && !Array.isArray(value)) throw Object.assign(new Error('参考素材 referenceAssetIds 必须使用数组格式'), { statusCode: 400 });
   const ids = (value || []).map(safeId).filter(Boolean);
   const referenceLimits = limits || { image: 7, video: 0, audio: 0, total: 7 };
@@ -1577,6 +1589,7 @@ async function validateReferenceAssets(userId, value, limits = null, { requireRe
     counts[asset.kind]++;
     if (counts[asset.kind] > Number(referenceLimits[asset.kind] || 0)) throw Object.assign(new Error(`参考${asset.kind === 'image' ? '图片' : asset.kind === 'video' ? '视频' : '音频'}最多支持 ${referenceLimits[asset.kind]} 个`), { statusCode: 400 });
     if (asset.kind === 'image' && Number(asset.size) > maxReferenceImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 20 MB`), { statusCode: 400 });
+    if (asset.kind === 'image' && Number(asset.size) >= maxImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 ${maxImageBytes / 1024 / 1024} MB，请选择小于 ${maxImageBytes / 1024 / 1024} MB 的图片`), { statusCode: 400 });
     if (asset.kind !== 'image' && Number(asset.size) > maxUploadBytes) throw Object.assign(new Error(`参考素材“${asset.name}”超过 25 MB`), { statusCode: 400 });
     if (requireReadable && !readable.has(id)) {
       if (!await referenceAssetHasReadableSource(userId, asset)) throw Object.assign(new Error(`参考素材“${asset.name}”尚未同步到云端，请重新选择或上传后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
@@ -2061,12 +2074,19 @@ async function failGeneration(userId, task, error) {
   // Update channel health first; the job then retries its channel once and
   // moves on to the next one while it is still inside its retry window.
   trackModelRouteFailure(task, error);
-  if (prepareGenerationRetry(task, error)) {
-    clearProviderTaskIdTimeout(task.id);
-    if (autoPromptRepairEnabled(findUserById(userId))) await repairGenerationPrompt(task, error, {
+  const at = now();
+  let retry = generationRetryAllowed(task, error, at);
+  if (retry) {
+    const repaired = autoPromptRepairEnabled(findUserById(userId)) && await repairGenerationPrompt(task, error, {
       callLlm, config: llmConfig,
       save: task => saveGenerationWithRetry(userId, task, 'generation-prompt-repair'),
     });
+    // A refused description sent again unchanged is only refused again, on
+    // any channel: tell the user right away instead.
+    if (!repaired && isPromptContentRejection(error)) retry = false;
+  }
+  if (retry && prepareGenerationRetry(task, error, at)) {
+    clearProviderTaskIdTimeout(task.id);
     await saveGenerationWithRetry(userId, task, 'generation-retry-scheduled');
     console.info('[generation] retry scheduled', { generationId:task.id, retryCount:task.generationRetryCount, error:error.message });
     return;
@@ -2853,6 +2873,7 @@ const generationRoute = createGenerationRouteHandler({
   loadDramaProject,
   validateVideoRequest,
   validateReferenceAssets,
+  maxImageGenerationReferenceBytes,
   referenceAssetCounts,
   normalizeQuoteReferenceCounts,
   assertReferenceCountsWithinLimits,
@@ -2911,6 +2932,9 @@ const generationRoute = createGenerationRouteHandler({
 // OpenAI-compatible API and its console (api.guguai.xyz). Same accounts,
 // balance, pricing and generation pipeline as the desktop client.
 const apiPlatform = createApiPlatformRepository({ sql, tx, now });
+// The API is paused for now; API_PLATFORM_ENABLED=true turns it back on.
+const apiPlatformEnabled = process.env.API_PLATFORM_ENABLED === 'true';
+const apiPausedMessage = 'API 服务暂停使用，请使用 GuGu AI 客户端';
 const apiSiteHosts = new Set(String(process.env.API_SITE_HOSTS || 'api.guguai.xyz').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
 // Outside production there is no separate domain, so the API site also
 // listens on its own local port (PORT + 1 unless API_SITE_PORT says otherwise;
@@ -3153,8 +3177,13 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (await systemRoute(req, res, url)) return;
     // API-key requests carry no cookies, so cross-origin calls are allowed.
-    if (await openAiRoute(req, res, url)) return;
+    if (!apiPlatformEnabled && (url.pathname === '/v1' || url.pathname.startsWith('/v1/'))) return sendJson(res, 503, { error:{ message:apiPausedMessage, type:'service_unavailable', code:'api_paused' } });
+    if (apiPlatformEnabled && await openAiRoute(req, res, url)) return;
     if (!mutationAllowed(req)) return sendJson(res, 403, { error: '请求来源不允许' });
+    if (!apiPlatformEnabled && isApiSiteRequest(req)) {
+      if (url.pathname.startsWith('/api/')) return sendJson(res, 503, { error:apiPausedMessage });
+      return sendText(res, 503, apiPausedMessage);
+    }
     if (isApiSiteRequest(req)) {
       if (url.pathname.startsWith('/api/') && !apiSiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '接口不存在' });
       if (await apiConsoleRoute(req, res, url)) return;
@@ -3167,8 +3196,8 @@ const server = http.createServer(async (req, res) => {
     // guard so website visitors can inspect prices before signing in.
     if (url.pathname === '/api/public/model-prices' && req.method === 'GET') return sendJson(res, 200, publicModelPriceState());
     if (url.pathname === '/api/public/credit-packages' && req.method === 'GET') return sendJson(res, 200, publicCreditPackages());
-    if (url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
-    if (url.pathname === '/api/public/site-links' && req.method === 'GET') return sendJson(res, 200, { apiSiteUrl:apiSiteUrl(req) });
+    if (apiPlatformEnabled && url.pathname === '/api/public/api-models' && req.method === 'GET') return await apiConsoleRoute(req, res, url);
+    if (apiPlatformEnabled && url.pathname === '/api/public/site-links' && req.method === 'GET') return sendJson(res, 200, { apiSiteUrl:apiSiteUrl(req) });
     if (desktopAppOnly && url.pathname.startsWith('/api/') && !isDesktopRequest(req) && !websiteApiAllowed(url.pathname)) return sendJson(res, 404, { error: '请使用 GuGu AI 客户端' });
     if (await authRoute(req, res, url)) return;
     if (await accountRoute(req, res, url)) return;

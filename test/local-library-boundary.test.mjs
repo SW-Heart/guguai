@@ -64,13 +64,13 @@ test('each login activates its account workspace before the legacy claim', () =>
 test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(app.includes('./features/credits/presentation.js?v=6'));
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(admin.includes('/guguadmin.js?v=51'));
-  assert.ok(admin.includes('/guguadmin.css?v=22'));
+  assert.ok(admin.includes('/guguadmin.js?v=52'));
+  assert.ok(admin.includes('/guguadmin.css?v=23'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=8'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
   assert.match(index, /\/app\.js\?v=600\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
-  assert.match(index, /\/styles\.css\?v=430/);
+  assert.match(index, /\/styles\.css\?v=431/);
   assert.doesNotMatch(index, /reference-canvas\.css/, 'canvas styles load with the canvas workspaces');
   assert.match(app, /'\/vendor\/director\/reference-canvas\.css\?v=6'/);
   assert.match(index, /\/styles\/base\.css\?v=6\b/);
@@ -99,7 +99,7 @@ test('account-scoped loaders ignore responses from an older session', () => {
   assert.match(app, /sessionStorage\.setItem\(alipayOrderStorageKey\(state\.user\)/);
   assert.doesNotMatch(app, /sessionStorage\.setItem\('gugu_alipay_order'/);
   assert.doesNotMatch(marketing, /sessionStorage|paymentOrderStorageKey|purchaseUser/);
-  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=21/));
+  marketingPages.forEach(page => assert.match(page, /\/marketing\.js\?v=24/));
   assert.match(app, /const requestAccount = accountScope\.snapshot\(\);\n  const button = \$\('#alipayTopupButton'\)/);
   const refreshPaymentSource = app.slice(app.indexOf('async function refreshAlipayPayment'), app.indexOf('async function startAlipayTopup'));
   assert.ok(refreshPaymentSource.includes('orderPaymentProvider(state.alipayOrderNo)'));

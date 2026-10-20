@@ -87,7 +87,9 @@ test('content rejections are traced to the side the upstream named', () => {
   assert.equal(contentRejectionSource('400 CD requires 1 to 9 reference images'), '');
   assert.equal(contentRejectionSource('返回错误码 710082022，疑似包含侵权/违规内容'), 'input_text');
   assert.equal(contentRejectionSource('提示词有问题，请修改提示词。'), 'input_text');
+  assert.equal(contentRejectionSource('上游拒绝生成,请修改提示词后重试'), 'input_text');
   assert.equal(contentRejectionSource('content_policy_violation'), 'unknown');
+  assert.equal(contentRejectionSource('CONTENT_REVIEW_REJECTED'), 'unknown');
   assert.equal(contentRejectionSource('503 service unavailable'), '');
 });
 

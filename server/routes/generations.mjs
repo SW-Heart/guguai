@@ -20,6 +20,7 @@ export function createGenerationRouteHandler({
   loadDramaProject,
   validateVideoRequest,
   validateReferenceAssets,
+  maxImageGenerationReferenceBytes,
   referenceAssetCounts,
   normalizeQuoteReferenceCounts,
   assertReferenceCountsWithinLimits,
@@ -349,7 +350,7 @@ export function createGenerationRouteHandler({
     const deferredReferences = Boolean(input.deferReferenceUpload) && requestedReferenceCount === 0 && suppliedReferenceCount > 0;
     let aspectRatio = null; let duration = null; let videoRequest = null;
     if (type === 'video') { videoRequest = validateVideoRequest(input, requestedReferenceCount || suppliedReferenceCount); aspectRatio = videoRequest.aspectRatio; duration = videoRequest.duration; }
-    const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope });
+    const referenceAssetIds = deferredReferences ? [] : await validateReferenceAssets(user.id, input.referenceAssetIds, videoRequest?.referenceLimits, { scope, ...(type === 'image' ? { maxImageBytes:maxImageGenerationReferenceBytes } : {}) });
     const referenceCounts = deferredReferences ? suppliedReferenceCounts : referenceAssetCounts(user.id, referenceAssetIds, scope);
     assertReferenceCountsWithinLimits(referenceCounts, videoRequest?.referenceLimits);
     if (referenceCounts.image && !r2ReferenceConfigured) return sendJson(res, 503, { error:`${type === 'image' ? '图生图' : '图生视频'}参考图片暂时不可用，请稍后重试或联系支持` }), true;

@@ -143,6 +143,16 @@ test('a channel paused or switched off during the job gives up its retry', () =>
   assert.equal(refreshGenerationRetryRoute(task, { routeUsable:id => id !== 'route-1', selectModelRoute:() => secondRoute }).id, 'route-2');
 });
 
+test('no remaining channel reports the last attempt failure', () => {
+  const task = routedTask();
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true, message:'第一次失败' }, seconds(30)), true);
+  assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true, message:'视频生成失败，请凭任务编号联系客服' }, seconds(60)), true);
+  let error;
+  try { refreshGenerationRetryRoute(task, { selectModelRoute:() => null }); } catch (failure) { error = failure; }
+  assert.equal(error.message, '视频生成失败，请凭任务编号联系客服');
+  assert.equal(error.retryable, false);
+});
+
 test('no remaining channel ends the routed job', () => {
   const task = routedTask();
   assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }, seconds(30)), true);

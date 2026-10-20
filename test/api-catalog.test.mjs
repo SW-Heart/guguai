@@ -110,7 +110,7 @@ test('API console entry and marketing pages use current cache keys', async () =>
   assert.doesNotMatch(html, /[↗→]/);
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const source = await readFile(new URL(`../public/${page}.html`, import.meta.url), 'utf8');
-    assert.ok(source.includes('<a class="nav-api" href="https://api.guguai.xyz">使用 API</a>'), `${page} links to the API site`);
+    assert.doesNotMatch(source, /nav-api|api\.guguai\.xyz|使用 API/, `${page} has no API entry`);
   }
 });
 

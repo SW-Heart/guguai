@@ -111,6 +111,9 @@ test('Seedance route selection, pricing and catalog health', async t => {
     assert.equal(fast.salePriceYuan, 0.12);
     assert.equal(fast.salePriceCredits, 1.2);
     assert.equal(publicModelPrices().find(item => item.modelId === 'seedance-2.5' && item.quality === '720p').yuan, 0.24);
+    const priced = publicModelPrices().find(item => item.modelId === 'seedance-2.0' && item.quality === '480p');
+    const durations = selectModelRoute({ logicalModelId: 'seedance-2.0', quality: '480p', aspectRatio: '16:9', availableOnly: true }).durations;
+    assert.deepEqual([priced.duration, priced.maxDuration], [durations[0], durations.at(-1)], 'public prices expose the full supported duration range');
   });
 
   await t.test('Seedance Mini uses configured routes, durations, prices and fallback independently', () => {

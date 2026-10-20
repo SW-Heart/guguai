@@ -703,7 +703,8 @@ import { createApiClient } from './api-client.js?v=4';
     if (from) { params.set('from', inputToIso(from)); params.set('to', new Date().toISOString()); }
     const rangeLabel = overviewRanges.find(([key]) => key === state.overviewRange)?.[1] || '全部';
     try {
-      const data = await api(`/api/admin/overview${params.toString() ? `?${params}` : ''}`);
+      const query = params.toString() ? `?${params}` : '';
+      const [data, insights] = await Promise.all([api(`/api/admin/overview${query}`), api(`/api/admin/insights${query}`)]);
       if (isStale('overview', token)) return;
       const exceptions = Number(data.exceptions.reconcile || 0) + Number(data.exceptions.refundFailed || 0);
       const finished = Number(data.generations.completed || 0) + Number(data.generations.failed || 0);
@@ -737,6 +738,7 @@ import { createApiClient } from './api-client.js?v=4';
             </div>
           </section>
         </div>
+        ${insightsMarkup(insights, rangeLabel)}
         <p class="muted" style="margin:14px 2px 0">数据更新于 ${esc(new Date().toLocaleTimeString('zh-CN', { hour12: false }))}；用户数与积分余额为当前值，任务与消耗按所选时间范围统计。</p>`;
       doneLoading(body);
     } catch (error) {
@@ -747,6 +749,35 @@ import { createApiClient } from './api-client.js?v=4';
     } finally {
       if (!isStale('overview', token)) setButtonBusy(refresh, false);
     }
+  }
+
+  const seconds = value => value === null || value === undefined ? '—' : value < 60 ? `${value} 秒` : `${Math.floor(value / 60)} 分 ${value % 60} 秒`;
+  const yuanText = value => value === null || value === undefined ? '—' : `¥${money(value)}`;
+  function funnelStep(label, count, rate, hint) {
+    return `<div class="funnel-step"><div class="meter-caption"><span>${esc(label)}</span><b>${money(count)}${rate === null || rate === undefined ? '' : ` · ${percent(rate)}`}</b></div>
+      <div class="meter is-brand"><span style="width:${rate ?? 0}%"></span></div>${hint ? `<p class="muted">${esc(hint)}</p>` : ''}</div>`;
+  }
+  function insightsMarkup({ funnel, models }, rangeLabel) {
+    const funnelBody = funnel.registered ? `<div class="funnel-grid">
+        ${funnelStep('注册', funnel.registered, 100)}
+        ${funnelStep('提交过生成', funnel.generated, funnel.generatedRate)}
+        ${funnelStep('拿到过成品', funnel.succeeded, funnel.succeededRate)}
+        ${funnelStep('付过费', funnel.paid, funnel.paidRate)}
+        ${funnelStep('7 日内回来再用', funnel.returned, funnel.returnedRate, `只统计注册满 7 天的 ${money(funnel.returnEligible)} 人`)}
+      </div>` : emptyMarkup('所选时间内没有新注册用户');
+    const modelRows = models.map(item => `<tr>
+        <td><div class="cell-stack"><b>${esc(routeModelLabels[item.modelId] || item.modelId)}</b>${routeModelLabels[item.modelId] ? idText(item.modelId, '模型 ID') : ''}</div></td>
+        <td class="num">${money(item.total)}</td>
+        <td>${item.successRate === null ? '—' : pill(percent(item.successRate), item.successRate < 80 ? 'bad' : item.successRate < 90 ? 'warn' : 'ok')}<span class="detail">失败 ${money(item.failed)}${item.pending ? ` · 进行中 ${money(item.pending)}` : ''}</span></td>
+        <td class="num">${seconds(item.avgSeconds)}</td>
+        <td class="num">${yuanText(item.revenueYuan)}</td>
+        <td class="num">${item.costYuan === null ? '<span class="muted">未录入</span>' : `${yuanText(item.costYuan)}${item.costCoverage !== null && item.costCoverage < 100 ? `<span class="detail">覆盖 ${percent(item.costCoverage)} 的成品</span>` : ''}`}</td>
+        <td class="num">${item.grossProfitYuan === null ? '—' : `${yuanText(item.grossProfitYuan)}<span class="detail">${percent(item.grossMarginRate)}</span>`}</td>
+      </tr>`).join('');
+    return `
+      <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>新用户转化（${esc(rangeLabel)}注册）</h3><p>按注册时间圈定用户，看各自走到了哪一步；比例都以注册人数为基数</p></div></header>${funnelBody}</section>
+      <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>模型表现（${esc(rangeLabel)}）</h3><p>收入按成品实际扣除的积分折算（10 积分 = 1 元，含赠送积分）；成本取提交时线路登记的上游价格，未走线路的模型没有成本数据</p></div></header>
+        ${models.length ? `<div class="table-wrap"><table aria-label="模型表现"><thead><tr><th>模型</th><th class="num">任务</th><th>成功率</th><th class="num">平均耗时</th><th class="num">收入</th><th class="num">上游成本</th><th class="num">毛利</th></tr></thead><tbody>${modelRows}</tbody></table></div>` : emptyMarkup('所选时间内没有生成任务')}</section>`;
   }
 
   /* ---------- 用户 ---------- */
