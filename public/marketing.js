@@ -1,5 +1,6 @@
 import { createApiClient } from './api-client.js?v=4';
 import { initSiteInteractions } from './site-interactions.js?v=2';
+import { modelLogoUrl } from './components/model-logo.js?v=8';
 
 initSiteInteractions();
 
@@ -35,10 +36,10 @@ initSiteInteractions();
     return date.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' });
   };
   const unitText = unit => unit === 'request' ? '次' : '秒';
-  const iconMarkup = modelId => {
-    if (modelId === 'gpt-image-2') return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 4"/></svg>';
-    if (String(modelId).startsWith('seedance')) return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 14 7-14 7V5Z"/><path d="M9 9.5 15 12l-6 2.5"/></svg>';
-    if (String(modelId).includes('veo') || modelId === 'oai') return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9 9.5 15 12l-6 2.5V9.5Z"/></svg>';
+  const iconMarkup = (modelId, kind = '') => {
+    // Speech models are MiniMax voices.
+    const logo = modelLogoUrl(modelId, kind === 'audio' ? 'minimax' : '');
+    if (logo) return `<img src="${logo}" alt="" width="22" height="22" decoding="async">`;
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 7v5l3.5 2"/></svg>';
   };
 
@@ -69,7 +70,7 @@ initSiteInteractions();
       return `<div class="price-row"><div class="price-row-label"><b>${escapeHtml(item.quality || '标准')}</b><small>${durationText}${total}</small></div><div class="price-row-value"><strong>¥${formatNumber(item.yuan)}<span>/ ${unit}</span></strong><small>${formatNumber(item.credits, 2)} 积分 / ${unit}</small></div></div>`;
     }).join('');
     const modelLabel = model?.label || rows[0]?.label || rows[0]?.modelId || '未命名模型';
-    return `<article class="price-card"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，开始生成前会再次确认。</p></article>`;
+    return `<article class="price-card"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(rows[0]?.modelId, rows[0]?.kind)}<span hidden>${modelInitial(modelLabel)}</span></span><div><h2>${escapeHtml(modelLabel)}</h2><p class="price-card-description">${escapeHtml(description || model?.description || '当前可用模型')}</p></div></div><span class="price-badge">当前可用</span></header><div class="price-rows">${rowHtml}</div><p class="price-card-note">价格会随服务状态更新，开始生成前会再次确认。</p></article>`;
   };
   const renderUnavailableCard = model => `<article class="price-card"><header class="price-card-head"><div class="price-card-title"><span class="price-model-icon">${iconMarkup(model.id)}</span><div><h2>${escapeHtml(model.label)}</h2><p class="price-card-description">${escapeHtml(model.description || '模型能力正在准备中')}</p></div></div><span class="price-badge is-coming">${model.availability === 'coming-soon' ? '即将上线' : '暂不可用'}</span></header><div class="price-empty">当前没有可展示的实时价格</div><p class="price-card-note">服务恢复后，价格会自动出现在这里。</p></article>`;
 
