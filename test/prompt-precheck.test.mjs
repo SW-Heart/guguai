@@ -89,6 +89,7 @@ test('content rejections are traced to the side the upstream named', () => {
   assert.equal(contentRejectionSource('提示词有问题，请修改提示词。'), 'input_text');
   assert.equal(contentRejectionSource('上游拒绝生成,请修改提示词后重试'), 'input_text');
   assert.equal(contentRejectionSource('content_policy_violation'), 'unknown');
+  assert.equal(contentRejectionSource('CONTENT_REVIEW_REJECTED'), 'unknown');
   assert.equal(contentRejectionSource('503 service unavailable'), '');
 });
 

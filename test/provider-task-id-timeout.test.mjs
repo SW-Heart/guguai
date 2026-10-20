@@ -114,6 +114,14 @@ test('historical upstream failures expose actionable public diagnostics', () => 
       code: 'SERVICE_UNAVAILABLE', message: '生成服务暂时不可用', suggestion: /稍后重试/,
     },
     {
+      task: { type:'video', error:'CONTENT_REVIEW_REJECTED' },
+      code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
+    },
+    {
+      task: { type:'video', error:'500 CONTENT_REVIEW_REJECTED' },
+      code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
+    },
+    {
       task: { type:'image', error:'任务执行失败: API Error: openai returned 451: {"error":{"code":"content_policy_violation","message":"The generated images appear to be unsafe."}}' },
       code: 'CONTENT_REJECTED', message: '内容未通过生成检查', suggestion: /敏感、侵权或高风险/,
     },
