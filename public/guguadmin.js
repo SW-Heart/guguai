@@ -1910,13 +1910,16 @@ import { createApiClient } from './api-client.js?v=4';
     if (category === 'client') return item.message || stringifyLogDetails(item.details || {});
     return stringifyLogDetails(item.details || {});
   }
-  function logDetailCells(item, category, index, colspan) {
-    const detailId = `log-detail-${category}-${index}`;
+  function logDetailCells(item, category, detailId, colspan) {
     const preview = logPreview(item, category);
     const fullDetails = stringifyLogDetails(compactLogDetailData(logDetailData(item, category)), true);
-    return `<td class="log-details-cell"><button class="log-expand-button" data-log-expand type="button" aria-expanded="false" aria-controls="${detailId}"><span class="log-json" title="${esc(preview.slice(0, 400))}">${esc(preview.slice(0, 400))}</span><span class="log-expand-label">展开</span>${icon('chevronDown', 'log-expand-icon')}</button></td></tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
+    return `<td class="log-details-cell"><div class="log-preview"><span class="log-json" title="${esc(preview.slice(0, 400))}">${esc(preview.slice(0, 400))}</span>${icon('chevronDown', 'log-expand-icon')}</div></td></tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
   }
-  const logRow = (item, category, index, cells, colspan) => `<tr class="log-row">${cells}${logDetailCells(item, category, index, colspan)}`;
+  // 整行可点击展开；行内的复制、下载等控件自己处理点击，不触发展开。
+  const logRow = (item, category, index, cells, colspan) => {
+    const detailId = `log-detail-${category}-${index}`;
+    return `<tr class="log-row" data-log-expand tabindex="0" aria-expanded="false" aria-controls="${detailId}">${cells}${logDetailCells(item, category, detailId, colspan)}`;
+  };
   const userCell = (userId, nickname, extra = '') => userId || nickname ? `<div class="cell-stack"><b>${esc(nickname || extra || '—')}</b>${idText(userId, '用户 ID')}</div>` : '<span class="muted">—</span>';
   const signedAmount = value => `<b class="${Number(value) < 0 ? 'danger-text' : 'success-text'}">${Number(value) >= 0 ? '+' : ''}${money(value)}</b>`;
   function renderLogRows(category, items) {
@@ -1931,14 +1934,24 @@ import { createApiClient } from './api-client.js?v=4';
     return table('系统异常日志', ['时间', '级别', '分类', '消息', '用户', '模型', '关联任务'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : item.level === 'info' ? 'info' : 'warn')}</td><td><code>${esc(item.category || '—')}</code></td><td><span class="cell-clip" title="${esc(item.message || '')}">${plain(item.message)}</span></td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td>${idText(item.generationId, '任务 ID')}</td>`, 8)).join(''));
   }
   function bindLogDetails(root) {
-    $$('[data-log-expand]', root).forEach(button => button.addEventListener('click', () => {
-      const expanded = button.getAttribute('aria-expanded') === 'true';
-      const detailRow = document.getElementById(button.getAttribute('aria-controls'));
-      button.setAttribute('aria-expanded', String(!expanded));
-      $('.log-expand-label', button).textContent = expanded ? '展开' : '收起';
-      detailRow.hidden = expanded;
-      button.closest('.log-row')?.classList.toggle('is-expanded', !expanded);
-    }));
+    const toggle = row => {
+      const expanded = row.getAttribute('aria-expanded') === 'true';
+      row.setAttribute('aria-expanded', String(!expanded));
+      row.classList.toggle('is-expanded', !expanded);
+      document.getElementById(row.getAttribute('aria-controls')).hidden = expanded;
+    };
+    $$('[data-log-expand]', root).forEach(row => {
+      row.addEventListener('click', event => {
+        if (event.target.closest('a, button, input, select, textarea')) return;
+        if (String(window.getSelection?.() || '')) return;
+        toggle(row);
+      });
+      row.addEventListener('keydown', event => {
+        if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        toggle(row);
+      });
+    });
     $$('[data-copy-log]', root).forEach(button => button.addEventListener('click', () => copyText($('pre', button.closest('.log-detail-panel'))?.textContent || '', '日志详情')));
   }
 
@@ -1969,7 +1982,7 @@ import { createApiClient } from './api-client.js?v=4';
     const root = $('#view-logs');
     const categories = Object.keys(logLabels);
     if (!categories.includes(state.logCategory)) state.logCategory = 'generations';
-    root.innerHTML = pageHead('logsTitle', '日志中心', '按类型、用户、模型和时间范围查找运营记录，点击“展开”查看完整内容', refreshButton('logs')) + `
+    root.innerHTML = pageHead('logsTitle', '日志中心', '按类型、用户、模型和时间范围查找运营记录，点击日志行查看完整内容', refreshButton('logs')) + `
       <div class="tabs" role="tablist" aria-label="日志类型">${categories.map(key => `<button class="tab" role="tab" type="button" data-log-tab="${key}" aria-selected="${String(key === state.logCategory)}" tabindex="${key === state.logCategory ? 0 : -1}" aria-controls="logPanel">${esc(logLabels[key])}</button>`).join('')}</div>
       <div class="panel" id="logPanel" role="tabpanel">
         <form id="logFilters" class="toolbar" role="search"></form>
@@ -2028,7 +2041,7 @@ import { createApiClient } from './api-client.js?v=4';
     const spec = logFilterSpec[category] || {};
     const filters = state.filters.logs;
     const token = nextRequest('logs');
-    const params = new URLSearchParams({ limit: '50' });
+    const params = new URLSearchParams({ limit: '20' });
     if (currentCursor('log')) params.set('cursor', currentCursor('log'));
     if (spec.taskId && filters.taskId) params.set('taskId', filters.taskId);
     if (filters.userId) params.set('userId', filters.userId);

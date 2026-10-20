@@ -147,5 +147,5 @@ test('per-request video prices reach cards and preserve credit units', () => {
 test('video billing changes refresh the admin and workspace cache entries', async () => {
   const { readFile } = await import('node:fs/promises');
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(admin, /guguadmin\.js\?v=52/);
+  assert.match(admin, /guguadmin\.js\?v=53/);
 });

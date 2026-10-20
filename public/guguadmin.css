@@ -406,12 +406,14 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 
 /* Logs */
 .log-details-cell { width: 34%; min-width: 260px; max-width: 420px; }
-.log-expand-button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0; border: 0; color: var(--muted); background: transparent; text-align: left; }
-.log-expand-button:hover { color: var(--text); }
+.log-row { cursor: pointer; }
+.log-row:hover { background: #fafaff; }
+.log-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.log-preview { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; color: var(--muted); }
+.log-row:hover .log-preview { color: var(--text); }
 .log-json { flex: 1 1 auto; min-width: 0; overflow: hidden; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.log-expand-label { flex: none; color: var(--brand-strong); font-size: 12px; font-weight: 550; }
-.log-expand-icon { transition: transform var(--ease); }
-.log-expand-button[aria-expanded="true"] .log-expand-icon { transform: rotate(180deg); }
+.log-expand-icon { flex: none; transition: transform var(--ease); }
+.log-row[aria-expanded="true"] .log-expand-icon { transform: rotate(180deg); }
 .log-row.is-expanded { background: #fafaff; }
 .log-detail-row > td { padding: 0 14px 14px; background: #fafaff; white-space: normal; }
 .log-detail-panel { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
