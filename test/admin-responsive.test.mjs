@@ -46,3 +46,13 @@ test('admin dropdown uses the layout viewport when visualViewport is unavailable
   assert.ok(parseFloat(popup.style.top) < 780);
   assert.ok(parseFloat(popup.style.top) + popup.offsetHeight <= 836);
 });
+
+test('admin log tables keep readable widths and scroll horizontally on narrow screens', () => {
+  const css = readFileSync(new URL('../public/guguadmin.css', import.meta.url), 'utf8');
+  const start = css.indexOf('@media (max-width: 900px) {\n');
+  const narrow = css.slice(start, css.indexOf('@media (max-width: 640px)', start));
+  assert.match(narrow, /\.log-table \{ min-width: 820px; \}/);
+  assert.match(narrow, /\.log-table:has\(col:nth-child\(10\)\) \{ min-width: 1080px; \}/);
+  assert.match(narrow, /\.log-table \.log-detail-panel \{ position: sticky;/);
+  assert.match(css, /\.table-wrap \{[^}]*overflow-x: auto;/);
+});

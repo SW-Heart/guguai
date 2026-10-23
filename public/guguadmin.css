@@ -582,6 +582,16 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
   .toolbar .field, .toolbar .field.is-wide, .toolbar .field.is-date { flex: none; min-width: 0; max-width: none; }
   .toolbar .field.is-wide, .toolbar > div { grid-column: 1 / -1; }
   .toolbar-actions { width: 100%; margin-left: 0; justify-content: flex-end; }
+  /* 窄屏下日志表保留可读列宽，改为在表格区域内左右滑动查看。 */
+  .table-wrap { overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+  .log-table { min-width: 820px; }
+  .log-table:has(col:nth-child(10)) { min-width: 1080px; }
+  .log-table .log-row > td.is-actions, .log-table:has(td.is-actions) th:last-child { position: sticky; right: 0; z-index: 1; box-shadow: -8px 0 12px -8px rgba(24, 24, 27, .12); }
+  .log-table:has(td.is-actions) th:last-child { z-index: 2; background: #f8f9fc; }
+  .log-table .log-row > td.is-actions { background: var(--surface); }
+  .log-table .log-row:hover > td.is-actions { background: #f7f8ff; }
+  .log-table .log-row.is-expanded > td.is-actions { background: #f1f3ff; }
+  .log-table .log-detail-panel { position: sticky; left: 14px; max-width: calc(100vw - 62px); }
 }
 @media (max-width: 640px) {
   .cards { grid-template-columns: 1fr; }
@@ -625,6 +635,7 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
   .error-state > .btn { width: 100%; }
   .announcement-editor-meta { align-items: flex-start; flex-direction: column; gap: 4px; }
   .log-detail-row > td { position: static; box-shadow: none; }
+  .log-table .log-detail-panel { max-width: calc(100vw - 54px); }
   .login-card { padding: 28px 22px 22px; }
 }
 @media (prefers-reduced-motion: reduce) {
