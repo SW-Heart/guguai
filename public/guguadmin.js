@@ -237,7 +237,8 @@ import { createApiClient } from './api-client.js?v=4';
       ? `<select ${attrs}>${field.options.map(option => `<option value="${esc(option.value)}"${option.hint ? ` data-hint="${esc(option.hint)}"` : ''}${option.disabled ? ' disabled' : ''} ${String(option.value) === String(field.value) ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}</select>`
       : field.type === 'textarea' ? `<textarea ${attrs}>${esc(field.value || '')}</textarea>`
         : `<input ${attrs} type="${esc(field.type || 'text')}" value="${esc(field.value ?? '')}" autocomplete="off" spellcheck="false">`;
-    return `<label class="admin-dialog-field${field.span === 'full' ? ' span-full' : ''}" for="${esc(id)}"><span>${esc(field.label)}${field.required ? '<span class="required" aria-hidden="true">*</span>' : ''}</span>${control}${help}</label>`;
+    const presets = field.presets?.length ? `<span class="admin-dialog-presets" role="group" aria-label="${esc(field.label)}快捷填写">${field.presets.map(preset => `<button class="chip" type="button" data-admin-dialog-preset="${esc(field.name)}" data-value="${esc(preset.value)}" aria-pressed="${String(String(preset.value) === String(field.value ?? ''))}">${esc(preset.label)}</button>`).join('')}</span>` : '';
+    return `<label class="admin-dialog-field${field.span === 'full' ? ' span-full' : ''}" for="${esc(id)}"><span>${esc(field.label)}${field.required ? '<span class="required" aria-hidden="true">*</span>' : ''}</span>${control}${presets}${help}</label>`;
   }
 
   function adminDialogFieldsMarkup(fields) {
@@ -327,12 +328,31 @@ import { createApiClient } from './api-client.js?v=4';
       adminDialogResolver = resolve;
       dialog.showModal();
       bindAdminMultiselects($('#adminDialogBody'));
+      bindAdminDialogPresets($('#adminDialogBody'));
       onRender?.($('#adminDialogBody'));
       requestAnimationFrame(() => {
         const firstField = $('#adminDialogBody input:not([type="checkbox"]):not([hidden]),#adminDialogBody select,#adminDialogBody textarea,#adminDialogBody [contenteditable="true"]', dialog);
         (firstField || (danger ? cancelButton : submitButton)).focus();
       });
     });
+  }
+
+  // 快捷填写只是把模板值写进输入框，之后仍可继续手动修改；输入内容与模板一致时高亮对应按钮。
+  function bindAdminDialogPresets(body) {
+    const buttons = $$('[data-admin-dialog-preset]', body);
+    for (const name of new Set(buttons.map(button => button.dataset.adminDialogPreset))) {
+      const input = body.querySelector(`[name="${name}"]`);
+      if (!input) continue;
+      const group = buttons.filter(button => button.dataset.adminDialogPreset === name);
+      const sync = () => group.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.value === input.value.trim())));
+      input.addEventListener('input', sync);
+      group.forEach(button => button.addEventListener('click', event => {
+        event.preventDefault();
+        input.value = button.dataset.value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+      }));
+    }
   }
 
   function adminDialogValues() {
@@ -1844,7 +1864,7 @@ import { createApiClient } from './api-client.js?v=4';
       { name: 'credentialId', label: '渠道 / API Key', type: 'select', value: selectedChannel, options: channelDialogOptions(channels), required: true, help: '未配置 Key 的渠道保存后会显示“密钥异常”。', span: 'full' },
       { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : ['wan-3.0', 'wan-3.0-value'].includes(selectedModelId) ? '例如 wd-wan-3.0-720p' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
       { name: 'priority', label: '优先级', type: 'number', value: String(route?.priority || nextPriority), min: 1, max: 1000, step: 1, inputmode: 'numeric', required: true, help: '数字越小越优先；与已有线路相同时，原线路依次后移。' },
-      { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || (selectedModelId === 'minimax-h3-15s' ? Array.from({ length: 15 }, (_, index) => index + 1) : [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15])).join(', '), placeholder: '例如 5, 10, 15', required: true, help: '填写整数秒，多个用逗号分隔。' },
+      { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || (selectedModelId === 'minimax-h3-15s' ? Array.from({ length: 15 }, (_, index) => index + 1) : [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15])).join(', '), placeholder: '例如 5, 10, 15', required: true, presets: [[4, 30], [4, 15]].map(([start, end]) => ({ label: `${start}–${end} 秒`, value: Array.from({ length: end - start + 1 }, (_, index) => start + index).join(', ') })), help: '填写整数秒，多个用逗号分隔，也可以点击快捷按钮填入。' },
       { name: 'aspectRatios', type: 'multiselect', label: '可选画面比例', value: route?.capabilities?.ratios || (selectedModelId === 'minimax-h3-15s' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1']), options: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'], span: 'full', help: '可选择多个画面比例。' },
       ...[['image', '图像'], ['video', '视频'], ['audio', '音频']].map(([kind, label]) => ({ name: `${kind}ReferenceCount`, label, group: 'referenceCounts', groupLabel: '参考素材数量', groupHelp: '0 表示不支持该类参考素材。', type: 'number', value: route?.capabilities?.[kind] ?? (['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? (kind === 'image' ? 30 : 10) : selectedModelId === 'minimax-h3-15s' && kind === 'video' ? 0 : kind === 'image' ? 9 : 3), min: 0, step: 1, inputmode: 'numeric', required: true })),
       { name: 'textPlaceholderImage', type: 'checkbox', label: '文生视频自动补图', checked: Boolean(route?.textPlaceholderImage), help: '用于只支持图生视频的模型。开启后，没有参考图的请求会自动附带一张纯黑图片，让该线路也能处理文生视频。', span: 'full' },

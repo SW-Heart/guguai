@@ -498,6 +498,7 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 .admin-dialog-body:empty { display: none; }
 .admin-dialog-field { display: grid; align-content: start; gap: 6px; min-width: 0; color: var(--text-soft); font-size: 12px; font-weight: 600; }
 .admin-dialog-field.span-full, .admin-dialog-field:has(textarea), .admin-dialog-check { grid-column: 1 / -1; }
+.admin-dialog-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .admin-dialog-field small { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.45; }
 .admin-dialog-field .required { margin-left: 2px; color: var(--danger); }
 .admin-dialog-check { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; transition: border-color var(--ease), background var(--ease); }
