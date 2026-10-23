@@ -29,6 +29,20 @@ test('pending, ambiguous submissions, local errors, timeouts and delivered resul
   assert.equal(prepareGenerationRetry({ type:'image', sourceUrl:'https://result' }, { upstreamTerminal:true }), false);
 });
 
+test('an image that times out waiting is submitted again once', () => {
+  const timeout = () => Object.assign(new Error('图片任务等待超时'), { upstreamTerminal:true, pollTimedOut:true });
+  const task = { id:'g', type:'image', provider:'duomi', status:'running', providerTaskId:'upstream-1', submittedAt:'2026-01-01T00:00:00Z', creditStatus:'charged' };
+  assert.equal(prepareGenerationRetry(task, timeout()), true);
+  assert.equal(task.status, 'queued');
+  assert.equal(task.providerTaskId, '');
+  assert.equal(task.submittedAt, null);
+  assert.equal(task.creditStatus, 'charged');
+  assert.equal(task.generationAttempts[0].pollTimedOut, true);
+  Object.assign(task, { status:'running', providerTaskId:'upstream-2' });
+  assert.equal(prepareGenerationRetry(JSON.parse(JSON.stringify(task)), timeout()), false);
+  assert.equal(prepareGenerationRetry(JSON.parse(JSON.stringify(task)), Object.assign(new Error('failed'), { upstreamTerminal:true })), true);
+});
+
 for (const type of ['image', 'video']) test(`${type}: content review failures receive up to three retries without another charge`, () => {
   for (const error of [
     Object.assign(new Error('request rejected'), { upstreamStatus:451 }),

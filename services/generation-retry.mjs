@@ -65,9 +65,18 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsabl
   return route;
 }
 
+// An image the provider never finishes within the wait limit is submitted
+// again once instead of failing outright; a second timeout still fails.
+export const imagePollTimeoutRetries = 1;
+
+function pollTimeoutRetryAllowed(task) {
+  return task.type === 'image'
+    && (task.generationAttempts || []).filter(attempt => attempt.pollTimedOut).length < imagePollTimeoutRetries;
+}
+
 export function generationRetryAllowed(task, error, at = new Date().toISOString()) {
   return !(!['image', 'video'].includes(task.type) || task.sourceUrl || task.archivePending
-    || error.submissionUncertain || error.pollTimedOut || error.retryable === false || [408, 409, 425].includes(Number(error.upstreamStatus))
+    || error.submissionUncertain || (error.pollTimedOut && !pollTimeoutRetryAllowed(task)) || error.retryable === false || [408, 409, 425].includes(Number(error.upstreamStatus))
     || !(error.upstreamTerminal || Number(error.upstreamStatus) >= 400)
     || (task.routeId ? !routedRetryAllowed(task, at) : (Number(task.generationRetryCount) || 0) >= maxGenerationRetries));
 }
@@ -80,6 +89,7 @@ export function prepareGenerationRetry(task, error, at = new Date().toISOString(
     startedAt: task.attemptStartedAt || task.createdAt,
     finishedAt: at,
     error: error.message,
+    ...(error.pollTimedOut ? { pollTimedOut: true } : {}),
     ...(task.routeId ? {
       routeId: task.routeId,
       routeVersion: task.routeVersion,
