@@ -39,6 +39,7 @@ import { downloadUpdateToFile } from './update-download.mjs';
 import { runDesktopAction, sendToWindow } from './window-events.mjs';
 import { openWindowsUpdateInstaller } from './windows-update.mjs';
 import { renameMediaFile } from './media-rename.mjs';
+import { spawnableBundledPath } from './ffmpeg-path.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(here, 'renderer');
@@ -357,11 +358,7 @@ async function resolveFfmpegExecutable() {
   try {
     const module = await import('ffmpeg-static');
     const bundled = String(module.default || module || '').trim();
-    if (bundled) {
-      candidates.push(bundled);
-      // Native executables cannot be spawned from inside an ASAR archive.
-      candidates.push(bundled.replace(/\.asar([\\/])/i, '.asar.unpacked$1'));
-    }
+    if (bundled) candidates.push(spawnableBundledPath(bundled));
   } catch {
     // The dependency is present in packaged builds; leave development builds
     // usable when node_modules has not been installed yet.
