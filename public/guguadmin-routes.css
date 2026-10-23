@@ -14,10 +14,12 @@
 .route-policy select:hover { border-color: #c4c4cc; }
 .route-policy select:focus { border-color: var(--brand); box-shadow: var(--ring); outline: 0; }
 .route-group .table-wrap { border: 0; border-radius: 0; }
-.route-table { min-width: 980px; }
+.route-table { min-width: 900px; }
+.route-table th, .route-table td { padding: 10px 12px; }
 .route-table tr.is-selected { background: #fafaff; }
 .route-table tr.is-selected > td:first-child { box-shadow: inset 3px 0 var(--brand); }
 .route-priority { display: inline-grid; place-items: center; min-width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--surface-muted); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.route-durations { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route-message { max-width: 220px; margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .route-message.is-auto-disabled { max-width: 260px; color: var(--danger); line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
 .route-empty { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; color: var(--muted); font-size: 13px; }

@@ -139,6 +139,6 @@ test('route fields render a single collapsed dropdown and one row of three refer
   const css = readFileSync(new URL('../public/guguadmin.css', import.meta.url), 'utf8');
   assert.match(css, /\.admin-dialog-number-row\s*\{[^}]*grid-template-columns:\s*repeat\(3,/);
   const entry = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(entry.includes('/guguadmin.js?v=53'));
+  assert.ok(entry.includes('/guguadmin.js?v=54'));
   assert.ok(entry.includes('/guguadmin.css?v=24'));
 });

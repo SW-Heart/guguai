@@ -1716,14 +1716,35 @@ import { createApiClient } from './api-client.js?v=4';
     });
   }
 
+  // 连续秒数合并成区间（1–15 秒），档位仍多时只显示前几段，完整列表放在悬浮提示里，避免撑宽表格。
+  function routeDurationText(durations) {
+    const values = [...new Set((durations || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b);
+    const segments = [];
+    for (const value of values) {
+      const last = segments[segments.length - 1];
+      if (last && value === last[1] + 1) last[1] = value; else segments.push([value, value]);
+    }
+    const labels = segments.map(([start, end]) => end - start >= 2 ? `${start}–${end}` : start === end ? `${start}` : `${start}、${end}`);
+    const short = labels.length > 4 ? `${labels.slice(0, 3).join('、')} 等 ${values.length} 档` : labels.join('、');
+    return { short: `${short} 秒`, full: `${values.join('、')} 秒` };
+  }
+
+  // 线路表列多，最近检查时间只显示月日时分，完整时间放在悬浮提示里。
+  function routeCheckedText(value) {
+    const parsed = value ? new Date(value) : null;
+    if (!parsed || Number.isNaN(parsed.getTime())) return value ? esc(value) : '—';
+    return parsed.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
   function routeRowMarkup(route, selected) {
+    const durationText = routeDurationText(route.durations);
     return `<tr class="${selected ? 'is-selected' : ''}">
       <td><span class="route-priority">${esc(route.priority)}</span></td>
-      <td><div class="cell-stack"><span><b>${esc(route.displayName)}</b>${selected ? ' <span class="tag is-brand">当前使用</span>' : ''}</span>${idText(route.upstreamModelId, '上游模型 ID')}<span class="detail">可选时长 ${esc((route.durations || []).join('、'))} 秒${route.textPlaceholderImage ? ' · 文生视频自动补图' : ''}</span></div></td>
+      <td><div class="cell-stack"><span><b>${esc(route.displayName)}</b>${selected ? ' <span class="tag is-brand">当前使用</span>' : ''}</span>${idText(route.upstreamModelId, '上游模型 ID')}<span class="detail route-durations" title="可选时长 ${esc(durationText.full)}">可选时长 ${esc(durationText.short)}${route.textPlaceholderImage ? ' · 文生视频自动补图' : ''}</span></div></td>
       <td>${routeStatusCell(route)}</td>
       <td class="is-num"><b>¥${Number(Number(route.costYuan).toFixed(8))}</b><div class="detail">${route.billingUnit === 'request' ? '每次' : '每秒'}</div></td>
       <td class="is-num"><b>¥${Number(Number(route.salePriceYuan).toFixed(8))}</b><div class="detail">${route.billingUnit === 'request' ? '每次' : '每秒'}${route.salePriceConfigured ? '' : ' · 自动定价'}</div></td>
-      <td>${date(route.catalogCheckedAt)}</td>
+      <td title="${route.catalogCheckedAt ? date(route.catalogCheckedAt) : ''}">${routeCheckedText(route.catalogCheckedAt)}</td>
       <td class="is-actions"><div class="actions">${route.autoDisabled ? `<button class="btn btn-sm btn-primary" data-enable-route="${esc(route.id)}" type="button">恢复启用</button>` : ''}<button class="btn btn-sm" data-check-route="${esc(route.id)}" type="button">检查</button><button class="btn btn-sm" data-edit-route="${esc(route.id)}" type="button">编辑</button><button class="btn btn-sm btn-danger-ghost" data-delete-route="${esc(route.id)}" type="button">删除</button></div></td>
     </tr>`;
   }
