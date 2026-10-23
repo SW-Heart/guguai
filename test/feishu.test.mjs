@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { notifyGenerationFailure, __test } from '../lib/feishu.mjs';
+import { notifyGenerationFailure, notifyRechargeSuccess, __test } from '../lib/feishu.mjs';
 
 const webhookEnv = { FEISHU_WEBHOOK: 'https://open.feishu.cn/open-apis/bot/v2/hook/test-hook' };
 
@@ -40,4 +40,41 @@ test('feishu notification retries business failures and succeeds', async () => {
   });
   assert.equal(result.sent, true);
   assert.equal(attempts, 3);
+});
+
+test('recharge card shows the user, amount, credits and payment method', () => {
+  const card = __test.rechargeSuccessCard({
+    user: { username: 'carol' },
+    provider: 'wechat',
+    outTradeNo: 'WX123',
+    amountFen: 990,
+    credits: 1000,
+    paidAt: '2026-10-23T02:00:00.000Z',
+  });
+  assert.equal(card.msg_type, 'interactive');
+  assert.equal(card.card.header.template, 'green');
+  assert.match(card.card.header.title.content, /用户充值到账/);
+  assert.match(card.card.elements[0].fields[0].text.content, /^充值金额：¥9\.90$/);
+  assert.match(card.card.elements[0].fields[1].text.content, /^到账积分：1000$/);
+  assert.match(card.card.elements[1].text.content, /^用户名：carol$/);
+  assert.match(card.card.elements[2].text.content, /^支付方式：微信支付$/);
+  assert.match(card.card.elements[3].text.content, /^订单号：WX123$/);
+  assert.match(card.card.elements[4].text.content, /2026-10-23 10:00:00/);
+});
+
+test('recharge notification is skipped without a webhook and posts when configured', async () => {
+  assert.equal((await notifyRechargeSuccess({ env: {}, provider: 'alipay', fetchImpl: () => { throw new Error('should not send'); } })).skipped, true);
+  let body = null;
+  const result = await notifyRechargeSuccess({
+    env: webhookEnv,
+    user: { username: 'dave' },
+    provider: 'alipay',
+    outTradeNo: 'AL1',
+    amountFen: 2990,
+    credits: 3000,
+    fetchImpl: async (_url, init) => { body = JSON.parse(init.body); return new Response(JSON.stringify({ code: 0 }), { status: 200 }); },
+  });
+  assert.equal(result.sent, true);
+  assert.match(JSON.stringify(body), /支付宝/);
+  assert.match(JSON.stringify(body), /¥29\.90/);
 });

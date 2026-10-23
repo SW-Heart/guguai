@@ -68,7 +68,7 @@ cp .env.example .env
 | GuGu 2.0 视频 | `AUTODL_API_BASE`、`AUTODL_COMFYUI_KEY`、`AUTODL_MINIMAX_H3_15S_WORKFLOW_ID` | 内部模型 ID 为 `minimax-h3-15s`，通过 AutoDL ComfyUI 工作流使用；支持最多 9 张参考图片 + 3 段参考音频，1～15 秒，16:9/9:16 与 480p/768p 组合，1 积分/秒 |
 | 智能导演 | `DIRECTOR_AGENT_BASE_URL`、`DIRECTOR_AGENT_API_KEY`、`DIRECTOR_AGENT_MODEL` | 使用智能导演、剧本分析或自动分镜 |
 | 创作 Agent 对话 | `AGENT_API_BASE`、`AGENT_API_KEY`、`AGENT_MODEL`、`AGENT_MODELS` | 导演画布中的创作对话；可兼容已有导演配置，详见下文 |
-| 飞书失败告警 | `FEISHU_WEBHOOK` | 可选，生成任务失败时向飞书群机器人发送卡片；留空关闭 |
+| 飞书通知 | `FEISHU_WEBHOOK` | 可选，生成任务失败、用户充值到账（支付宝 / 微信）时向飞书群机器人发送卡片；留空关闭 |
 | LLM 计费 | `LLM_API_PROTOCOL`、`LLM_INPUT_PRICE_YUAN_PER_MILLION`、`LLM_OUTPUT_PRICE_YUAN_PER_MILLION`、`YUAN_PER_CREDIT` | 使用智能导演时建议确认 |
 | 短信登录 | `SMS_ACCESS_KEY_ID`、`SMS_ACCESS_KEY_SECRET`、`SMS_SIGN_NAME`、`SMS_TEMPLATE_CODE`、`SMS_SCHEME_NAME` | 使用阿里云号码认证服务发送和核验短信验证码；短信凭据与媒体存储凭据相互隔离 |
 
@@ -204,7 +204,7 @@ FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-token
 
 生成任务进入服务端 `failGeneration` 失败处理时，异步发送标题为“生成任务失败”的卡片，包含模型、上游渠道、任务 ID、用户名、失败原因和北京时间。Midjourney 拆分子图不重复告警，同一任务在进程内去重；这不是跨重启持久化的去重机制，也不是覆盖登录、支付、Agent 对话等所有错误的通用告警。
 
-未配置或地址格式无效时直接跳过发送。每次请求超时为 5 秒，最多尝试 3 次；发送失败写入服务端 `[feishu]` 日志，不阻塞任务失败处理。没有收到通知时，先检查运行服务实际加载的环境变量、是否已重启、地址格式和机器人安全设置，再查看 `[feishu] 生成失败卡片发送失败` 日志。不要用真实付费生成任务作为配置测试；可运行 `node --test test/feishu.test.mjs` 检查实现，该测试使用模拟请求，不会向群里发消息。
+未配置或地址格式无效时直接跳过发送。每次请求超时为 5 秒，最多尝试 3 次；发送失败写入服务端 `[feishu]` 日志，不阻塞任务失败处理和充值到账。充值卡片只在订单首次到账时发送一次，支付回调重复到达不会重复通知。没有收到通知时，先检查运行服务实际加载的环境变量、是否已重启、地址格式和机器人安全设置，再查看 `[feishu] 生成失败卡片发送失败` 或 `[feishu] 充值到账卡片发送失败` 日志。不要用真实付费生成任务作为配置测试；可运行 `node --test test/feishu.test.mjs` 检查实现，该测试使用模拟请求，不会向群里发消息。
 
 ### 创作 Agent 对话配置
 
