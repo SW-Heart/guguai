@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -7,7 +7,7 @@ import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import test from 'node:test';
 
 import { bodyJson, mutationAllowed, publicHttpErrorBody, requestTraceId, sendJson } from '../server/http-protocol.mjs';
-import { servePublicFile, staticCacheControl, staticEncoding, staticEntryFile } from '../server/static.mjs';
+import { servePublicFile, serveStatic, staticCacheControl, staticEncoding, staticEntryFile } from '../server/static.mjs';
 
 test('HTTP protocol readers and writers keep one response contract', async () => {
   assert.deepEqual(await bodyJson(Readable.from(['{"ok":true}'])), { ok:true });
@@ -98,4 +98,15 @@ test('public text files are compressed once and pictures answer 304 when unchang
   await servePublicFile(repeat, picture, 'image/webp', 'no-cache', { headers:{ 'if-none-match':first.headers.ETag } });
   assert.equal(repeat.status, 304);
   assert.equal(repeat.body, undefined);
+});
+
+test('static directory requests answer 404 instead of crashing the server', async () => {
+  const publicDir = mkdtempSync(path.join(tmpdir(), 'gugu-static-dir-'));
+  try {
+    mkdirSync(path.join(publicDir, 'images'));
+    const sent = [];
+    const res = { setHeader() {}, getHeader() {}, writeHead() { throw new Error('目录不应被发送'); } };
+    await serveStatic(res, '/images/', { headers:{}, url:'/images/' }, { publicDir, sendJson:(_, status, body) => sent.push({ status, body }) });
+    assert.deepEqual(sent, [{ status:404, body:{ error:'静态文件不存在' } }]);
+  } finally { rmSync(publicDir, { recursive:true, force:true }); }
 });

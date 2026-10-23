@@ -4,6 +4,18 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib';
 
+// Directories (e.g. /images/) are reported as missing files instead of being
+// streamed: a read stream on a directory emits EISDIR and would crash the server.
+async function statFile(file) {
+  const stat = await fs.stat(file);
+  if (!stat.isFile()) throw Object.assign(new Error('不是文件'), { code:'ENOENT' });
+  return stat;
+}
+
+function pipeFile(file, res) {
+  createReadStream(file).on('error', error => res.destroy(error)).pipe(res);
+}
+
 // /agent, /drama and /lab are older addresses; the app moves them to /create and /projects.
 const frontendRoutePaths = new Set(['/login', '/create', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
 const marketingRouteFiles = new Map([
@@ -33,7 +45,7 @@ export function staticEntryFile(pathname, { desktop = false, appOnly = true } = 
 }
 
 export async function serveFile(res, file, mimeType, cacheControl = 'private, max-age=3600', validator = null) {
-  const stat = await fs.stat(file);
+  const stat = await statFile(file);
   const headers = { 'Content-Type': mimeType, 'Content-Length': stat.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' };
   if (validator) {
     const etag = `"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
@@ -45,7 +57,7 @@ export async function serveFile(res, file, mimeType, cacheControl = 'private, ma
     }
   }
   res.writeHead(200, headers);
-  createReadStream(file).pipe(res);
+  pipeFile(file, res);
 }
 
 const compressibleExtensions = new Set(['.js', '.css', '.html', '.svg', '.json']);
@@ -75,7 +87,7 @@ async function compressedStaticBody(file, stat, encoding) {
 }
 
 export async function servePublicFile(res, file, mimeType, cacheControl, req = null) {
-  const stat = await fs.stat(file);
+  const stat = await statFile(file);
   const headers = { 'Content-Type': mimeType, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff' };
   const ext = path.extname(file);
   const encoding = compressibleExtensions.has(ext) && stat.size >= 1024 ? staticEncoding(req?.headers?.['accept-encoding']) : '';
@@ -97,7 +109,7 @@ export async function servePublicFile(res, file, mimeType, cacheControl, req = n
   }
   res.writeHead(200, { ...headers, 'Content-Length': stat.size });
   if (req?.method === 'HEAD') return res.end();
-  createReadStream(file).pipe(res);
+  pipeFile(file, res);
 }
 
 export async function serveStatic(res, pathname, req = null, { publicDir, appOnly = true, sendJson } = {}) {
