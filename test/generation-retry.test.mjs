@@ -145,6 +145,16 @@ test('a routed job may start new attempts only within 600 seconds of its submiss
   for (let attempt = 1; attempt <= 12; attempt++) assert.equal(prepareGenerationRetry(fast, { upstreamTerminal:true }, seconds(attempt * 10)), true);
 });
 
+test('special-offer models may start new attempts for an hour, other models keep 600 seconds', () => {
+  for (const videoModelId of ['seedance-2.0-value', 'seedance-2.0-mini-value', 'seedance-2.0-fast-value', 'seedance-2.5-value', 'wan-3.0-value']) {
+    assert.equal(prepareGenerationRetry(routedTask({ videoModelId }), { upstreamTerminal:true }, seconds(3599)), true, videoModelId);
+    assert.equal(prepareGenerationRetry(routedTask({ videoModelId }), { upstreamTerminal:true }, seconds(3600)), false, videoModelId);
+  }
+  for (const videoModelId of ['seedance-2.0', 'seedance-2.5', 'wan-3.0']) {
+    assert.equal(prepareGenerationRetry(routedTask({ videoModelId }), { upstreamTerminal:true }, seconds(700)), false, videoModelId);
+  }
+});
+
 test('jobs without a submission time keep the former routed attempt limit', () => {
   const task = routedTask({ createdAt:undefined });
   for (let attempt = 1; attempt <= 4; attempt++) assert.equal(prepareGenerationRetry(task, { upstreamTerminal:true }), true);

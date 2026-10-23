@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
 
 export const generationAttemptContext = new AsyncLocalStorage();
 export const maxGenerationRetries = 3;
@@ -6,6 +7,13 @@ export const maxGenerationRetries = 3;
 // channel. A new attempt may only start within this window after the job was
 // submitted; an attempt already running is never cut short by it.
 export const routedRetryWindowMs = 600_000;
+// Special-offer models run on slower, cheaper channels, so they keep trying
+// channels for an hour instead.
+export const valueRoutedRetryWindowMs = 3_600_000;
+const valueVideoModelIds = new Set(Object.entries(VIDEO_MODEL_IDS).filter(([key]) => key.endsWith('_VALUE')).map(([, id]) => id));
+export function routedRetryWindowFor(task) {
+  return valueVideoModelIds.has(task.videoModelId || task.modelId) ? valueRoutedRetryWindowMs : routedRetryWindowMs;
+}
 export const attemptsPerRoute = 2;
 // Jobs saved without a usable submission time keep the former attempt cap.
 const legacyRoutedRetryLimit = maxGenerationRetries + 1;
@@ -18,7 +26,7 @@ function routedRetryAllowed(task, at) {
   const startedAt = Date.parse(task.createdAt);
   const failedAt = Date.parse(at);
   if (!Number.isFinite(startedAt) || !Number.isFinite(failedAt)) return (Number(task.generationRetryCount) || 0) < legacyRoutedRetryLimit;
-  return failedAt - startedAt < routedRetryWindowMs;
+  return failedAt - startedAt < routedRetryWindowFor(task);
 }
 
 export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsable = () => true, referenceCounts = {} } = {}) {
