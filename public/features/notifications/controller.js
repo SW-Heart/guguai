@@ -2,6 +2,9 @@ function query(selector) {
   return globalThis.document?.querySelector?.(selector) || null;
 }
 
+// Unread messages are shown one after another in a single dialog, at most this many at a time.
+const MAX_DIALOG_MESSAGES = 4;
+
 export function createNotificationController({ state, api, esc, toast, accountSnapshot, isAccountCurrent, render:renderOverride = null }) {
   let closeTimer = 0;
   // Messages that arrive while the app is open wait for the next page switch,
@@ -32,30 +35,61 @@ export function createNotificationController({ state, api, esc, toast, accountSn
 
   let notificationDialogRestoreFocus = null;
   let openNotificationId = '';
+  let dialogQueue = [];
+  let dialogIndex = 0;
 
   function closeNotificationDialog() {
     const dialog = query('#notificationDialog');
     if (dialog?.open) dialog.close();
   }
 
-  function openNotification(item, trigger) {
+  function showDialogMessage(item) {
+    const body = query('#notificationDialogBody');
+    openNotificationId = item.id;
+    query('#notificationDialogTitle').textContent = item.title || '消息通知';
+    query('#notificationDialogTime').textContent = dateText(item.publishedAt);
+    body.innerHTML = contentMarkup(item);
+    body.scrollTop = 0;
+    if (item.summary && !item.contentHtml) void loadFullNotification(item, body);
+    const multiple = dialogQueue.length > 1;
+    const last = dialogIndex >= dialogQueue.length - 1;
+    const step = query('#notificationDialogStep');
+    if (step) {
+      step.hidden = !multiple;
+      step.textContent = multiple ? `${dialogIndex + 1} / ${dialogQueue.length}` : '';
+    }
+    const done = query('#notificationDialogDone');
+    if (done) done.textContent = last ? '知道了' : '下一条';
+    const later = query('#notificationDialogLater');
+    if (later) later.hidden = last;
+    markRead(item.id);
+  }
+
+  function openNotifications(items, trigger) {
+    const [item] = items;
     if (!item) return;
     const dialog = query('#notificationDialog');
-    if (!dialog) { markRead(item.id); return; }
-    const title = query('#notificationDialogTitle');
-    const time = query('#notificationDialogTime');
-    const body = query('#notificationDialogBody');
-    if (!title || !time || !body) { markRead(item.id); return; }
+    if (!dialog || !query('#notificationDialogTitle') || !query('#notificationDialogTime') || !query('#notificationDialogBody')) { markRead(item.id); return; }
     notificationDialogRestoreFocus = trigger || globalThis.document?.activeElement || null;
-    openNotificationId = item.id;
-    title.textContent = item.title || '消息通知';
-    time.textContent = dateText(item.publishedAt);
-    body.innerHTML = contentMarkup(item);
-    if (item.summary && !item.contentHtml) void loadFullNotification(item, body);
+    dialogQueue = items.slice(0, MAX_DIALOG_MESSAGES);
+    dialogIndex = 0;
+    showDialogMessage(item);
     dialog.hidden = false;
     dialog.setAttribute('aria-hidden', 'false');
     if (!dialog.open) dialog.showModal();
-    markRead(item.id);
+  }
+
+  function openNotification(item, trigger) {
+    if (item) openNotifications([item], trigger);
+  }
+
+  function showNextNotification() {
+    if (dialogIndex >= dialogQueue.length - 1) {
+      closeNotificationDialog();
+      return;
+    }
+    dialogIndex += 1;
+    showDialogMessage(dialogQueue[dialogIndex]);
   }
 
   // Background refreshes only carry previews; the full message is fetched when it is opened.
@@ -70,20 +104,23 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     } catch {}
   }
 
-  function openLatestUnread() {
-    const item = state.notifications.find(notification => !notification.isRead);
+  function canOpenDialog(items) {
     const dialog = query('#notificationDialog');
-    if (!item || !dialog || dialog.open || !query('#notificationDialogTitle') || !query('#notificationDialogTime') || !query('#notificationDialogBody')) return false;
-    openNotification(item);
+    return Boolean(items.length && dialog && !dialog.open && query('#notificationDialogTitle') && query('#notificationDialogTime') && query('#notificationDialogBody'));
+  }
+
+  function openLatestUnread() {
+    const items = state.notifications.filter(notification => !notification.isRead);
+    if (!canOpenDialog(items)) return false;
+    openNotifications(items);
     return true;
   }
 
   function openArrivedUnread() {
-    const item = state.notifications.find(notification => !notification.isRead && arrivedIds.has(notification.id));
-    const dialog = query('#notificationDialog');
-    if (!item || !dialog || dialog.open || !query('#notificationDialogTitle') || !query('#notificationDialogTime') || !query('#notificationDialogBody')) return false;
+    const items = state.notifications.filter(notification => !notification.isRead && arrivedIds.has(notification.id));
+    if (!canOpenDialog(items)) return false;
     arrivedIds = new Set();
-    openNotification(item);
+    openNotifications(items);
     return true;
   }
 
@@ -215,13 +252,16 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     openNotification(state.notifications.find(item => item.id === button.dataset.notificationId), button);
   });
   query('#closeNotificationDialog')?.addEventListener('click', closeNotificationDialog);
-  query('#notificationDialogDone')?.addEventListener('click', closeNotificationDialog);
+  query('#notificationDialogDone')?.addEventListener('click', showNextNotification);
+  query('#notificationDialogLater')?.addEventListener('click', closeNotificationDialog);
   query('#notificationDialog')?.addEventListener('click', event => { if (event.target === event.currentTarget) closeNotificationDialog(); });
   query('#notificationDialog')?.addEventListener('cancel', event => { event.preventDefault(); closeNotificationDialog(); });
   query('#notificationDialog')?.addEventListener('close', () => {
     const dialog = query('#notificationDialog');
     dialog?.setAttribute('aria-hidden', 'true');
     openNotificationId = '';
+    dialogQueue = [];
+    dialogIndex = 0;
     requestAnimationFrame(() => { if (notificationDialogRestoreFocus?.isConnected && !notificationDialogRestoreFocus.disabled) notificationDialogRestoreFocus.focus(); });
     notificationDialogRestoreFocus = null;
   });

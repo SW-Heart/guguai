@@ -81,6 +81,8 @@ function createFakeDocument() {
     ['#notificationDialogBody', new FakeElement('notificationDialogBody')],
     ['#closeNotificationDialog', new FakeElement('closeNotificationDialog')],
     ['#notificationDialogDone', new FakeElement('notificationDialogDone')],
+    ['#notificationDialogStep', new FakeElement('notificationDialogStep')],
+    ['#notificationDialogLater', new FakeElement('notificationDialogLater')],
   ]);
   elements.set('.notification-menu-item', new FakeElement('notification-menu-item'));
   return {
@@ -254,4 +256,58 @@ test('a new message already read elsewhere does not pop up on page switch', asyn
   items[0].isRead = true;
   await controller.load();
   assert.equal(controller.openArrivedUnread(), false);
+});
+
+test('several unread messages page through one dialog, capped at four', async () => {
+  const items = Array.from({ length:6 }, (_, index) => ({ id:`n${index + 1}`, title:`公告${index + 1}`, isRead:false }));
+  const { state, controller } = startupHarness(items);
+  await controller.load();
+  const $ = selector => globalThis.document.querySelector(selector);
+  assert.equal(controller.openLatestUnread(), true);
+  assert.equal($('#notificationDialogTitle').textContent, '公告1');
+  assert.equal($('#notificationDialogStep').textContent, '1 / 4');
+  assert.equal($('#notificationDialogStep').hidden, false);
+  assert.equal($('#notificationDialogDone').textContent, '下一条');
+  assert.equal($('#notificationDialogLater').hidden, false);
+  for (const index of [2, 3, 4]) {
+    $('#notificationDialogDone').dispatch('click');
+    assert.equal($('#notificationDialogTitle').textContent, `公告${index}`);
+    assert.equal($('#notificationDialogStep').textContent, `${index} / 4`);
+  }
+  assert.equal($('#notificationDialogDone').textContent, '知道了');
+  assert.equal($('#notificationDialogLater').hidden, true);
+  $('#notificationDialogDone').dispatch('click');
+  assert.equal($('#notificationDialog').open, false);
+  assert.deepEqual(state.notifications.map(item => item.isRead), [true, true, true, true, false, false]);
+  assert.equal(state.unreadNotifications, 2);
+});
+
+test('closing early leaves the remaining messages unread', async () => {
+  const { state, controller } = startupHarness([
+    { id:'a', title:'公告A', isRead:false },
+    { id:'b', title:'公告B', isRead:false },
+  ]);
+  await controller.load();
+  const $ = selector => globalThis.document.querySelector(selector);
+  assert.equal(controller.openLatestUnread(), true);
+  $('#notificationDialogLater').dispatch('click');
+  assert.equal($('#notificationDialog').open, false);
+  assert.deepEqual(state.notifications.map(item => item.isRead), [true, false]);
+
+  state.notifications[1].isRead = true;
+  const list = $('#notificationList');
+  controller.render();
+  list.dispatch('click', { target:list.querySelectorAll()[0], currentTarget:list, preventDefault() {}, stopPropagation() {} });
+  assert.equal($('#notificationDialogStep').hidden, true, 'a single message opened from the list shows no pager');
+  assert.equal($('#notificationDialogDone').textContent, '知道了');
+});
+
+test('several messages arriving while open page through on the next page switch', async () => {
+  const items = [];
+  const { controller } = startupHarness(items);
+  await controller.load();
+  items.unshift({ id:'x', title:'新公告X', isRead:false }, { id:'y', title:'新公告Y', isRead:false });
+  await controller.load();
+  assert.equal(controller.openArrivedUnread(), true);
+  assert.equal(globalThis.document.querySelector('#notificationDialogStep').textContent, '1 / 2');
 });

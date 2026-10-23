@@ -15,7 +15,7 @@ import { createVideoUpscaleController, isVideoUpscaleTask } from './features/gen
 import { createCreditPresentation } from './features/credits/presentation.js?v=6';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
 import { createAccountScope } from './state/account-scope.js?v=2';
-import { createNotificationController } from './features/notifications/controller.js?v=9';
+import { createNotificationController } from './features/notifications/controller.js?v=10';
 import { resetAccountState } from './state/account-state.js?v=2';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=13';
