@@ -40,11 +40,13 @@ export function createProviderTransport({
   }
 
   async function fetchJson(url, options = {}) {
+    const { onResponse, ...requestOptions } = options;
     const context = generationAttemptContext.getStore();
     if (context) console.info('[generation] upstream request', JSON.stringify(await generationRequestLog(url, options, context)));
     let response, text;
     try {
-      response = await fetchImpl(url, options);
+      response = await fetchImpl(url, requestOptions);
+      onResponse?.(response);
       text = await response.text();
     } catch (error) {
       const codes = transportErrorCodes(error);

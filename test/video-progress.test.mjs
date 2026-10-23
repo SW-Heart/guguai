@@ -21,3 +21,8 @@ test('public generation preserves an optional progress value', () => {
   assert.equal(value.progress, 68);
   assert.equal(value.progressStage, 'submitting');
 });
+
+test('unknown YK progress is omitted instead of displayed as zero', () => {
+  assert.equal(__test.videoProgress({ progress_known:false, progress:0 }), null);
+  assert.equal(__test.videoProgress({ data:{ progress_known:false, progress:0 } }), null);
+});

@@ -51,5 +51,5 @@ test('model status distinguishes disabled, unchecked and fully unavailable route
 });
 
 test('admin entry loads the updated route status logic', () => {
-  assert.match(readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8'), /\/guguadmin\.js\?v=56"/);
+  assert.match(readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8'), /\/guguadmin\.js\?v=61"/);
 });

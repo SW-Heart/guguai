@@ -763,6 +763,7 @@ function errorMessage(value, fallback = '') {
   return fallback;
 }
 function videoProgress(value) {
+  if (value?.progress_known === false || value?.data?.progress_known === false) return null;
   const hasProgress = Object.prototype.hasOwnProperty.call(value || {}, 'progress')
     || Object.prototype.hasOwnProperty.call(value?.data || {}, 'progress');
   if (!hasProgress) return null;
@@ -1641,7 +1642,8 @@ async function referenceAssetHasReadableSource(userId, asset) {
   catch { return false; }
 }
 function generationSourceHeaders(task, resultUrl) {
-  const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''));
+  const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''))
+    && new URL(resultUrl).origin === new URL(task.routeBaseUrl).origin;
   if (routeContent) return { Authorization: `Bearer ${routeCredential(task.routeCredentialId)}` };
   const contentUrl = task?.provider === 'oai' ? `${oaiBase}/videos/${encodeURIComponent(task.providerTaskId)}/content` : '';
   if (contentUrl && resultUrl === contentUrl) return { Authorization: `Bearer ${oaiProvider.keyForTask(task)}` };

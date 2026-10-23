@@ -15,6 +15,7 @@ import {
   availableModelRouteQualities,
   publicModelPrices,
   modelRouteCharge,
+  modelRouteQualities,
   routeCredential,
   SEEDANCE_ROUTE_MODEL_IDS,
   selectModelRoute,
@@ -27,11 +28,12 @@ import { canvasGenerationOptions, canvasGenerationPayload, reconcileCanvasGenera
 import { normalizeShotVideoParameters } from '../public/features/drama/pure.js';
 
 const originalKeys = {};
-for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'AUTODL_COMFYUI_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET']) originalKeys[name] = process.env[name];
+for (const name of ['DIW_KEY', 'WJ_TJWD_KEY', 'WJ_SD_PY_900_KEY', 'CNTCN_KEY', 'AUTODL_COMFYUI_KEY', 'MODEL_ROUTE_CREDENTIAL_SECRET', 'YK_API_KEY']) originalKeys[name] = process.env[name];
 
 function freshDb() {
   resetForTests();
   openDatabase({ file: ':memory:' });
+  process.env.YK_API_KEY = 'yk-test';
   process.env.DIW_KEY = 'diw-test';
   process.env.WJ_TJWD_KEY = 'wj-test';
   process.env.WJ_SD_PY_900_KEY = 'wj-py-test';
@@ -59,6 +61,24 @@ function createAvailableRoute(input) {
 test('Seedance route selection, pricing and catalog health', async t => {
   t.beforeEach(freshDb);
   t.afterEach(cleanupDb);
+
+  await t.test('YK channel supports every configurable model without seeding routes', async () => {
+    const channel = listModelRouteChannels().find(item => item.id === 'yk-main');
+    assert.equal(channel.adapterType, 'yk-video');
+    assert.equal(channel.configured, true);
+    assert.equal(routeCredential(channel.id), 'yk-test');
+    assert.equal(listModelRoutes().some(item => item.provider === 'yk'), false);
+    const models = [...new Set(publicModelPrices().map(item => item.modelId))];
+    assert.ok(models.length >= 10);
+    const ids = [];
+    for (const logicalModelId of models) for (const quality of modelRouteQualities(logicalModelId)) {
+      const route = createModelRoute({ logicalModelId, quality, credentialId:'yk-main', upstreamModelId:`custom-${logicalModelId}-${quality}`, priority:1, costYuan:0.1, salePriceYuan:0.2 });
+      assert.equal(route.adapterType, 'yk-video');
+      ids.push(route.id);
+    }
+    await checkModelRoutes({ routeIds:ids, fetchImpl:async () => new Response(JSON.stringify({data:ids.map(id => ({id:listModelRoutes().find(item => item.id === id).upstreamModelId}))})) });
+    assert.ok(listModelRoutes().filter(item => ids.includes(item.id)).every(item => item.catalogStatus === 'available'));
+  });
 
   await t.test('route video billing can switch without duration multiplying a request price', () => {
     const original = listModelRoutes().find(item => item.id === 'mmh3-480-autodl');

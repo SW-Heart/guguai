@@ -53,7 +53,7 @@ import { createApiClient } from './api-client.js?v=4';
     client: { userLabel: '用户 ID' },
   };
   const taskFilterCategories = new Set(Object.entries(logFilterSpec).filter(([, spec]) => spec.taskId).map(([key]) => key));
-  const adapterLabels = { 'wj-video': 'WJ 视频协议', 'diw-video': 'DIW 视频协议', 'cntcn-video': 'CNTCN 视频协议', 'autodl-comfyui': 'AutoDL 工作流协议' };
+  const adapterLabels = { 'yk-video': 'YK 视频', 'wj-video': 'WJ 视频协议', 'diw-video': 'DIW 视频协议', 'cntcn-video': 'CNTCN 视频协议', 'autodl-comfyui': 'AutoDL 工作流协议' };
   const kindLabels = { image: '图片', video: '视频', text: '文本', llm: '文本', audio: '音频' };
 
   const ICONS = {
@@ -1945,16 +1945,9 @@ import { createApiClient } from './api-client.js?v=4';
   function stringifyLogDetails(value, pretty = false) {
     try { return JSON.stringify(value, null, pretty ? 2 : 0) || '暂无详情'; } catch { return String(value); }
   }
-  function logPreview(item, category) {
-    if (category === 'credits') return item.note || item.reasonCode || stringifyLogDetails(item.details || {});
-    if (category === 'audit') return stringifyLogDetails(item.after || item.before || item.metadata || {});
-    if (category === 'client') return item.message || stringifyLogDetails(item.details || {});
-    return stringifyLogDetails(item.details || {});
-  }
   function logDetailCells(item, category, detailId, colspan, trailing = '') {
-    const preview = logPreview(item, category);
     const fullDetails = stringifyLogDetails(compactLogDetailData(logDetailData(item, category)), true);
-    return `<td class="log-details-cell"><div class="log-preview"><span class="log-json" title="${esc(preview.slice(0, 400))}">${esc(preview.slice(0, 400))}</span>${icon('chevronDown', 'log-expand-icon')}</div></td>${trailing}</tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
+    return `${trailing}</tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
   }
   // 整行可点击展开；行内的复制、下载等控件自己处理点击，不触发展开。
   const logRow = (item, category, index, cells, colspan, trailing = '') => {
@@ -1974,18 +1967,37 @@ import { createApiClient } from './api-client.js?v=4';
     if (!controls.stop) return '<td class="is-actions"><span class="muted">—</span></td>';
     return `<td class="is-actions"><div class="actions">${controls.switchRoute ? `<button class="btn btn-sm" data-generation-switch="${esc(item.id)}" type="button">切换线路</button>` : ''}<button class="btn btn-sm btn-danger-ghost" data-generation-stop="${esc(item.id)}" type="button">停止</button></div></td>`;
   }
-  const userCell = (userId, nickname, extra = '') => userId || nickname ? `<div class="cell-stack"><b>${esc(nickname || extra || '—')}</b>${idText(userId, '用户 ID')}</div>` : '<span class="muted">—</span>';
+  const userCell = (_userId, nickname, extra = '') => nickname || extra ? `<span class="cell-clip log-user" title="${esc(nickname || extra)}">${esc(nickname || extra)}</span>` : '<span class="muted">—</span>';
   const signedAmount = value => `<b class="${Number(value) < 0 ? 'danger-text' : 'success-text'}">${Number(value) >= 0 ? '+' : ''}${money(value)}</b>`;
+  function logModelName(item) {
+    const names = { ...routeModelLabels, 'gpt-image-2': 'GPT Image 2', 'gpt-image-2.5': 'GPT Image 2.5', midjourney: 'Midjourney', grok: 'Grok 1.5', oai: 'Omni Flash', 'veo-31': 'Veo 3.1', veo: 'Veo 3.1 Fast', 'minimax-h3': 'Minimax H3', 'video-upscale': '视频高清放大', 'seedance-2.0-text': 'Seedance 2.0', 'seedance-2.0-img': 'Seedance 2.0' };
+    const name = item.modelName || names[item.modelId] || item.modelId || '—';
+    const doc = item.details || {};
+    const quality = item.quality || item.resolution || doc.quality || doc.resolution || '';
+    const seconds = Number(item.duration ?? item.seconds ?? doc.duration ?? doc.seconds);
+    const specs = [quality, Number.isFinite(seconds) && seconds > 0 ? `${seconds}秒` : ''].filter(Boolean);
+    const suffix = specs.length ? `（${specs.join('，')}）` : '';
+    return `<span class="log-model" title="${esc(name + suffix)}"><span class="log-model-name">${esc(name)}</span>${suffix ? `<span class="log-model-specs">${esc(suffix)}</span>` : ''}</span>`;
+  }
   function renderLogRows(category, items) {
-    const table = (label, heads, rows, trailingHead = '') => `<table aria-label="${esc(label)}" style="min-width:${(heads.length + (trailingHead ? 1 : 0)) * 140}px"><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}<th>详情</th>${trailingHead ? `<th>${trailingHead}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`;
-    const tokenCell = (tokens, rate) => `<td class="is-num"><div class="cell-stack"><span>${tokens === null || tokens === undefined ? '—' : money(tokens)}</span>${rate === null || rate === undefined ? '' : `<small class="muted">${money(rate)} 元 / 百万 Token</small>`}</div></td>`;
-    if (category === 'generations') return table('生成任务日志', ['时间', '任务 ID', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '任务 ID', true)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 8, generationActionsCell(item))).join(''), '操作');
-    if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', '关联任务', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td>${idText(item.generationId, '任务 ID')}</td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 8)).join(''));
-    if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 11)).join(''));
-    if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 6)).join(''));
+    const columnWidths = {
+      generations: [17, 11, 12, 34, 9, 17],
+      credits: [18, 15, 15, 22, 14, 16],
+      llm: [15, 10, 8, 10, 17, 8, 8, 8, 8, 8],
+      audit: [19, 25, 23, 19, 14],
+      client: [18, 16, 14, 16, 24, 12],
+      system: [18, 10, 16, 25, 13, 18],
+    };
+    const widths = columnWidths[category] || columnWidths.system;
+    const table = (label, heads, rows, trailingHead = '') => `<table class="log-table" aria-label="${esc(label)}"><colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}${trailingHead ? `<th>${trailingHead}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`;
+    const tokenCell = (tokens, rate) => `<td class="is-num"${rate === null || rate === undefined ? '' : ` title="${esc(money(rate))} 元 / 百万 Token"`}>${tokens === null || tokens === undefined ? '—' : money(tokens)}</td>`;
+    if (category === 'generations') return table('生成任务日志', ['时间', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 6, generationActionsCell(item))).join(''), '操作');
+    if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 6)).join(''));
+    if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 10)).join(''));
+    if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 5)).join(''));
     // 客户端日志包存在对象存储里，这一列给的是后端签名跳转，点开即下载 .log.gz。
-    if (category === 'client') return table('客户端诊断日志', ['时间', '编号', '用户', '版本 / 平台', '问题描述', '日志包'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.reference)}</code></td><td>${userCell(item.userId, item.userNickname, item.username)}</td><td><div class="cell-stack"><span>${plain(item.appVersion)}</span><span class="detail">${esc(item.platform || '—')}</span></div></td><td><div class="cell-stack"><span class="cell-clip" title="${esc(item.note || '')}">${plain(item.note)}</span><span class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</span></div></td><td>${item.downloadable ? `<a class="btn btn-sm" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">${icon('download')}下载</a>` : '<span class="muted">—</span>'}</td>`, 7)).join(''));
-    return table('系统异常日志', ['时间', '级别', '分类', '消息', '用户', '模型', '关联任务'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : item.level === 'info' ? 'info' : 'warn')}</td><td><code>${esc(item.category || '—')}</code></td><td><span class="cell-clip" title="${esc(item.message || '')}">${plain(item.message)}</span></td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td>${idText(item.generationId, '任务 ID')}</td>`, 8)).join(''));
+    if (category === 'client') return table('客户端诊断日志', ['时间', '编号', '用户', '版本 / 平台', '问题描述', '日志包'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.reference)}</code></td><td>${userCell(item.userId, item.userNickname, item.username)}</td><td><div class="cell-stack"><span>${plain(item.appVersion)}</span><span class="detail">${esc(item.platform || '—')}</span></div></td><td><div class="cell-stack"><span class="cell-clip" title="${esc(item.note || '')}">${plain(item.note)}</span><span class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</span></div></td><td>${item.downloadable ? `<a class="btn btn-sm" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">${icon('download')}下载</a>` : '<span class="muted">—</span>'}</td>`, 6)).join(''));
+    return table('系统异常日志', ['时间', '级别', '分类', '消息', '用户', '模型'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : item.level === 'info' ? 'info' : 'warn')}</td><td><code>${esc(item.category || '—')}</code></td><td><span class="cell-clip" title="${esc(item.message || '')}">${plain(item.message)}</span></td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td>`, 6)).join(''));
   }
   function bindLogDetails(root) {
     const toggle = row => {

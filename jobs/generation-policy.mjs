@@ -39,7 +39,7 @@ export function createGenerationJobPolicy({
     }
     if (kind === 'poll') {
       const failures = Math.max(0, Number(task?.pollFailureCount) || 0);
-      return at + Math.min(pollInterval(task) * 2 ** Math.min(failures, 3), 60_000);
+      return Math.max(at + Math.min(pollInterval(task) * 2 ** Math.min(failures, 3), 60_000), Number(task?.providerNextPollAt) || 0);
     }
     return at + recoverySweepMs;
   }

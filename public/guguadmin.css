@@ -405,16 +405,46 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 .invite-created span { color: var(--muted); font-size: 12px; }
 
 /* Logs */
-.log-details-cell { width: 34%; min-width: 260px; max-width: 420px; }
+#logPanel { border-radius: 16px; box-shadow: 0 4px 20px rgba(24, 24, 40, .035); }
+#logFilters { gap: 14px; padding: 20px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+#logPanel .pagination { padding: 16px 20px; background: var(--surface); }
+.log-table { min-width: 0; table-layout: fixed; }
+.log-table th, .log-table td { padding: 14px clamp(6px, 1vw, 16px); }
+.log-table th { height: 44px; color: var(--muted); background: #f8f9fc; font-size: 12px; font-weight: 600; border-bottom-color: #e9ebf2; }
+.log-table .log-row > td { height: 60px; color: var(--text-soft); font-size: 13px; border-bottom-color: #f0f1f5; }
+.log-table th:first-child, .log-table td:first-child { padding-left: 20px; }
+.log-table th:last-child, .log-table td:last-child { padding-right: 20px; }
+.log-table .log-row > td:first-child { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.log-table .is-num { font-weight: 550; font-variant-numeric: tabular-nums; }
+.log-user { color: var(--text); font-weight: 550; }
+.log-model { display: flex; align-items: baseline; min-width: 0; gap: 3px; white-space: nowrap; }
+.log-model-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: 550; }
+.log-model-specs { flex: none; color: var(--muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.log-table th, .log-table .log-row > td { white-space: nowrap; }
+.log-table th, .log-table .log-row > td:not(.is-actions) { overflow: hidden; text-overflow: ellipsis; }
+.log-table .log-row .cell-stack { display: flex; align-items: center; gap: 6px; }
+.log-table .log-row .cell-stack > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-table .log-row .cell-stack > .id-text { flex: 0 1 10ch; }
+.log-table .id-text { display: flex; width: 100%; min-width: 0; }
+.log-table .id-text code { flex: 0 1 auto; min-width: 0; max-width: 10ch; }
+.log-table .id-text .icon-button { flex: none; }
+.log-table .cell-stack > *, .log-table .cell-clip { min-width: 0; max-width: 100%; }
+.log-table .cell-stack > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-table .cell-stack small { font-size: 11px; }
+.log-table .is-actions { position: static; box-shadow: none; }
+.log-table .is-actions .actions { display: flex; width: max-content; flex-wrap: nowrap; justify-content: flex-start; gap: 4px; }
+.log-table .btn { flex: none; min-height: 30px; padding: 5px 10px; border-radius: 7px; box-shadow: none; font-size: 12px; white-space: nowrap; }
+.log-table .actions .btn:not(.btn-danger-ghost) { color: var(--brand-strong); border-color: #dfe1f6; background: #f5f6ff; }
+.log-table .actions .btn:not(.btn-danger-ghost):hover { border-color: var(--brand-line); background: var(--brand-soft); }
+.log-table .actions .btn-danger-ghost { border-color: #f4dfe1; background: #fff8f8; }
+.log-table .badge { max-width: 100%; min-height: 25px; padding: 2px 8px; border-color: transparent; border-radius: 7px; font-size: 12px; white-space: nowrap; }
+.log-table .log-detail-panel { min-width: 0; }
+.log-table .log-detail-head, .log-table .log-detail-head > div { flex-wrap: wrap; }
+.log-table .log-detail-panel pre { min-width: 0; word-break: break-word; }
 .log-row { cursor: pointer; }
-.log-row:hover { background: #fafaff; }
+.log-row:hover { background: #f7f8ff; }
 .log-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
-.log-preview { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; color: var(--muted); }
-.log-row:hover .log-preview { color: var(--text); }
-.log-json { flex: 1 1 auto; min-width: 0; overflow: hidden; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.log-expand-icon { flex: none; transition: transform var(--ease); }
-.log-row[aria-expanded="true"] .log-expand-icon { transform: rotate(180deg); }
-.log-row.is-expanded { background: #fafaff; }
+.log-row.is-expanded { background: #f1f3ff; box-shadow: inset 2px 0 var(--brand); }
 .log-detail-row > td { padding: 0 14px 14px; background: #fafaff; white-space: normal; }
 .log-detail-panel { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
 .log-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
