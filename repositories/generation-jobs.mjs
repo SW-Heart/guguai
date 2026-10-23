@@ -251,3 +251,11 @@ export function rescheduleGenerationJob({ id, owner, leaseToken, kind = null, ne
     }).changes > 0;
   });
 }
+
+/**
+ * Drops every queued or running job of a generation. A worker still busy with
+ * it loses its lease, so none of its later writes reach the generation.
+ */
+export function revokeGenerationJobs(generationId) {
+  return sql('DELETE FROM generation_jobs WHERE generation_id = :generationId').run({ generationId }).changes;
+}

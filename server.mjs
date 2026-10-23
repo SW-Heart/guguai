@@ -30,7 +30,7 @@ import { conservativeInputTokenUpperBound, creditsToMicro, llmRatesFromEnv, llmR
 import { closeDatabase, openDatabase, resolveDbFile, sql, tx } from './lib/db.mjs';
 import { chargeGenerationBatchMicro, chargeGenerationMicro, configureLedger, markLlmBillingReconcile, recentCreditEntries, refundGenerationMicro, releaseLlmCredits, reserveLlmCredits, settleLlmCredits, walletOf } from './lib/ledger.mjs';
 import { claimLegacyWorkspace, claimUploadIntent, decodeCursor, encodeCursor, completeUploadIntentWithAsset, configureCursors, countActiveUploadIntents, createSessionRecord, createSmsUser, createUploadIntent, deleteAsset, deleteDramaProject, deleteSession, expireUploadIntent, expireUploadIntents, findAsset, findAssetBySha256, findCloudAssets, listAssetsWithObjects, findDramaProject, findGeneration, findUploadIntent, findUserById, findUserByLogin, findUserByPhoneNumber, latestDramaProject, listAssetChanges, listAssets, listDramaProjects, listGenerations, listPendingAssetDeliveries, listPendingGenerations, listRecoverableUploadIntents, markAssetDeliveryPending, markAssetDeliveryReady, markUploadIntentFailed, parseLimit, purgeExpiredSessions, registerUser, saveAssetRecord, saveDramaProjectRecord, saveGenerationRecord, updateUserProfile, userForSession } from './lib/store.mjs';
-import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease } from './repositories/generation-jobs.mjs';
+import { claimGenerationJobs, completeGenerationJob, createGenerationRequest, enqueueGenerationJob, findGenerationRequest, generationJobLeaseActive, generationQueueStats, rescheduleGenerationJob, renewGenerationJobLease, revokeGenerationJobs } from './repositories/generation-jobs.mjs';
 import { normalizeMotionPlan, normalizeProductionScenes, productionQualitySummary, STORYBOARD_ENGINE_VERSION } from './lib/storyboard-engine.mjs';
 import { callLlm, isLlmConfigured, llmConfigFromEnv } from './lib/llm-client.mjs';
 import { buildVideoPayload, publicVideoCapabilities, VIDEO_MODEL_IDS, LEGACY_VIDEO_MODEL_IDS, MINIMAX_H3_15S_DEFAULT_PRICING_BY_QUALITY } from './lib/video-capabilities.mjs';
@@ -51,6 +51,7 @@ import { createVideoUpscaleService } from './services/video-upscale.mjs';
 import { createMediaRetentionService } from './services/media-retention.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
 import { generationAttemptContext, generationRetryAllowed, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
+import { createGenerationAdminControl } from './services/generation-admin-control.mjs';
 import { isPromptContentRejection, repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
 import { createStorageKeyService } from './storage/keys.mjs';
@@ -81,7 +82,7 @@ import { clientIp, createCaptchaStore, createLoginAttemptLimiter, createSmsSendL
 import { checkSmsVerifyCode, sendSmsVerifyCode, smsConfigFromEnv } from './lib/sms.mjs';
 import { currentPricing, pricingSnapshot, modelPrice, videoBillingUnit, liveLlmRates } from './lib/pricing.mjs';
 import { IMAGE_MODEL_DESCRIPTIONS, isModelEnabled, isImageModelAvailable, listModelControls, publicVideoCapabilitiesWithControls, validateControlledVideoRequest as validateVideoRequest, withModelDescriptions } from './lib/model-controls.mjs';
-import { ensureDefaultModelRoutes, isRouteModel, publicModelPrices, publicRoutePriceVersion, modelRouteUsable, routeCredential, selectAndClaimModelRoute, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
+import { ensureDefaultModelRoutes, isRouteModel, listSwitchableModelRoutes, modelRoute, publicModelPrices, publicRoutePriceVersion, modelRouteUsable, routeCredential, selectAndClaimModelRoute, selectModelRoute, startModelRouteMonitor } from './lib/model-routes.mjs';
 import { recordModelRouteFailure, recordModelRouteSuccess } from './lib/model-route-health.mjs';
 import { placeholderReferenceImage } from './lib/placeholder-image.mjs';
 import { generationFailureCode } from './lib/generation-failure-code.mjs';
@@ -2134,6 +2135,18 @@ function providerTaskIdTimedOut(task, at = Date.now()) {
 }
 const generationLifecycle = createGenerationLifecycleService({ now, saveGenerationWithRetry, providerTaskIdDeadline });
 const generationRecovery = createGenerationRecoveryService({ activeGenerations, now, saveGeneration, saveGenerationWithRetry, completeGenerationResult, failGeneration });
+// Admin writes bypass the job lease on purpose: the control first revokes the
+// job, so the record is no longer owned by any worker.
+const generationAdminControl = createGenerationAdminControl({
+  generationOwner: id => sql('SELECT user_id FROM generations WHERE id = :id').get({ id })?.user_id || '',
+  findGeneration: (userId, id) => findGeneration(userId, id),
+  saveGenerationRecord: (userId, task) => saveGenerationRecord(userId, { ...task, updatedAt:now() }),
+  revokeGenerationJobs, enqueueGenerationJob, drainGenerationJobs, clearProviderTaskIdTimeout,
+  refundGenerationMicro, creditsToMicro, listSwitchableModelRoutes, modelRoute,
+  referenceCounts: (userId, task) => referenceAssetCounts(userId, task.referenceAssetIds, { deviceId:task.originDeviceId, workspaceId:task.originWorkspaceId }),
+  relatedOutputs: (userId, task) => findMidjourneyGridTasks(userId, task),
+  now,
+});
 function clearProviderTaskIdTimeout(generationId) {
   const timer = providerTaskIdTimeoutTimers.get(generationId);
   if (timer) clearTimeout(timer);
@@ -3189,7 +3202,7 @@ const server = http.createServer(async (req, res) => {
       if (await apiConsoleRoute(req, res, url)) return;
       if (apiConsolePages.has(url.pathname.replace(/(.)\/+$/, '$1')) && req.method === 'GET') return await serveStatic(res, '/api-console.html', req, { publicDir, appOnly:false, sendJson });
     }
-    if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res);
+    if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res, { generationControl:generationAdminControl });
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
     if (await accountRoute(req, res, url, { publicOnly:true })) return;
     // Public pricing data intentionally sits before the desktop-only API

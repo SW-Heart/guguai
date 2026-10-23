@@ -1951,22 +1951,35 @@ import { createApiClient } from './api-client.js?v=4';
     if (category === 'client') return item.message || stringifyLogDetails(item.details || {});
     return stringifyLogDetails(item.details || {});
   }
-  function logDetailCells(item, category, detailId, colspan) {
+  function logDetailCells(item, category, detailId, colspan, trailing = '') {
     const preview = logPreview(item, category);
     const fullDetails = stringifyLogDetails(compactLogDetailData(logDetailData(item, category)), true);
-    return `<td class="log-details-cell"><div class="log-preview"><span class="log-json" title="${esc(preview.slice(0, 400))}">${esc(preview.slice(0, 400))}</span>${icon('chevronDown', 'log-expand-icon')}</div></td></tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
+    return `<td class="log-details-cell"><div class="log-preview"><span class="log-json" title="${esc(preview.slice(0, 400))}">${esc(preview.slice(0, 400))}</span>${icon('chevronDown', 'log-expand-icon')}</div></td>${trailing}</tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
   }
   // 整行可点击展开；行内的复制、下载等控件自己处理点击，不触发展开。
-  const logRow = (item, category, index, cells, colspan) => {
+  const logRow = (item, category, index, cells, colspan, trailing = '') => {
     const detailId = `log-detail-${category}-${index}`;
-    return `<tr class="log-row" data-log-expand tabindex="0" aria-expanded="false" aria-controls="${detailId}">${cells}${logDetailCells(item, category, detailId, colspan)}`;
+    return `<tr class="log-row" data-log-expand tabindex="0" aria-expanded="false" aria-controls="${detailId}">${cells}${logDetailCells(item, category, detailId, colspan, trailing)}`;
   };
+  // 与服务端规则一致：排队或生成中、尚未拿到结果的图片和视频任务可以停止；
+  // 走调用线路的视频任务还可以切换线路。服务端会再次校验。
+  function generationControls(item) {
+    const doc = item.details || {};
+    const active = ['queued', 'running'].includes(item.status) && ['image', 'video'].includes(item.type)
+      && !doc.archivePending && !doc.sourceUrl && !(Number(doc.midjourneyOutputIndex) > 0);
+    return { stop: active, switchRoute: active && item.type === 'video' && Boolean(doc.routeId) };
+  }
+  function generationActionsCell(item) {
+    const controls = generationControls(item);
+    if (!controls.stop) return '<td class="is-actions"><span class="muted">—</span></td>';
+    return `<td class="is-actions"><div class="actions">${controls.switchRoute ? `<button class="btn btn-sm" data-generation-switch="${esc(item.id)}" type="button">切换线路</button>` : ''}<button class="btn btn-sm btn-danger-ghost" data-generation-stop="${esc(item.id)}" type="button">停止</button></div></td>`;
+  }
   const userCell = (userId, nickname, extra = '') => userId || nickname ? `<div class="cell-stack"><b>${esc(nickname || extra || '—')}</b>${idText(userId, '用户 ID')}</div>` : '<span class="muted">—</span>';
   const signedAmount = value => `<b class="${Number(value) < 0 ? 'danger-text' : 'success-text'}">${Number(value) >= 0 ? '+' : ''}${money(value)}</b>`;
   function renderLogRows(category, items) {
-    const table = (label, heads, rows) => `<table aria-label="${esc(label)}" style="min-width:${heads.length * 140}px"><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}<th>详情</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const table = (label, heads, rows, trailingHead = '') => `<table aria-label="${esc(label)}" style="min-width:${(heads.length + (trailingHead ? 1 : 0)) * 140}px"><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}<th>详情</th>${trailingHead ? `<th>${trailingHead}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`;
     const tokenCell = (tokens, rate) => `<td class="is-num"><div class="cell-stack"><span>${tokens === null || tokens === undefined ? '—' : money(tokens)}</span>${rate === null || rate === undefined ? '' : `<small class="muted">${money(rate)} 元 / 百万 Token</small>`}</div></td>`;
-    if (category === 'generations') return table('生成任务日志', ['时间', '任务 ID', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '任务 ID', true)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 7)).join(''));
+    if (category === 'generations') return table('生成任务日志', ['时间', '任务 ID', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '任务 ID', true)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 8, generationActionsCell(item))).join(''), '操作');
     if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', '关联任务', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td>${idText(item.generationId, '任务 ID')}</td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 8)).join(''));
     if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${plain(item.modelId)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 11)).join(''));
     if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 6)).join(''));
@@ -2100,6 +2113,7 @@ import { createApiClient } from './api-client.js?v=4';
         : emptyMarkup(`暂无${logLabels[category]}`, filtered ? '尝试放宽筛选条件或调整时间范围。' : '有新的记录时会显示在这里。');
       doneLoading(table);
       bindLogDetails(table);
+      if (category === 'generations') bindGenerationControls(table, items);
       bindPageControls(table, 'log', fetchLogs, data.nextCursor);
     } catch (error) {
       if (isStale('logs', token)) return;
@@ -2107,6 +2121,55 @@ import { createApiClient } from './api-client.js?v=4';
       table.innerHTML = errorMarkup(error.message, 'logs');
       bindRetry(table, 'logs', fetchLogs);
     }
+  }
+
+  const switchRouteStates = { available: '可用', paused: '自动暂停中', disabled: '已停用', unhealthy: '检查异常' };
+  function bindGenerationControls(root, items) {
+    const find = id => items.find(item => item.id === id);
+    $$('[data-generation-switch]', root).forEach(button => button.onclick = () => switchGenerationRoute(find(button.dataset.generationSwitch), button));
+    $$('[data-generation-stop]', root).forEach(button => button.onclick = () => stopGeneration(find(button.dataset.generationStop)));
+  }
+
+  async function switchGenerationRoute(item, button) {
+    if (!item) return;
+    let data;
+    setButtonBusy(button, true, '读取中…');
+    try { data = await api(`/api/admin/generations/${encodeURIComponent(item.id)}/routes`); }
+    catch (error) { toastError(error); return; }
+    finally { setButtonBusy(button, false); }
+    const current = data.task?.routeDisplayName || '未知线路';
+    if (!data.routes?.length) {
+      await showAdminDialog({ kicker: '切换线路', title: '没有可切换的线路', description: `当前线路：${current}。同模型、同清晰度下没有其他能处理这个任务的线路。`, submit: '知道了', hideCancel: true, tone: 'info', size: 'narrow' });
+      return;
+    }
+    await showAdminDialog({
+      kicker: '切换线路', title: '把任务切换到新线路',
+      description: `当前线路：${current}。切换后会放弃当前线路上的请求，立即在新线路重新提交，之后的进度查询也都走新线路；用户已扣积分不变。`,
+      fields: [{ name: 'routeId', label: '新线路', type: 'select', value: data.routes.find(route => route.state === 'available')?.id || data.routes[0].id, span: 'full', required: true,
+        options: data.routes.map(route => ({ value: route.id, label: `${route.displayName} · 优先级 ${route.priority} · ${switchRouteStates[route.state] || route.state}` })),
+        help: '暂停或停用的线路也可以手动指定，只用于这一次提交。' }],
+      submit: '切换线路', busyLabel: '切换中…', size: 'narrow',
+      onSubmit: async values => {
+        await api(`/api/admin/generations/${encodeURIComponent(item.id)}/switch-route`, { method: 'POST', body: JSON.stringify({ routeId: values.routeId }) });
+        toast('已切换线路，任务正在重新提交', 'success');
+        await fetchLogs();
+      },
+    });
+  }
+
+  async function stopGeneration(item) {
+    if (!item) return;
+    const credits = item.creditCost === null || item.creditCost === undefined ? '' : `，并退回 ${money(item.creditCost)} 积分`;
+    await showAdminDialog({
+      kicker: '停止任务', title: '立即停止这个任务？',
+      html: `<p class="admin-dialog-confirmation is-danger">任务 <code>${esc(item.id)}</code> 会立即标记为失败${credits}。上游已经开始的生成不会再被查询，产出的结果也不会交付给用户。</p>`,
+      submit: '停止并退款', busyLabel: '停止中…', danger: true, size: 'narrow',
+      onSubmit: async () => {
+        const result = await api(`/api/admin/generations/${encodeURIComponent(item.id)}/stop`, { method: 'POST', body: '{}' });
+        toast(result.task?.creditStatus === 'refund_failed' ? '任务已停止，退款稍后自动重试' : '任务已停止，积分已退回', result.task?.creditStatus === 'refund_failed' ? 'error' : 'success');
+        await fetchLogs();
+      },
+    });
   }
 
   /* ---------- 登录 ---------- */

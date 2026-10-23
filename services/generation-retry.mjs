@@ -29,8 +29,33 @@ function routedRetryAllowed(task, at) {
   return failedAt - startedAt < routedRetryWindowFor(task);
 }
 
+/** Points the job at another channel; the charge taken at submission is kept. */
+export function applyGenerationRoute(task, route) {
+  Object.assign(task, {
+    provider: route.provider,
+    model: route.upstreamModelId,
+    routeId: route.id,
+    routeVersion: route.version,
+    routePriority: route.priority,
+    routeDisplayName: route.displayName,
+    routeAdapter: route.adapterType,
+    routeBaseUrl: route.baseUrl,
+    routeCredentialId: route.credentialId,
+    routeTextPlaceholderImage: Boolean(route.textPlaceholderImage),
+    referenceLimits: {
+      image: Number(route.capabilities?.image || 0),
+      video: Number(route.capabilities?.video || 0),
+      audio: Number(route.capabilities?.audio || 0),
+      total: Number(route.capabilities?.image || 0) + Number(route.capabilities?.video || 0) + Number(route.capabilities?.audio || 0),
+    },
+  });
+}
+
 export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsable = () => true, referenceCounts = {} } = {}) {
   if (!task?.routeId || (Number(task.generationRetryCount) || 0) < 1) return null;
+  // A channel an administrator picked by hand is used as chosen, even when it
+  // is paused, for exactly the next attempt.
+  if (task.adminRouteId === task.routeId) return { id:task.routeId, version:task.routeVersion };
   // The failed attempts are persisted on the job, so a restart resumes on the
   // same channel until it has used its retry and only then moves on. A channel
   // paused or switched off meanwhile gives up its retry.
@@ -52,24 +77,7 @@ export function refreshGenerationRetryRoute(task, { selectModelRoute, routeUsabl
     error.retryable = false;
     throw error;
   }
-  Object.assign(task, {
-    provider: route.provider,
-    model: route.upstreamModelId,
-    routeId: route.id,
-    routeVersion: route.version,
-    routePriority: route.priority,
-    routeDisplayName: route.displayName,
-    routeAdapter: route.adapterType,
-    routeBaseUrl: route.baseUrl,
-    routeCredentialId: route.credentialId,
-    routeTextPlaceholderImage: Boolean(route.textPlaceholderImage),
-    referenceLimits: {
-      image: Number(route.capabilities?.image || 0),
-      video: Number(route.capabilities?.video || 0),
-      audio: Number(route.capabilities?.audio || 0),
-      total: Number(route.capabilities?.image || 0) + Number(route.capabilities?.video || 0) + Number(route.capabilities?.audio || 0),
-    },
-  });
+  applyGenerationRoute(task, route);
   return route;
 }
 
@@ -110,6 +118,7 @@ export function prepareGenerationRetry(task, error, at = new Date().toISOString(
     } : {}),
   }];
   task.generationRetryCount = (Number(task.generationRetryCount) || 0) + 1;
+  delete task.adminRouteId;
   Object.assign(task, {
     status: 'queued', attemptStartedAt: at, providerTaskId: '', submittedAt: null,
     finishedAt: null, error: '', submissionUncertain: false, submissionUncertainAt: null,
