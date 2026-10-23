@@ -4,6 +4,11 @@ function query(selector) {
 
 export function createNotificationController({ state, api, esc, toast, accountSnapshot, isAccountCurrent, render:renderOverride = null }) {
   let closeTimer = 0;
+  // Messages that arrive while the app is open wait for the next page switch,
+  // so they never interrupt work on the current page.
+  let knownAccount = null;
+  let knownIds = new Set();
+  let arrivedIds = new Set();
 
   function countText(count) {
     return Number(count) > 99 ? '99+' : String(Math.max(0, Number(count) || 0));
@@ -73,6 +78,30 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     return true;
   }
 
+  function openArrivedUnread() {
+    const item = state.notifications.find(notification => !notification.isRead && arrivedIds.has(notification.id));
+    const dialog = query('#notificationDialog');
+    if (!item || !dialog || dialog.open || !query('#notificationDialogTitle') || !query('#notificationDialogTime') || !query('#notificationDialogBody')) return false;
+    arrivedIds = new Set();
+    openNotification(item);
+    return true;
+  }
+
+  function trackArrivals(requestAccount) {
+    const ids = state.notifications.map(item => item.id);
+    if (!knownAccount || !isAccountCurrent(knownAccount)) {
+      knownAccount = requestAccount;
+      knownIds = new Set(ids);
+      arrivedIds = new Set();
+      return;
+    }
+    for (const item of state.notifications) {
+      if (!knownIds.has(item.id) && !item.isRead) arrivedIds.add(item.id);
+    }
+    knownIds = new Set(ids);
+    arrivedIds = new Set([...arrivedIds].filter(id => knownIds.has(id)));
+  }
+
   function render() {
     if (renderOverride) {
       renderOverride();
@@ -133,6 +162,7 @@ export function createNotificationController({ state, api, esc, toast, accountSn
         return item.summary && previous?.updatedAt === item.updatedAt ? { ...item, contentHtml:previous.contentHtml, contentText:previous.contentText, summary:false } : item;
       });
       state.unreadNotifications = Number(result.unreadCount) || 0;
+      trackArrivals(requestAccount);
       render();
     } catch (error) {
       if (isAccountCurrent(requestAccount) && error.status === 401) location.reload();
@@ -196,5 +226,5 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     notificationDialogRestoreFocus = null;
   });
 
-  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead, openNotification, openLatestUnread, closeNotificationDialog };
+  return { load, render, setPanelOpen, schedulePanelClose, markRead, markAllRead, openNotification, openLatestUnread, openArrivedUnread, closeNotificationDialog };
 }

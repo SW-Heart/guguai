@@ -227,3 +227,31 @@ test('opening a summarized message fetches its full body once', async () => {
   await controller.load();
   assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>', 'a later summary refresh keeps the loaded body');
 });
+
+test('messages arriving while the app is open wait for the next page switch', async () => {
+  const items = [{ id:'old', title:'旧公告', isRead:false }];
+  const { state, controller } = startupHarness(items);
+  await controller.load();
+  const dialog = globalThis.document.querySelector('#notificationDialog');
+  assert.equal(controller.openArrivedUnread(), false, 'messages present at startup are not treated as new');
+
+  items.unshift({ id:'fresh', title:'新公告', isRead:false });
+  await controller.load();
+  assert.equal(dialog.open, false, 'polling must not interrupt the current page');
+  assert.equal(controller.openArrivedUnread(), true);
+  assert.equal(globalThis.document.querySelector('#notificationDialogTitle').textContent, '新公告');
+  assert.equal(state.notifications.find(item => item.id === 'old').isRead, false);
+  dialog.close();
+  assert.equal(controller.openArrivedUnread(), false, 'each new message pops up only once');
+});
+
+test('a new message already read elsewhere does not pop up on page switch', async () => {
+  const items = [];
+  const { controller } = startupHarness(items);
+  await controller.load();
+  items.unshift({ id:'fresh', title:'新公告', isRead:false });
+  await controller.load();
+  items[0].isRead = true;
+  await controller.load();
+  assert.equal(controller.openArrivedUnread(), false);
+});
