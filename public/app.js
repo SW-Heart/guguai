@@ -1,7 +1,7 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
-import { officialPriceDiscount } from './state/official-model-prices.js?v=5';
+import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=6';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';
@@ -4644,23 +4644,31 @@ function priceCreditsText(credits, unit) {
   const amount = unit === 'second' ? Number(credits).toFixed(1) : creditText(credits);
   return `${amount} 积分 / ${priceUnitLabel(unit)}`;
 }
-function modelPriceCard(modelId, rows, kind) {
+// Per-request video prices also show the per-second equivalent over the
+// longest length the model offers, e.g. "/ 次（≈¥0.13/s）".
+function priceUnitText(row) {
+  const perSecond = requestPricePerSecond(row);
+  return `/ ${priceUnitLabel(row.unit)}${perSecond === null ? '' : `（≈¥${priceAmountText(perSecond)}/s）`}`;
+}
+function modelPriceCard(modelId, rows, kind, maxSeconds = 0) {
   const label = rows[0]?.label || modelId;
-  const tiers = [...rows].sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
+  const tiers = rows.map(row => kind === 'video' && row.unit === 'request' && !(Number(row.maxDuration) > 0) && maxSeconds > 0 ? { ...row, maxDuration:maxSeconds } : row).sort((a, b) => priceQualityWeight(a.quality) - priceQualityWeight(b.quality));
   const active = tiers.reduce((cheapest, item) => (Number(item.yuan) < Number(cheapest.yuan) ? item : cheapest), tiers[0]);
   const discount = officialPriceDiscount(modelId, active);
   const meta = kind === 'audio' ? '语音生成 · 按字符或音色计费' : kind === 'image' ? '图像生成 · 按次计费' : '视频生成 · ' + (tiers.every(item => item.unit === 'request') ? '按次计费' : tiers.every(item => item.unit === 'second') ? '按秒计费' : '按所选清晰度计费');
   const tierRow = tiers.length > 1
-    ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-discount="${esc(officialPriceDiscount(modelId, item)?.label || '')}" data-discount-detail="${esc(officialPriceDiscount(modelId, item)?.detail || '')}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitLabel(item.unit))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
+    ? `<div class="price-tier-row" role="group" aria-label="${esc(label)} 清晰度">${tiers.map(item => `<button class="price-tier${item === active ? ' active' : ''}" type="button" aria-pressed="${item === active ? 'true' : 'false'}" data-discount="${esc(officialPriceDiscount(modelId, item)?.label || '')}" data-discount-detail="${esc(officialPriceDiscount(modelId, item)?.detail || '')}" data-amount="${priceAmountText(item.yuan)}" data-unit="${esc(priceUnitText(item))}" data-credits="${esc(priceCreditsText(item.credits, item.unit))}">${esc(item.quality)}</button>`).join('')}</div>`
     : `<div class="price-tier-row"><span class="price-tier price-tier-static">${esc(tiers[0].quality)}</span></div>`;
-  return `<article class="price-model-card"><header class="price-model-card-head">${modelIcon(modelId)}<div><h3>${esc(label)}</h3><small>${meta}</small></div><span class="price-model-discount"${discount ? '' : ' hidden'} title="${esc(discount?.detail || '')}" aria-label="${esc(discount ? `${discount.label}。${discount.detail}` : '')}">${esc(discount?.label || '')}</span></header><div class="price-model-figure"><span class="price-model-currency">¥</span><strong class="price-model-amount">${priceAmountText(active.yuan)}</strong><span class="price-model-unit">/ ${priceUnitLabel(active.unit)}</span></div><p class="price-model-credits">${priceCreditsText(active.credits, active.unit)}</p>${tierRow}</article>`;
+  return `<article class="price-model-card"><header class="price-model-card-head">${modelIcon(modelId)}<div><h3>${esc(label)}</h3><small>${meta}</small></div><span class="price-model-discount"${discount ? '' : ' hidden'} title="${esc(discount?.detail || '')}" aria-label="${esc(discount ? `${discount.label}。${discount.detail}` : '')}">${esc(discount?.label || '')}</span></header><div class="price-model-figure"><span class="price-model-currency">¥</span><strong class="price-model-amount">${priceAmountText(active.yuan)}</strong><span class="price-model-unit">${esc(priceUnitText(active))}</span></div><p class="price-model-credits">${priceCreditsText(active.credits, active.unit)}</p>${tierRow}</article>`;
 }
 function renderModelPrices(items = state.config?.modelPrices || []) {
   const body = $('#modelPriceBody');
   if (!body) return;
   const visibleItems = items.filter(item => item.available === true && item.enabled !== false && item.availability !== 'coming-soon' && Number.isFinite(Number(item.credits)) && Number.isFinite(Number(item.yuan)));
   if (!visibleItems.length) { body.innerHTML = '<div class="price-catalog-empty">暂时没有可用的模型价格。</div>'; return; }
-  const videoModelIds = new Set((state.config?.videoCapabilities?.models || []).map(model => model.id));
+  const videoModels = state.config?.videoCapabilities?.models || [];
+  const videoModelIds = new Set(videoModels.map(model => model.id));
+  const modelMaxSeconds = modelId => Math.max(0, ...(videoModels.find(model => model.id === modelId)?.modes || []).flatMap(mode => mode.durations || []).map(Number).filter(Number.isFinite));
   const videoModelOrderMap = new Map(videoModelOptions().map((model, index) => [model.id, index]));
   const groups = [...new Set(visibleItems.map(item => item.modelId))].map(modelId => {
     const rows = visibleItems.filter(item => item.modelId === modelId);
@@ -4675,7 +4683,7 @@ function renderModelPrices(items = state.config?.modelPrices || []) {
       return leftOrder - rightOrder;
     });
     if (!cards.length) return '';
-    return `<section class="price-section"><header class="price-section-head"><h4>${section.title}</h4><span>${cards.length} 个 · ${section.hint}</span></header><div class="price-section-grid">${cards.map(card => modelPriceCard(card.modelId, card.rows, card.kind)).join('')}</div></section>`;
+    return `<section class="price-section"><header class="price-section-head"><h4>${section.title}</h4><span>${cards.length} 个 · ${section.hint}</span></header><div class="price-section-grid">${cards.map(card => modelPriceCard(card.modelId, card.rows, card.kind, modelMaxSeconds(card.modelId))).join('')}</div></section>`;
   }).join('');
 }
 
@@ -4739,7 +4747,7 @@ $('#modelPriceBody')?.addEventListener('click', event => {
   const unit = card.querySelector('.price-model-unit');
   const credits = card.querySelector('.price-model-credits');
   if (amount) amount.textContent = tier.dataset.amount || '';
-  if (unit) unit.textContent = `/ ${tier.dataset.unit || '秒'}`;
+  if (unit) unit.textContent = tier.dataset.unit || '/ 秒';
   if (credits) credits.textContent = tier.dataset.credits || '';
   const discount = card.querySelector('.price-model-discount');
   if (discount) {

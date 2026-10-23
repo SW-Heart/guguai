@@ -18,22 +18,33 @@ const suppliedPrices = Object.freeze({
   'midjourney': { unit:'request', prices:{ '标准':0.32 }, label:'Midjourney' },
 });
 
+// A video sold per request is compared per second over the longest length the
+// model currently offers, which is the best value a buyer can get from one request.
+export function requestPricePerSecond(row) {
+  const seconds = Number(row?.maxDuration);
+  const yuan = row?.yuan;
+  if (row?.unit !== 'request' || !Number.isFinite(seconds) || seconds <= 0 || typeof yuan !== 'number' || !Number.isFinite(yuan) || yuan < 0) return null;
+  return yuan / seconds;
+}
+
 export function officialPriceDiscount(modelId, row) {
   const baseModel = { 'seedance-2.0-mini-value':'seedance-2.0-mini', 'seedance-2.0-fast-value':'seedance-2.0-fast', 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
   const quality = String(row?.quality || '').toLowerCase();
   const supplied = suppliedPrices[baseModel];
   const officialYuan = supplied ? supplied.prices[quality] : seedancePrices[baseModel]?.[quality];
   const unit = supplied?.unit || 'second';
-  const yuan = row?.yuan;
-  if (row?.unit !== unit || typeof yuan !== 'number' || !Number.isFinite(yuan) || yuan < 0 || !officialYuan || yuan >= officialYuan) return null;
+  const perSecond = unit === 'second' ? requestPricePerSecond(row) : null;
+  const yuan = perSecond ?? row?.yuan;
+  if ((perSecond === null && row?.unit !== unit) || typeof yuan !== 'number' || !Number.isFinite(yuan) || yuan < 0 || !officialYuan || yuan >= officialYuan) return null;
   // Round down so the badge never overstates savings, including near parity.
   const percent = Math.floor((1 - yuan / officialYuan) * 100 + 1e-9);
   if (percent < 1) return null;
+  const perRequest = perSecond === null ? '' : `每次 ¥${row.yuan.toFixed(2)}，按最长 ${Number(row.maxDuration)} 秒折算约 ¥${perSecond.toFixed(2)}/秒。`;
   return {
     label:`${(100 - percent) / 10}折`,
-    detail:supplied
+    detail:(supplied
       ? `比官方价格低${percent}%。按 ${supplied.label} 官方参考价 ¥${officialYuan.toFixed(2)}/${unit === 'second' ? '秒' : '次'}计算。`
-      : `比官方价格低${percent}%。按官方 16:9、无参考视频的参考价 ¥${officialYuan.toFixed(2)}/秒计算；实际费用随画幅和参考视频变化。核对日期：2026-10-10。`,
+      : `比官方价格低${percent}%。按官方 16:9、无参考视频的参考价 ¥${officialYuan.toFixed(2)}/秒计算；实际费用随画幅和参考视频变化。核对日期：2026-10-10。`) + perRequest,
     source:supplied ? null : source,
   };
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { officialPriceDiscount } from '../public/state/official-model-prices.js';
+import { officialPriceDiscount, requestPricePerSecond } from '../public/state/official-model-prices.js';
 
 const row = (quality, yuan, unit = 'second') => ({ quality, yuan, unit, credits:yuan * 10, label:'Seedance' });
 test('discounts compare the selected resolution and map special offers to the same model', () => {
@@ -49,7 +49,7 @@ test('unknown, incomparable, invalid and non-discounted prices have no badge', (
 
 const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
 test('cards initialize on the cheapest tier and carry independent discount values for each tier', () => {
-  const context = vm.createContext({ officialPriceDiscount, esc:String, creditText:String, modelIcon:() => '' });
+  const context = vm.createContext({ officialPriceDiscount, requestPricePerSecond, esc:String, creditText:String, modelIcon:() => '' });
   vm.runInContext(app.slice(app.indexOf('const priceUnitLabels ='), app.indexOf('function renderModelPrices(')), context);
   const html = context.modelPriceCard('seedance-2.0', [row('720p', 0.5), row('480p', 0.4)], 'video');
   assert.match(html, /class="price-model-discount"[^>]*>8.7折/);
@@ -84,7 +84,29 @@ test('tier clicks update and hide the badge along with the displayed price', () 
 
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=600/);
+  assert.match(html, /\/app\.js\?v=601/);
   assert.match(html, /\/styles\.css\?v=431/);
-  assert.match(app, /official-model-prices\.js\?v=5/);
+  assert.match(app, /official-model-prices\.js\?v=6/);
+});
+
+test('per-request video prices compare per second over the longest available length', () => {
+  const perRequest = { ...row('480p', 1.5, 'request'), maxDuration:15 };
+  const discount = officialPriceDiscount('minimax-h3-15s', perRequest);
+  assert.equal(discount.label, '3.1折');
+  assert.match(discount.detail, /每次 ¥1\.50，按最长 15 秒折算约 ¥0\.10\/秒。$/);
+  assert.equal(officialPriceDiscount('seedance-2.0', { ...row('480p', 7.5, 'request'), maxDuration:15 }), null);
+  assert.equal(officialPriceDiscount('seedance-2.0', { ...row('480p', 1, 'request'), maxDuration:0 }), null);
+  assert.equal(officialPriceDiscount('midjourney', { ...row('标准', 0.16, 'request'), maxDuration:10 }).label, '5折');
+});
+
+test('per-request video cards show the per-second equivalent and its discount', () => {
+  const context = vm.createContext({ officialPriceDiscount, requestPricePerSecond, esc:String, creditText:String, modelIcon:() => '' });
+  vm.runInContext(app.slice(app.indexOf('const priceUnitLabels ='), app.indexOf('function renderModelPrices(')), context);
+  const fromRoute = context.modelPriceCard('minimax-h3-15s', [{ ...row('480p', 1.5, 'request'), maxDuration:15 }], 'video');
+  assert.match(fromRoute, /class="price-model-discount"[^>]*>3.1折/);
+  assert.match(fromRoute, /<span class="price-model-unit">\/ 次（≈¥0\.10\/s）<\/span>/);
+  const fromCapabilities = context.modelPriceCard('seedance-2.0', [row('480p', 3, 'request'), row('720p', 6, 'request')], 'video', 20);
+  assert.match(fromCapabilities, /<span class="price-model-unit">\/ 次（≈¥0\.15\/s）<\/span>/);
+  assert.match(fromCapabilities, /data-unit="\/ 次（≈¥0\.30\/s）"/);
+  assert.doesNotMatch(context.modelPriceCard('midjourney', [row('标准', 0.4, 'request')], 'image', 20), /≈/);
 });
