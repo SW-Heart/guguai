@@ -753,3 +753,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover { opacity:
 }
 
 .model-control-description { display: block; margin-top: 2px; max-width: 360px; white-space: normal; line-height: 1.5; }
+
+.log-table .log-elapsed.is-deep-green { color: #166534; }
+.log-table .log-elapsed.is-green { color: #16a34a; }
+.log-table .log-elapsed.is-yellow { color: #a16207; }
+.log-table .log-elapsed.is-red { color: #dc2626; }

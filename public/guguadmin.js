@@ -613,6 +613,7 @@ import { createApiClient } from './api-client.js?v=4';
 
   /* ---------- 会话、导航 ---------- */
   function showLogin(message = '') {
+    clearTimeout(logRefreshTimer);
     if (adminDialogResolver) finishAdminDialog(null);
     state.csrf = '';
     state.admin = null;
@@ -654,6 +655,7 @@ import { createApiClient } from './api-client.js?v=4';
     if (name === 'orders') resetPager('orders');
     if (name === 'invites') resetPager('invites');
     if (name === 'logs') resetPager('log');
+    clearTimeout(logRefreshTimer);
     state.view = name;
     scrollAdminToTop();
     document.title = `${viewTitles[name]} · GuGu 管理后台`;
@@ -1952,7 +1954,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 整行可点击展开；行内的复制、下载等控件自己处理点击，不触发展开。
   const logRow = (item, category, index, cells, colspan, trailing = '') => {
     const detailId = `log-detail-${category}-${index}`;
-    return `<tr class="log-row" data-log-expand tabindex="0" aria-expanded="false" aria-controls="${detailId}">${cells}${logDetailCells(item, category, detailId, colspan, trailing)}`;
+    return `<tr class="log-row" data-log-expand data-log-id="${esc(item.id)}" tabindex="0" aria-expanded="false" aria-controls="${detailId}">${cells}${logDetailCells(item, category, detailId, colspan, trailing)}`;
   };
   // 与服务端规则一致：排队或生成中、尚未拿到结果的图片和视频任务可以停止；
   // 走调用线路的视频任务还可以切换线路。服务端会再次校验。
@@ -1979,9 +1981,23 @@ import { createApiClient } from './api-client.js?v=4';
     const suffix = specs.length ? `（${specs.join('，')}）` : '';
     return `<span class="log-model" title="${esc(name + suffix)}"><span class="log-model-name">${esc(name)}</span>${suffix ? `<span class="log-model-specs">${esc(suffix)}</span>` : ''}</span>`;
   }
+  function generationElapsedSeconds(item, at = Date.now()) {
+    const active = ['queued', 'running'].includes(item.status);
+    if (!active && !['completed', 'failed'].includes(item.status)) return null;
+    const startedAt = Date.parse(item.createdAt);
+    const finishedAt = active ? at : Date.parse(item.details?.finishedAt || item.updatedAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt < startedAt) return null;
+    return (finishedAt - startedAt) / 1000;
+  }
+  function generationElapsedText(item, at = Date.now()) {
+    const seconds = generationElapsedSeconds(item, at);
+    if (seconds === null) return '—';
+    const tone = seconds < 200 ? 'deep-green' : seconds < 500 ? 'green' : seconds <= 1000 ? 'yellow' : 'red';
+    return `<span class="log-elapsed is-${tone}">${Math.floor(seconds)} 秒</span>`;
+  }
   function renderLogRows(category, items) {
     const columnWidths = {
-      generations: [17, 11, 12, 34, 9, 17],
+      generations: [16, 10, 11, 28, 9, 9, 17],
       credits: [18, 15, 15, 22, 14, 16],
       llm: [15, 10, 8, 10, 17, 8, 8, 8, 8, 8],
       audit: [19, 25, 23, 19, 14],
@@ -1991,7 +2007,7 @@ import { createApiClient } from './api-client.js?v=4';
     const widths = columnWidths[category] || columnWidths.system;
     const table = (label, heads, rows, trailingHead = '') => `<table class="log-table" aria-label="${esc(label)}"><colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}${trailingHead ? `<th>${trailingHead}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`;
     const tokenCell = (tokens, rate) => `<td class="is-num"${rate === null || rate === undefined ? '' : ` title="${esc(money(rate))} 元 / 百万 Token"`}>${tokens === null || tokens === undefined ? '—' : money(tokens)}</td>`;
-    if (category === 'generations') return table('生成任务日志', ['时间', '状态', '用户', '模型', ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 6, generationActionsCell(item))).join(''), '操作');
+    if (category === 'generations') return table('生成任务日志', ['时间', '状态', '用户', '模型', ['耗时', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td><td class="is-num">${generationElapsedText(item)}</td><td class="is-num">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</td>`, 7, generationActionsCell(item))).join(''), '操作');
     if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 6)).join(''));
     if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 10)).join(''));
     if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 5)).join(''));
@@ -2101,7 +2117,16 @@ import { createApiClient } from './api-client.js?v=4';
     await fetchLogs();
   }
 
-  async function fetchLogs() {
+  let logRefreshTimer;
+  function scheduleLogRefresh() {
+    clearTimeout(logRefreshTimer);
+    if (state.view !== 'logs' || state.logCategory !== 'generations') return;
+    logRefreshTimer = setTimeout(() => {
+      if (state.view === 'logs' && state.logCategory === 'generations') fetchLogs({ background: true });
+    }, 5000);
+  }
+  async function fetchLogs({ background = false } = {}) {
+    clearTimeout(logRefreshTimer);
     const table = $('#logTable'); if (!table) return;
     const category = state.logCategory;
     const spec = logFilterSpec[category] || {};
@@ -2115,20 +2140,31 @@ import { createApiClient } from './api-client.js?v=4';
     if (spec.status && filters.status) params.set(spec.status.param, filters.status);
     if (filters.from) params.set('from', inputToIso(filters.from));
     if (filters.to) params.set('to', inputToIso(filters.to));
-    markLoading(table);
+    if (!background) markLoading(table);
     try {
       const data = await api(`/api/admin/logs/${category}?${params}`);
-      if (isStale('logs', token) || category !== state.logCategory) return;
+      if (isStale('logs', token) || category !== state.logCategory || state.view !== 'logs') return;
       const items = data.items || [];
       const filtered = [...params.keys()].some(key => !['limit', 'cursor'].includes(key));
+      const expanded = background ? $$('[data-log-expand][aria-expanded="true"]', table).map(row => row.dataset.logId) : [];
+      const scrollLeft = $('.table-wrap', table)?.scrollLeft || 0;
       table.innerHTML = items.length ? `<div class="table-wrap" style="border:0;border-radius:0">${renderLogRows(category, items)}</div>${pageControls('log', data.total, data.nextCursor, items.length)}`
         : emptyMarkup(`暂无${logLabels[category]}`, filtered ? '尝试放宽筛选条件或调整时间范围。' : '有新的记录时会显示在这里。');
       doneLoading(table);
+      for (const id of expanded) {
+        const row = $$('[data-log-expand]', table).find(row => row.dataset.logId === id);
+        const detail = row && document.getElementById(row.getAttribute('aria-controls'));
+        if (detail && row) { detail.hidden = false; row.setAttribute('aria-expanded', 'true'); row.classList.add('is-expanded'); }
+      }
+      const wrap = $('.table-wrap', table);
+      if (wrap) wrap.scrollLeft = scrollLeft;
       bindLogDetails(table);
       if (category === 'generations') bindGenerationControls(table, items);
       bindPageControls(table, 'log', fetchLogs, data.nextCursor);
+      if (category === 'generations' && items.some(item => ['queued', 'running'].includes(item.status))) scheduleLogRefresh();
     } catch (error) {
-      if (isStale('logs', token)) return;
+      if (isStale('logs', token) || category !== state.logCategory || state.view !== 'logs') return;
+      if (background) { scheduleLogRefresh(); return; }
       doneLoading(table);
       table.innerHTML = errorMarkup(error.message, 'logs');
       bindRetry(table, 'logs', fetchLogs);
