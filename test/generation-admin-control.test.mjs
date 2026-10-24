@@ -129,12 +129,14 @@ test('log center offers controls only on running jobs, and channel moves only on
   const admin = await readFile(new URL('../public/guguadmin.js', import.meta.url), 'utf8');
   const context = vm.createContext({ esc:String });
   vm.runInContext(admin.slice(admin.indexOf('  function generationControls('), admin.indexOf('  const userCell =')), context);
-  const cell = item => context.generationActionsCell(item);
+  const cell = item => context.generationActionsOverlay(item);
   const running = { id:'g', type:'video', status:'running', details:{ routeId:'r' } };
   assert.match(cell(running), /data-generation-switch="g"[^>]*>切换线路<\/button><button[^>]*data-generation-stop="g"[^>]*>停止<\/button>/);
+  assert.match(cell(running), /class="log-actions-overlay"/);
+  assert.doesNotMatch(cell(running), /<td/);
   assert.doesNotMatch(cell({ ...running, details:{} }), /切换线路/);
   assert.match(cell({ ...running, type:'image', details:{} }), /停止/);
   for (const item of [{ ...running, status:'completed' }, { ...running, status:'failed' }, { ...running, type:'audio' }, { ...running, details:{ routeId:'r', archivePending:true } }]) {
-    assert.doesNotMatch(cell(item), /<button/);
+    assert.equal(cell(item), '');
   }
 });

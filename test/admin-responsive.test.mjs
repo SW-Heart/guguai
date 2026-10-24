@@ -56,3 +56,10 @@ test('admin log tables keep readable widths and scroll horizontally on narrow sc
   assert.match(narrow, /\.log-table \.log-detail-panel \{ position: sticky;/);
   assert.match(css, /\.table-wrap \{[^}]*overflow-x: auto;/);
 });
+
+test('log action overlay can extend beyond its credit cell without clipping', () => {
+  const css = readFileSync(new URL('../public/guguadmin.css', import.meta.url), 'utf8');
+  assert.match(css, /td:not\(\.is-actions, \.log-actions-anchor\) \{ overflow: hidden;/);
+  assert.match(css, /\.log-table \.log-row > td\.log-actions-anchor \{ position: relative; overflow: visible; \}/);
+  assert.match(css, /\.log-actions-overlay \{[^}]*width: max-content;/);
+});

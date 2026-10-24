@@ -39,19 +39,20 @@ test('generation log places elapsed time after model and keeps detail rows align
     item: { status: 'completed', createdAt, updatedAt: '2026-10-24T01:00:12Z', creditCost: 5 },
     esc: value => value, date: value => value, badge: value => value,
     userCell: () => '用户', logModelName: () => '模型名称', money: value => value,
-    generationActionsCell: () => '<td>操作</td>',
+    generationActionsOverlay: () => '',
     logRow: (item, category, index, cells, colspan, trailing) => `<tr>${cells}${trailing}</tr><tr><td colspan="${colspan}">详情</td></tr>`,
   });
   assert.match(markup, /<th>模型<\/th><th class="is-num">耗时<\/th>/);
   assert.match(markup, /<td>模型名称<\/td><td class="is-num"><span class="log-elapsed is-deep-green">12 秒<\/span><\/td>/);
-  assert.equal((markup.match(/<col style=/g) || []).length, 7);
-  assert.match(markup, /colspan="7"/);
+  assert.equal((markup.match(/<col style=/g) || []).length, 6);
+  assert.match(markup, /colspan="6"/);
+  assert.doesNotMatch(markup, /<th>操作<\/th>/);
 });
 
 test('admin entry uses the fresh script cache key', () => {
   const entry = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(entry.includes('/guguadmin.js?v=64'));
-  assert.ok(entry.includes('/guguadmin.css?v=31'));
+  assert.ok(entry.includes('/guguadmin.js?v=65'));
+  assert.ok(entry.includes('/guguadmin.css?v=33'));
   assert.ok(!entry.includes('/guguadmin.js?v=61'));
 });
 
