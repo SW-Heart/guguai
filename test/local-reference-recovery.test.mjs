@@ -40,11 +40,11 @@ test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
   const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=604'));
+  assert.ok(html.includes('/app.js?v=605'));
   assert.ok(frontend.includes('./features/generation/polling.js?v=5'));
-  assert.ok(frontend.includes('./features/media/controller.js?v=13'));
-  assert.ok(frontend.includes('./drama-studio.js?v=312'));
-  for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=15'));
+  assert.ok(frontend.includes('./features/media/controller.js?v=14'));
+  assert.ok(frontend.includes('./drama-studio.js?v=313'));
+  for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=16'));
 });
 
 test('a local image uploaded for reference is listed once in pickers', () => {
@@ -52,7 +52,7 @@ test('a local image uploaded for reference is listed once in pickers', () => {
   const localB = { id:'local-b', kind:'image', localOnly:true, localStatus:'saved', url:'gugu-media://asset/local-b' };
   const cloudA = { id:'cloud-a', kind:'image', localId:'local-a', remoteStatus:'ready', localStatus:'saved', url:'gugu-media://asset/local-a' };
   const libraryCopy = { id:'cloud-c', localId:'local-c', cloudAssetId:'cloud-c', kind:'image', localOnly:false };
-  assert.deepEqual(withoutSupersededLocalFiles([localA, localB, cloudA, libraryCopy]).map(file => file.id), ['local-b', 'cloud-a', 'cloud-c']);
+  assert.deepEqual(withoutSupersededLocalFiles([localA, localB, cloudA, libraryCopy]).map(file => file.id), ['local-a', 'local-b', 'cloud-c']);
   assert.deepEqual(withoutSupersededLocalFiles([localA, localB]).map(file => file.id), ['local-a', 'local-b']);
 });
 
@@ -140,4 +140,25 @@ test('removing a reference then cancelling the remaining batch preserves files a
       assert.equal(await fs.readFile(path.join(root, file.relativePath), 'utf8'), 'image');
     }
   } finally { closeLocalLibrary(); await fs.rm(root, { recursive:true, force:true }); }
+});
+
+test('reopening a project looks up its referenced files and keeps unloaded project materials', async () => {
+  const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
+  const openProject = extract(drama, 'async function openProject(id) {', 'async function closeProject(){');
+  assert.ok(openProject.includes('loadFilesByIds(projectFileIds())'));
+  assert.ok(frontend.includes('loadCredits, loadFiles, loadFilesByIds,'));
+  const seed = extract(drama, 'function seedProjectAssets(){', 'function projectAssetKind(file){');
+  assert.ok(seed.includes('.filter(id=>!assetMissing(id))'));
+  assert.ok(!seed.includes('.filter(id=>asset(id))'));
+});
+
+test('a cleared cloud reference is uploaded again and the generation resubmitted once', async () => {
+  const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
+  const wrapper = extract(drama, 'const api = (url, options = {}) => {', 'let projectBaseSnapshot = null;');
+  assert.ok(wrapper.includes("error?.code!=='REFERENCE_NOT_READY'"));
+  assert.ok(wrapper.includes('ensureCloudReferenceIds(ids,{force:true})'));
+  const ensure = extract(drama, 'async function ensureCloudReferenceIds(', 'async function addLocalDramaAsset(');
+  assert.ok(ensure.includes('const ready = file => !force && isRemoteReferenceReady(file);'));
+  assert.ok(ensure.includes('await loadFilesByIds(unique)'));
+  assert.ok(ensure.includes('if (!force && cached'));
 });

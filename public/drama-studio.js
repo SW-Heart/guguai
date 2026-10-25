@@ -4,7 +4,7 @@ import { createWorkbenchMediaController } from './features/drama/workbench-media
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
-import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
+import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=16';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
 import { buildShotVideoPrompt, orderedShotReferenceMentions, videoPromptMaxLength } from './video-prompt.js?v=6';
@@ -64,7 +64,7 @@ const stepNames = { script:'剧本设计', resources:'素材生成', storyboard:
 const typeNames = { character:'角色', location:'场景', prop:'物品' };
 const richEditorEmptyChar = '\u200B';
 
-export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, renameCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {}, loadCanvasStyles = async () => {} }) {
+export function createDramaStudio({ api: requestApi, promptPrecheck = { check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll = () => {}, loadCredits, loadFiles, loadFilesByIds = async () => {}, uploadImage, uploadAsset, importCanvasAsset = null, registerCanvasFile, renameCanvasFile, importLocalMedia = async () => null, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing = () => false, localDeliveryMarkup = () => '', localDeliverySignature = () => '', retryLocalDownload = () => {}, showAssetInFolder = null, removeCloudAssets = null, syncDesktopDeliveries = null, accountSnapshot = () => null, isAccountCurrent = () => true, getDesktopSyncInfo = () => ({}), renderProjectList = () => {}, onProjectViewChange = () => {}, loadCanvasStyles = async () => {} }) {
   const root = document.querySelector('#dramaStage');
   let directorWorkspaceView;
   // Only smart projects use the canvas engine, the largest part of this page's
@@ -97,7 +97,14 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       const body=JSON.parse(options.body || '{}');
       if(!body.dramaProjectId)body.dramaProjectId=project.id;
       if(body.dramaProjectId===project.id && body.dramaStyleRevision===undefined)body.dramaStyleRevision=project.style?.revision || 0;
-      return requestApi(url,{...options,body:JSON.stringify(body)});
+      return requestApi(url,{...options,body:JSON.stringify(body)}).catch(async error=>{
+        // The cloud copy of a reference can be cleared while this device still
+        // thinks it is there. Upload it again and resubmit once, without asking.
+        const ids=Array.isArray(body.referenceAssetIds)?body.referenceAssetIds:[];
+        if(error?.code!=='REFERENCE_NOT_READY'||!ids.length)throw error;
+        const referenceAssetIds=await ensureCloudReferenceIds(ids,{force:true});
+        return requestApi(url,{...options,body:JSON.stringify({...body,referenceAssetIds})});
+      });
     }
     return requestApi(url,options);
   };
@@ -328,24 +335,26 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     }));
     return results;
   }
-  async function ensureCloudReferenceIds(ids) {
+  async function ensureCloudReferenceIds(ids, { force = false } = {}) {
     const request = projectRequest();
     const unique = [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))];
+    if (unique.some(id => !recordIndexes.fileById(id))) { await loadFilesByIds(unique); assertProjectRequest(request); }
     const files = unique.map(id => {
       if (assetMissing(id)) throw new Error('参考素材不存在，请重新选择');
       const file = asset(id);
       if (!file) throw new Error('参考素材不存在，请重新选择');
       return file;
     });
-    const media = files.some(file => !isRemoteReferenceReady(file)) ? requireDesktopMedia('syncLocal') : null;
+    const ready = file => !force && isRemoteReferenceReady(file);
+    const media = files.some(file => !ready(file)) ? requireDesktopMedia('syncLocal') : null;
     // At most two uploads at once: the server allows only a few unfinished uploads per account.
     return mapWithLimit(files, 2, async file => {
-      if (isRemoteReferenceReady(file)) return file.id;
+      if (ready(file)) return file.id;
       const sourceId = localAssetId(file);
       if (!sourceId) throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
       const cacheKey = `${sourceId}:${file.sha256 || ''}`;
       const cached = cloudReferenceCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < cloudReferenceCacheMs && asset(cached.id)) return cached.id;
+      if (!force && cached && Date.now() - cached.at < cloudReferenceCacheMs && asset(cached.id)) return cached.id;
       const result = await media.syncLocal({ assetId:sourceId, uploadForReference:true });
       assertProjectRequest(request);
       const cloudAsset = result?.cloudAsset;
@@ -851,6 +860,9 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       // it here when the in-memory library is genuinely empty; opening a
       // project must not rescan 200 unrelated local files on every visit.
       if(!state.files.length)void loadFiles({background:true});
+      // Files this project uses may sit beyond the first library page after
+      // signing in again; without them its references look unavailable.
+      if(project?.id===id)void loadFilesByIds(projectFileIds()).then(()=>{if(current()&&project?.id===id)render();}).catch(error=>console.warn('[drama] 项目素材加载失败',error.message));
       return true;
     }catch(error){
       if(!current())return false;
@@ -1183,13 +1195,14 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     }
     throw new Error('生成仍在进行，可稍后继续此计划');
   }
+  function projectFileIds(taskIds=[]){return [...new Set([...projectAssetIds,...project.shots.flatMap(shot=>[...shotReferenceIds(shot),shot.generation?.firstFrameAssetId,shot.generation?.lastFrameAssetId,shot.tailFrameAssetId]),...taskIds.map(id=>task(id)?.assetId),project.finalAssetId].filter(Boolean))];}
   function refreshTasks(){
     if(project?.mode==='smart'&&state.route==='drama'){directorWorkspaceView?.refresh();return;}
     if (assetMissing(professionalMediaPreview)) document.querySelector('#professionalMediaPreviewDialog')?.close();
     if(!project||state.route!=='drama')return;
     const taskIds=[...new Set(project.shots.flatMap(shot=>[shot.selectedVideoTaskId,...(shot.videoVersions||[]),...(shot.pendingImageGenerations||[]).map(item=>item.taskId)]).filter(Boolean))];
     const signature=taskIds.map(id=>{const item=task(id);return `${id}:${item?.status||''}:${item?.progress??''}:${item?.progressStage||''}:${item?.failure?.code||''}:${item?.error||''}:${item?.assetId||''}`;}).join('|');
-    const fileIds=[...new Set([...projectAssetIds,...project.shots.flatMap(shot=>[...shotReferenceIds(shot),shot.generation?.firstFrameAssetId,shot.generation?.lastFrameAssetId]),...taskIds.map(id=>task(id)?.assetId),project.finalAssetId].filter(Boolean))];
+    const fileIds=projectFileIds(taskIds);
     const fileSignature=fileIds.map(id=>{const item=recordIndexes.fileById(id);return `${id}:${item?.name||''}:${item?.url||''}:${item?.localStatus||''}:${item?.localPath||''}:${assetSyncing(item)}:${localDeliverySignature(id)}`;}).join('|');
     const changed=signature!==taskRenderSignature||fileSignature!==fileRenderSignature;
     taskRenderSignature=signature;
@@ -1519,7 +1532,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
 
   function seedProjectAssets(){
     const related=[...project.shots.flatMap(shot=>[...(shot.referenceAssetIds||[]),...(shot.assetMentions||[]).map(item=>item.id),...(shot.professionalAssets?.characters||[]),...(shot.professionalAssets?.locations||[]),shot.generation?.firstFrameAssetId,shot.generation?.lastFrameAssetId]),...project.resources.map(resource=>taskAsset(resource.selectedTaskId)?.id)].filter(Boolean);
-    projectAssetIds=[...new Set([...projectAssetIds,...(project.projectAssetIds||[]),...related])].filter(id=>asset(id));project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);
+    projectAssetIds=[...new Set([...projectAssetIds,...(project.projectAssetIds||[]),...related])].filter(id=>!assetMissing(id));project.projectAssetIds=[...projectAssetIds];project.projectAssetCategories=Object.fromEntries(projectAssetCategories);
   }
 
   function projectAssetKind(file){

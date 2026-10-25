@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createTaskPoller } from '../public/features/generation/polling.js';
 import { createMediaController } from '../public/features/media/controller.js';
 
-function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => ({ items:[] }), acknowledgementFailures = 0, initialFiles = [], syncDeliveries = [], syncPages = null, removeDramaAssemblyAssets = async () => {} } = {}) {
+function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => ({ items:[] }), acknowledgementFailures = 0, initialFiles = [], syncDeliveries = [], syncPages = null, removeDramaAssemblyAssets = async () => {}, apiHandler = null } = {}) {
   const state = { files:[...initialFiles], route:'files', initialSyncReady:true, fileKind:'all' };
   const pendingDownloads = new Map();
   let downloadCount = 0;
@@ -28,6 +28,7 @@ function createHarness({ account = 'alpha', epoch = 1, listLocal = async () => (
     state,
     api: async (path, options) => {
       apiCalls.push(path);
+      if (apiHandler) return apiHandler(path, options);
       if (path.startsWith('/api/files/sync?') && syncPages) return syncPages.shift();
       if (path.endsWith('/local-ready')) {
         acknowledgements.push({ path, options });
@@ -309,4 +310,38 @@ test('a video completed while desktop is hidden is downloaded and acknowledged w
   assert.equal(harness.acknowledgements.length, 1);
   assert.equal(timers.length, 0);
   assert.equal(await poller.pollActiveInBackground(), false);
+});
+
+test('project files beyond the first library page load by id after signing in again', async () => {
+  const listCalls = [];
+  const harness = createHarness({
+    initialFiles:[{ id:'recent', kind:'image', localStatus:'saved', url:'gugu-media://recent' }],
+    listLocal:async options => { listCalls.push(options); return { items:(options.localAssetIds || []).filter(id => id === 'local-only').map(id => ({ id, kind:'image' })) }; },
+  });
+  const cloudLookups = [];
+  harness.bridge.media.listLocalByCloudIds = async ids => { cloudLookups.push(ids); return ids.filter(id => id === 'older-ref').map(id => ({ id, kind:'image' })); };
+  await harness.controller.loadFilesByIds(['recent', 'older-ref', 'local-only', 'gone', '']);
+  assert.deepEqual(cloudLookups, [['older-ref', 'local-only', 'gone']]);
+  assert.deepEqual(listCalls.map(options => options.localAssetIds), [['local-only', 'gone']]);
+  assert.deepEqual(harness.state.files.map(file => file.id).sort(), ['local-only', 'older-ref', 'recent']);
+  await harness.controller.loadFilesByIds(['recent', 'older-ref']);
+  assert.equal(cloudLookups.length, 1);
+});
+
+test('a reference uploaded from a local file is matched back to it by content after signing in again', async () => {
+  const local = { id:'local-photo', kind:'image', sha256:'f'.repeat(64), size:120, relativePath:'library/photo.png' };
+  const cloud = { id:'cloud-photo', kind:'image', sha256:local.sha256, size:120, remoteStatus:'local_only', url:'/api/files/cloud-photo/content' };
+  const harness = createHarness({
+    listLocal:async options => options.localAssetIds ? { items:[] } : { items:[local], nextCursor:'' },
+    apiHandler:async path => { if (path === '/api/files/cloud-photo') return cloud; throw Object.assign(new Error('文件不存在'), { status:404 }); },
+  });
+  harness.bridge.media.listLocalByCloudIds = async () => [];
+  await harness.controller.loadFilesByIds(['cloud-photo', 'cloud-unknown']);
+  const file = harness.state.files.find(item => item.id === 'cloud-photo');
+  assert.equal(file.localId, 'local-photo');
+  assert.equal(file.localStatus, 'saved');
+  assert.equal(file.url, 'gugu-media://local-photo');
+  assert.equal(file.remoteStatus, 'local_only');
+  await harness.controller.loadFilesByIds(['cloud-unknown']);
+  assert.equal(harness.apiCalls.filter(path => path === '/api/files/cloud-unknown').length, 1);
 });

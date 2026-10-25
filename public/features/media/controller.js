@@ -1,5 +1,5 @@
 import { mergeTransientFields } from '../../list-sync.js?v=3';
-import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=15';
+import { desktopAcknowledgementRetryDelay, desktopHydrationRetryDelay, desktopMediaPayload, mergeDesktopAssetRecord, shouldHydrateDesktopAsset } from '../../desktop-media-sync.js?v=16';
 
 const emptyStorage = Object.freeze({ getItem: () => null, setItem: () => {} });
 
@@ -48,6 +48,8 @@ export function createMediaController({
   const desktopHydrationForced = new Set();
   const desktopHydrationFailureCounts = new Map();
   const desktopDownloadStates = new Map();
+  // Cloud ids with no matching local file this session; looked up once only.
+  const unmatchedReferenceIds = new Set();
   const desktopHydrationRetryTimers = new Map();
   let desktopHydrationRunning = false;
   const desktopAcknowledgementQueue = [];
@@ -126,6 +128,63 @@ export function createMediaController({
       if (!requestIsCurrent(requestAccount, requestEpoch)) return;
       mergeLocalAssets(page.items);
     }
+  }
+
+  // Projects can point at a file by its local id or by its cloud id. A file
+  // uploaded only to serve as a reference keeps no link back from the local
+  // library, so after signing in again its cloud id is matched by content.
+  async function loadFilesByIds(ids = []) {
+    const localBridge = bridge();
+    if (!localBridge?.media?.listLocalByCloudIds) return;
+    const wanted = [...new Set(ids.map(id => String(id || '').trim()).filter(Boolean))].filter(id => !fileById(id));
+    if (!wanted.length) return;
+    const requestAccount = accountSnapshot();
+    const requestEpoch = getAccountEpoch();
+    for (let index = 0; index < wanted.length; index += 500) {
+      const batch = wanted.slice(index, index + 500);
+      const cloudItems = await localBridge.media.listLocalByCloudIds(batch);
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      mergeLocalAssets(cloudItems.map(desktopLocalClientAsset).filter(Boolean));
+      const remaining = batch.filter(id => !fileById(id));
+      if (!remaining.length) continue;
+      const page = await listDesktopFiles({ localAssetIds:remaining });
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      mergeLocalAssets(page.items);
+    }
+    const unresolved = wanted.filter(id => !fileById(id) && !unmatchedReferenceIds.has(id));
+    if (!unresolved.length) return;
+    const cloudAssets = [];
+    for (let index = 0; index < unresolved.length; index += 4) {
+      const records = await Promise.all(unresolved.slice(index, index + 4).map(id => api(`/api/files/${encodeURIComponent(id)}`, { responseShape:'object' }).catch(error => {
+        if (error?.status !== 404) throw error;
+        unmatchedReferenceIds.add(id);
+        return null;
+      })));
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      cloudAssets.push(...records.filter(record => record?.id && record.sha256 && Number(record.size) > 0));
+    }
+    if (!cloudAssets.length) return;
+    const localByDigest = new Map();
+    let cursor = '';
+    const cursors = new Set();
+    do {
+      const page = await listDesktopFiles({ limit:200, cursor });
+      if (!requestIsCurrent(requestAccount, requestEpoch)) return;
+      for (const file of page.items) {
+        const key = `${file.sha256 || ''}:${Number(file.size) || 0}`;
+        if (file.sha256 && file.localStatus !== 'missing' && !localByDigest.has(key)) localByDigest.set(key, file);
+      }
+      cursor = String(page.nextCursor || '');
+      if (cursor && cursors.has(cursor)) break;
+      cursors.add(cursor);
+    } while (cursor);
+    const matched = [];
+    for (const cloudAsset of cloudAssets) {
+      const local = localByDigest.get(`${cloudAsset.sha256}:${Number(cloudAsset.size)}`);
+      if (!local) { unmatchedReferenceIds.add(cloudAsset.id); continue; }
+      matched.push({ ...cloudAsset, url:local.url, remoteUrl:cloudAsset.url, localId:local.localId || local.id, localStatus:'saved', localPath:local.localPath || local.relativePath, sha256:cloudAsset.sha256 });
+    }
+    if (matched.length) mergeLocalAssets(matched);
   }
 
   function mergeLocalAssets(files) {
@@ -674,6 +733,7 @@ export function createMediaController({
     desktopAcknowledgementRetryTimers.clear();
     desktopHydrationQueue.length = 0;
     desktopHydrationQueued.clear();
+    unmatchedReferenceIds.clear();
     desktopHydrationAttempted.clear();
     desktopHydrationActive.clear();
     desktopHydrationForced.clear();
@@ -720,6 +780,7 @@ export function createMediaController({
     claimLegacyWorkspace,
     loadFiles,
     loadReferenceFiles,
+    loadFilesByIds,
     refreshLocalAvailability: async () => {
       try { await reconcileLocalFiles(); notifyChanged(); }
       catch (error) { console.warn('[desktop] 本地文件检查暂不可用', error.message); }

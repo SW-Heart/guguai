@@ -103,8 +103,8 @@ test('desktop drama asset picker returns the complete batch when multiple is req
 
 test('batch upload changes reach the current versioned frontend entrypoints', async () => {
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
-  assert.match(html,/\/app\.js\?v=604\b/);
-  assert.match(app,/\.\/drama-studio\.js\?v=312\b/);
+  assert.match(html,/\/app\.js\?v=605\b/);
+  assert.match(app,/\.\/drama-studio\.js\?v=313\b/);
 });
 
 test('short-drama asset imports keep the local copy and skip cloud upload', async () => {
@@ -140,6 +140,7 @@ test('generation uploads local references two at a time and reuses recent result
     state:{files:[...files]},
     projectRequest:() => ({}),assertProjectRequest(){},assetMissing:() => false,
     asset:id => context.state.files.find(file => file.id === id),
+    recordIndexes:{fileById:id => context.state.files.find(file => file.id === id)},loadFilesByIds:async () => {},
     isRemoteReferenceReady:file => !file.localOnly,
     localAssetId:file => file.localOnly ? file.id : '',
     requireDesktopMedia:() => ({syncLocal:async ({assetId}) => {

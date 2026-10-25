@@ -5,7 +5,7 @@ import { officialPriceDiscount, requestPricePerSecond } from './state/official-m
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';
-import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=15';
+import { canRemoveImportedLocalAsset, cloudAssetFromDesktopSync, isRemoteReferenceReady, needsReferenceUpload, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=16';
 import { createApiClient } from './api-client.js?v=4';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
@@ -18,7 +18,7 @@ import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=10';
 import { resetAccountState } from './state/account-state.js?v=2';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
-import { createMediaController } from './features/media/controller.js?v=13';
+import { createMediaController } from './features/media/controller.js?v=14';
 import { createVideoPreviews } from './features/media/video-previews.js?v=5';
 import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
@@ -154,6 +154,7 @@ const mergeStateFiles = mediaController.mergeStateFiles;
 const syncDesktopDeliveries = mediaController.syncDesktopDeliveries;
 const loadFiles = mediaController.loadFiles;
 const loadReferenceFiles = mediaController.loadReferenceFiles;
+const loadFilesByIds = mediaController.loadFilesByIds;
 const removeDesktopCloudAssets = mediaController.removeDesktopCloudAssets;
 const claimLegacyWorkspace = mediaController.claimLegacyWorkspace;
 const showDesktopAssetInFolder = mediaController.showAssetInFolder;
@@ -2210,7 +2211,7 @@ function loadReferenceCanvasStyles() {
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
 const importAgentWorkspace = () => import('./features/agent/workspace.js?v=179');
-const importDramaStudio = () => import('./drama-studio.js?v=312');
+const importDramaStudio = () => import('./drama-studio.js?v=313');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2231,7 +2232,7 @@ function ensureDramaController() {
   if (dramaController) return Promise.resolve(dramaController);
   if (!dramaControllerPromise) {
     dramaControllerPromise = importDramaStudio().then(({ createDramaStudio }) => {
-      dramaController = createDramaStudio({ loadCanvasStyles:loadReferenceCanvasStyles, api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
+      dramaController = createDramaStudio({ loadCanvasStyles:loadReferenceCanvasStyles, api, promptPrecheck, state, esc, toast, setCreditBalance, creditText, loadTasks, scheduleTaskPoll, loadCredits, loadFiles, loadFilesByIds, uploadImage:pickAndUploadDramaImage, uploadAsset:pickAndUploadDramaAsset, importCanvasAsset:pickAndImportDramaCanvasAsset, registerCanvasFile, importLocalMedia, renameCanvasFile, loadReferenceFiles, confirmDelete, taskFailure, isAssetSyncing:isDesktopAssetSyncing, localDeliveryMarkup:desktopSyncMarkup, localDeliverySignature:id => JSON.stringify(mediaController.downloadState(id)), retryLocalDownload:id => mediaController.retryDownload(id), showAssetInFolder:showDesktopAssetInFolder, removeCloudAssets:removeDesktopCloudAssets, syncDesktopDeliveries, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent, getDesktopSyncInfo:()=>desktopSyncInfo, renderProjectList:root => projectLibrary.renderPage(root), onProjectViewChange:syncDramaProjectLocation });
       return dramaController;
     }).catch(error=>{dramaControllerPromise=null;throw error;});
   }
