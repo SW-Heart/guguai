@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args);
+// Electron wraps main-process errors as "Error invoking remote method '…': Error: …";
+// keep only the original message so users see a readable reason.
+const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args).catch(error => {
+  const message = String(error?.message || '').replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '');
+  throw new Error(message || '操作失败，请稍后重试');
+});
 
 contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   isDesktop: true,

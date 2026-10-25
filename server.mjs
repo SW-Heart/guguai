@@ -1419,23 +1419,42 @@ async function verifyUploadedObject(intent) {
   try { meta = await headObject(intent.temporaryObjectKey); } catch (error) {
     throw Object.assign(new Error('上传对象不存在或暂时不可读取'), { statusCode: 422, code: 'UPLOAD_OBJECT_MISSING', cause: error });
   }
-  if (meta.size !== Number(intent.expectedSize)) throw Object.assign(new Error('上传文件大小校验失败'), { statusCode: 422, code: 'UPLOAD_SIZE_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
-  if (normalizeUploadMime(meta.mimeType) !== String(intent.mimeType).toLowerCase()) throw Object.assign(new Error('上传文件类型校验失败'), { statusCode: 422, code: 'UPLOAD_MIME_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
+  if (meta.size !== Number(intent.expectedSize)) throw Object.assign(new Error('文件没有完整上传，请重新上传'), { statusCode: 422, code: 'UPLOAD_SIZE_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
+  if (normalizeUploadMime(meta.mimeType) !== String(intent.mimeType).toLowerCase()) throw Object.assign(new Error('上传过程中文件信息不一致，请重新上传'), { statusCode: 422, code: 'UPLOAD_MIME_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
   const prefix = await readObjectPrefix(intent.temporaryObjectKey);
-  if (!magicMatches(intent.mimeType, prefix)) throw Object.assign(new Error('文件内容与声明类型不一致'), { statusCode: 422, code: 'UPLOAD_MAGIC_MISMATCH', actualSize: meta.size, objectEtag: meta.etag });
-  return meta;
+  let contentMimeType;
+  try { contentMimeType = detectUploadContentMime(intent, prefix); }
+  catch (error) { throw Object.assign(error, { actualSize: meta.size, objectEtag: meta.etag }); }
+  return { ...meta, contentMimeType };
 }
-async function promoteUploadedObject(intent) {
+const uploadKindLabels = Object.freeze({ image:'图片', video:'视频', audio:'音频' });
+const uploadKindFormats = Object.freeze({ image:'PNG、JPG、WebP', video:'MP4、MOV、WebM', audio:'MP3、WAV、M4A、AAC、OGG、FLAC' });
+// The file extension only decides the declared type, so a JPEG saved as
+// ".png" is common. Trust the content signature instead: accept any supported
+// format of the declared kind and reject only content that is not one.
+function detectUploadContentMime(intent, prefix) {
+  if (magicMatches(intent.mimeType, prefix)) return intent.mimeType;
+  const kindTypes = { image:imageTypes, video:videoTypes, audio:audioTypes };
+  const matched = [...(kindTypes[intent.kind] || [])].find(type => magicMatches(type, prefix));
+  if (matched) return matched;
+  const otherKind = Object.keys(kindTypes).find(kind => kind !== intent.kind && [...kindTypes[kind]].some(type => magicMatches(type, prefix)));
+  const expected = uploadKindLabels[intent.kind] || '媒体';
+  const message = otherKind
+    ? `这个文件实际是${uploadKindLabels[otherKind]}，不是${expected}，请确认文件后重新选择`
+    : `这个文件不是可识别的${expected}，可能已损坏或格式不受支持。请转存为 ${uploadKindFormats[intent.kind] || '常见格式'} 后重新上传`;
+  throw Object.assign(new Error(message), { statusCode: 422, code: 'UPLOAD_MAGIC_MISMATCH' });
+}
+async function promoteUploadedObject(intent, mimeType = intent.mimeType) {
   if (!r2Configured) throw storageUnavailable();
   try {
     const existing = await headObject(intent.finalObjectKey);
-    if (existing.size === Number(intent.expectedSize) && existing.mimeType === String(intent.mimeType).toLowerCase()) return existing;
+    if (existing.size === Number(intent.expectedSize) && existing.mimeType === String(mimeType).toLowerCase()) return existing;
     throw Object.assign(new Error('正式对象已存在但内容不匹配'), { statusCode: 409, code: 'UPLOAD_FINAL_CONFLICT' });
   } catch (error) {
     if (error.code === 'UPLOAD_FINAL_CONFLICT') throw error;
     if (!isStorageNotFound(error)) throw error;
   }
-  await copyObject(intent.temporaryObjectKey, intent.finalObjectKey, intent.mimeType);
+  await copyObject(intent.temporaryObjectKey, intent.finalObjectKey, mimeType);
   return headObject(intent.finalObjectKey);
 }
 async function uploadAsset(userId, asset) {
@@ -3171,7 +3190,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, detectUploadContentMime, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

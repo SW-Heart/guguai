@@ -194,7 +194,7 @@ export function createFilesRouteHandler({
         return true;
       }
       if (existing.status === 'expired') { sendJson(res, 410, { error:'上传凭证已过期，请重新选择文件' }); return true; }
-      if (existing.status === 'failed') { sendJson(res, 422, { error:'上传文件验证失败，请重新选择文件' }); return true; }
+      if (existing.status === 'failed') { sendJson(res, 422, { error:existing.errorCode === 'UPLOAD_MAGIC_MISMATCH' ? '这个文件不是可识别的图片、视频或音频，请转存为常见格式后重新上传' : '上传文件验证失败，请重新选择文件', code:existing.errorCode || 'UPLOAD_VERIFY_FAILED' }); return true; }
       const nowIso = now();
       if (existing.expiresAt <= nowIso) {
         const expired = expireUploadIntent(user.id, uploadId, nowIso);
@@ -216,9 +216,11 @@ export function createFilesRouteHandler({
       let meta;
       try {
         meta = await verifyUploadedObject(intent);
-        const finalMeta = await promoteUploadedObject(intent);
-        const extension = uploadExtension(intent.mimeType, intent.name);
-        const asset = { id:intent.assetId, ownerId:user.id, name:intent.name, kind:intent.kind, mimeType:intent.mimeType, size:meta.size, ...(intent.sha256 ? { sha256:intent.sha256 } : {}), storageName:`${intent.assetId}${extension}`, source:'upload', sourceGenerationId:'', sourceUrl:'', objectKey:intent.finalObjectKey, objectUploadedAt:nowIso, ...(scope.desktop ? { originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId } : {}), ...(intent.kind === 'image' && intent.clientWidth && intent.clientHeight ? { width:intent.clientWidth, height:intent.clientHeight } : {}), createdAt:nowIso, updatedAt:nowIso };
+        const mimeType = meta.contentMimeType || intent.mimeType;
+        const finalMeta = await promoteUploadedObject(intent, mimeType);
+        // A corrected type must not keep the misleading extension from the file name.
+        const extension = mimeType === intent.mimeType ? uploadExtension(intent.mimeType, intent.name) : uploadExtension(mimeType);
+        const asset = { id:intent.assetId, ownerId:user.id, name:intent.name, kind:intent.kind, mimeType, size:meta.size, ...(intent.sha256 ? { sha256:intent.sha256 } : {}), storageName:`${intent.assetId}${extension}`, source:'upload', sourceGenerationId:'', sourceUrl:'', objectKey:intent.finalObjectKey, objectUploadedAt:nowIso, ...(scope.desktop ? { originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId } : {}), ...(intent.kind === 'image' && intent.clientWidth && intent.clientHeight ? { width:intent.clientWidth, height:intent.clientHeight } : {}), createdAt:nowIso, updatedAt:nowIso };
         completeUploadIntentWithAsset(user.id, uploadId, { actualSize:finalMeta.size || meta.size, objectEtag:finalMeta.etag || meta.etag, asset, nowIso });
         await deleteObject(intent.temporaryObjectKey).catch(error => console.warn(`[upload] 清理 pending 失败 uploadId=${uploadId}`, error.message));
         sendJson(res, 201, publicAsset(asset));

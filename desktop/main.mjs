@@ -611,8 +611,8 @@ async function completeCloudUpload(uploadId) {
     body: '{}',
   });
   if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`上传校验失败（${response.status}）`);
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error || `上传校验失败（${response.status}）`);
   }
   let result = await response.json();
   if (response.status !== 202 && result.status !== 'verifying') return result;
