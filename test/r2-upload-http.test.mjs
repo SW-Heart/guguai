@@ -269,6 +269,14 @@ test('R2-only HTTP upload verifies, promotes, cleans up, and completes idempoten
     assert.equal(body.mode, 'reuse');
     assert.equal(body.asset.id, asset.id);
   }
+  // The stored type may differ from a mislabeled extension; identical bytes still reuse the file.
+  const mislabeled = await fetch(`${base}/api/files/uploads/init`, {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'sample.jpg', mimeType: 'image/jpeg', size: png.length, sha256: 'a'.repeat(64) }),
+  });
+  assert.equal(mislabeled.status, 200);
+  assert.equal((await mislabeled.json()).asset.id, asset.id);
   assert.equal((await init('b'.repeat(64))).status, 201);
   assert.equal((await init('c'.repeat(64))).status, 429);
 

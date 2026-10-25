@@ -155,7 +155,8 @@ export function createFilesRouteHandler({
       if (suppliedHash && !/^[a-f0-9]{64}$/.test(suppliedHash)) { sendJson(res, 400, { error:'sha256 格式无效' }); return true; }
       if (suppliedHash) {
         const existingAsset = findAssetBySha256(user.id, suppliedHash, size, { requireRemote:true, deviceId:scope.deviceId, workspaceId:scope.workspaceId });
-        if (existingAsset && existingAsset.mimeType === mimeType && existingAsset.kind === uploadKind(mimeType)) { sendJson(res, 200, { mode:'reuse', asset:publicAsset(existingAsset), sha256:suppliedHash }); return true; }
+        // Same hash means same bytes; the stored type may have been corrected from a wrong file extension.
+        if (existingAsset && existingAsset.kind === uploadKind(mimeType)) { sendJson(res, 200, { mode:'reuse', asset:publicAsset(existingAsset), sha256:suppliedHash }); return true; }
       }
       // Reusing an existing file creates no upload, so only new uploads count toward the limits.
       if (!uploadInitRateAllowed(user.id)) { sendJson(res, 429, { error:'上传请求过于频繁，请稍后再试' }); return true; }
