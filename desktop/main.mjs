@@ -31,6 +31,7 @@ import {
 } from './local-library.mjs';
 import { macDmgInstallerLauncher, macDmgUpdateFile } from './manual-update.mjs';
 import { appendDesktopLog, collectDesktopLogBundle, desktopLogDirectory, flushDesktopLog, initDesktopLogging } from './desktop-log.mjs';
+import { createMainErrorReporter } from './error-reporter.mjs';
 import { createIpcRegistrar, ipcId, ipcIdList, ipcRecord, ipcText } from './ipc/registration.mjs';
 import { normalizeControlledUrl } from './remote-settings.mjs';
 import { installResponseHeaderGuard } from './response-headers.mjs';
@@ -72,6 +73,15 @@ initDesktopLogging({
   dir: resolveLogDirectory(),
   header: { version: clientVersion(), platform: process.platform, arch: process.arch, electron: process.versions.electron, packaged: app.isPackaged },
 });
+// 主进程错误同时上报到服务端异常中心；连上服务之前先排队。
+createMainErrorReporter({
+  send: async body => {
+    if (!trustedOrigin) return false;
+    const response = await cloudRequest('/api/errors', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    return response.ok;
+  },
+  meta: () => ({ appVersion:clientVersion(), platform:process.platform }),
+}).install();
 function startupTrace(stage) {
   const line = `[desktop-startup] ${stage} +${Date.now() - startupStartedAt}ms`;
   if (!app.isPackaged || process.env.GUGU_STARTUP_LOG === '1') {

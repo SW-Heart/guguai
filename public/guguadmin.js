@@ -11,6 +11,8 @@ import { createApiClient } from './api-client.js?v=4';
     ordersCursors: [''],
     invitesCursors: [''],
     logCursors: [''],
+    issuesCursors: [''],
+    issuesServerTime: '',
     logCategory: 'generations',
     modelItems: [],
     routeData: null,
@@ -23,11 +25,12 @@ import { createApiClient } from './api-client.js?v=4';
       invites: { query: '', enabled: '' },
       announcements: { status: '' },
       logs: { taskId: '', userId: '', modelId: '', status: '', from: '', to: '' },
+      issues: { status: 'open', source: '', level: '', query: '' },
     },
   };
   const { request: requestApi } = createApiClient({ scopeHeaders: () => state.csrf ? { 'X-CSRF-Token': state.csrf } : {}, responseShapeFor: () => 'object' });
 
-  const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '邀请码', announcements: '消息通知', models: '模型与价格', credentials: '渠道与 Key', logs: '日志中心' };
+  const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '邀请码', announcements: '消息通知', models: '模型与价格', credentials: '渠道与 Key', issues: '异常中心', logs: '日志中心' };
   const routeModelLabels = {
     'wan-3.0': 'Wan 3.0',
     'wan-3.0-value': 'Wan 3.0 特价',
@@ -636,7 +639,7 @@ import { createApiClient } from './api-client.js?v=4';
     }
   }
 
-  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, precheck: loadPrecheck, models: loadModels, credentials: loadCredentials, logs: loadLogs };
+  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, precheck: loadPrecheck, models: loadModels, credentials: loadCredentials, issues: loadIssues, logs: loadLogs };
   const viewFromHash = () => { const name = location.hash.replace(/^#\/?/, ''); return loaders[name] ? name : 'overview'; };
   function scrollAdminToTop() {
     const scroller = document.scrollingElement || document.documentElement;
@@ -655,6 +658,7 @@ import { createApiClient } from './api-client.js?v=4';
     if (name === 'orders') resetPager('orders');
     if (name === 'invites') resetPager('invites');
     if (name === 'logs') resetPager('log');
+    if (name === 'issues') resetPager('issues');
     clearTimeout(logRefreshTimer);
     state.view = name;
     scrollAdminToTop();
@@ -748,7 +752,7 @@ import { createApiClient } from './api-client.js?v=4';
           <section class="overview-card"><h3>账务与系统</h3><p>需要人工关注的事项</p>
             <div class="meter-caption"><span>可用积分占比</span><b>${Math.round(availableRate)}%</b></div>
             <div class="meter is-brand"><span style="width:${availableRate}%"></span></div>
-            <div class="kv-list" style="margin-top:10px"><div class="kv-row"><span>待核账</span>${Number(data.exceptions.reconcile) ? pill(`${money(data.exceptions.reconcile)} 项`, 'warn') : pill('无', 'ok')}</div><div class="kv-row"><span>退款失败</span>${Number(data.exceptions.refundFailed) ? pill(`${money(data.exceptions.refundFailed)} 项`, 'bad') : pill('无', 'ok')}</div><div class="kv-row"><span>系统错误日志</span>${Number(data.exceptions.systemErrors) ? `<button class="btn btn-sm" type="button" data-jump="logs" data-log-category="system" data-log-status="error">查看 ${money(data.exceptions.systemErrors)} 条</button>` : pill('无', 'ok')}</div></div>
+            <div class="kv-list" style="margin-top:10px"><div class="kv-row"><span>待核账</span>${Number(data.exceptions.reconcile) ? pill(`${money(data.exceptions.reconcile)} 项`, 'warn') : pill('无', 'ok')}</div><div class="kv-row"><span>退款失败</span>${Number(data.exceptions.refundFailed) ? pill(`${money(data.exceptions.refundFailed)} 项`, 'bad') : pill('无', 'ok')}</div><div class="kv-row"><span>未处理异常</span>${Number(data.exceptions.openIssues) ? `<button class="btn btn-sm" type="button" data-jump="issues">查看 ${money(data.exceptions.openIssues)} 个</button>` : pill('无', 'ok')}</div></div>
           </section>
           <section class="overview-card"><h3>常用操作</h3><p>快速进入高频管理页面</p>
             <div class="shortcut-list">
@@ -1931,6 +1935,211 @@ import { createApiClient } from './api-client.js?v=4';
       },
       onSubmit: async values => { await api(`/api/admin/models/${encodeURIComponent(model.modelId)}`, { method: 'PATCH', body: JSON.stringify({ userVisible: values.userVisible, enabled: values.enabled, sortOrder: Number(values.sortOrder), description: String(values.description || '').trim(), expectedVersion: model.version }) }); toast('模型设置已保存'); state.modelsTab = 'models'; await loadModels({ refreshPricing: false }); },
     });
+  }
+
+  /* ---------- 异常中心 ---------- */
+  const issueStatusLabels = { open: '未处理', resolved: '已解决', ignored: '已忽略', all: '全部' };
+  const issueSourceLabels = { server: '服务端', web: '网页端', desktop: '客户端' };
+  const issueLevelTone = level => level === 'critical' || level === 'error' ? 'bad' : 'warn';
+  function issueFilterParams() {
+    const filters = state.filters.issues;
+    const params = new URLSearchParams();
+    if (filters.source) params.set('source', filters.source);
+    if (filters.level) params.set('level', filters.level);
+    if (filters.query) params.set('query', filters.query);
+    return params;
+  }
+  function issueActions(item) {
+    if (item.status === 'open') return `<button class="btn btn-sm" type="button" data-issue-status="resolved" data-issue="${esc(item.fingerprint)}">解决</button><button class="btn btn-sm btn-ghost" type="button" data-issue-status="ignored" data-issue="${esc(item.fingerprint)}">忽略</button>`;
+    return `<button class="btn btn-sm btn-ghost" type="button" data-issue-status="open" data-issue="${esc(item.fingerprint)}">重新打开</button>`;
+  }
+  function renderIssueRows(items) {
+    const widths = [15, 8, 9, 36, 8, 9, 15];
+    const rows = items.map((item, index) => {
+      const detailId = `issue-detail-${index}`;
+      const reopened = item.reopenedCount ? ` · 复发 ${money(item.reopenedCount)} 次` : '';
+      return `<tr class="log-row" data-issue-expand data-issue-id="${esc(item.fingerprint)}" tabindex="0" aria-expanded="false" aria-controls="${detailId}">
+        <td>${date(item.lastSeenAt)}</td>
+        <td>${badge(item.level, issueLevelTone(item.level))}</td>
+        <td>${esc(issueSourceLabels[item.source] || item.source)}</td>
+        <td><div class="issue-title"><span class="cell-clip" title="${esc(item.message)}">${esc(item.message)}</span><small class="muted"><code>${esc(item.category)}</code> · 首次 ${date(item.firstSeenAt)}${esc(reopened)}</small></div></td>
+        <td class="is-num"><b>${money(item.count)}</b></td>
+        <td class="is-num">${item.userCount ? money(item.userCount) : '<span class="muted">—</span>'}</td>
+        <td class="is-actions"><div class="actions">${issueActions(item)}</div></td>
+      </tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="7"><div class="log-detail-panel" data-issue-detail="${esc(item.fingerprint)}">${loadingMarkup('正在读取最近记录…')}</div></td></tr>`;
+    }).join('');
+    return `<table class="log-table issue-table" aria-label="异常问题"><colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr><th>最近出现</th><th>级别</th><th>来源</th><th>问题</th><th class="is-num">次数</th><th class="is-num">涉及用户</th><th class="is-actions">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function issueDetailMarkup(issue, events) {
+    const latest = events[0];
+    const kv = [
+      ['出错位置', issue.location ? `<code>${esc(issue.location)}</code>` : '<span class="muted">—</span>'],
+      ['最近用户', userCell(issue.lastUserId, issue.lastUserNickname)],
+      ['处理状态', `${esc(issueStatusLabels[issue.status] || issue.status)}${issue.resolvedAt ? ` · ${date(issue.resolvedAt)}` : ''}`],
+      ['备注', issue.note ? `<span class="issue-note">${esc(issue.note)}</span>` : '<span class="muted">—</span>'],
+    ].map(([label, value]) => `<div class="kv-row"><span>${label}</span><span>${value}</span></div>`).join('');
+    const list = events.length ? `<ol class="issue-events">${events.map(event => `<li><span>${date(event.createdAt)}</span><span class="cell-clip" title="${esc(event.message)}">${esc(event.message)}</span><span>${userCell(event.userId, event.userNickname)}</span></li>`).join('')}</ol>` : '<p class="muted issue-empty">近 30 天的详细记录已清理，次数统计仍然保留。</p>';
+    const full = latest ? stringifyLogDetails(compactLogDetailData({ requestId: latest.requestId, userId: latest.userId, modelId: latest.modelId, generationId: latest.generationId, message: latest.message, details: latest.details, createdAt: latest.createdAt }), true) : '';
+    return `<div class="log-detail-head"><strong>最近 ${money(events.length)} 次记录</strong><div><button class="btn btn-sm btn-ghost" type="button" data-issue-note="${esc(issue.fingerprint)}">${icon('pencil')}备注</button>${full ? `<button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button>` : ''}</div></div>
+      <div class="issue-detail-body"><div class="kv-list">${kv}</div>${list}</div>${full ? `<pre>${esc(full)}</pre>` : ''}`;
+  }
+  async function loadIssueDetail(panel, fingerprint) {
+    try {
+      const data = await api(`/api/admin/error-issues/${encodeURIComponent(fingerprint)}`);
+      panel.innerHTML = issueDetailMarkup(data.issue, data.events || []);
+      panel.dataset.loaded = '1';
+      $('[data-copy-log]', panel)?.addEventListener('click', () => copyText($('pre', panel)?.textContent || '', '错误详情'));
+      $('[data-issue-note]', panel)?.addEventListener('click', () => editIssueNote(data.issue));
+    } catch (error) {
+      panel.innerHTML = errorMarkup(error.message);
+    }
+  }
+  function bindIssueRows(root) {
+    const toggle = row => {
+      const expanded = row.getAttribute('aria-expanded') === 'true';
+      row.setAttribute('aria-expanded', String(!expanded));
+      row.classList.toggle('is-expanded', !expanded);
+      const detail = document.getElementById(row.getAttribute('aria-controls'));
+      detail.hidden = expanded;
+      const panel = $('[data-issue-detail]', detail);
+      if (!expanded && panel && !panel.dataset.loaded) loadIssueDetail(panel, row.dataset.issueId);
+    };
+    $$('[data-issue-expand]', root).forEach(row => {
+      row.addEventListener('click', event => {
+        if (event.target.closest('a, button, input, select, textarea')) return;
+        if (String(window.getSelection?.() || '')) return;
+        toggle(row);
+      });
+      row.addEventListener('keydown', event => {
+        if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        toggle(row);
+      });
+    });
+    $$('[data-issue-status]', root).forEach(button => button.addEventListener('click', async () => {
+      const next = button.dataset.issueStatus;
+      setButtonBusy(button, true, '处理中…');
+      try {
+        await api(`/api/admin/error-issues/${encodeURIComponent(button.dataset.issue)}`, { method: 'PATCH', body: JSON.stringify({ status: next }) });
+        toast(next === 'resolved' ? '已标记为已解决' : next === 'ignored' ? '已忽略，之后出现只累计次数' : '已重新打开');
+        await fetchIssues();
+      } catch (error) { setButtonBusy(button, false); toastError(error); }
+    }));
+  }
+  async function editIssueNote(issue) {
+    await showAdminDialog({
+      kicker: '异常中心', title: '处理备注', description: issue.message.slice(0, 120),
+      fields: [{ name: 'note', label: '备注', type: 'textarea', value: issue.note, span: 'full', maxLength: 2000, placeholder: '例如原因、修复版本或负责人' }],
+      submit: '保存', busyLabel: '保存中…', size: 'narrow',
+      onSubmit: async values => {
+        await api(`/api/admin/error-issues/${encodeURIComponent(issue.fingerprint)}`, { method: 'PATCH', body: JSON.stringify({ note: values.note }) });
+        toast('备注已保存');
+        await fetchIssues();
+      },
+    });
+  }
+  async function resolveAllIssues() {
+    const open = Number(state.issueCounts?.open || 0);
+    if (!open) { toast('当前没有未处理的问题', 'info'); return; }
+    const filtered = issueFilterParams().toString() !== '';
+    await showAdminDialog({
+      kicker: '异常中心', title: `一键解决 ${money(open)} 个问题？`,
+      description: `${filtered ? '当前筛选条件下' : '所有'}未处理的问题都会标记为已解决。之后再次出现的问题会自动重新打开，打开页面后新出现的问题不受影响。`,
+      submit: '全部解决', busyLabel: '处理中…', size: 'narrow', tone: 'info',
+      onSubmit: async () => {
+        const filters = state.filters.issues;
+        const result = await api('/api/admin/error-issues/resolve-all', { method: 'POST', body: JSON.stringify({ before: state.issuesServerTime, source: filters.source, level: filters.level, query: filters.query }) });
+        toast(result.resolved ? `已解决 ${money(result.resolved)} 个问题` : '没有需要处理的问题', result.resolved ? 'success' : 'info');
+        resetPager('issues');
+        await fetchIssues();
+      },
+    });
+  }
+  function issueTabsMarkup(counts = {}) {
+    return Object.keys(issueStatusLabels).map(key => {
+      const count = key === 'all' ? null : counts[key];
+      const active = key === state.filters.issues.status;
+      return `<button class="tab" role="tab" type="button" data-issue-tab="${key}" aria-selected="${String(active)}" tabindex="${active ? 0 : -1}" aria-controls="issuePanel">${esc(issueStatusLabels[key])}${count === null || count === undefined ? '' : ` <span class="count">${money(count)}</span>`}</button>`;
+    }).join('');
+  }
+  async function loadIssues() {
+    const root = $('#view-issues');
+    const filters = state.filters.issues;
+    root.innerHTML = pageHead('issuesTitle', '异常中心', '同类错误自动合并；已解决的问题再次出现会重新打开', `${refreshButton('issues')}<button class="btn btn-primary" type="button" data-resolve-all>${icon('checkMark')}一键解决</button>`) + `
+      <div class="tabs" role="tablist" aria-label="处理状态" id="issueTabs">${issueTabsMarkup(state.issueCounts)}</div>
+      <div class="panel" id="issuePanel" role="tabpanel">
+        <form id="issueFilters" class="toolbar" role="search">
+          <label class="field is-wide"><span class="field-label">关键词</span><span class="search-input">${icon('search')}<input id="issueQuery" data-search value="${esc(filters.query)}" placeholder="错误内容或分类" autocomplete="off" spellcheck="false"></span></label>
+          <label class="field"><span class="field-label">来源</span><select id="issueSource">${[['', '全部来源'], ...Object.entries(issueSourceLabels)].map(([value, label]) => `<option value="${value}" ${value === filters.source ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <label class="field"><span class="field-label">级别</span><select id="issueLevel">${[['', '全部级别'], ['critical', '严重'], ['error', '错误'], ['warning', '警告']].map(([value, label]) => `<option value="${value}" ${value === filters.level ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <div class="toolbar-actions"><button class="btn btn-ghost" type="button" data-reset>${icon('rotate')}重置</button><button class="btn btn-primary" type="submit">${icon('search')}查询</button></div>
+        </form>
+        <div id="issueTable" data-table>${skeletonMarkup()}</div>
+      </div>`;
+    const form = $('#issueFilters', root);
+    const apply = () => {
+      filters.query = $('#issueQuery', form).value.trim();
+      filters.source = $('#issueSource', form).value;
+      filters.level = $('#issueLevel', form).value;
+      resetPager('issues');
+      fetchIssues();
+    };
+    form.onsubmit = event => { event.preventDefault(); apply(); };
+    $('#issueSource', form).onchange = $('#issueLevel', form).onchange = apply;
+    $('[data-reset]', form).onclick = () => { Object.assign(filters, { source: '', level: '', query: '' }); loadIssues(); };
+    $('[data-refresh="issues"]', root).onclick = () => fetchIssues();
+    $('[data-resolve-all]', root).onclick = resolveAllIssues;
+    bindIssueTabs();
+    await fetchIssues();
+  }
+  function bindIssueTabs() {
+    const tabs = $$('[data-issue-tab]');
+    tabs.forEach((tab, index) => {
+      tab.onclick = () => {
+        if (state.filters.issues.status === tab.dataset.issueTab) return;
+        state.filters.issues.status = tab.dataset.issueTab;
+        tabs.forEach(item => { const active = item === tab; item.setAttribute('aria-selected', String(active)); item.tabIndex = active ? 0 : -1; });
+        resetPager('issues');
+        fetchIssues();
+      };
+      tab.onkeydown = event => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        const next = tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+        next.click(); next.focus();
+      };
+    });
+  }
+  async function fetchIssues() {
+    const table = $('#issueTable'); if (!table) return;
+    const token = nextRequest('issues');
+    const params = issueFilterParams();
+    params.set('status', state.filters.issues.status);
+    params.set('limit', '20');
+    if (currentCursor('issues')) params.set('cursor', currentCursor('issues'));
+    markLoading(table);
+    try {
+      const data = await api(`/api/admin/error-issues?${params}`);
+      if (isStale('issues', token) || state.view !== 'issues') return;
+      state.issuesServerTime = data.serverTime || new Date().toISOString();
+      state.issueCounts = data.counts || {};
+      const tabs = $('#issueTabs');
+      if (tabs) { tabs.innerHTML = issueTabsMarkup(state.issueCounts); bindIssueTabs(); }
+      const resolveAll = $('[data-resolve-all]');
+      if (resolveAll) resolveAll.disabled = !Number(state.issueCounts.open || 0);
+      const items = data.items || [];
+      const filtered = issueFilterParams().toString() !== '';
+      const emptyTitle = state.filters.issues.status === 'open' ? '没有未处理的问题' : `暂无${issueStatusLabels[state.filters.issues.status] || ''}的问题`;
+      table.innerHTML = items.length ? `<div class="table-wrap" style="border:0;border-radius:0">${renderIssueRows(items)}</div>${pageControls('issues', data.total, data.nextCursor, items.length)}`
+        : emptyMarkup(emptyTitle, filtered ? '尝试放宽筛选条件。' : '新出现的错误会自动汇总到这里。');
+      doneLoading(table);
+      bindIssueRows(table);
+      bindPageControls(table, 'issues', fetchIssues, data.nextCursor);
+    } catch (error) {
+      if (isStale('issues', token) || state.view !== 'issues') return;
+      doneLoading(table);
+      table.innerHTML = errorMarkup(error.message, 'issues');
+      bindRetry(table, 'issues', fetchIssues);
+    }
   }
 
   /* ---------- 日志中心 ---------- */

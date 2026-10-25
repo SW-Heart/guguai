@@ -26,6 +26,7 @@ import { createSupportLogController } from './features/support/controller.js?v=2
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=5';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
+import { createErrorReporter } from './features/errors/reporter.js?v=1';
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -82,6 +83,10 @@ const desktopScope = createDesktopScope({ getWindow: () => window, getSyncInfo: 
 const desktopScopeHeaders = desktopScope.headers;
 const apiResponseShape = url => /\/api\/generations\?/.test(String(url)) && /(?:^|[?&])(?:ids|view)=/.test(String(url)) ? 'array' : 'object';
 const { request: api, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
+createErrorReporter({
+  headers: () => window.guguDesktop ? { ...desktopScopeHeaders(), 'X-GuGu-Desktop':'1' } : {},
+  meta: () => ({ appVersion:String(desktopClientInfo.version || ''), platform:String(desktopClientInfo.platform || '') }),
+}).install(window);
 const promptPrecheck = createPromptPrecheck({ api });
 const projectLibrary = createProjectLibrary({
   api,

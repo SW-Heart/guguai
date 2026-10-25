@@ -124,7 +124,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=65/);
+  assert.match(adminHtml, /guguadmin\.js\?v=66/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -461,6 +461,37 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.ok(taskCredits.data.items.every(item => item.generationId === taskId));
   const taskSystem = await admin.call(`/api/admin/logs/system?taskId=${taskId}`);
   assert.deepEqual(taskSystem.data.items.map(item => item.generationId), [taskId]);
+
+  // 异常中心：种子错误已汇总成问题；前端上报会新增问题；一键解决只处理加载前出现的问题。
+  const openIssues = await admin.call('/api/admin/error-issues?status=open');
+  assert.equal(openIssues.response.status, 200);
+  const seededIssue = openIssues.data.items.find(item => item.message === '任务失败测试日志');
+  assert.ok(seededIssue);
+  assert.equal(seededIssue.userCount, 1);
+  const reported = await fetch(`${base}/api/errors`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ reports: [
+    { kind: 'error', message: 'TypeError: x is undefined', stack: 'TypeError: x is undefined\n    at render (http://127.0.0.1/app.js?v=604:10:2)', source: `${base}/app.js?v=604` },
+    { kind: 'error', message: 'Script error.' },
+  ] }) });
+  assert.equal(reported.status, 200);
+  const webIssues = await admin.call('/api/admin/error-issues?status=open&source=web');
+  assert.deepEqual(webIssues.data.items.map(item => [item.category, item.message, item.location]), [['web.error', 'TypeError: x is undefined', 'render app.js']]);
+  const issueDetail = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`);
+  assert.equal(issueDetail.data.events.length, 1);
+  assert.equal(issueDetail.data.events[0].details.source, `${base}/app.js?v=604`);
+  const ignored = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`, { method: 'PATCH', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { status: 'ignored', note: '浏览器插件导致' } });
+  assert.equal(ignored.response.status, 200);
+  assert.equal(ignored.data.issue.status, 'ignored');
+  assert.equal(ignored.data.issue.note, '浏览器插件导致');
+  const csrfMissing = await admin.call('/api/admin/error-issues/resolve-all', { method: 'POST', headers: { Origin: base }, body: {} });
+  assert.equal(csrfMissing.response.status, 403);
+  const resolvedAll = await admin.call('/api/admin/error-issues/resolve-all', { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { before: openIssues.data.serverTime } });
+  assert.equal(resolvedAll.response.status, 200);
+  assert.ok(resolvedAll.data.resolved >= 1);
+  const afterResolve = await admin.call('/api/admin/error-issues?status=resolved');
+  assert.ok(afterResolve.data.items.some(item => item.fingerprint === seededIssue.fingerprint && item.resolvedAt));
+  assert.equal(afterResolve.data.counts.ignored, 1);
+  const overviewIssues = await admin.call('/api/admin/overview');
+  assert.equal(overviewIssues.data.exceptions.openIssues, afterResolve.data.counts.open);
 
   const disabled = await admin.call(`/api/admin/users/${target.id}/disable`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: {} });
   assert.equal(disabled.response.status, 200);

@@ -457,6 +457,26 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 .log-detail-panel pre { max-height: 380px; margin: 0; padding: 12px; overflow: auto; color: var(--text-soft); font: 12px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .cell-clip { display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* 异常中心 */
+.issue-title { display: grid; gap: 2px; min-width: 0; }
+.issue-title .cell-clip { max-width: 100%; color: var(--text); font-weight: 550; }
+.issue-title small { overflow: hidden; text-overflow: ellipsis; font-size: 11px; white-space: nowrap; }
+.issue-table .log-row > td { padding-top: 10px; padding-bottom: 10px; }
+.issue-detail-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 4px 20px; padding: 4px 12px 8px; border-bottom: 1px solid var(--line-soft); }
+.issue-detail-body .kv-row { min-height: 36px; font-size: 12px; }
+.issue-detail-body .kv-row > span:last-child { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; }
+.issue-note { white-space: pre-wrap; }
+.issue-events { display: grid; align-content: start; margin: 0; padding: 0; list-style: none; }
+.issue-events li { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 110px); align-items: center; gap: 12px; min-height: 36px; border-bottom: 1px solid var(--line-soft); color: var(--text-soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.issue-events li:last-child { border-bottom: 0; }
+.issue-events .cell-clip { max-width: 100%; }
+.issue-empty { margin: 0; padding: 12px 0; font-size: 12px; }
+@media (max-width: 900px) {
+  .issue-detail-body { grid-template-columns: minmax(0, 1fr); }
+  .issue-events li { grid-template-columns: 130px minmax(0, 1fr); }
+  .issue-events li > span:last-child { display: none; }
+}
+
 /* Announcements */
 .announcement-preview { display: -webkit-box; max-width: 480px; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .announcement-editor-field { display: grid; grid-column: 1 / -1; gap: 16px; }

@@ -89,6 +89,8 @@ import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { getNotification, listNotifications, markAllNotificationsRead, markNotificationRead, unreadNotificationCount } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
+import { handleClientErrorReport, installServerErrorCapture, reportServerError } from './lib/error-tracker.mjs';
+import { backfillIssues, pruneErrorHistory } from './lib/error-issues.mjs';
 import { notifyGenerationFailure } from './lib/feishu.mjs';
 import { putSupportLogObject, supportLogMaxBytes, supportLogObjectKey, supportLogStorageReady, SUPPORT_LOG_MIME } from './lib/support-logs.mjs';
 import {
@@ -3224,6 +3226,8 @@ const server = http.createServer(async (req, res) => {
       if (apiConsolePages.has(url.pathname.replace(/(.)\/+$/, '$1')) && req.method === 'GET') return await serveStatic(res, '/api-console.html', req, { publicDir, appOnly:false, sendJson });
     }
     if (url.pathname.startsWith('/api/admin/')) return await handleAdminRequest(req, res, { generationControl:generationAdminControl });
+    // 前端错误上报不要求登录，网页端和客户端都会调用，因此放在客户端限定检查之前。
+    if (url.pathname === '/api/errors' && req.method === 'POST') return await handleClientErrorReport(req, res, { user:currentUser(req), desktop:isDesktopRequest(req), ip:clientIp(req) });
     if (url.pathname === '/favicon.ico') { res.writeHead(204, { 'Cache-Control': 'public, max-age=86400' }); return res.end(); }
     if (await accountRoute(req, res, url, { publicOnly:true })) return;
     // Public pricing data intentionally sits before the desktop-only API
@@ -3267,7 +3271,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     return await serveStatic(res, url.pathname, req, { publicDir, appOnly:desktopAppOnly, sendJson });
-  } catch (error) { if (!error.statusCode || error.statusCode >= 500) console.error({ requestId, url:req.url, code:error.code, message:error.message }); if (res.headersSent) return res.end(); const isAdminRequest = String(req.url || '').split('?')[0].startsWith('/api/admin/'); const message = isAdminRequest ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), publicHttpErrorBody(error, message)); }
+  } catch (error) { if (!error.statusCode || error.statusCode >= 500) reportServerError(error, { category:'server.http', requestId, details:{ method:req.method, url:String(req.url || '').slice(0, 500) } }); if (res.headersSent) return res.end(); const isAdminRequest = String(req.url || '').split('?')[0].startsWith('/api/admin/'); const message = isAdminRequest ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), publicHttpErrorBody(error, message)); }
 });
 
 // Importing server helpers from a test must never open the production port.
@@ -3313,6 +3317,11 @@ async function shutdownServer() {
 }
 
 if (isMainModule && process.env.NODE_ENV !== 'test') {
+  installServerErrorCapture();
+  const pruneErrors = () => { try { pruneErrorHistory(); } catch (error) { console.error('[errors] 历史错误清理失败', error.message); } };
+  try { backfillIssues(); } catch (error) { console.error('[errors] 历史错误汇总失败', error.message); }
+  pruneErrors();
+  setInterval(pruneErrors, 6 * 60 * 60_000).unref();
   process.once('SIGINT', shutdownServer);
   process.once('SIGTERM', shutdownServer);
   if (apiSitePort) {
