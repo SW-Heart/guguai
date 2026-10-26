@@ -1,3 +1,5 @@
+import { minimaxH3SubmitModel } from './minimax-h3.mjs';
+
 export function createAutodlProvider({
   baseUrl,
   workflowId,
@@ -133,11 +135,8 @@ export function createAutodlProvider({
       // H3's image/audio workflow requires an image even when audio is supplied.
       // Select by the images actually sent, so text-only and audio-only jobs
       // both use the text workflow across routed and legacy submissions.
-      const isMinimaxH3 = task.videoModelId === 'minimax-h3-15s'
-        || task.videoProfile === 'minimax-h3-15s'
-        || workflowId === 'minimax_h3_image_audio_to_video_v2_15s';
       const hasImage = Object.entries(requestPayload).some(([key, value]) => /^ref_image_\d+$/.test(key) && Boolean(value));
-      const submitWorkflowId = isMinimaxH3 && !hasImage ? 'minimax_h3_z0901' : workflowId;
+      const submitWorkflowId = minimaxH3SubmitModel(task, workflowId, hasImage);
       const created = await submit(`${baseUrl}/api/v1/comfyui/comfyui_workflow/${encodeURIComponent(submitWorkflowId)}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },

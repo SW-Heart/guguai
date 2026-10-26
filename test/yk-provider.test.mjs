@@ -36,6 +36,30 @@ test('YK submits arbitrary configured models and typed references with stable id
   assert.equal(calls.length, 1, 'durable recovery respects Retry-After');
 });
 
+test('every routed H3 text submission overrides stale model IDs at every quality', async () => {
+  for (const routeAdapter of ['yk-video', 'diw-video', 'wj-video', 'cntcn-video']) {
+    for (const quality of ['480p', '768p', '1088p', '1440p']) {
+      for (const refs of [[], { images:[], audios:['https://cdn.test/audio.wav'] }]) {
+        const { provider, calls } = setup([{ body:{ id:'h3-text-task' } }]);
+        await provider.createVideo({ ...task(), videoModelId:'minimax-h3-15s', model:'minimax_h3_zm_u24', routeAdapter, quality }, refs, { deferPolling:true });
+        assert.equal(JSON.parse(calls[0].body).model, 'minimax_h3_z0901', `${routeAdapter} ${quality}`);
+        assert.equal(calls.length, 1);
+      }
+    }
+  }
+});
+
+test('routed H3 selects its model using submitted images and preserves other models', () => {
+  const { provider } = setup([]);
+  for (const routeAdapter of ['yk-video', 'diw-video', 'wj-video', 'cntcn-video']) {
+    const current = { ...task(), videoModelId:'minimax-h3-15s', model:'minimax_h3_zm_u24', routeAdapter };
+    assert.equal(provider.payload({ ...current, generationType:'TEXT' }, { images:['https://cdn.test/image.png'] }).model, current.model);
+    assert.equal(provider.payload({ ...current, generationType:'REFERENCE' }, { images:[] }).model, 'minimax_h3_z0901');
+    assert.equal(provider.payload({ ...current, model:'configured-h3-image-model' }, []).model, 'minimax_h3_z0901');
+    assert.equal(provider.payload({ ...current, videoModelId:'seedance-2.0', model:'configured-seedance-model' }, []).model, 'configured-seedance-model');
+  }
+});
+
 test('YK polls original task and downloads authenticated content only on success', async () => {
   const { provider, calls } = setup([{ body:{ status:'running', url:'https://cdn.test/early.mp4' } }, { body:{ status:'succeeded' } }]);
   const current = { ...task(), providerTaskId:'original-id' };

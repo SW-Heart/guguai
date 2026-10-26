@@ -1,4 +1,5 @@
 import { generationFailureCode } from '../lib/generation-failure-code.mjs';
+import { minimaxH3SubmitModel } from './minimax-h3.mjs';
 
 export function createRoutedProvider({
   fetchJson,
@@ -57,8 +58,9 @@ export function createRoutedProvider({
     const images = groups.images?.slice(0, limits.image || 0) || [];
     const videos = groups.videos?.slice(0, limits.video || 0) || [];
     const audios = groups.audios?.slice(0, limits.audio || 0) || [];
+    const model = minimaxH3SubmitModel(task, task.model, images.some(Boolean));
     if (task.routeAdapter === 'yk-video') return {
-      model: task.model, prompt: task.prompt, duration: Number(task.duration),
+      model, prompt: task.prompt, duration: Number(task.duration),
       resolution: task.quality, ratio: task.aspectRatio,
       sound: true,
       ...(images.length || videos.length || audios.length ? { generation_mode: 'reference' } : {}),
@@ -69,14 +71,14 @@ export function createRoutedProvider({
       ],
     };
     if (task.routeAdapter === 'cntcn-video') return {
-      model: task.model, prompt: task.prompt, seconds: task.duration,
+      model, prompt: task.prompt, seconds: task.duration,
       aspect_ratio: task.aspectRatio, resolution: task.quality,
       ...(images.length ? { reference_image_urls: images } : {}),
       ...(videos.length ? { reference_videos: videos } : {}),
       ...(audios.length ? { reference_audios: audios } : {}),
     };
     const value = {
-      model: task.model,
+      model,
       prompt: task.prompt,
       [task.routeAdapter === 'wj-video' ? 'seconds' : 'duration']: task.duration,
       aspect_ratio: task.aspectRatio,
