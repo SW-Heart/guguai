@@ -2216,7 +2216,7 @@ import { createApiClient } from './api-client.js?v=4';
     const widths = columnWidths[category] || columnWidths.system;
     const table = (label, heads, rows, trailingHead = '') => `<table class="log-table" aria-label="${esc(label)}"><colgroup>${widths.map(width => `<col style="width:${width}%">`).join('')}</colgroup><thead><tr>${heads.map(head => typeof head === 'string' ? `<th>${head}</th>` : `<th class="${head[1]}">${head[0]}</th>`).join('')}${trailingHead ? `<th>${trailingHead}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table>`;
     const tokenCell = (tokens, rate) => `<td class="is-num"${rate === null || rate === undefined ? '' : ` title="${esc(money(rate))} 元 / 百万 Token"`}>${tokens === null || tokens === undefined ? '—' : money(tokens)}</td>`;
-    if (category === 'generations') return table('生成任务日志', ['时间', '状态', '用户', '模型', ['耗时', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td><td class="is-num">${generationElapsedText(item)}</td><td class="is-num log-actions-anchor">${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}${generationActionsOverlay(item)}</td>`, 6)).join(''));
+    if (category === 'generations') return table('生成任务日志', ['时间', '状态', '用户', '模型', ['耗时', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td data-log-status>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td><td class="is-num" data-log-elapsed>${generationElapsedText(item)}</td><td class="is-num log-actions-anchor"><span data-log-credit>${item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost)}</span>${generationActionsOverlay(item)}</td>`, 6)).join(''));
     if (category === 'credits') return table('积分流水日志', ['时间', '流水 ID', '用户', '类型', ['变动', 'is-num'], ['变动后余额', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '流水 ID')}</td><td>${userCell(item.userId, item.userNickname)}</td><td><code>${esc(item.type || item.reasonCode || '—')}</code></td><td class="is-num">${signedAmount(item.amount)}</td><td class="is-num">${money(item.balanceAfter)}</td>`, 6)).join(''));
     if (category === 'llm') return table('LLM 用量日志', ['时间', '请求 ID', '状态', '用户', '模型', ['普通输入', 'is-num'], ['缓存读取', 'is-num'], ['缓存创建', 'is-num'], ['输出', 'is-num'], ['消耗积分', 'is-num']], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${idText(item.id, '请求 ID')}</td><td>${badge(item.status)}</td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td>${tokenCell(item.uncachedInputTokens, item.inputRateYuanPerMillion)}${tokenCell(item.cacheReadTokens, item.cacheReadRateYuanPerMillion)}${tokenCell(item.cacheCreationTokens, item.cacheCreationRateYuanPerMillion)}${tokenCell(item.outputTokens, item.outputRateYuanPerMillion)}<td class="is-num">${item.charged === null || item.charged === undefined ? '—' : money(item.charged)}</td>`, 10)).join(''));
     if (category === 'audit') return table('管理员审计日志', ['时间', '操作', '目标', '管理员', '结果'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.action)}</code></td><td><div class="cell-stack"><span>${plain(item.targetType)}</span>${idText(item.targetId, '目标 ID')}</div></td><td>${userCell(item.actorUserId, item.actorNickname)}</td><td>${badge(item.status)}</td>`, 5)).join(''));
@@ -2354,17 +2354,23 @@ import { createApiClient } from './api-client.js?v=4';
       const data = await api(`/api/admin/logs/${category}?${params}`);
       if (isStale('logs', token) || category !== state.logCategory || state.view !== 'logs') return;
       const items = data.items || [];
+      if (background) {
+        const receivedIds = new Set(items.map(item => item.id));
+        const missing = $$('[data-log-expand]', table).filter(row =>
+          ['queued', 'running'].includes(row._generationLogItem?.status) && !receivedIds.has(row.dataset.logId));
+        // A finished job can disappear from a status-filtered page, or a new job
+        // can push it onto another page. Refresh those visible records by ID.
+        const extra = await Promise.all(missing.map(row => api(`/api/admin/logs/generations?${new URLSearchParams({ taskId: row.dataset.logId, limit: '1' })}`)));
+        if (isStale('logs', token) || category !== state.logCategory || state.view !== 'logs') return;
+        const active = updateGenerationLogRows(table, [...items, ...extra.flatMap(data => data.items || [])]);
+        if (active) scheduleLogRefresh();
+        return;
+      }
       const filtered = [...params.keys()].some(key => !['limit', 'cursor'].includes(key));
-      const expanded = background ? $$('[data-log-expand][aria-expanded="true"]', table).map(row => row.dataset.logId) : [];
       const scrollLeft = $('.table-wrap', table)?.scrollLeft || 0;
       table.innerHTML = items.length ? `<div class="table-wrap" style="border:0;border-radius:0">${renderLogRows(category, items)}</div>${pageControls('log', data.total, data.nextCursor, items.length)}`
         : emptyMarkup(`暂无${logLabels[category]}`, filtered ? '尝试放宽筛选条件或调整时间范围。' : '有新的记录时会显示在这里。');
       doneLoading(table);
-      for (const id of expanded) {
-        const row = $$('[data-log-expand]', table).find(row => row.dataset.logId === id);
-        const detail = row && document.getElementById(row.getAttribute('aria-controls'));
-        if (detail && row) { detail.hidden = false; row.setAttribute('aria-expanded', 'true'); row.classList.add('is-expanded'); }
-      }
       const wrap = $('.table-wrap', table);
       if (wrap) wrap.scrollLeft = scrollLeft;
       bindLogDetails(table);
@@ -2381,10 +2387,37 @@ import { createApiClient } from './api-client.js?v=4';
   }
 
   const switchRouteStates = { available: '可用', paused: '自动暂停中', disabled: '已停用', unhealthy: '检查异常' };
+  function updateGenerationLogRows(root, items) {
+    const byId = new Map(items.map(item => [item.id, item]));
+    let active = false;
+    $$('[data-log-expand]', root).forEach(row => {
+      const previous = row._generationLogItem;
+      const item = byId.get(row.dataset.logId) || previous;
+      if (!item) return;
+      active ||= ['queued', 'running'].includes(item.status);
+      const elapsed = $('[data-log-elapsed]', row);
+      const markup = generationElapsedText(item);
+      if (elapsed && elapsed.innerHTML !== markup) elapsed.innerHTML = markup;
+      if (previous?.status !== item.status) $('[data-log-status]', row).innerHTML = badge(item.status);
+      const credit = $('[data-log-credit]', row);
+      const cost = item.creditCost === null || item.creditCost === undefined ? '—' : money(item.creditCost);
+      if (credit && credit.textContent !== cost) credit.textContent = cost;
+      const before = generationControls(previous || item);
+      const after = generationControls(item);
+      row._generationLogItem = item;
+      if (before.stop !== after.stop || before.switchRoute !== after.switchRoute) {
+        $('.log-actions-overlay', row)?.remove();
+        $('.log-actions-anchor', row).insertAdjacentHTML('beforeend', generationActionsOverlay(item));
+        bindGenerationControls(row, [item]);
+      }
+    });
+    return active;
+  }
   function bindGenerationControls(root, items) {
-    const find = id => items.find(item => item.id === id);
-    $$('[data-generation-switch]', root).forEach(button => button.onclick = () => switchGenerationRoute(find(button.dataset.generationSwitch), button));
-    $$('[data-generation-stop]', root).forEach(button => button.onclick = () => stopGeneration(find(button.dataset.generationStop)));
+    const byId = new Map(items.map(item => [item.id, item]));
+    $$('[data-log-expand]', root).forEach(row => { row._generationLogItem = byId.get(row.dataset.logId); });
+    $$('[data-generation-switch]', root).forEach(button => button.onclick = () => switchGenerationRoute(button.closest('[data-log-expand]')._generationLogItem, button));
+    $$('[data-generation-stop]', root).forEach(button => button.onclick = () => stopGeneration(button.closest('[data-log-expand]')._generationLogItem));
   }
 
   async function switchGenerationRoute(item, button) {

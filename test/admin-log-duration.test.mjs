@@ -43,7 +43,7 @@ test('generation log places elapsed time after model and keeps detail rows align
     logRow: (item, category, index, cells, colspan, trailing) => `<tr>${cells}${trailing}</tr><tr><td colspan="${colspan}">详情</td></tr>`,
   });
   assert.match(markup, /<th>模型<\/th><th class="is-num">耗时<\/th>/);
-  assert.match(markup, /<td>模型名称<\/td><td class="is-num"><span class="log-elapsed is-deep-green">12 秒<\/span><\/td>/);
+  assert.match(markup, /<td>模型名称<\/td><td class="is-num" data-log-elapsed><span class="log-elapsed is-deep-green">12 秒<\/span><\/td>/);
   assert.equal((markup.match(/<col style=/g) || []).length, 6);
   assert.match(markup, /colspan="6"/);
   assert.doesNotMatch(markup, /<th>操作<\/th>/);
@@ -51,7 +51,7 @@ test('generation log places elapsed time after model and keeps detail rows align
 
 test('admin entry uses the fresh script cache key', () => {
   const entry = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(entry.includes('/guguadmin.js?v=66'));
+  assert.ok(entry.includes('/guguadmin.js?v=67'));
   assert.ok(entry.includes('/guguadmin.css?v=34'));
   assert.ok(!entry.includes('/guguadmin.js?v=61'));
 });
