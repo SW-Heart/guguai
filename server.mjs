@@ -3324,8 +3324,13 @@ if (isMainModule && process.env.NODE_ENV !== 'test') {
   setInterval(pruneErrors, 6 * 60 * 60_000).unref();
   process.once('SIGINT', shutdownServer);
   process.once('SIGTERM', shutdownServer);
+  // nginx keeps idle upstream connections for 60s by default. Node's default
+  // 5s keep-alive closes them first, and a POST that nginx sends on a socket
+  // Node is closing gets reset and surfaces as 502 (nginx won't retry it).
+  const upstreamKeepAlive = target => Object.assign(target, { keepAliveTimeout: 75_000, headersTimeout: 76_000 });
+  upstreamKeepAlive(server);
   if (apiSitePort) {
-    apiSiteServer = http.createServer((req, res) => server.emit('request', req, res));
+    apiSiteServer = upstreamKeepAlive(http.createServer((req, res) => server.emit('request', req, res)));
     apiSiteServer.on('error', error => console.warn(`[api] API 站点端口 ${apiSitePort} 未启用：${error.message}`));
     apiSiteServer.listen(apiSitePort, '127.0.0.1', () => console.log(`GuGu AI API: http://127.0.0.1:${apiSitePort}`));
   }
