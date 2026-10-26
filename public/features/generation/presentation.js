@@ -11,13 +11,8 @@ export function createGenerationPresentation({ escapeHtml } = {}) {
 
   function videoProgressLabel(task) {
     if (isUpscale(task)) return task.progressStage === 'archiving' ? '正在整理成品' : '正在放大视频';
-    return ({
-      submitting: '正在准备视频',
-      provider_processing: '正在生成视频',
-      polling_retry: '正在重试获取进度',
-      archiving: '正在整理成品',
-      awaiting_reconciliation: '正在确认生成',
-    })[task.progressStage] || '正在生成视频';
+    // Users only ever see one in-progress state; internal stages stay internal.
+    return '生成中…';
   }
 
   function videoProgressMarkup(task) {
@@ -40,8 +35,7 @@ export function createGenerationPresentation({ escapeHtml } = {}) {
       const progress = Number.isFinite(uploadProgress) ? uploadProgress : 0;
       return `<div class="skeleton-progress" role="status" aria-live="polite" aria-label="正在上传视频 ${progress}%"><div class="skeleton-progress-head"><span><i aria-hidden="true"></i>正在上传视频</span><b>${progress}%</b></div><div class="skeleton-progress-track" aria-hidden="true"><i style="--progress:${progress}%"></i></div></div>`;
     }
-    const label = ({ preparing_references: '正在准备素材…', confirming_price: '正在确认价格…', submitting: '正在准备生成…' })[task.progressStage] || '正在准备生成…';
-    return labelMarkup(label);
+    return labelMarkup('生成中…');
   }
 
   return Object.freeze({ taskProgress, videoProgressLabel, videoProgressMarkup, generationPreparationMarkup });

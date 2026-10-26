@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {generationVisualStates,generationFrameState,generationTaskStatus,renderGenerationPlaceholder} from '../public/features/drama/generation-status.js';
 
-test('every canvas generation state has a distinct visible status treatment',()=>{
+test('every in-progress canvas state shows only 生成中 to users',()=>{
   assert.deepEqual(generationVisualStates,[
     'draft','submitting','waiting_approval','queued','running',
     'processing','saving','completed','failed','cancelled',
   ]);
-  const expected=['等待生成','正在开始','等待确认','排队中','正在生成','正在处理','正在准备文件','已完成','生成失败','已取消'];
+  const expected=['等待生成','生成中…','等待确认','生成中…','生成中…','生成中…','生成中…','已完成','生成失败','已取消'];
   for(const [index,state] of generationVisualStates.entries()){
     const html=renderGenerationPlaceholder(state,{progress:60});
     assert.match(html,new RegExp(`data-phase="${state}"`));
@@ -56,7 +56,7 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   const read=path=>readFileSync(new URL(`../public/${path}`,import.meta.url),'utf8');
   const source=read('features/drama/director-workspace.js');
   const css=read('styles.css');
-  assert.ok(source.includes("./generation-status.js?v=4"));
+  assert.ok(source.includes("./generation-status.js?v=5"));
   assert.ok(source.includes("./canvas-icons.js?v=1"));
   assert.ok(read('features/drama/generation-status.js').includes("./canvas-icons.js?v=1"));
   for(const tone of ['waiting','active','done','danger','locked'])assert.ok(css.includes(`[data-tone=${tone}]`),tone);
@@ -65,10 +65,10 @@ test('canvas cards share status tones and the redesigned modules are cache-buste
   assert.match(css,/\.dw-frame-caption\{position:absolute;left:0;right:0;top:auto;bottom:calc\(100% \+ 6px\)/);
   assert.ok(Number(read('index.html').match(/\/styles\.css\?v=(\d+)\b/)?.[1])>=340);
   assert.ok(Number(read('index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('app.js').includes("./drama-studio.js?v=313"));
-  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=179"));
-  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=204"));
-  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=204"));
+  assert.ok(read('app.js').includes("./drama-studio.js?v=314"));
+  assert.ok(read('app.js').includes("./features/agent/workspace.js?v=180"));
+  assert.ok(read('drama-studio.js').includes("./features/drama/director-workspace.js?v=205"));
+  assert.ok(read('features/agent/workspace.js').includes("../drama/director-workspace.js?v=205"));
 });
 
 test('an automatically retried job keeps showing as running instead of queued',()=>{

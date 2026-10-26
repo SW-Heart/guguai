@@ -10,7 +10,7 @@ import { createApiClient } from './api-client.js?v=4';
 import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=5';
-import { createGenerationPresentation } from './features/generation/presentation.js?v=5';
+import { createGenerationPresentation } from './features/generation/presentation.js?v=6';
 import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=2';
 import { createCreditPresentation } from './features/credits/presentation.js?v=6';
 import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
@@ -656,7 +656,7 @@ const dateText = value => new Date(value).toLocaleString('zh-CN', { month:'2-dig
 const fullDateText = value => value ? new Date(value).toLocaleString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—';
 const creditPresentation = createCreditPresentation({ getState:() => state, escapeHtml:esc, formatFullDate:fullDateText });
 const { creditText, compactCreditText, creditEntryAmount, creditDateText, creditModelName, creditGenerationType, creditSpendType, creditEarnType, creditEntryStatus, signedCreditAmount, renderCreditRows } = creditPresentation;
-const statusText = value => ({ queued:'排队中', running:'生成中', completed:'已完成', failed:'失败' })[value] || value;
+const statusText = value => ({ queued:'生成中', running:'生成中', completed:'已完成', failed:'失败' })[value] || value;
 const generationStage = status => status === 'queued' ? 1 : status === 'running' ? 3 : status === 'completed' ? 5 : 0;
 const generationStages = ['排队', '准备', '生成', '增强', '完成'];
 const taskFailure = task => {
@@ -2210,8 +2210,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=179');
-const importDramaStudio = () => import('./drama-studio.js?v=313');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=180');
+const importDramaStudio = () => import('./drama-studio.js?v=314');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -4376,29 +4376,17 @@ function referenceCountsForIds(ids) {
   const files = (Array.isArray(ids) ? ids : []).map(referenceFileById).filter(Boolean);
   return Object.fromEntries(['image','video','audio'].map(kind => [kind, files.filter(file => file.kind === kind).length]));
 }
-async function submitGeneration(type, form, payload) {
-  if (generationSubmissionForms.has(form)) return;
-  if (type === 'image') {
-    const oversized = state.refs.image.map(referenceFileById).find(imageReferenceTooLarge);
-    if (oversized) return toast(imageReferenceTooLargeText(oversized));
+async function submitGeneration(type, form, payload, preparation) {
+  if (!preparation) {
+    if (generationSubmissionForms.has(form)) return;
+    preparation = startGenerationPreparation(type, form, { prompt:payload.prompt, count:type === 'image' ? Number(payload.quantity) || 1 : 1 });
   }
-  generationSubmissionForms.add(form);
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
   const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
-  const preparationCount = type === 'image' ? Math.max(1, Number(payload.quantity) || 1) : 1;
-  const preparationGroupId = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const initialStage = unresolvedReferences ? 'preparing_references' : 'submitting';
-  const preparations = Array.from({ length:preparationCount }, (_, index) => ({ id:`local-preparation-${preparationGroupId}-${index + 1}`, type, status:'running', progressStage:initialStage, prompt:payload.prompt, createdAt, localPreparation:true }));
-  const preparationIds = new Set(preparations.map(item => item.id));
-  const setPreparationStage = progressStage => {
-    state.generationPreparations = state.generationPreparations.map(item => preparationIds.has(item.id) ? { ...item, progressStage } : item);
-    renderTasks();
-  };
-  state.generationPreparations = [...preparations, ...state.generationPreparations];
-  renderTasks();
+  const setPreparationStage = progressStage => preparation.setStage(progressStage);
+  if (unresolvedReferences) setPreparationStage('preparing_references');
   let chargedTasks = [];
   const referenceJobs = requestedReferenceIds.map(pendingReferenceJob).filter(Boolean);
   referenceJobs.forEach(job => { job.inUse = (job.inUse || 0) + 1; });
@@ -4436,7 +4424,7 @@ async function submitGeneration(type, form, payload) {
     if (!accountScope.isCurrent(requestAccount)) return;
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
     chargedTasks = tasks;
-    state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
+    preparation.clear();
     state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
     mergeTasksIntoLoadedHistory(tasks);
     renderTasks();
@@ -4451,7 +4439,7 @@ async function submitGeneration(type, form, payload) {
     await loadTasks();
   } catch (error) {
     if (!accountScope.isCurrent(requestAccount)) return;
-    state.generationPreparations = state.generationPreparations.filter(item => !preparationIds.has(item.id));
+    preparation.clear();
     if (chargedTasks.length) {
       try {
         const cancelled = await api('/api/generations/references/cancel', { method:'POST', body:JSON.stringify({ taskIds:chargedTasks.map(task => task.id), error:`素材准备失败：${error.message}` }) });
@@ -4464,7 +4452,59 @@ async function submitGeneration(type, form, payload) {
     }
     renderTasks(); renderReferences(); toast(error.message); await loadCredits();
   }
-  finally { referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); }); generationSubmissionForms.delete(form); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
+  finally { referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); }); preparation.release(); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
+}
+// Clicking generate shows a pressed button and a progress card right away; the
+// prompt check, reference uploads and pricing then run behind that card.
+function setGenerateButtonBusy(form, busy) {
+  const button = form?.querySelector?.('.generate');
+  if (!button) return;
+  const label = button.querySelector('span:first-child');
+  if (busy) {
+    button.classList.add('is-pressed');
+    clearTimeout(button.pressTimer);
+    button.pressTimer = setTimeout(() => button.classList.remove('is-pressed'), 160);
+    if (label && !button.dataset.idleLabel) button.dataset.idleLabel = label.textContent;
+    if (label) label.textContent = '生成中…';
+    button.setAttribute('aria-busy', 'true');
+  } else {
+    if (label && button.dataset.idleLabel) label.textContent = button.dataset.idleLabel;
+    delete button.dataset.idleLabel;
+    button.removeAttribute('aria-busy');
+  }
+}
+function startGenerationPreparation(type, form, { prompt, count = 1 }) {
+  generationSubmissionForms.add(form);
+  setGenerateButtonBusy(form, true);
+  const groupId = crypto.randomUUID();
+  const createdAt = new Date().toISOString();
+  const preparations = Array.from({ length:Math.max(1, count) }, (_, index) => ({ id:`local-preparation-${groupId}-${index + 1}`, type, status:'running', progressStage:'submitting', prompt, createdAt, localPreparation:true }));
+  const ids = new Set(preparations.map(item => item.id));
+  state.generationPreparations = [...preparations, ...state.generationPreparations];
+  renderTasks();
+  return {
+    setStage(progressStage) {
+      state.generationPreparations = state.generationPreparations.map(item => ids.has(item.id) ? { ...item, progressStage } : item);
+      renderTasks();
+    },
+    clear() {
+      state.generationPreparations = state.generationPreparations.filter(item => !ids.has(item.id));
+      renderTasks();
+    },
+    release() {
+      generationSubmissionForms.delete(form);
+      setGenerateButtonBusy(form, false);
+    },
+  };
+}
+async function checkPromptBeforeGeneration(preparation, input) {
+  try {
+    const checked = await promptPrecheck.check(input);
+    if (checked.action !== 'cancel') return checked;
+  } catch (error) { toast(error.message); }
+  preparation.clear();
+  preparation.release();
+  return null;
 }
 $('#imageModel').addEventListener('change', () => syncImageModelParameters());
 ['imageMjStylize', 'imageMjChaos', 'imageMjWeird'].forEach(id => $(`#${id}`)?.addEventListener('input', syncMidjourneyRangeLabels));
@@ -4480,9 +4520,12 @@ $('#imageForm').onsubmit = async event => {
   const midjourneyOptions = modelId === 'midjourney' ? currentMidjourneyOptions() : null;
   const tuziQuality = modelId === 'gpt-image-2.5' ? ($('#imageTuziQuality').value || '1k') : '';
   const quantity = commitImageQuantity($('#imageQuantity').value);
+  const oversized = state.refs.image.map(referenceFileById).find(imageReferenceTooLarge);
+  if (oversized) return toast(imageReferenceTooLargeText(oversized));
+  const preparation = startGenerationPreparation('image', form, { prompt:replaceAssetMentions(prompt, state.imagePromptMentions), count:quantity });
   // Edits made in the check dialog apply to this submission only; @mentions in the text still resolve.
-  const checked = await promptPrecheck.check({ prompts:[prompt], modelId, source:'image' });
-  if (checked.action === 'cancel') return;
+  const checked = await checkPromptBeforeGeneration(preparation, { prompts:[prompt], modelId, source:'image' });
+  if (!checked) return;
   submitGeneration('image', form, {
     modelId,
     prompt:replaceAssetMentions(checked.prompts[0], state.imagePromptMentions),
@@ -4491,7 +4534,7 @@ $('#imageForm').onsubmit = async event => {
     quality:modelId === 'midjourney' ? midjourneyOptions.quality : modelId === 'gpt-image-2.5' ? tuziQuality : $('#imageQuality').value,
     quantity,
     ...(midjourneyOptions ? { midjourneyOptions } : {}),
-  });
+  }, preparation);
 };
 $('#imageQuantity').oninput = () => { const input = $('#imageQuantity'); const value = imageQuantityValue(input.value); if (value !== null) input.value = String(value); updateImageCost(); };
 $('#imageQuantity').onchange = () => commitImageQuantity($('#imageQuantity').value);
@@ -4510,9 +4553,10 @@ $('#videoForm').onsubmit = async event => {
   const input = currentVideoFormInput();
   if (!input) return toast('创作参数已变化，请重新选择时长、画幅和清晰度');
   const referenceAssetIds = input.generationType === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video;
-  const checked = await promptPrecheck.check({ prompts:[prompt], modelId:input.modelId, source:'video' });
-  if (checked.action === 'cancel') return;
-  submitGeneration('video', form, { prompt:replaceAssetMentions(checked.prompts[0], state.videoPromptMentions), ...input, referenceAssetIds, ...checked.fields });
+  const preparation = startGenerationPreparation('video', form, { prompt:replaceAssetMentions(prompt, state.videoPromptMentions) });
+  const checked = await checkPromptBeforeGeneration(preparation, { prompts:[prompt], modelId:input.modelId, source:'video' });
+  if (!checked) return;
+  submitGeneration('video', form, { prompt:replaceAssetMentions(checked.prompts[0], state.videoPromptMentions), ...input, referenceAssetIds, ...checked.fields }, preparation);
 };
 const imageQuantityMin = 1;
 const imageQuantityMax = 10;

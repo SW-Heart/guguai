@@ -325,6 +325,15 @@
 /* Creator property panel */
 .creator-panel { grid-area: creator; overflow: auto; padding: 16px 18px 82px; border-right: 1px solid var(--line); background: var(--panel); }
 .creator-panel .generate { position: fixed; z-index: 15; left: calc(var(--rail-width) + 18px); bottom: 20px; width: calc(var(--creator-width) - 36px); margin: 0; }
+/* Generate button: a raised key that visibly sinks on press, then shows it is submitting. */
+.gradient-button.generate { --generate-edge: color-mix(in srgb, var(--brand) 62%, #1d1b4f); box-shadow: 0 4px 0 var(--generate-edge), 0 10px 22px rgb(91 92 232 / .24), inset 0 1px rgb(255 255 255 / .28); transition: transform 90ms ease-out, box-shadow 90ms ease-out, background var(--ease), border-color var(--ease); }
+.gradient-button.generate:hover:not(:disabled) { box-shadow: 0 4px 0 var(--generate-edge), 0 14px 28px rgb(91 92 232 / .3), inset 0 1px rgb(255 255 255 / .32); }
+.gradient-button.generate:active:not(:disabled), .gradient-button.generate.is-pressed { transform: translateY(4px); box-shadow: 0 0 0 var(--generate-edge), 0 3px 8px rgb(91 92 232 / .2), inset 0 2px 5px rgb(20 18 70 / .28); transition-duration: 40ms; }
+.gradient-button.generate:disabled { box-shadow: none; }
+.gradient-button.generate[aria-busy="true"] { cursor: progress; }
+.gradient-button.generate[aria-busy="true"] .button-cost { position: relative; color: transparent; }
+.gradient-button.generate[aria-busy="true"] .button-cost::after { content: ""; position: absolute; top: 50%; right: 0; width: 14px; height: 14px; margin-top: -7px; border: 2px solid rgb(255 255 255 / .35); border-top-color: #fff; border-radius: 50%; animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .gradient-button.generate[aria-busy="true"] .button-cost::after { animation-duration: 2.4s; } }
 .select-ratio-icon, .select-clock { border: 0; border-radius: 0; background: transparent; }
 .panel-heading h1, .content-head h2, .dialog-head h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
 .field-label { display: block; margin: 0 0 8px; color: var(--ink-soft); font-size: 12px; font-weight: 550; }

@@ -3,12 +3,13 @@ import { canvasIcon } from './canvas-icons.js?v=1';
 export const generationVisualStates=Object.freeze(['draft','submitting','waiting_approval','queued','running','processing','saving','completed','failed','cancelled']);
 const presentation={
   draft:{label:'等待生成',icon:'image'},
-  submitting:{label:'正在开始',icon:'loader-circle'},
+  // Every in-progress phase looks the same to users; the phases are internal.
+  submitting:{label:'生成中…',icon:'sparkles'},
   waiting_approval:{label:'等待确认',icon:'clock'},
-  queued:{label:'排队中',icon:'hourglass'},
-  running:{label:'正在生成',icon:'sparkles'},
-  processing:{label:'正在处理',icon:'scan-line'},
-  saving:{label:'正在准备文件',icon:'download'},
+  queued:{label:'生成中…',icon:'sparkles'},
+  running:{label:'生成中…',icon:'sparkles'},
+  processing:{label:'生成中…',icon:'sparkles'},
+  saving:{label:'生成中…',icon:'sparkles'},
   completed:{label:'已完成',icon:'circle-check'},
   failed:{label:'生成失败',icon:'circle-alert'},
   cancelled:{label:'已取消',icon:'ban'},

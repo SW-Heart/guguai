@@ -49,7 +49,8 @@ test('generation presentation only renders valid active progress', () => {
   assert.equal(presentation.taskProgress({ progress: 101 }), null);
   assert.equal(presentation.taskProgress({ progress: 42.4 }), 42);
   assert.equal(presentation.videoProgressMarkup({ type: 'video', status: 'running', progress: 42, progressStage: 'provider_processing' }).includes('42%'), true);
-  assert.match(presentation.videoProgressMarkup({ type: 'video', status: 'running', progress: 42, progressStage: 'polling_retry' }), /正在重试获取进度/);
+  assert.match(presentation.videoProgressMarkup({ type: 'video', status: 'running', progress: 42, progressStage: 'polling_retry' }), /生成中…/);
   assert.equal(presentation.videoProgressMarkup({ type: 'image', status: 'running', progress: 42 }), '');
-  assert.match(presentation.generationPreparationMarkup({ localPreparation: true, progressStage: 'submitting' }), /正在准备生成/);
+  assert.match(presentation.generationPreparationMarkup({ localPreparation: true, progressStage: 'submitting' }), /生成中…/);
+  for (const progressStage of ['preparing_references', 'confirming_price', 'submitting']) assert.doesNotMatch(presentation.generationPreparationMarkup({ localPreparation: true, progressStage }), /素材|价格|准备/);
 });
