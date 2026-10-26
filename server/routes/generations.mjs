@@ -1,3 +1,4 @@
+import { minimaxH3RecordedModel } from '../../providers/minimax-h3.mjs';
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice, videoBillingUnit } from '../../lib/pricing.mjs';
 import { publicPrecheckHits } from './prompt-precheck.mjs';
@@ -412,7 +413,7 @@ export function createGenerationRouteHandler({
         id:taskIds[index], ownerId:user.id, originDeviceId:scope.deviceId, originWorkspaceId:scope.workspaceId, type, prompt, referenceAssetIds, provider,
         ...(dramaProjectId ? {dramaProjectId}:{}),
         ...(styleSnapshot ? {userPrompt,dramaStyleSnapshot:styleSnapshot,stylePromptMaxLength:promptMaxLength}:{}),
-        model:type === 'video' ? routeSelection?.upstreamModelId || videoRequest.model : modelId, modelId, size,
+        model:type === 'video' ? minimaxH3RecordedModel({ videoModelId:videoRequest.modelId, videoProfile:videoRequest.profileKey, referenceImageCount:referenceCounts.image }, routeSelection?.upstreamModelId || videoRequest.model, routeSelection || {}) : modelId, modelId, size,
         quality:type === 'image' ? (isMidjourney ? midjourneyOptions.quality : imageQuality) : videoRequest.quality, aspectRatio, duration,
         ...(isMidjourney ? {
           midjourneyOptions,
@@ -422,7 +423,7 @@ export function createGenerationRouteHandler({
           midjourneyOutputIds:outputIds,
           midjourneyPrimaryId:outputIds[0],
         } : {}),
-        ...(type === 'video' ? { videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
+        ...(type === 'video' ? { referenceImageCount:referenceCounts.image, videoModelId:videoRequest.modelId, generationType:videoRequest.generationType, videoProfile:videoRequest.profileKey, maxReferenceImages:videoRequest.maxImages, referenceLimits:routeSelection ? { image:routeSelection.capabilities.image, video:routeSelection.capabilities.video, audio:routeSelection.capabilities.audio, total:routeSelection.capabilities.image + routeSelection.capabilities.video + routeSelection.capabilities.audio } : videoRequest.referenceLimits, dramaProjectId, dramaShotId } : {}),
         ...(routeSelection ? { routeId:routeSelection.id, routeVersion:routeSelection.version, routePriority:routeSelection.priority, routeDisplayName:routeSelection.displayName, routeAdapter:routeSelection.adapterType, routeBaseUrl:routeSelection.baseUrl, routeCredentialId:routeSelection.credentialId, routeTextPlaceholderImage:routeSelection.textPlaceholderImage } : {}),
         ...(generationRequestId ? { requestId:generationRequestId } : {}), ...(requestFingerprint ? { requestFingerprint } : {}), ...(quantity > 1 ? { batchId:generationRequestId || batchId, batchIndex:index + 1, batchSize:quantity } : {}),
         creditCost:isIncludedOutput ? 0 : pricingSnapshotValue.total,

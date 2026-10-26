@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { VIDEO_MODEL_IDS } from '../lib/video-capabilities.mjs';
+import { minimaxH3RecordedModel } from '../providers/minimax-h3.mjs';
 
 export const generationAttemptContext = new AsyncLocalStorage();
 export const maxGenerationRetries = 3;
@@ -33,7 +34,7 @@ function routedRetryAllowed(task, at) {
 export function applyGenerationRoute(task, route) {
   Object.assign(task, {
     provider: route.provider,
-    model: route.upstreamModelId,
+    model: minimaxH3RecordedModel(task, route.upstreamModelId, route),
     routeId: route.id,
     routeVersion: route.version,
     routePriority: route.priority,

@@ -134,3 +134,18 @@ test('YK nested confirmed failures preserve status detail and billing state', as
   await assert.rejects(provider.pollVideo(current, {}, {immediate:true, pollOnce:true}), error => error.message === '生成内容未通过审核' && error.upstreamTerminal === true);
   assert.equal(current.providerFinancialHold, true);
 });
+
+test('MiniMax H3 jobs record the model that is actually submitted', async () => {
+  const { minimaxH3RecordedModel } = await import('../providers/minimax-h3.mjs');
+  const { applyGenerationRoute } = await import('../services/generation-retry.mjs');
+  const h3 = { videoModelId:'minimax-h3-15s' };
+  assert.equal(minimaxH3RecordedModel({ ...h3, referenceImageCount:0 }, 'minimax_h3_zm_u24'), 'minimax_h3_z0901');
+  assert.equal(minimaxH3RecordedModel({ ...h3, referenceImageCount:0 }, 'minimax_h3_z0902'), 'minimax_h3_z0901');
+  assert.equal(minimaxH3RecordedModel({ ...h3, referenceImageCount:2 }, 'minimax_h3_zm_u24'), 'minimax_h3_zm_u24');
+  assert.equal(minimaxH3RecordedModel({ ...h3, referenceImageCount:0 }, 'minimax_h3_zm_u24', { textPlaceholderImage:true }), 'minimax_h3_zm_u24');
+  assert.equal(minimaxH3RecordedModel({ ...h3, generationType:'TEXT' }, 'minimax_h3_zm_u24'), 'minimax_h3_z0901', 'older jobs fall back to the generation type');
+  assert.equal(minimaxH3RecordedModel({ videoModelId:'seedance-2.0', referenceImageCount:0 }, 'seedance-model'), 'seedance-model');
+  const task = { ...h3, referenceImageCount:0 };
+  applyGenerationRoute(task, { provider:'autodl', upstreamModelId:'minimax_h3_zm_u24', id:'r', version:1, capabilities:{} });
+  assert.equal(task.model, 'minimax_h3_z0901');
+});
