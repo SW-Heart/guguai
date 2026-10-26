@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 test('speech language popover style fix reaches the versioned stylesheet entry', async () => {
   for (const [file, url] of [
-    ['index.html', '/styles.css?v=433'],
+    ['index.html', '/styles.css?v=434'],
     ['styles.css', '/styles/speech.css?v=7'],
   ]) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
@@ -14,7 +14,7 @@ test('speech language popover style fix reaches the versioned stylesheet entry',
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=606', '/styles.css?v=433']],
+    ['index.html', ['/app.js?v=606', '/styles.css?v=434']],
     ['app.js', ['./drama-studio.js?v=314', './features/agent/workspace.js?v=180']],
     ['drama-studio.js', ['./features/drama/director-workspace.js?v=205']],
     ['features/agent/workspace.js', ['../drama/director-workspace.js?v=205']],
@@ -35,7 +35,7 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
     ['index.html', '/app.js?v=606'],
-    ['index.html', '/styles.css?v=433'],
+    ['index.html', '/styles.css?v=434'],
     ['app.js', './drama-studio.js?v=314'],
     ['app.js', './features/agent/workspace.js?v=180'],
     ['drama-studio.js', './features/drama/director-workspace.js?v=205'],
