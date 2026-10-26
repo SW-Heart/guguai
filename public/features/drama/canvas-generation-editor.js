@@ -1,4 +1,4 @@
-import {createPromptEditorCodec} from '../../components/prompt-editor.js?v=2';
+import {createPromptEditorCodec,linkTextMentions,pastePlainText,splitTextMentions,textMentionEntries} from '../../components/prompt-editor.js?v=3';
 import {bindGenerationMentionDialog,mentionTrigger} from './director-mentions.js?v=5';
 
 const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -14,20 +14,10 @@ export function generationMentionMarkup(file,label=file.name||'未命名素材')
 function generationDraftSegments(draft){
   let segments=draft.promptSegments;
   if(!Array.isArray(segments)||generationSegmentsText(segments)!==draft.prompt)segments=[String(draft.prompt||'')];
-  const files=draft.attachments.filter(file=>file.name).sort((a,b)=>b.name.length-a.name.length);
+  const entries=textMentionEntries(draft.attachments);
   // References may become available after a storyboard's plain text was saved.
   // Promote text mentions on every render while retaining explicit ID bindings.
-  segments=segments.flatMap(segment=>{
-    if(typeof segment!=='string')return [segment];
-    const result=[];let text=segment,plain='';
-    while(text){
-      const file=text[0]==='@'?files.find(file=>text.startsWith(`@${file.name}`)):null;
-      if(file){if(plain)result.push(plain);plain='';result.push({id:file.id,label:file.name});text=text.slice(file.name.length+1);}
-      else{plain+=text[0];text=text.slice(1);}
-    }
-    if(plain)result.push(plain);
-    return result;
-  });
+  segments=segments.flatMap(segment=>typeof segment==='string'?splitTextMentions(segment,entries).parts.map(part=>typeof part==='string'?part:{id:part.file.id,label:part.label}):[segment]);
   return segments;
 }
 
@@ -111,7 +101,7 @@ export function restoreGenerationSelection(editor,offsets){
   const selection=editor.ownerDocument.defaultView.getSelection();selection.removeAllRanges();selection.addRange(range);
 }
 
-export function bindGenerationRichPrompt(editor,{pick,getInput,signal,type='video'}){
+export function bindGenerationRichPrompt(editor,{pick,getInput,signal,type='video',mentionFiles=()=>[],toast=()=>{}}){
   editor.dataset.placeholder=type==='image'?'描述想要的画面、风格与细节，输入 @ 引用图片…':'描述视频中的画面、动作与镜头，输入 @ 引用素材…';
   generationPromptCodec.normalizeEmpty(editor);
   // Let the composer save this input event before opening a dialog rebuilds it.
@@ -135,10 +125,11 @@ export function bindGenerationRichPrompt(editor,{pick,getInput,signal,type='vide
     editor.dispatchEvent(new Event('input',{bubbles:true}));
   },{signal});
   editor.addEventListener('paste',event=>{
-    const selection=editor.ownerDocument.defaultView.getSelection();if(!selection?.rangeCount||!editor.contains(selection.anchorNode))return;
-    event.preventDefault();const range=selection.getRangeAt(0);range.deleteContents();
-    const text=editor.ownerDocument.createTextNode(event.clipboardData.getData('text/plain'));range.insertNode(text);
-    generationPromptCodec.setCaret(editor,text,text.nodeValue.length);editor.dispatchEvent(new Event('input',{bubbles:true}));
+    if(!pastePlainText(editor,event))return;
+    const holder=editor.ownerDocument.createElement('span');
+    const {ambiguous}=linkTextMentions(editor,textMentionEntries(mentionFiles()),{mentionClass:'video-prompt-mention',createChip:(file,label)=>{holder.innerHTML=generationMentionMarkup(file,label);return holder.firstElementChild;}});
+    editor.dispatchEvent(new Event('input',{bubbles:true}));
+    if(ambiguous.length)toast(`@${ambiguous[0]} 对应多个同名素材，请补全文件后缀`);
   },{signal});
   editor.addEventListener('compositionstart',()=>{editor.dataset.composing='true';},{signal});
   editor.addEventListener('compositionend',()=>{editor.dataset.composing='false';editor.dispatchEvent(new Event('input',{bubbles:true}));},{signal});

@@ -29,7 +29,7 @@ import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=21';
 import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=20';
 import { generationFrameState, generationTaskStatus, renderGenerationPlaceholder } from './generation-status.js?v=5';
-import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=5';
+import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=6';
 import { canvasIcon } from './canvas-icons.js?v=1';
 import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=12';
 import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, isInlineGenerator, displayedResult, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=3';
@@ -2048,6 +2048,8 @@ export function createDirectorWorkspace(host, bridge) {
       bindGenerationRichPrompt(input,{
         type:draft.type,
         signal:generationMentionEvents.signal,
+        mentionFiles:()=>current()?generationPromptView(draft).attachments:[],
+        toast:message=>bridge.toast(message),
         getInput:()=>current()?panel.querySelector('[data-gen-prompt]'):null,
         pick:async()=>{
           if(!current())return null;

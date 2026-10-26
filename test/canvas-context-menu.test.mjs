@@ -12,10 +12,10 @@ test('right-click placement accounts for the canvas offset, pan and zoom', () =>
 test('the context menu is reachable through fresh script and stylesheet cache versions', () => {
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=606', '/styles.css?v=434']],
-    ['app.js', ['./drama-studio.js?v=314', './features/agent/workspace.js?v=180']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=205']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=205']],
+    ['index.html', ['/app.js?v=608', '/styles.css?v=434']],
+    ['app.js', ['./drama-studio.js?v=315', './features/agent/workspace.js?v=182']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=206']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=206']],
     ['features/drama/director-workspace.js', ['./canvas-context-menu.js?v=2']],
   ]) for (const url of urls) {
     const [path,version]=url.split('?v=');

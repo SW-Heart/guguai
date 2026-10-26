@@ -15,8 +15,8 @@ test('the optimization button precedes generation and every changed frontend ent
   assert.match(studio, /promptOptimizationButton\(shot,locked\)\}<button type="button" class="wb-generate-button"/);
   assert.ok(studio.includes('./features/drama/prompt-optimization.js?v=4'));
   assert.ok(read('features/drama/prompt-optimization.js').includes('./prompt-optimization-loading.js?v=1'));
-  assert.ok(read('app.js').includes('./drama-studio.js?v=314'));
-  assert.ok(read('index.html').includes('/app.js?v=606'));
+  assert.ok(read('app.js').includes('./drama-studio.js?v=315'));
+  assert.ok(read('index.html').includes('/app.js?v=608'));
   assert.ok(read('index.html').includes('/styles.css?v=434'));
   const css = read('styles.css');
   assert.match(css,/prompt-optimization-comparison\{[^}]*grid-template-columns:1fr 1fr/);
@@ -356,14 +356,12 @@ test('manually added @ references are considered without persisting the draft an
 test('confirming a draft keeps existing chips and resolves newly typed names with the regular @ matcher', () => {
   const source = readFileSync(new URL('../public/drama-studio.js',import.meta.url),'utf8');
   const code = source.slice(source.indexOf('  function optimizedShotEditorMarkup('),source.indexOf('  function workbenchReferenceRow('));
-  let replaced, originalCalled = 0;
-  const protectedChip = {nodeType:1,classList:{contains:() => true},childNodes:[{nodeType:3,nodeValue:'@小美'}],id:'existing-asset'};
-  const typedName = {nodeType:3,nodeValue:'在 @客厅 说话',replaceWith:fragment => replaced=fragment};
-  const holder = {childNodes:[protectedChip,typedName],innerHTML:''};
-  const context = {Node:{TEXT_NODE:3,ELEMENT_NODE:1},document:{createElement:() => holder},
-    renderMentionEditorContent:item => {originalCalled++;assert.equal(item.assetMentions[0].id,'existing-asset');return 'markup';},
-    autoMentionFragment:text => {assert.equal(text,'在 @客厅 说话');return {fragment:{id:'new-room'}};}};
+  let linked = null, originalCalled = 0;
+  const holder = {innerHTML:''};
+  const context = {document:{createElement:() => holder},
+    renderMentionEditorContent:item => {originalCalled++;assert.equal(item.assetMentions[0].id,'existing-asset');assert.equal(item.script,'当前编辑');return 'markup';},
+    linkEditorMentions:target => {linked = target;}};
   vm.createContext(context);vm.runInContext(code,context);
-  context.optimizedShotEditorMarkup({assetMentions:[{id:'existing-asset'}]},'当前编辑');
-  assert.equal(originalCalled,1);assert.equal(protectedChip.id,'existing-asset');assert.equal(replaced.id,'new-room');
+  assert.equal(context.optimizedShotEditorMarkup({assetMentions:[{id:'existing-asset'}]},'当前编辑'),'markup');
+  assert.equal(originalCalled,1);assert.equal(linked,holder);
 });

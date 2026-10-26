@@ -94,8 +94,8 @@ test('local videos load only near the viewport and changed entrypoints share fre
   assert.match(mediaSource,/data-wb-video-src=/);assert.match(mediaSource,/preload="metadata"/);assert.doesNotMatch(mediaSource,/preload="auto"/);
   const html=readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.ok(html.includes('/app.js?v=606'));assert.ok(html.includes('/styles.css?v=434'));
-  assert.ok(app.includes('./drama-studio.js?v=314'));
+  assert.ok(html.includes('/app.js?v=608'));assert.ok(html.includes('/styles.css?v=434'));
+  assert.ok(app.includes('./drama-studio.js?v=315'));
   assert.ok(source.includes('./features/drama/workbench-media.js?v=1'));
 });
 
@@ -137,7 +137,7 @@ test('a title edit after saving updates the current shot object',()=>{
     querySelectorAll:()=>[]};
   const old={id:'a',title:'旧名称'};
   const context={project:{shots:[old]},root:{querySelector:()=>null},DEFAULT_SHOT_TITLE:'未命名分镜',
-    bindWorkbenchDropdowns(){},fitWorkbenchTitle(){},bindMentionChipInteractions(){},bindWorkbenchShotSettings(){},rememberWorkbenchCard(){},
+    bindWorkbenchDropdowns(){},fitWorkbenchTitle(){},bindMentionChipInteractions(){},linkShotEditorMentions(){},bindWorkbenchShotSettings(){},rememberWorkbenchCard(){},
     bindWorkbenchPreviewActions(){},bindWorkbenchVideoRatios(){},hydrateWorkbenchVideos(){},requestAnimationFrame:fn=>fn(),
     updateWorkbenchShot:(id,field,value)=>{context.project.shots.find(shot=>shot.id===id)[field]=value;}};
   vm.createContext(context);vm.runInContext(functionSource('bindStoryboardWorkbench','applyProjectAssetToShot'),context);

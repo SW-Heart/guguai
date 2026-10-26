@@ -13,7 +13,7 @@ import { createTaskPoller } from './features/generation/polling.js?v=5';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=6';
 import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=2';
 import { createCreditPresentation } from './features/credits/presentation.js?v=6';
-import { createPromptEditorCodec } from './components/prompt-editor.js?v=2';
+import { createPromptEditorCodec, linkTextMentions, pastePlainText, textMentionEntries } from './components/prompt-editor.js?v=3';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=10';
 import { resetAccountState } from './state/account-state.js?v=2';
@@ -525,6 +525,17 @@ function insertVideoPromptMentions(assetIds, request = videoPromptMentionRequest
   videoPromptMentionRequest = null;
   return { editor, range:range.cloneRange() };
 }
+// Pasted text and text written before an upload both pick up `@name` references.
+function promptMentionChip(markup) {
+  const holder = document.createElement('span');
+  holder.innerHTML = markup;
+  return holder.firstElementChild;
+}
+function linkVideoPromptTextMentions() {
+  if (videoGenerationParameters().mode === 'FIRST&LAST') return { ids:[], ambiguous:[] };
+  const files = state.refs.video.map(id => referenceFileById(id)).filter(file => file && ['image','video','audio'].includes(file.kind));
+  return linkTextMentions(videoPromptEditor(), textMentionEntries(files), { mentionClass:'video-prompt-mention', createChip:(file, label) => promptMentionChip(videoPromptMentionMarkup({ id:file.id, label, kind:file.kind }, file)) });
+}
 let imagePromptMentionRequest = null;
 let imagePromptCompositionFrame = 0;
 function imagePromptEditor() { return $('#imagePrompt'); }
@@ -572,6 +583,10 @@ function removeImagePromptMentionAtCaret(editor, event) {
   else if (before?.isConnected && before.nodeType === Node.TEXT_NODE) setVideoPromptCaret(editor, before, before.nodeValue.length);
   else setVideoPromptCaret(editor);
   return true;
+}
+function linkImagePromptTextMentions() {
+  const files = state.refs.image.map(id => referenceFileById(id)).filter(file => file?.kind === 'image');
+  return linkTextMentions(imagePromptEditor(), textMentionEntries(files), { mentionClass:'image-prompt-mention', createChip:(file, label) => promptMentionChip(imagePromptMentionMarkup({ id:file.id, label, kind:'image' }, file)) });
 }
 function syncImagePromptMentionsFromEditor() {
   const previousMentionIds = new Set(state.imagePromptMentions.map(item => item.id));
@@ -2210,8 +2225,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=180');
-const importDramaStudio = () => import('./drama-studio.js?v=314');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=182');
+const importDramaStudio = () => import('./drama-studio.js?v=315');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2386,6 +2401,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
   // Dispose the old canvas before changing its grid or allowing a route-shell paint.
   if (creativeRoutes.includes(state.route) && !creativeRoutes.includes(nextRoute)) agentController?.suspend?.();
   else if (state.route === 'project' && nextRoute === 'agent') agentController?.showHome?.();
+  else if (nextRoute === 'project') agentController?.prepareProject?.(window.location.pathname.split('/').filter(Boolean).at(-1));
   if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
   // Keep an open short-drama path on load and back/forward; a sidebar click shows the list.
   const keepDramaPath=nextRoute==='drama'&&historyMode!=='push'&&Boolean(dramaProjectIdFromPath());
@@ -3796,6 +3812,8 @@ function renderReferences() {
   }
   state.refs.image = normalizeImageReferenceIds(state.refs.image);
   pruneImagePromptMentionsToReferences();
+  if (linkImagePromptTextMentions().ids.length) { syncImagePromptMentionsFromEditor(); syncImagePromptState(); }
+  if (linkVideoPromptTextMentions().ids.length) { syncVideoPromptMentionsFromEditor(); syncVideoPromptState(); }
   if (state.videoFrames.first && !referenceFileById(state.videoFrames.first)) state.videoFrames.first = '';
   if (state.videoFrames.last && !referenceFileById(state.videoFrames.last)) state.videoFrames.last = '';
   const imageSelected = state.refs.image.map(id => referenceFileById(id)).filter(Boolean);
@@ -4290,6 +4308,12 @@ $('#imagePrompt').addEventListener('compositionend', () => {
   imagePromptCompositionFrame = requestAnimationFrame(() => syncImagePromptInput());
 });
 $('#imagePrompt').addEventListener('keydown', event => { removeImagePromptMentionAtCaret(imagePromptEditor(), event); });
+$('#imagePrompt').addEventListener('paste', event => {
+  if (!pastePlainText(imagePromptEditor(), event)) return;
+  const { ambiguous } = linkImagePromptTextMentions();
+  syncImagePromptInput();
+  if (ambiguous.length) toast(`@${ambiguous[0]} 对应多张同名图片，请补全文件后缀`);
+});
 $('#imagePrompt').oninput = event => {
   const editor = imagePromptEditor();
   if (event.isComposing || event.inputType === 'insertCompositionText' || editor.dataset.composing === 'true') return;
@@ -4315,6 +4339,12 @@ $('#videoPrompt').addEventListener('compositionend', () => {
   videoPromptCompositionFrame = requestAnimationFrame(() => syncVideoPromptInput());
 });
 $('#videoPrompt').addEventListener('keydown', event => { removeVideoPromptMentionAtCaret($('#videoPrompt'), event); });
+$('#videoPrompt').addEventListener('paste', event => {
+  if (!pastePlainText(videoPromptEditor(), event)) return;
+  const { ambiguous } = linkVideoPromptTextMentions();
+  syncVideoPromptInput();
+  if (ambiguous.length) toast(`@${ambiguous[0]} 对应多个同名素材，请补全文件后缀`);
+});
 $('#videoPrompt').oninput = event => {
   const editor = $('#videoPrompt');
   if (event.isComposing || event.inputType === 'insertCompositionText' || editor.dataset.composing === 'true') return;

@@ -52,7 +52,7 @@ test('video loading and every changed entrypoint have current cache keys',()=>{
   const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
   assert.match(read('drama-studio.js'),/video-generation-loading\.js\?v=1/);
   assert.match(read('features/drama/video-generation-loading.js'),/prompt-optimization-loading\.js\?v=1/);
-  assert.match(read('app.js'),/drama-studio\.js\?v=314\b/);
-  assert.match(read('index.html'),/app\.js\?v=606\b/);
-  assert.match(read('index.html'),/styles\.css\?v=433\b/);
+  assert.match(read('app.js'),/drama-studio\.js\?v=315\b/);
+  assert.match(read('index.html'),/app\.js\?v=608\b/);
+  assert.match(read('index.html'),/styles\.css\?v=434\b/);
 });

@@ -12,12 +12,12 @@ const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.ur
 export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAsset,registerCanvasFile,renameCanvasFile,importLocalMedia=async()=>null,loadReferenceFiles,loadFiles,loadTasks,scheduleTaskPoll,syncDesktopDeliveries,setCreditBalance,accountSnapshot,isAccountCurrent,onProjectTitleChanged,onCreateProject,renderRecentProjects,loadCanvasStyles=async()=>{}}) {
   const host=document.querySelector('#agentView');
   const project={id:'',directorWorkspace:normalizeDirectorWorkspace(),assetIds:[],resources:[],shots:[],script:'',synopsis:''};
-  let view=null,sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,initialCanvasOpen=false,screen='',navigationEpoch=0,creating=false;
+  let view=null,openingId='',sessionId='',account=null,initialMessage='',initialAttachments=[],initialDocuments=[],initialSkill='',initialModelPreferences,initialCanvasOpen=false,screen='',navigationEpoch=0,creating=false;
   let homeActionsController=null;
   // The canvas engine is most of this page's code but the home view never uses
   // it, so it loads with the project data and is warmed up once the home is idle.
   let canvasModule=null,canvasWarmup=0;
-  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=205'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
+  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=206'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
     canvasModule=null;
     console.warn('[agent] 画布模块加载失败',error);
     throw new Error('画布加载失败，请检查网络后重试');
@@ -31,7 +31,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   const locationFor=(viewName,id='')=>viewName==='workspace'?`/projects/${encodeURIComponent(id)}`:'/create';
   function changeLocation(viewName,id=''){window.history.pushState({route:viewName==='workspace'?'project':'agent'},'',locationFor(viewName,id));}
   function dispatchRoute(){window.dispatchEvent(new PopStateEvent('popstate'));}
-  function resetView(){navigationEpoch++;homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;initialCanvasOpen=false;}
+  function resetView(){navigationEpoch++;openingId='';homeActionsController?.abort();homeActionsController=null;view?.dispose();view=null;host.replaceChildren();sessionId='';project.id='';project.directorWorkspace=normalizeDirectorWorkspace();project.assetIds=[];initialMessage='';initialAttachments=[];initialDocuments=[];initialSkill='';initialModelPreferences=undefined;initialCanvasOpen=false;}
   function showHome(){
     if(screen==='home'&&isAccountCurrent(account)&&host.querySelector('.create-home')){refreshRecent();return;}
     resetView();account=accountSnapshot();screen='home';
@@ -233,18 +233,27 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
       const title=defaultTitleFromMessage(message)||defaultTitleFromMessage(documents.length?`根据${documents[0].title}创作`:attachments.length?'基于附件开始创作':'')||'新项目';
       const {project:created}=await api('/api/agent/projects',{method:'POST',body:JSON.stringify({title})});
       if(token!==navigationEpoch)return;
-      changeLocation('workspace',created.id);await openProject(created.id,message,attachments,documents,skill,modelPreferences,true);dispatchRoute();
+      // Enter the project layout first so the loading page is shown full size.
+      changeLocation('workspace',created.id);dispatchRoute();await openProject(created.id,message,attachments,documents,skill,modelPreferences,true);
     }catch(error){if(token===navigationEpoch)toast(error.message);}
     finally{creating=false;}
   }
   async function openProject(id,message='',attachments=[],documents=[],skill='',modelPreferences,showCanvas=true){
     if(screen==='workspace'&&project.id===id&&view)return;
-    resetView();const token=navigationEpoch;screen='loading';host.innerHTML=`<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true">${projectLoadingMarkup}</div>`;
+    // The route render asks for the same project again while a new one is opening.
+    if(screen==='loading'&&openingId===id)return;
+    showProjectLoading();openingId=id;const token=navigationEpoch;
     try{
       const [result,{createDirectorWorkspace}]=await Promise.all([api(`/api/agent/projects/${encodeURIComponent(id)}`),loadCanvas()]);
       if(screen!=='loading'||token!==navigationEpoch)return;
       project.id=result.project.id;project.title=result.project.title;initialMessage=message;initialAttachments=attachments;initialDocuments=documents.map((file,index)=>({...file,id:file.id||`entry-${index}-${crypto.randomUUID()}`}));initialSkill=skill;initialModelPreferences=modelPreferences;initialCanvasOpen=showCanvas;screen='workspace';mountWorkspace(createDirectorWorkspace);
     }catch(error){if(token!==navigationEpoch)return;toast(error.message);changeLocation('home');dispatchRoute();}
+  }
+  function showProjectLoading(){resetView();screen='loading';host.innerHTML=`<div class="agent-project-loading is-opening" role="status" aria-live="polite" aria-busy="true">${projectLoadingMarkup}</div>`;}
+  // Replace the previous page as soon as the project route is entered.
+  function prepareProject(id){
+    if((screen==='workspace'&&project.id===id&&view)||(screen==='loading'&&openingId===id))return;
+    showProjectLoading();
   }
   const asset=id=>state.files.find(file=>file.id===id&&file.localStatus!=='missing');
   const task=id=>state.tasks.find(item=>item.id===id);
@@ -423,5 +432,5 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
     const heading=host?.querySelector('.dw-agent-project-title');
     if(heading){heading.textContent=title;heading.title=title;}
   }
-  return {load,showHome,generationIds:canvasGenerationIds,createProject:()=>createProject(),loadProject:id=>openProject(id),refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
+  return {load,showHome,generationIds:canvasGenerationIds,createProject:()=>createProject(),loadProject:id=>openProject(id),prepareProject,refreshTasks:()=>view?.refresh(),renameProject,suspend(){resetView();screen='';}};
 }

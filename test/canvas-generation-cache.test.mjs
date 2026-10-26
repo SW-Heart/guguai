@@ -14,10 +14,10 @@ test('speech language popover style fix reaches the versioned stylesheet entry',
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=606', '/styles.css?v=434']],
-    ['app.js', ['./drama-studio.js?v=314', './features/agent/workspace.js?v=180']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=205']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=205']],
+    ['index.html', ['/app.js?v=608', '/styles.css?v=434']],
+    ['app.js', ['./drama-studio.js?v=315', './features/agent/workspace.js?v=182']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=206']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=206']],
     ['features/drama/director-workspace.js', ['./canvas-layout.js?v=2']],
   ];
   for (const [file, urls] of entries) {
@@ -34,12 +34,12 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=606'],
+    ['index.html', '/app.js?v=608'],
     ['index.html', '/styles.css?v=434'],
-    ['app.js', './drama-studio.js?v=314'],
-    ['app.js', './features/agent/workspace.js?v=180'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=205'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=205'],
+    ['app.js', './drama-studio.js?v=315'],
+    ['app.js', './features/agent/workspace.js?v=182'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=206'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=206'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
     ['features/drama/director-workspace.js', './canvas-generation-references.js?v=12'],
     ['features/drama/director-workspace.js', './storyboard-drafts.js?v=11'],
@@ -57,10 +57,10 @@ test('bounded image drops reach both workspace entries through fresh cache versi
     ['features/drama/director-workspace.js', './director-mentions.js?v=5'],
     ['features/drama/director-workspace.js', './canvas-media-library.js?v=3'],
     ['features/drama/director-workspace.js', './director-actions.js?v=21'],
-    ['features/drama/director-workspace.js', './canvas-generation-editor.js?v=5'],
+    ['features/drama/director-workspace.js', './canvas-generation-editor.js?v=6'],
     ['features/drama/director-workspace.js', './document-card.js?v=3'],
     ['features/drama/canvas-generation-editor.js', './director-mentions.js?v=5'],
-    ['features/drama/canvas-generation-editor.js', '../../components/prompt-editor.js?v=2'],
+    ['features/drama/canvas-generation-editor.js', '../../components/prompt-editor.js?v=3'],
   ];
   for (const [file, url] of entries) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
@@ -74,11 +74,11 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('connection endpoint handle fix reaches both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=606'],
-    ['app.js', './drama-studio.js?v=314'],
-    ['app.js', './features/agent/workspace.js?v=180'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=205'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=205'],
+    ['index.html', '/app.js?v=608'],
+    ['app.js', './drama-studio.js?v=315'],
+    ['app.js', './features/agent/workspace.js?v=182'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=206'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=206'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
   ];
   for (const [file, url] of entries) {

@@ -132,7 +132,7 @@ test('loading a project after returning home cannot remount its canvas',async()=
   const host={replaceChildren(){},querySelector:()=>null,innerHTML:''};
   const context=vm.createContext({host,navigationEpoch:0,homeActionsController:null,view:null,sessionId:'',project:{},
     initialMessage:'',initialAttachments:[],initialDocuments:[],initialSkill:'',initialModelPreferences:undefined,
-    account:null,screen:'',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>1,isAccountCurrent:()=>true,
+    account:null,screen:'',openingId:'',normalizeDirectorWorkspace:()=>({}),accountSnapshot:()=>1,isAccountCurrent:()=>true,
     renderHome(){homeRenders++;},projectLoadingMarkup:'正在打开项目',api:()=>new Promise(resolve=>{finishProject=resolve;}),
     mountWorkspace(){mounts++;},toast(){assert.fail('stale navigation must not notify');},
     warmCanvas(){},loadCanvas:async()=>({createDirectorWorkspace(){}})});
@@ -145,10 +145,10 @@ test('loading a project after returning home cannot remount its canvas',async()=
 
 test('navigation fixes reach both workspace imports and the versioned HTML entry',()=>{
   const html=read('index.html');
-  assert.ok(html.includes('/app.js?v=606'));assert.ok(html.includes('/styles.css?v=434'));
-  assert.ok(app.includes('./features/agent/workspace.js?v=180'));assert.ok(app.includes('./drama-studio.js?v=314'));
-  assert.ok(agent.includes('../drama/director-workspace.js?v=205'));
-  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=205'));
+  assert.ok(html.includes('/app.js?v=608'));assert.ok(html.includes('/styles.css?v=434'));
+  assert.ok(app.includes('./features/agent/workspace.js?v=182'));assert.ok(app.includes('./drama-studio.js?v=315'));
+  assert.ok(agent.includes('../drama/director-workspace.js?v=206'));
+  assert.ok(read('drama-studio.js').includes('./features/drama/director-workspace.js?v=206'));
 });
 
 test('the creation route shows a loading state until its page is ready and starts downloading at startup',()=>{
