@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 test('speech language popover style fix reaches the versioned stylesheet entry', async () => {
   for (const [file, url] of [
-    ['index.html', '/styles.css?v=435'],
+    ['index.html', '/styles.css?v=436'],
     ['styles.css', '/styles/speech.css?v=7'],
   ]) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
@@ -14,10 +14,10 @@ test('speech language popover style fix reaches the versioned stylesheet entry',
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=612', '/styles.css?v=435']],
-    ['app.js', ['./drama-studio.js?v=315', './features/agent/workspace.js?v=182']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=206']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=206']],
+    ['index.html', ['/app.js?v=613', '/styles.css?v=436']],
+    ['app.js', ['./drama-studio.js?v=316', './features/agent/workspace.js?v=183']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=207']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=207']],
     ['features/drama/director-workspace.js', ['./canvas-layout.js?v=2']],
   ];
   for (const [file, urls] of entries) {
@@ -34,25 +34,25 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=612'],
-    ['index.html', '/styles.css?v=435'],
-    ['app.js', './drama-studio.js?v=315'],
-    ['app.js', './features/agent/workspace.js?v=182'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=206'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=206'],
+    ['index.html', '/app.js?v=613'],
+    ['index.html', '/styles.css?v=436'],
+    ['app.js', './drama-studio.js?v=316'],
+    ['app.js', './features/agent/workspace.js?v=183'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=207'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=207'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
-    ['features/drama/director-workspace.js', './canvas-generation-references.js?v=12'],
-    ['features/drama/director-workspace.js', './storyboard-drafts.js?v=11'],
-    ['features/drama/storyboard-drafts.js', './canvas-generation-references.js?v=12'],
+    ['features/drama/director-workspace.js', './canvas-generation-references.js?v=13'],
+    ['features/drama/director-workspace.js', './storyboard-drafts.js?v=12'],
+    ['features/drama/storyboard-drafts.js', './canvas-generation-references.js?v=13'],
     ['features/drama/director-workspace.js', './canvas-links.js?v=3'],
     ['features/drama/director-workspace.js', './canvas-connect.js?v=3'],
-    ['features/drama/director-workspace.js', './canvas-ops.js?v=7'],
+    ['features/drama/director-workspace.js', './canvas-ops.js?v=8'],
     ['features/drama/director-workspace.js', '../agent/frames.js?v=4'],
     ['features/drama/director-workspace.js', './document-card.js?v=3'],
     ['features/drama/director-actions.js', './canvas-links.js?v=3'],
     ['features/drama/storyboard-drafts.js', './canvas-links.js?v=3'],
     ['features/agent/workspace.js', '../drama/director-actions.js?v=21'],
-    ['features/drama/canvas-generation-references.js', './canvas-generation.js?v=20'],
+    ['features/drama/canvas-generation-references.js', './canvas-generation.js?v=21'],
     ['app.js', './features/media/controller.js?v=14'],
     ['features/drama/director-workspace.js', './director-mentions.js?v=5'],
     ['features/drama/director-workspace.js', './canvas-media-library.js?v=3'],
@@ -74,11 +74,11 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('connection endpoint handle fix reaches both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=612'],
-    ['app.js', './drama-studio.js?v=315'],
-    ['app.js', './features/agent/workspace.js?v=182'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=206'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=206'],
+    ['index.html', '/app.js?v=613'],
+    ['app.js', './drama-studio.js?v=316'],
+    ['app.js', './features/agent/workspace.js?v=183'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=207'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=207'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
   ];
   for (const [file, url] of entries) {

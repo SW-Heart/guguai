@@ -7084,7 +7084,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .drama-style-dialog h2,.drama-custom-style-dialog h2{margin:0;font-size:21px;letter-spacing:-.5px}
 .drama-style-dialog .dialog-head p{margin:6px 0 0;color:#77758b;font-size:13px}
 .drama-style-dialog .dialog-head>button,.drama-custom-style-dialog .dialog-head>button{border:0;background:transparent;font-size:24px;line-height:1;color:#77758b;cursor:pointer;padding:2px 5px}
-.drama-style-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));align-content:start;gap:16px;padding:4px 28px 24px;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.drama-style-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:max-content;align-content:start;gap:16px;padding:4px 28px 24px;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .drama-style-card{display:flex;flex-direction:column;padding:0;min-width:0;border:2px solid transparent;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 2px 10px #312a4710;text-align:left;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s}
 .drama-style-card:hover{border-color:#bab2ed;box-shadow:0 5px 16px #62559a20}
 .drama-style-card.is-selected{border-color:#7567c8;box-shadow:0 0 0 2px #7567c81a}
@@ -7092,6 +7092,11 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .drama-style-card>div:not(.drama-style-custom-art){padding:11px 12px 14px}
 .drama-style-card b{font-size:14px;font-weight:600}
 .drama-style-card p{margin:5px 0 0;font-size:12px;line-height:1.6;color:#77758b;overflow-wrap:anywhere}
+.drama-style-card.is-loading{cursor:default;pointer-events:none}
+.drama-style-card.is-loading .drama-style-custom-art,.drama-style-card.is-loading i{background:linear-gradient(100deg,#f0edf7 30%,#f8f6fc 50%,#f0edf7 70%) 0 0/300% 100%;animation:drama-style-loading 1.4s ease-in-out infinite}
+.drama-style-card.is-loading i{display:block;height:12px;border-radius:6px;width:45%}
+.drama-style-card.is-loading i+i{width:85%;margin-top:9px}
+@keyframes drama-style-loading{from{background-position:100% 0}to{background-position:0 0}}
 .drama-style-custom p{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .drama-style-custom-art{display:grid;place-items:center;font-size:40px;font-weight:300;color:#8e80bf;background:radial-gradient(ellipse at 30% 30%,#e4def7,transparent 70%),linear-gradient(145deg,#f4f0fc,#eae9fb)}
 .drama-style-dialog>footer,.drama-custom-style-dialog footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 28px;border-top:1px solid #dedbe980;background:#ffffffa8}
@@ -7107,7 +7112,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .drama-style-dialog :focus-visible,.drama-custom-style-dialog :focus-visible,.drama-project-style:focus-visible{outline:2px solid #7567c8;outline-offset:3px}
 @media(max-width:900px){.drama-style-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:640px){.drama-style-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px)}.drama-style-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:4px 18px 18px;gap:12px}.drama-style-dialog .dialog-head,.drama-custom-style-dialog .dialog-head{padding:20px 18px 16px}.drama-style-dialog>footer,.drama-custom-style-dialog footer{padding:16px 18px}.drama-style-dialog>footer{flex-wrap:wrap}.drama-style-dialog>footer>div{width:100%}.drama-custom-style-fields{padding:4px 18px 20px}.drama-project-style{max-width:100px;padding:6px 8px}}
-@media(prefers-reduced-motion:reduce){.drama-style-card{transition:none}}
+@media(prefers-reduced-motion:reduce){.drama-style-card{transition:none}.drama-style-card.is-loading .drama-style-custom-art,.drama-style-card.is-loading i{animation:none}}
 
 @media(prefers-reduced-motion:reduce){#agentView .create-home-primary:is(:hover,:focus-visible,:active) .create-home-sheet-back{transform:translate(-53px,-2px) rotate(-11deg)}#agentView .create-home-primary:is(:hover,:focus-visible,:active) .create-home-sheet-middle{transform:translate(53px,-2px) rotate(10deg)}#agentView .create-home-primary:is(:hover,:focus-visible,:active) .create-home-sheet-front{transform:translateY(3px)}}
 

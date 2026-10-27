@@ -1435,7 +1435,12 @@ function showMainWindow() {
 function updateBackgroundTaskPolling() {
   clearInterval(backgroundTaskPollTimer);
   backgroundTaskPollTimer = null;
-  if (!mainWindow || mainWindow.isDestroyed() || (mainWindow.isVisible() && !mainWindow.isMinimized())) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // A visible but unfocused window can still be fully covered by another app;
+  // Chromium then reports the page hidden and stops its own polling. Keep
+  // ticking whenever the window is not in front; the renderer skips the task
+  // poll while its page is actually visible.
+  if (mainWindow.isVisible() && !mainWindow.isMinimized() && mainWindow.isFocused()) return;
   backgroundTaskPollTimer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed() || isQuitting) {
       clearInterval(backgroundTaskPollTimer);
@@ -1859,6 +1864,8 @@ async function createWindow({ loadStudioAfter = true } = {}) {
   mainWindow.on('show', updateBackgroundTaskPolling);
   mainWindow.on('minimize', updateBackgroundTaskPolling);
   mainWindow.on('restore', updateBackgroundTaskPolling);
+  mainWindow.on('focus', updateBackgroundTaskPolling);
+  mainWindow.on('blur', updateBackgroundTaskPolling);
   // 页面自身的异常与崩溃只在渲染进程里可见，转录一份到日志文件，
   // 否则用户上传的日志会缺掉最关键的那一段。
   mainWindow.webContents.on('console-message', detail => {

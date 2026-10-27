@@ -14,3 +14,9 @@ Wan uses the Qwen color mark from Lobe Icons, matching `Qwen.Color` in
 https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/qwen-color.svg
 The light variant preserves the original asset; the dark variant lightens the
 purple gradient for contrast while preserving its geometry.
+
+Kling uses the Kling color mark from Lobe Icons static SVG package version 1.98.0.
+Source:
+https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/kling-color.svg
+The light variant preserves the original asset; the dark variant lightens the
+deep blue gradient stop for contrast while preserving its geometry.

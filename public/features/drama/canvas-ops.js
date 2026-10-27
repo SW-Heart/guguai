@@ -4,7 +4,7 @@
 // and a save from a client that missed some edits gets them replayed first,
 // so neither side overwrites the other.
 import { normalizeLinks, linkId, linkError, isGenerator, isInlineGenerator, entityKinds, uniqueEntityName, renameEntity, placeResults } from './canvas-links.js?v=3';
-import { canvasGenerationFrameSize } from './canvas-generation.js?v=20';
+import { canvasGenerationFrameSize } from './canvas-generation.js?v=21';
 
 export const EDIT_LOG_LIMIT=50;
 export const OPERATION_LIMIT=60;

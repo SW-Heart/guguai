@@ -131,6 +131,8 @@ test('development scripts revalidate while production versioned assets stay immu
   assert.equal(__test.staticCacheControl('.css', { versioned:true, production:false }), 'no-cache');
   assert.equal(__test.staticCacheControl('.js', { versioned:true, production:true }), 'public, max-age=31536000, immutable');
   assert.equal(__test.staticCacheControl('.js', { versioned:false, production:true }), 'no-cache');
+  assert.equal(__test.staticCacheControl('.webp', { versioned:true, production:true }), 'public, max-age=31536000, immutable');
+  assert.equal(__test.staticCacheControl('.webp', { versioned:false, production:true }), 'no-cache');
 });
 
 test('drama video generation preserves the submitted prompt and only falls back when absent', () => {

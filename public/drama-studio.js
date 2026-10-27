@@ -1,9 +1,9 @@
-import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=3';
+import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=4';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createRecordIndexes } from './state/records.js?v=2';
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=9';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=16';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
@@ -57,7 +57,7 @@ const imageQualities = [['low','低'],['medium','中'],['high','高']];
 const DEFAULT_SHOT_TITLE = '未命名分镜';
 const LEGACY_GUGU_2_MODEL_ID = 'grok-15';
 const MINIMAX_H3_15S_MODEL_ID = 'minimax-h3-15s';
-const ROUTED_VIDEO_MODEL_IDS = new Set(['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value']);
+const ROUTED_VIDEO_MODEL_IDS = new Set(['wan-3.0','wan-3.0-value','kling-4.0','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value']);
 const canonicalVideoModelId = value => String(value || '').trim().toLowerCase() === LEGACY_GUGU_2_MODEL_ID ? MINIMAX_H3_15S_MODEL_ID : String(value || '').trim();
 const PREVIEW_PLAY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7 8 5-8 5z"/></svg>';
 const stepOrder = ['script','resources','storyboard','video'];
@@ -71,7 +71,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   // Only smart projects use the canvas engine, the largest part of this page's
   // code, so it is fetched when one opens and warmed up while the list is idle.
   let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
-  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=206'), loadCanvasStyles()]).then(([module]) => {
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=207'), loadCanvasStyles()]).then(([module]) => {
     createDirectorWorkspace = module.createDirectorWorkspace;
     return module;
   }).catch(error => {
@@ -227,7 +227,6 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     throw Object.assign(new Error('账号已切换，已取消旧操作'), { stale:true });
   };
   const styleDialog=createDramaStyleDialog({api,esc,toast,isCurrent:isProjectRequestCurrent,
-    onCreate:async(style,request)=>{assertProjectRequest(request);return createProject('professional',style);},
     onChange:async(style,request)=>{
       await flushSave();assertProjectRequest(request);
       const saved=await patch({style});
@@ -788,7 +787,6 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       if (isAccountCurrent(requestAccount)) { setRenameProjectError(error.message); button.disabled = false; button.textContent = '保存名称'; input.focus(); input.select(); }
     }
   });
-  async function openCreateProjectDialog(){await styleDialog.open({request:projectRequest()});}
   async function load(force=false) {
     const requestAccount=accountSnapshot();
     if(busy){
@@ -3336,5 +3334,5 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     shotPreviewSignatures.clear();
     state.dramaProject=null;
   }
-  return { load, render, refreshTasks, refreshProject, removeAssemblyVideosForAssets, modelState, suspend, resetForAccount, open:openProject, close:closeProject, create:openCreateProjectDialog, rename:openRenameProjectDialog, remove:deleteProject, get projects(){return projects;}, get project(){return project;} };
+  return { load, render, refreshTasks, refreshProject, removeAssemblyVideosForAssets, modelState, suspend, resetForAccount, open:openProject, close:closeProject, create:style=>createProject('professional',style), rename:openRenameProjectDialog, remove:deleteProject, get projects(){return projects;}, get project(){return project;} };
 }

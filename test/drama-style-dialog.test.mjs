@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDramaStyleDialog } from '../public/features/drama/style-dialog.js';
 
-function harness(t, { onCreate = async () => true, onChange = async () => true, emptyCatalog = false } = {}) {
+function harness(t, { onCreate = async () => true, onChange = async () => true, emptyCatalog = false, catalog } = {}) {
   const dialogs = [], messages = [], request = { projectId:'current' };
   let current = true;
   const originalDocument = globalThis.document;
@@ -32,7 +32,7 @@ function harness(t, { onCreate = async () => true, onChange = async () => true, 
   };
   const preset = { id:'live-action', name:'真人影视', description:'自然画面', coverUrl:'/cover.png' };
   const controller = createDramaStyleDialog({
-    api:async () => ({ styles:emptyCatalog ? [] : [preset] }), esc:String, toast:message => messages.push(message),
+    api:catalog || (async () => ({ styles:emptyCatalog ? [] : [preset] })), esc:String, toast:message => messages.push(message),
     onCreate, onChange, isCurrent:value => current && value === request,
   });
   return { controller, request, preset, messages, picker:() => dialogs[0], stale:() => { current = false; } };
@@ -95,4 +95,17 @@ test('skip works without available presets and ignores an outdated project reque
   h.stale();
   await h.picker().querySelector('[data-skip]').onclick();
   assert.equal(calls, 1);
+});
+
+test('the picker shows at once and fills in the styles when they arrive', async t => {
+  let deliver;
+  const h = harness(t, { catalog:() => new Promise(resolve => { deliver = resolve; }) });
+  const opening = h.controller.open({ request:h.request });
+  assert.equal(h.picker().open, true);
+  assert.equal(h.picker().querySelector('[data-submit]').disabled, true);
+  assert.equal(h.picker().querySelector('[data-style]'), null);
+  deliver({ styles:[h.preset] });
+  await opening;
+  assert.ok(h.picker().querySelector('[data-style]'));
+  assert.equal(h.picker().querySelector('[data-submit]').disabled, false);
 });

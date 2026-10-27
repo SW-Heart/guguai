@@ -1,4 +1,4 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=9';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
 import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=7';
@@ -26,6 +26,7 @@ import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
 import { createDesktopUpdateExit } from './platform/desktop-update-exit.js?v=3';
 import { createProjectLibrary, openProjectTypeDialog } from './features/projects/library.js?v=5';
+import { createDramaStyleDialog } from './features/drama/style-dialog.js?v=4';
 import { createPromptPrecheck } from './features/prompt-precheck/guard.js?v=3';
 import { createErrorReporter } from './features/errors/reporter.js?v=1';
 
@@ -184,6 +185,14 @@ async function confirmFileDeletion(file) {
 }
 const esc = (value='') => String(value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const notificationController = createNotificationController({ state, api, esc, toast, accountSnapshot:accountScope.snapshot, isAccountCurrent:accountScope.isCurrent });
+// The style picker opens before the drama workspace finishes loading; the
+// workspace keeps downloading while a style is being chosen.
+const dramaCreateDialog = createDramaStyleDialog({ api, esc, toast, isCurrent:request => accountScope.isCurrent(request.account),
+  onCreate:async (style, request) => {
+    const controller = await ensureDramaController();
+    return accountScope.isCurrent(request.account) ? controller.create(style) : false;
+  },
+});
 const { load:loadNotifications, render:renderNotifications, setPanelOpen:setNotificationPanelOpen, schedulePanelClose:scheduleNotificationPanelClose, markRead:markNotificationRead, markAllRead:markAllNotificationsRead } = notificationController;
 const supportLogController = createSupportLogController({ api, toast, closeNotifications:() => setNotificationPanelOpen(false), getClientInfo:() => desktopClientInfo, getSyncInfo:() => desktopSyncInfo });
 const generationPresentation = createGenerationPresentation({ escapeHtml:esc });
@@ -1636,6 +1645,7 @@ function clearDesktopAccountState() {
   state.uploadJobs.splice(0).forEach(job => {
     if (job.revokePreview && job.previewUrl) URL.revokeObjectURL(job.previewUrl);
   });
+  dramaCreateDialog.close();
   dramaController?.resetForAccount?.();
   projectLibrary.reset();
   notificationController.closeNotificationDialog();
@@ -2227,8 +2237,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=182');
-const importDramaStudio = () => import('./drama-studio.js?v=315');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=183');
+const importDramaStudio = () => import('./drama-studio.js?v=316');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2375,7 +2385,10 @@ async function startProjectCreation(trigger) {
   const type = await openProjectTypeDialog(trigger);
   try {
     if (type === 'canvas') await (await ensureAgentController()).createProject();
-    else if (type === 'drama') await (await ensureDramaController()).create();
+    else if (type === 'drama') {
+      void ensureDramaController().catch(() => {});
+      await dramaCreateDialog.open({ request:{ account:accountScope.snapshot() } });
+    }
   } catch (error) {
     toast(error.message || '项目创建失败，请重试');
   }
@@ -4424,7 +4437,7 @@ async function submitGeneration(type, form, payload, preparation) {
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
   const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
-  const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
+  const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','kling-4.0','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   const setPreparationStage = progressStage => preparation.setStage(progressStage);
   if (unresolvedReferences) setPreparationStage('preparing_references');
   let chargedTasks = [];
@@ -4690,7 +4703,7 @@ function updateVideoCost() {
   const sequence = ++videoQuoteSequence;
   const input = currentVideoQuoteInput();
   if (!input) { state.modelQuote = null; cost.textContent = '—'; return; }
-  const routed = ['wan-3.0','wan-3.0-value','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
+  const routed = ['wan-3.0','wan-3.0-value','kling-4.0','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(input.modelId);
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }

@@ -16,7 +16,7 @@ test('video catalog exposes Minimax H3 as available in launch order', () => {
   const capabilities = publicVideoCapabilities();
   const models = capabilities.models;
   assert.deepEqual(models.map(model => model.label), [
-    'Wan 3.0', 'Wan 3.0 特价', 'Seedance 2.0', 'Seedance 2.0 Mini', 'Seedance 2.5', 'Seedance 2.0 Mini 特价', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.0 Fast 特价', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
+    'Wan 3.0', 'Wan 3.0 特价', 'Kling 4.0', 'Seedance 2.0', 'Seedance 2.0 Mini', 'Seedance 2.5', 'Seedance 2.0 Mini 特价', 'Seedance 2.0 特价', 'Seedance 2.0 Fast', 'Seedance 2.0 Fast 特价', 'Seedance 2.5 特价', 'Minimax H3', 'Omni Flash', 'Veo 3.1', 'Grok 1.5', 'Veo 3.1 Fast',
   ]);
   const minimaxH315s = models.find(model => model.id === VIDEO_MODEL_IDS.MINIMAX_H3_15S);
   assert.equal(minimaxH315s?.availability, 'available');

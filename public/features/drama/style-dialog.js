@@ -1,5 +1,7 @@
+const loadingCards = Array.from({length:10},()=>'<div class="drama-style-card is-loading" aria-hidden="true"><div class="drama-style-custom-art"></div><div><i></i><i></i></div></div>').join('');
+
 export function createDramaStyleDialog({ api, esc, toast, onCreate, onChange, isCurrent }) {
-  let catalog = [], selected = null, context = null, token = 0, busy = false;
+  let catalog = [], catalogRequest = null, selected = null, context = null, token = 0, busy = false, loading = false;
   let picker, custom;
   function mount() {
     if(picker)return;
@@ -9,7 +11,7 @@ export function createDramaStyleDialog({ api, esc, toast, onCreate, onChange, is
     picker.addEventListener('cancel',event=>{if(busy)event.preventDefault();else close();});
   }
   function render() {
-    picker.innerHTML = `<header class="dialog-head"><div><h2 id="dramaStyleHeading">${context.edit ? '修改画面风格' : '选择短剧风格'}</h2><p>${context.edit ? '用于之后生成的画面，已生成内容保持原样。' : '选一种适合故事的画面风格。'}</p></div><button type="button" data-close aria-label="关闭"><span class="gugu-lucide gugu-lucide-x" aria-hidden="true"></span></button></header><div class="drama-style-grid">${catalog.map(item=>`<button type="button" class="drama-style-card ${selected?.id===item.id?'is-selected':''}" data-style="${esc(item.id)}" aria-pressed="${selected?.id===item.id}"><img src="${esc(item.coverUrl)}" alt="${esc(item.name)}风格示例" width="480" height="640" loading="lazy" decoding="async"><div><b>${esc(item.name)}</b><p>${esc(item.description)}</p></div></button>`).join('')}<button type="button" class="drama-style-card drama-style-custom ${selected?.id==='custom'?'is-selected':''}" data-custom aria-pressed="${selected?.id==='custom'}"><div class="drama-style-custom-art" aria-hidden="true">＋</div><div><b>${selected?.id==='custom'?esc(selected.name):'自定义风格'}</b><p>${selected?.id==='custom'?esc(selected.description):'用自己的文字描述喜欢的画面。'}</p></div></button></div><footer><span data-selection>${selected ? `已选择：${esc(selected.name)}` : '请选择一种风格'}</span><div><button type="button" class="secondary-button" data-close>取消</button>${context.edit ? '' : '<button type="button" class="secondary-button" data-skip>暂不选择直接进入</button>'}<button type="button" class="gradient-button" data-submit ${!selected?'disabled':''}>${context.edit?'保存风格':'创建项目'}</button></div></footer>`;
+    picker.innerHTML = `<header class="dialog-head"><div><h2 id="dramaStyleHeading">${context.edit ? '修改画面风格' : '选择短剧风格'}</h2><p>${context.edit ? '用于之后生成的画面，已生成内容保持原样。' : '选一种适合故事的画面风格。'}</p></div><button type="button" data-close aria-label="关闭"><span class="gugu-lucide gugu-lucide-x" aria-hidden="true"></span></button></header><div class="drama-style-grid" aria-busy="${loading}">${loading?loadingCards:''}${catalog.map(item=>`<button type="button" class="drama-style-card ${selected?.id===item.id?'is-selected':''}" data-style="${esc(item.id)}" aria-pressed="${selected?.id===item.id}"><img src="${esc(item.coverUrl)}" alt="${esc(item.name)}风格示例" width="480" height="640" loading="lazy" decoding="async"><div><b>${esc(item.name)}</b><p>${esc(item.description)}</p></div></button>`).join('')}<button type="button" class="drama-style-card drama-style-custom ${selected?.id==='custom'?'is-selected':''}" data-custom aria-pressed="${selected?.id==='custom'}"><div class="drama-style-custom-art" aria-hidden="true">＋</div><div><b>${selected?.id==='custom'?esc(selected.name):'自定义风格'}</b><p>${selected?.id==='custom'?esc(selected.description):'用自己的文字描述喜欢的画面。'}</p></div></button></div><footer><span data-selection>${selected ? `已选择：${esc(selected.name)}` : '请选择一种风格'}</span><div><button type="button" class="secondary-button" data-close>取消</button>${context.edit ? '' : '<button type="button" class="secondary-button" data-skip>暂不选择直接进入</button>'}<button type="button" class="gradient-button" data-submit ${!selected?'disabled':''}>${context.edit?'保存风格':'创建项目'}</button></div></footer>`;
     picker.querySelectorAll('[data-close]').forEach(button=>button.onclick=close);
     picker.querySelectorAll('[data-style]').forEach(button=>button.onclick=()=>{
       selected=catalog.find(item=>item.id===button.dataset.style);
@@ -50,11 +52,24 @@ export function createDramaStyleDialog({ api, esc, toast, onCreate, onChange, is
   async function open({ style=null, edit=false, request }) {
     if(picker?.open||busy)return;
     const currentToken=++token;
+    // Show the dialog at once; covers fill in when the catalog arrives.
+    mount();context={edit,request};loading=!catalog.length;selected=style||catalog[0]||null;render();picker.showModal();
+    if(!loading)return;
     try {
-      if(!catalog.length)catalog=(await api('/api/drama/styles')).styles;
-      if(currentToken!==token||!isCurrent(request))return;
-      mount();context={edit,request};selected=style||catalog[0]||null;render();picker.showModal();
-    } catch(error) { if(currentToken===token&&isCurrent(request))toast(error.message); }
+      await loadCatalog();
+      if(currentToken!==token)return;
+      if(!isCurrent(request)){close();return;}
+      loading=false;selected||=catalog[0]||null;
+      if(!busy)render();
+    } catch(error) {
+      if(currentToken!==token)return;
+      close();
+      if(isCurrent(request))toast(error.message);
+    }
+  }
+  function loadCatalog() {
+    if(catalog.length)return Promise.resolve(catalog);
+    return catalogRequest ||= api('/api/drama/styles').then(data=>catalog=data.styles||[]).finally(()=>{catalogRequest=null;});
   }
   function close() { token++;busy=false;if(custom?.open)custom.close();if(picker?.open)picker.close(); }
   return { open, close };

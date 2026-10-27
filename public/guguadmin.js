@@ -34,6 +34,7 @@ import { createApiClient } from './api-client.js?v=4';
   const routeModelLabels = {
     'wan-3.0': 'Wan 3.0',
     'wan-3.0-value': 'Wan 3.0 特价',
+    'kling-4.0': 'Kling 4.0',
     'seedance-2.0': 'Seedance 2.0',
     'seedance-2.0-mini': 'Seedance 2.0 Mini',
     'seedance-2.0-mini-value': 'Seedance 2.0 Mini 特价',
@@ -1779,7 +1780,7 @@ import { createApiClient } from './api-client.js?v=4';
   // 这样空分组（例如尚未配置的 1080p 线路池）也能稳定渲染“新增线路”和选路策略。
   function renderRoutePanel(data) {
     const root = $('#routePanel'); if (!root) return;
-    const families = ['wan-3.0', 'wan-3.0-value', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-fast-value', 'seedance-2.0-mini', 'seedance-2.0-mini-value', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
+    const families = ['wan-3.0', 'wan-3.0-value', 'kling-4.0', 'seedance-2.0', 'seedance-2.5', 'seedance-2.0-fast', 'seedance-2.0-fast-value', 'seedance-2.0-mini', 'seedance-2.0-mini-value', 'seedance-2.0-value', 'seedance-2.5-value', 'minimax-h3-15s'];
     const normalizeModelId = id => /^seedance-?2\.0(?:[-_](?:text|img))$/.test(id) ? 'seedance-2.0' : id;
     const uniqueRoutes = new Map();
     const replacements = new Map();
@@ -1868,7 +1869,7 @@ import { createApiClient } from './api-client.js?v=4';
     const selectedModelId = route?.logicalModelId || logicalModelId;
     return [
       { name: 'credentialId', label: '渠道 / API Key', type: 'select', value: selectedChannel, options: channelDialogOptions(channels), required: true, help: '未配置 Key 的渠道保存后会显示“密钥异常”。', span: 'full' },
-      { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : ['wan-3.0', 'wan-3.0-value'].includes(selectedModelId) ? '例如 wd-wan-3.0-720p' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
+      { name: 'upstreamModelId', label: selectedModelId === 'minimax-h3-15s' ? '上游模型 ID（AutoDL 工作流 ID）' : '上游模型 ID', type: 'text', value: route?.upstreamModelId || '', placeholder: selectedModelId === 'minimax-h3-15s' ? '例如 minimax_h3_zm_u24' : ['wan-3.0', 'wan-3.0-value'].includes(selectedModelId) ? '例如 wd-wan-3.0-720p' : selectedModelId === 'kling-4.0' ? '例如 kling-4.0-720p' : '例如 seedance2.0-select-full-720p', required: true, help: selectedModelId === 'minimax-h3-15s' ? '填写 AutoDL 工作流 ID，需支持当前分辨率。' : '需与该渠道模型列表中的 ID 完全一致。', span: 'full' },
       { name: 'priority', label: '优先级', type: 'number', value: String(route?.priority || nextPriority), min: 1, max: 1000, step: 1, inputmode: 'numeric', required: true, help: '数字越小越优先；与已有线路相同时，原线路依次后移。' },
       { name: 'durations', label: '可选时长（秒）', type: 'text', value: (route?.durations || (selectedModelId === 'minimax-h3-15s' ? Array.from({ length: 15 }, (_, index) => index + 1) : [['seedance-2.5', 'seedance-2.5-value'].includes(selectedModelId) ? 30 : 15])).join(', '), placeholder: '例如 5, 10, 15', required: true, presets: [[4, 30], [4, 15]].map(([start, end]) => ({ label: `${start}–${end} 秒`, value: Array.from({ length: end - start + 1 }, (_, index) => start + index).join(', ') })), help: '填写整数秒，多个用逗号分隔，也可以点击快捷按钮填入。' },
       { name: 'aspectRatios', type: 'multiselect', label: '可选画面比例', value: route?.capabilities?.ratios || (selectedModelId === 'minimax-h3-15s' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1']), options: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'], span: 'full', help: '可选择多个画面比例。' },

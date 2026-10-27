@@ -31,7 +31,7 @@ const isProjectRoute = pathname => /^\/projects\/(?:drama\/)?[\w-]+\/?$/.test(pa
 export function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
 export function staticCacheControl(ext, { versioned = false, production = process.env.NODE_ENV === 'production' } = {}) {
-  if (['.js', '.css'].includes(ext)) return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
+  if (['.js', '.css', '.webp'].includes(ext)) return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
   return ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
 }
 
@@ -119,7 +119,7 @@ export async function serveStatic(res, pathname, req = null, { publicDir, appOnl
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
   const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-  const versioned = ['.js', '.css'].includes(ext) && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
+  const versioned = ['.js', '.css', '.webp'].includes(ext) && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
   const cacheControl = staticCacheControl(ext, { versioned });
   if (appOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname) || isProjectRoute(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
   try { await servePublicFile(res, file, mime, cacheControl, req); }
