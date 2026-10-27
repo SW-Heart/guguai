@@ -23,6 +23,21 @@ test('whole-number discounts omit decimal zero and explain the savings on hover'
   assert.match(discount.detail, /^比官方价格低40%。/);
 });
 
+test('Wan standard and value offers compare each resolution against official CNY list prices', () => {
+  for (const modelId of ['wan-3.0', 'wan-3.0-value']) {
+    for (const [quality, officialYuan] of [['480p', .30], ['720P', .60], ['1080p', 1.20]]) {
+      const discount = officialPriceDiscount(modelId, row(quality, officialYuan / 2));
+      assert.equal(discount.label, '5折');
+      assert.match(discount.detail, /Wan 3.0（北京）/);
+      assert.ok(discount.detail.includes(`¥${officialYuan.toFixed(2)}/秒`));
+      assert.equal(discount.source, 'https://help.aliyun.com/zh/model-studio/wan3-0-video');
+      assert.equal(officialPriceDiscount(modelId, row(quality, officialYuan)), null);
+    }
+    assert.equal(officialPriceDiscount(modelId, { ...row('720p', 3, 'request'), maxDuration:10 }).label, '5折');
+    assert.equal(officialPriceDiscount(modelId, row('4K', .01)), null);
+  }
+});
+
 test('user-supplied references support H3 resolutions and per-request image prices', () => {
   assert.equal(officialPriceDiscount('minimax-h3-15s', row('480P', 0.05)).label, '1.6折');
   assert.equal(officialPriceDiscount('minimax-h3-15s', row('768p', 0.06)).label, '1.2折');
@@ -82,11 +97,25 @@ test('tier clicks update and hide the badge along with the displayed price', () 
   assert.equal(badge.title, '');
 });
 
+test('Wan cards display their discount at the top right and include discounts for resolution changes', () => {
+  const context = vm.createContext({ officialPriceDiscount, requestPricePerSecond, esc:String, creditText:String, modelIcon:() => '' });
+  vm.runInContext(app.slice(app.indexOf('const priceUnitLabels ='), app.indexOf('function renderModelPrices(')), context);
+  for (const modelId of ['wan-3.0', 'wan-3.0-value']) {
+    const rows = [row('480p', .15), row('720p', .12), row('1080p', .36)].map(item => ({ ...item, label:'Wan 3.0' }));
+    const html = context.modelPriceCard(modelId, rows, 'video');
+    assert.match(html, /<header class="price-model-card-head">.*class="price-model-discount"[^>]*>2折<\/span><\/header>/);
+    assert.match(html, /data-discount="5折"/);
+    assert.match(html, /data-discount="3折"/);
+    const perRequest = context.modelPriceCard(modelId, [{ ...row('480p', 1.5, 'request'), label:'Wan 3.0' }], 'video', 10);
+    assert.match(perRequest, /class="price-model-discount"[^>]*>5折/);
+  }
+});
+
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=608/);
-  assert.match(html, /\/styles\.css\?v=434/);
-  assert.match(app, /official-model-prices\.js\?v=6/);
+  assert.match(html, /\/app\.js\?v=612/);
+  assert.match(html, /\/styles\.css\?v=435/);
+  assert.match(app, /official-model-prices\.js\?v=7/);
 });
 
 test('per-request video prices compare per second over the longest available length', () => {

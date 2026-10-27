@@ -1,7 +1,7 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=8';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
-import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=6';
+import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=7';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';
@@ -20,6 +20,7 @@ import { resetAccountState } from './state/account-state.js?v=2';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=14';
 import { createVideoPreviews } from './features/media/video-previews.js?v=5';
+import { createJustifiedFileLayout } from './features/media/justified-layout.js?v=3';
 import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
@@ -303,6 +304,7 @@ const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObse
   const root = document.querySelector(selector);
   if (root) createOffscreenImages({ root, selector:images, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, getComputedStyle:element => window.getComputedStyle(element) }).scan();
 });
+const fileLibraryLayout = createJustifiedFileLayout($('#fileGrid'));
 let videoPreviewScanFrame = 0;
 function hydrateVisibleVideoPreviews() {
   videoPreviewScanFrame = 0;
@@ -3387,8 +3389,8 @@ function assetDisplayName(file) {
   const date = new Date(file.createdAt); const day = Number.isNaN(date.getTime()) ? '' : `｜${String(date.getMonth()+1).padStart(2,'0')}月${String(date.getDate()).padStart(2,'0')}日`;
   return `导入${file.kind === 'image' ? '图片' : file.kind === 'audio' ? '音频' : '视频'}${day}`;
 }
-function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? assetImageMarkup(file, displayName) : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : videoPreviewMarkup(file); const reveal = `<button class="show-in-folder" data-asset-id="${esc(file.id)}">在文件夹中显示</button>`; return `<article class="file-card" data-record-id="${file.id}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${reveal}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
-function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}`; }
+function fileCard(file) { const displayName = assetDisplayName(file); const media = file.kind === 'image' ? assetImageMarkup(file, displayName) : file.kind === 'audio' ? '<span class="audio-file-mark">♫</span>' : videoPreviewMarkup(file); const reveal = `<button class="show-in-folder" data-asset-id="${esc(file.id)}">在文件夹中显示</button>`; return `<article class="file-card" data-record-id="${file.id}" data-aspect-ratio="${file.width > 0 && file.height > 0 ? file.width / file.height : 1}"><button class="file-preview preview-file" data-id="${file.id}" aria-label="预览 ${esc(displayName)}">${media}<span class="asset-preview-label">预览</span></button><button class="more-button file-card-more" aria-label="文件操作" data-id="${file.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu hidden" data-menu="${file.id}"><button class="rename-file" data-id="${file.id}">重命名</button>${reveal}<button class="delete-file danger" data-id="${file.id}">删除</button></div></article>`; }
+function fileRenderSignature(file) { return `${recordSignature(file, fileCardSignatureFields)}|name:${assetDisplayName(file)}|dimensions:${file.width || 0}:${file.height || 0}`; }
 function uploadJobKind(mimeType) { const value = String(mimeType || ''); return value.startsWith('image/') ? 'image' : value.startsWith('video/') ? 'video' : value.startsWith('audio/') ? 'audio' : ''; }
 function uploadJobMediaMarkup(job) { if (job.kind === 'image' && job.previewUrl) return `<img src="${esc(job.previewUrl)}" alt="${esc(job.name)}">`; if (job.kind === 'video' && job.previewUrl) return `<video data-preview-src="${esc(job.previewUrl)}" preload="none" muted></video><span class="play-mark"><svg viewBox="0 0 24 24"><path d="m9 7 8 5-8 5z"/></svg></span>`; return '<span class="audio-file-mark">♫</span>'; }
 function uploadJobCard(job, variant='file') {
@@ -3482,7 +3484,8 @@ function renderFiles() {
   const query = $('#fileSearch').value.trim().toLowerCase();
   const uploads = state.uploadJobs.filter(job => job.context === 'library' && (!query || job.name.toLowerCase().includes(query)) && (state.fileKind === 'all' || job.kind === state.fileKind));
   const uploadingAssetIds = new Set(uploads.map(job => job.assetId).filter(Boolean));
-  const files = libraryFiles.filter(file => libraryFileMatches(file) && !uploadingAssetIds.has(file.id));
+  const files = libraryFiles.filter(file => libraryFileMatches(file) && !uploadingAssetIds.has(file.id))
+    .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
   const hasInitialData = state.initialSyncReady || libraryFiles.length > 0 || uploads.length > 0;
   $('#fileCount').textContent = hasInitialData ? `${localFileTotal + uploads.length} 个文件${uploads.length ? ` · ${uploads.length} 个上传中` : ''}` : '正在加载…';
   const empty = hasInitialData
@@ -3491,6 +3494,7 @@ function renderFiles() {
   const grid = $('#fileGrid');
   reconcileCards(grid, files, { card:fileCard, signature:fileRenderSignature, bind:bindFileActions, empty, preserve:node => uploads.some(job => job.id === node.dataset.uploadId) });
   renderUploadJobCards(grid, uploads, 'file');
+  fileLibraryLayout.schedule();
   grid.querySelector('.empty-upload')?.addEventListener('click', () => openUploadPicker('library'), { once:true });
   const loadMore = $('#loadMoreFiles');
   if (loadMore) {
@@ -4179,7 +4183,13 @@ function imageModelOptions() {
   return models.filter(model => model.enabled !== false && model.availability !== 'coming-soon' && model.availability !== 'unavailable');
 }
 function imageModelPromo() { return ''; }
-const modelIconUrls = modelLogoUrls;
+const modelIconUrls = {
+  ...modelLogoUrls,
+  'speech-2.8-hd': modelLogoUrls['minimax-h3-15s'],
+  'speech-2.8-turbo': modelLogoUrls['minimax-h3-15s'],
+  'minimax-voice-design': modelLogoUrls['minimax-h3-15s'],
+  'minimax-voice-preview': modelLogoUrls['minimax-h3-15s'],
+};
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? modelLogoMarkup(src, { className: 'select-model-icon' }) : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }

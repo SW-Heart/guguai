@@ -8,6 +8,12 @@ const seedancePrices = Object.freeze({
   'seedance-2.5': { '480p':0.67, '720p':1.51, '1080p':3.74 },
 });
 const source = 'https://docs.volcengine.com/docs/ark/model-pricing?lang=zh';
+// Alibaba Cloud's Beijing list prices in CNY, excluding limited-time offers.
+// Checked 2026-10-27: https://help.aliyun.com/zh/model-studio/wan3-0-video
+const wanReference = Object.freeze({
+  unit:'second', prices:{ '480p':0.30, '720p':0.60, '1080p':1.20 },
+  label:'Wan 3.0（北京）', source:'https://help.aliyun.com/zh/model-studio/wan3-0-video', checkedAt:'2026-10-27',
+});
 // Official reference prices supplied by the user on 2026-10-10.
 // H3 cards use the supplied MiniMax-H3-Max reference for matching resolutions.
 const suppliedPrices = Object.freeze({
@@ -28,11 +34,11 @@ export function requestPricePerSecond(row) {
 }
 
 export function officialPriceDiscount(modelId, row) {
-  const baseModel = { 'seedance-2.0-mini-value':'seedance-2.0-mini', 'seedance-2.0-fast-value':'seedance-2.0-fast', 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
+  const baseModel = { 'wan-3.0-value':'wan-3.0', 'seedance-2.0-mini-value':'seedance-2.0-mini', 'seedance-2.0-fast-value':'seedance-2.0-fast', 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
   const quality = String(row?.quality || '').toLowerCase();
-  const supplied = suppliedPrices[baseModel];
-  const officialYuan = supplied ? supplied.prices[quality] : seedancePrices[baseModel]?.[quality];
-  const unit = supplied?.unit || 'second';
+  const reference = baseModel === 'wan-3.0' ? wanReference : suppliedPrices[baseModel];
+  const officialYuan = reference ? reference.prices[quality] : seedancePrices[baseModel]?.[quality];
+  const unit = reference?.unit || 'second';
   const perSecond = unit === 'second' ? requestPricePerSecond(row) : null;
   const yuan = perSecond ?? row?.yuan;
   if ((perSecond === null && row?.unit !== unit) || typeof yuan !== 'number' || !Number.isFinite(yuan) || yuan < 0 || !officialYuan || yuan >= officialYuan) return null;
@@ -42,9 +48,9 @@ export function officialPriceDiscount(modelId, row) {
   const perRequest = perSecond === null ? '' : `每次 ¥${row.yuan.toFixed(2)}，按最长 ${Number(row.maxDuration)} 秒折算约 ¥${perSecond.toFixed(2)}/秒。`;
   return {
     label:`${(100 - percent) / 10}折`,
-    detail:(supplied
-      ? `比官方价格低${percent}%。按 ${supplied.label} 官方参考价 ¥${officialYuan.toFixed(2)}/${unit === 'second' ? '秒' : '次'}计算。`
+    detail:(reference
+      ? `比官方价格低${percent}%。按 ${reference.label} 官方参考价 ¥${officialYuan.toFixed(2)}/${unit === 'second' ? '秒' : '次'}计算。${reference.checkedAt ? `核对日期：${reference.checkedAt}。` : ''}`
       : `比官方价格低${percent}%。按官方 16:9、无参考视频的参考价 ¥${officialYuan.toFixed(2)}/秒计算；实际费用随画幅和参考视频变化。核对日期：2026-10-10。`) + perRequest,
-    source:supplied ? null : source,
+    source:reference ? reference.source || null : source,
   };
 }
