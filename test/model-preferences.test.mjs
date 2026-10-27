@@ -118,7 +118,7 @@ test('account choices survive new projects, fresh conversations, another workspa
 test('all changed frontend entry points use the new cache keys', () => {
   const read = name => readFileSync(new URL(`../public/${name}`,import.meta.url),'utf8');
   for (const [file,urls] of [
-    ['index.html',['/app.js?v=613','/styles.css?v=436']],
+    ['index.html',['/app.js?v=614','/styles.css?v=436']],
     ['app.js',['./features/agent/workspace.js?v=183','./drama-studio.js?v=316']],
     ['drama-studio.js',['./features/drama/director-workspace.js?v=207']],
     ['features/agent/workspace.js',['../drama/director-workspace.js?v=207','./model-preference-picker.js?v=20']],

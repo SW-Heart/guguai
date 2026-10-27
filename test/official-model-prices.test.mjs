@@ -111,11 +111,19 @@ test('Wan cards display their discount at the top right and include discounts fo
   }
 });
 
+test('Kling 4.0 compares 720p and 1080p against its converted official list price', () => {
+  assert.equal(officialPriceDiscount('kling-4.0', row('720p', 0.22)).label, '2折');
+  assert.equal(officialPriceDiscount('kling-4.0', row('1080p', 0.30)).label, '1.8折');
+  assert.match(officialPriceDiscount('kling-4.0', row('720p', 0.22)).detail, /¥1\.11\/秒/);
+  assert.equal(officialPriceDiscount('kling-4.0', row('480p', 0.10)), null);
+  assert.equal(officialPriceDiscount('kling-4.0', row('1080p', 1.67)), null);
+});
+
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=613/);
+  assert.match(html, /\/app\.js\?v=614/);
   assert.match(html, /\/styles\.css\?v=436/);
-  assert.match(app, /official-model-prices\.js\?v=7/);
+  assert.match(app, /official-model-prices\.js\?v=8/);
 });
 
 test('per-request video prices compare per second over the longest available length', () => {

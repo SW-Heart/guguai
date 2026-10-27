@@ -1,7 +1,7 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=9';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
-import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=7';
+import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=8';
 import { createModelPriceNotice } from './state/model-price-notice.js?v=1';
 import { listSignature, mergeActiveRecords, mergeRecordsAddedDuringRequest, recordSignature } from './list-sync.js?v=3';
 import { replaceAssetMentions } from './video-prompt.js?v=6';

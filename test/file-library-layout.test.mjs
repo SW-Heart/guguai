@@ -40,7 +40,7 @@ test('single panoramas fit, unknown dimensions have a fallback, hidden grids def
 test('file library loads its layout through the current frontend cache chain', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=613'));
+  assert.ok(html.includes('/app.js?v=614'));
   assert.ok(html.includes('/styles.css?v=436'));
   assert.ok(app.includes('./features/media/justified-layout.js?v=3'));
 });

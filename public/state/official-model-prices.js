@@ -14,6 +14,12 @@ const wanReference = Object.freeze({
   unit:'second', prices:{ '480p':0.30, '720p':0.60, '1080p':1.20 },
   label:'Wan 3.0（北京）', source:'https://help.aliyun.com/zh/model-studio/wan3-0-video', checkedAt:'2026-10-27',
 });
+// Kling has no CNY API tariff for 4.0 yet; its USD list price ($0.157/s 720p,
+// $0.235/s 1080p) is converted at 7.1 CNY/USD as agreed with the user on 2026-10-27.
+const klingReference = Object.freeze({
+  unit:'second', prices:{ '720p':1.11, '1080p':1.67 },
+  label:'Kling 4.0 官方美元价（按 1 美元 ≈ 7.1 元折算）', source:'https://fal.ai/models/kling/v4/image-to-video', checkedAt:'2026-10-27',
+});
 // Official reference prices supplied by the user on 2026-10-10.
 // H3 cards use the supplied MiniMax-H3-Max reference for matching resolutions.
 const suppliedPrices = Object.freeze({
@@ -36,7 +42,7 @@ export function requestPricePerSecond(row) {
 export function officialPriceDiscount(modelId, row) {
   const baseModel = { 'wan-3.0-value':'wan-3.0', 'seedance-2.0-mini-value':'seedance-2.0-mini', 'seedance-2.0-fast-value':'seedance-2.0-fast', 'seedance-2.0-value':'seedance-2.0', 'seedance-2.5-value':'seedance-2.5' }[modelId] || modelId;
   const quality = String(row?.quality || '').toLowerCase();
-  const reference = baseModel === 'wan-3.0' ? wanReference : suppliedPrices[baseModel];
+  const reference = baseModel === 'wan-3.0' ? wanReference : baseModel === 'kling-4.0' ? klingReference : suppliedPrices[baseModel];
   const officialYuan = reference ? reference.prices[quality] : seedancePrices[baseModel]?.[quality];
   const unit = reference?.unit || 'second';
   const perSecond = unit === 'second' ? requestPricePerSecond(row) : null;

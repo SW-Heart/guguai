@@ -104,7 +104,7 @@ test('preview, use, retry and disposal keep skill selection inside the current e
 
 test('skill gallery cache versions are connected through HTML and the app entry', () => {
   for (const [path, refs] of [
-    ['index.html', ['/app.js?v=613', '/styles.css?v=436']],
+    ['index.html', ['/app.js?v=614', '/styles.css?v=436']],
     ['app.js', ['./features/agent/workspace.js?v=183']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8']],
   ]) {
