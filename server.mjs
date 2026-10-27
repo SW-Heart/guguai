@@ -50,7 +50,7 @@ import { VIDEO_UPSCALE_MODEL_ID, VIDEO_UPSCALE_PROVIDER } from './public/feature
 import { createVideoUpscaleService } from './services/video-upscale.mjs';
 import { createMediaRetentionService } from './services/media-retention.mjs';
 import { createOaiProvider } from './providers/oai.mjs';
-import { generationAttemptContext, generationRetryAllowed, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
+import { generationAttemptContext, generationRetryAllowed, isValueVideoTask, prepareGenerationRetry, refreshGenerationRetryRoute } from './services/generation-retry.mjs';
 import { createGenerationAdminControl } from './services/generation-admin-control.mjs';
 import { isPromptContentRejection, repairGenerationPrompt } from './services/generation-prompt-repair.mjs';
 import { createProviderTransport } from './providers/transport.mjs';
@@ -139,6 +139,8 @@ const oaiMinimaxConfigured = Boolean(process.env.OAIAPI_MINIMAX_KEY);
 const oaiPollIntervalMs = 4_000;
 const oaiRequestTimeoutMs = 300_000;
 const videoMaxPollDurationMs = Math.max(60_000, Number(process.env.VIDEO_MAX_POLL_DURATION_MS || 120 * 60_000));
+// Special-offer channels queue for a long time; their generation wait is a full day.
+const valueVideoMaxPollDurationMs = Math.max(videoMaxPollDurationMs, Number(process.env.VALUE_VIDEO_MAX_POLL_DURATION_MS || 24 * 60 * 60_000));
 const imagePollIntervalMs = Math.max(10, Number(process.env.IMAGE_POLL_INTERVAL_MS || 6_000));
 const imageMaxPollDurationMs = Math.max(imagePollIntervalMs, Number(process.env.IMAGE_MAX_POLL_DURATION_MS || 10 * 60_000));
 const providerSubmissionShutdownGraceMs = Math.max(1_000, Number(process.env.PROVIDER_SUBMISSION_SHUTDOWN_GRACE_MS || 15_000));
@@ -843,7 +845,7 @@ const routedProvider = createRoutedProvider({
   videoPollRequestSignal,
   videoPollTimeoutError,
   videoPollStartedAt,
-  videoMaxPollDurationMs,
+  videoMaxPollDurationMs: task => isValueVideoTask(task) ? valueVideoMaxPollDurationMs : videoMaxPollDurationMs,
   submitTimeoutMs: routedVideoSubmitTimeoutMs,
   errorMessage,
   createAutodlRouteProvider: ({ baseUrl, workflowId, apiKey, providerName }) => createAutodlProvider({
@@ -3192,7 +3194,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, detectUploadContentMime, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, detectUploadContentMime, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, valueVideoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

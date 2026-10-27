@@ -654,7 +654,7 @@ Seedance 2.0/2.5/Fast 使用 DIW、WJ、CNTCN 的动态完整调用线路。服�
 
 已扣费的动态线路任务在首次选中渠道上最多重试 3 次，仍失败才在下一优先级的可用且兼容渠道尝试 1 次，最多共 5 次生成尝试。当前任务的原渠道重试不受后续自动停用或优先级调整影响；新任务仍遵循实时可用状态。换线后仍按首次报价计费，差额由平台承担，全部失败只退回首次扣费。失败尝试保存线路和报价记录，重启后继续原有次数与已选渠道；提交结果不确定或轮询超时仍走原任务核对，不重复提交。
 
-其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。视频任务最长等待 120 分钟，可用 `VIDEO_MAX_POLL_DURATION_MS` 调整；OAI 可用 `OAI_MAX_POLL_DURATION_MS` 单独调整。
+其他路由保持原有适配：Grok Video 1.5 Fast 使用 TTAPI；Veo 使用 Duomi；Omni Flash、Veo 3.1 和 MiniMax H3 使用 OAI；GuGu 2.0 使用 AutoDL ComfyUI 工作流。视频任务最长等待 120 分钟，可用 `VIDEO_MAX_POLL_DURATION_MS` 调整；特价视频模型最长等待 24 小时，可用 `VALUE_VIDEO_MAX_POLL_DURATION_MS` 调整；OAI 可用 `OAI_MAX_POLL_DURATION_MS` 单独调整。
 
 ## 官网与帮助文档
 

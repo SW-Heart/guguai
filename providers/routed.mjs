@@ -99,24 +99,26 @@ export function createRoutedProvider({
     const yk = task.routeAdapter === 'yk-video';
     let consecutiveErrors = 0;
     const pollStartedAt = videoPollStartedAt(task);
+    // Special-offer models may wait much longer upstream than full-price ones.
+    const maxPollMs = typeof videoMaxPollDurationMs === 'function' ? videoMaxPollDurationMs(task) : videoMaxPollDurationMs;
     for (;;) {
       if (yk && Number(task.providerNextPollAt) > Date.now()) {
         if (pollOnce) return { pending: true, provider: task.provider, taskId: task.providerTaskId };
         await sleep(task.providerNextPollAt - Date.now());
       }
       const delay = consecutiveErrors ? Math.min(10_000 * 2 ** Math.min(consecutiveErrors, 3), 60_000) : 10_000;
-      const remainingMs = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs);
+      const remainingMs = videoPollRemainingMs(pollStartedAt, maxPollMs);
       if (!immediate && !(yk && task.providerNextPollAt) && remainingMs > 0) await sleep(Math.min(delay, remainingMs));
       // A worker may resume after sleep or downtime, long after upstream has
       // completed. Check the final state before applying our local deadline.
-      const expired = videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0;
+      const expired = videoPollRemainingMs(pollStartedAt, maxPollMs) <= 0;
       let state;
       try {
         if (yk) task.providerNextPollAt = Date.now() + 10_000;
         state = await fetchJson(`${yk ? apiBase(task) : `${base}/v1`}/videos/${encodeURIComponent(task.providerTaskId)}`, {
           headers: { Authorization: `Bearer ${key}` },
           ...(yk ? { onResponse: response => pollDeadline(task, response) } : {}),
-          signal: expired ? AbortSignal.timeout(60_000) : videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, videoMaxPollDurationMs, 60_000),
+          signal: expired ? AbortSignal.timeout(60_000) : videoPollRequestSignal(task.provider, task.providerTaskId, pollStartedAt, maxPollMs, 60_000),
         });
       } catch (error) {
         if (!yk && [401, 403].includes(Number(error.upstreamStatus))) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId, upstreamTerminal: true });
@@ -124,7 +126,7 @@ export function createRoutedProvider({
         await hooks.onPollError?.({ consecutiveErrors, detail: upstreamRequestErrorDetail(error) });
         // An unavailable status endpoint does not prove generation failed.
         // Let durable recovery retry without issuing a premature refund.
-        if (expired || videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId });
+        if (expired || videoPollRemainingMs(pollStartedAt, maxPollMs) <= 0) throw Object.assign(error, { provider: task.provider, providerTaskId: task.providerTaskId });
         if (pollOnce) return { pending: true, provider: task.provider, taskId: task.providerTaskId };
         continue;
       }
@@ -157,7 +159,7 @@ export function createRoutedProvider({
           ...(yk && generationFailureCode({ error: message }) === 'CONTENT_REJECTED' ? { retryable: false } : {}),
         });
       }
-      if (videoPollRemainingMs(pollStartedAt, videoMaxPollDurationMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
+      if (videoPollRemainingMs(pollStartedAt, maxPollMs) <= 0) throw videoPollTimeoutError(task.provider, task.providerTaskId);
       if (pollOnce) return { pending: true, provider: task.provider, taskId: task.providerTaskId };
     }
   }

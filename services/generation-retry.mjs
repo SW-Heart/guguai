@@ -12,8 +12,11 @@ export const routedRetryWindowMs = 600_000;
 // channels for an hour instead.
 export const valueRoutedRetryWindowMs = 3_600_000;
 const valueVideoModelIds = new Set(Object.entries(VIDEO_MODEL_IDS).filter(([key]) => key.endsWith('_VALUE')).map(([, id]) => id));
+export function isValueVideoTask(task) {
+  return valueVideoModelIds.has(task?.videoModelId || task?.modelId);
+}
 export function routedRetryWindowFor(task) {
-  return valueVideoModelIds.has(task.videoModelId || task.modelId) ? valueRoutedRetryWindowMs : routedRetryWindowMs;
+  return isValueVideoTask(task) ? valueRoutedRetryWindowMs : routedRetryWindowMs;
 }
 export const attemptsPerRoute = 2;
 // Jobs saved without a usable submission time keep the former attempt cap.
