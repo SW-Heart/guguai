@@ -68,7 +68,7 @@ test('frontend entrypoints use the current immutable cache keys', async () => {
   assert.ok(admin.includes('/guguadmin.css?v=34'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=9'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=615\b/);
+  assert.match(index, /\/app\.js\?v=616\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
   assert.match(index, /\/styles\.css\?v=437/);
   assert.doesNotMatch(index, /reference-canvas\.css/, 'canvas styles load with the canvas workspaces');
@@ -192,7 +192,9 @@ test('image prompt supports reference mentions and compiles them before submissi
   assert.match(index, /id="imagePrompt" class="rich-prompt-editor" contenteditable="true"/);
   assert.match(app, /function insertImagePromptMentions\(/);
   assert.match(app, /openReferenceDialog\('image', \{ mentionRequest:imagePromptMentionRequest \}\)/);
-  assert.match(app, /prompt:replaceAssetMentions\(checked\.prompts\[0\], state\.imagePromptMentions\)/);
+  // Mentions are captured at click time, before the composer empties.
+  assert.match(app, /const mentions = state\.imagePromptMentions;/);
+  assert.match(app, /prompt:replaceAssetMentions\(checked\.prompts\[0\], mentions\)/);
   assert.match(app, /data-image-prompt-mention-id/);
   assert.match(app, /target === 'image' && !state\.refs\.image\.includes\(id\)\) removeImagePromptMentionNodes/);
 });

@@ -4458,18 +4458,15 @@ function referenceCountsForIds(ids) {
 async function submitGeneration(type, form, payload, preparation) {
   if (!preparation) {
     if (generationSubmissionForms.has(form)) return;
-    preparation = startGenerationPreparation(type, form, { prompt:payload.prompt, count:type === 'image' ? Number(payload.quantity) || 1 : 1 });
+    preparation = startGenerationPreparation(type, form, { prompt:payload.prompt, count:type === 'image' ? Number(payload.quantity) || 1 : 1, referenceIds:type === 'video' ? payload.referenceAssetIds : state.refs[type] });
   }
   const requestAccount = accountScope.snapshot();
-  const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
-  const submittedPromptText = type === 'video' ? videoPromptText() : imagePromptText();
+  const requestedReferenceIds = type === 'video' ? [...(payload.referenceAssetIds || [])] : [...preparation.referenceIds];
   // The click is the whole submission: the form is free again right away and
   // references, pricing and the request continue behind the progress card.
   preparation.release();
   const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','kling-4.0','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
   let chargedTasks = [];
-  const referenceJobs = requestedReferenceIds.map(pendingReferenceJob).filter(Boolean);
-  referenceJobs.forEach(job => { job.inUse = (job.inUse || 0) + 1; });
   try {
     const localAssetIds = [...new Set(requestedReferenceIds.map(id => {
       const file = state.files.find(item => item.id === id);
@@ -4502,25 +4499,18 @@ async function submitGeneration(type, form, payload, preparation) {
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
     chargedTasks = tasks;
     preparation.clear();
+    preparation.settle();
     state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
     mergeTasksIntoLoadedHistory(tasks);
     renderTasks();
-    setCreditBalance(result.balance);
-    // Only reset the composer when it still holds this submission; a prompt
-    // written for the next generation in the meantime must stay.
-    if ((type === 'video' ? videoPromptText() : imagePromptText()) === submittedPromptText) {
-      if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
-      (type === 'video' ? videoPromptEditor() : imagePromptEditor()).dispatchEvent(new Event('input', { bubbles:true }));
-      state.refs[type] = [];
-      if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
-      renderReferences();
-    }
+    setCreditBalance(Number(result.balance) - pendingGenerationCredits);
     const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0);
     toast(tasks.length > 1 ? `已开始生成 ${tasks.length} 张图片，预计消耗 ${creditText(totalCost)} 积分` : `已开始生成，消耗 ${tasks[0].creditCost} 积分`);
     await loadTasks();
   } catch (error) {
     if (!accountScope.isCurrent(requestAccount)) return;
     preparation.clear();
+    preparation.settle({ restore:true });
     if (chargedTasks.length) {
       try {
         const cancelled = await api('/api/generations/references/cancel', { method:'POST', body:JSON.stringify({ taskIds:chargedTasks.map(task => task.id), error:`素材准备失败：${error.message}` }) });
@@ -4533,7 +4523,7 @@ async function submitGeneration(type, form, payload, preparation) {
     }
     renderTasks(); renderReferences(); toast(error.message); await loadCredits();
   }
-  finally { referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); }); preparation.release(); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
+  finally { preparation.settle(); preparation.release(); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
 // Clicking generate only presses the button and adds a progress card; the
 // button itself never shows a busy state, so the next generation can start
@@ -4545,10 +4535,55 @@ function pressGenerateButton(form) {
   clearTimeout(button.pressTimer);
   button.pressTimer = setTimeout(() => button.classList.remove('is-pressed'), 160);
 }
-function startGenerationPreparation(type, form, { prompt, count = 1 }) {
+// Credits shown as spent for generations whose request has not returned yet.
+let pendingGenerationCredits = 0;
+function generationCostEstimate(type) {
+  const value = Number(String($(type === 'video' ? '#videoCost' : '#imageCost')?.textContent || '').replace(/,/g, ''));
+  if (Number.isFinite(value) && value > 0) return value;
+  // A failed route quote leaves no price on the button; charge the price-card
+  // price now and let the server balance correct it when the request returns.
+  const input = type === 'video' ? currentVideoQuoteInput() : null;
+  const fallback = input ? Number(configuredVideoCredits(input)) : 0;
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+}
+function composerEmpty(type) {
+  const prompt = type === 'video' ? videoPromptText() : imagePromptText();
+  return !prompt.trim() && !state.refs[type].length && (type !== 'video' || (!state.videoFrames.first && !state.videoFrames.last));
+}
+// The composer empties the moment generate is pressed. If the generation
+// cannot start, what was submitted comes back unless something new was typed.
+function takeComposer(type) {
+  const editor = type === 'video' ? videoPromptEditor() : imagePromptEditor();
+  const snapshot = { html:editor?.innerHTML || '', mentions:[...(type === 'video' ? state.videoPromptMentions : state.imagePromptMentions)], refs:[...state.refs[type]], frames:type === 'video' ? { ...state.videoFrames } : null };
+  if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
+  editor?.dispatchEvent(new Event('input', { bubbles:true }));
+  state.refs[type] = [];
+  if (type === 'video') state.videoFrames = { first:'', last:'' };
+  renderReferences();
+  return () => {
+    if (!composerEmpty(type)) return;
+    const restoredId = id => pendingReferenceJob(id)?.assetId || id;
+    if (editor) editor.innerHTML = snapshot.html;
+    if (type === 'video') state.videoPromptMentions = snapshot.mentions; else state.imagePromptMentions = snapshot.mentions;
+    state.refs[type] = snapshot.refs.map(restoredId);
+    if (snapshot.frames) state.videoFrames = { first:snapshot.frames.first ? restoredId(snapshot.frames.first) : '', last:snapshot.frames.last ? restoredId(snapshot.frames.last) : '' };
+    editor?.dispatchEvent(new Event('input', { bubbles:true }));
+    renderReferences();
+  };
+}
+function startGenerationPreparation(type, form, { prompt, count = 1, referenceIds = [] }) {
   // Held only while the prompt check runs, so one click submits once.
   generationSubmissionForms.add(form);
   pressGenerateButton(form);
+  const requestedReferenceIds = [...(referenceIds || [])];
+  // Hold uploads the cleared composer no longer shows until this request is done.
+  const referenceJobs = requestedReferenceIds.map(pendingReferenceJob).filter(Boolean);
+  referenceJobs.forEach(job => { job.inUse = (job.inUse || 0) + 1; });
+  const cost = generationCostEstimate(type);
+  pendingGenerationCredits += cost;
+  setCreditBalance(state.credits - cost);
+  const restoreComposer = takeComposer(type);
+  let settled = false;
   const groupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const preparations = Array.from({ length:Math.max(1, count) }, (_, index) => ({ id:`local-preparation-${groupId}-${index + 1}`, type, status:'running', progressStage:'submitting', prompt, createdAt, localPreparation:true }));
@@ -4563,6 +4598,16 @@ function startGenerationPreparation(type, form, { prompt, count = 1 }) {
     release() {
       generationSubmissionForms.delete(form);
     },
+    referenceIds:requestedReferenceIds,
+    // Once per click: returns the shown credits and, if the generation could
+    // not start, the submitted prompt and references.
+    settle({ restore = false } = {}) {
+      if (settled) return;
+      settled = true;
+      pendingGenerationCredits = Math.max(0, pendingGenerationCredits - cost);
+      if (restore) { setCreditBalance(state.credits + cost); restoreComposer(); }
+      referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); });
+    },
   };
 }
 async function checkPromptBeforeGeneration(preparation, input) {
@@ -4571,6 +4616,7 @@ async function checkPromptBeforeGeneration(preparation, input) {
     if (checked.action !== 'cancel') return checked;
   } catch (error) { toast(error.message); }
   preparation.clear();
+  preparation.settle({ restore:true });
   preparation.release();
   return null;
 }
@@ -4590,16 +4636,20 @@ $('#imageForm').onsubmit = async event => {
   const quantity = commitImageQuantity($('#imageQuantity').value);
   const oversized = state.refs.image.map(referenceFileById).find(imageReferenceTooLarge);
   if (oversized) return toast(imageReferenceTooLargeText(oversized));
-  const preparation = startGenerationPreparation('image', form, { prompt:replaceAssetMentions(prompt, state.imagePromptMentions), count:quantity });
+  // Everything is read before the composer empties for the next generation.
+  const mentions = state.imagePromptMentions;
+  const size = modelId === 'midjourney' ? midjourneyOptions.aspectRatio : modelId === 'gpt-image-2.5' ? tuziImageSize() : $('#imageSize').value;
+  const quality = modelId === 'midjourney' ? midjourneyOptions.quality : modelId === 'gpt-image-2.5' ? tuziQuality : $('#imageQuality').value;
+  const preparation = startGenerationPreparation('image', form, { prompt:replaceAssetMentions(prompt, mentions), count:quantity, referenceIds:state.refs.image });
   // Edits made in the check dialog apply to this submission only; @mentions in the text still resolve.
   const checked = await checkPromptBeforeGeneration(preparation, { prompts:[prompt], modelId, source:'image' });
   if (!checked) return;
   submitGeneration('image', form, {
     modelId,
-    prompt:replaceAssetMentions(checked.prompts[0], state.imagePromptMentions),
+    prompt:replaceAssetMentions(checked.prompts[0], mentions),
     ...checked.fields,
-    size:modelId === 'midjourney' ? midjourneyOptions.aspectRatio : modelId === 'gpt-image-2.5' ? tuziImageSize() : $('#imageSize').value,
-    quality:modelId === 'midjourney' ? midjourneyOptions.quality : modelId === 'gpt-image-2.5' ? tuziQuality : $('#imageQuality').value,
+    size,
+    quality,
     quantity,
     ...(midjourneyOptions ? { midjourneyOptions } : {}),
   }, preparation);
@@ -4620,11 +4670,12 @@ $('#videoForm').onsubmit = async event => {
   syncVideoModelParameters();
   const input = currentVideoFormInput();
   if (!input) return toast('创作参数已变化，请重新选择时长、画幅和清晰度');
-  const referenceAssetIds = input.generationType === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : state.refs.video;
-  const preparation = startGenerationPreparation('video', form, { prompt:replaceAssetMentions(prompt, state.videoPromptMentions) });
+  const referenceAssetIds = input.generationType === 'FIRST&LAST' ? [state.videoFrames.first, state.videoFrames.last].filter(Boolean) : [...state.refs.video];
+  const mentions = state.videoPromptMentions;
+  const preparation = startGenerationPreparation('video', form, { prompt:replaceAssetMentions(prompt, mentions), referenceIds:referenceAssetIds });
   const checked = await checkPromptBeforeGeneration(preparation, { prompts:[prompt], modelId:input.modelId, source:'video' });
   if (!checked) return;
-  submitGeneration('video', form, { prompt:replaceAssetMentions(checked.prompts[0], state.videoPromptMentions), ...input, referenceAssetIds, ...checked.fields }, preparation);
+  submitGeneration('video', form, { prompt:replaceAssetMentions(checked.prompts[0], mentions), ...input, referenceAssetIds, ...checked.fields }, preparation);
 };
 const imageQuantityMin = 1;
 const imageQuantityMax = 10;
@@ -4722,12 +4773,18 @@ function updateVideoCost() {
   if (routed) {
     const signature = JSON.stringify(input);
     if (state.modelQuote?.signature === signature) { cost.textContent = creditText(state.modelQuote.credits); return; }
-    cost.textContent = '…';
+    // Show the price-card price at once; the route quote replaces it shortly.
+    cost.textContent = creditText(configuredVideoCredits(input));
     videoQuoteTimer = setTimeout(async () => { try { const quote = await api('/api/model-quote', { method:'POST', body:JSON.stringify(input) }); if (sequence !== videoQuoteSequence) return; state.modelQuote = { ...quote, signature }; cost.textContent = creditText(quote.credits); } catch { if (sequence !== videoQuoteSequence) return; state.modelQuote = null; cost.textContent = '暂不可用'; } }, 180);
     return;
   }
   state.modelQuote = null;
-  const parameters = videoModelParameters(input.modelId, input.generationType); const selectedPricing = videoPricingFor(input.modelId, parameters, input.quality); const fixedPrice = selectedPricing?.unit === 'request' ? Number(selectedPricing.amount) / (selectedPricing.currency === 'credit' ? 1 : Number(state.pricing.yuanPerCredit || 0.1)) : null; const perSecondPrice = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : null; cost.textContent = creditText(fixedPrice ?? input.duration * (perSecondPrice ?? state.pricing.videoPerSecond));
+  cost.textContent = creditText(configuredVideoCredits(input));
+}
+// Credits from the configured price list, the same prices the price cards show.
+function configuredVideoCredits(input) {
+  const parameters = videoModelParameters(input.modelId, input.generationType); const selectedPricing = videoPricingFor(input.modelId, parameters, input.quality); const fixedPrice = selectedPricing?.unit === 'request' ? Number(selectedPricing.amount) / (selectedPricing.currency === 'credit' ? 1 : Number(state.pricing.yuanPerCredit || 0.1)) : null; const perSecondPrice = selectedPricing?.unit === 'second' ? Number(selectedPricing.amount) : null;
+  return fixedPrice ?? input.duration * (perSecondPrice ?? state.pricing.videoPerSecond);
 }
 $('#videoModel').onchange = () => {
   const hadFirstLast = state.videoGenerationType === 'FIRST&LAST';

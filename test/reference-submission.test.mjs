@@ -8,10 +8,11 @@ const backend = await readFile(new URL('../server.mjs', import.meta.url), 'utf8'
 const submission = frontend.slice(frontend.indexOf('async function submitGeneration('), frontend.indexOf("$('#imageModel').addEventListener", frontend.indexOf('async function submitGeneration(')));
 
 function submissionContext({ resolve, requests }) {
-  const state = { files:[], refs:{ image:[], video:['local-1','local-2','local-3'] }, tasks:[], generationPreparations:[], modelQuote:{ signature:'old', priceVersion:'old' }, uploadJobs:[], videoFrames:{} };
+  const state = { credits:0, videoPromptMentions:[], imagePromptMentions:[], files:[], refs:{ image:[], video:['local-1','local-2','local-3'] }, tasks:[], generationPreparations:[], modelQuote:{ signature:'old', priceVersion:'old' }, uploadJobs:[], videoFrames:{} };
   const messages = [];
   const context = vm.createContext({
     state, generationSubmissionForms:new Set(), accountScope:{ snapshot:() => ({}), isCurrent:() => true },
+    $:() => null, currentVideoQuoteInput:() => null, removeUploadJob() {}, videoPromptMentions:[], imagePromptMentions:[],
     videoPromptText:() => '视频', imagePromptText:() => '', pendingReferenceJob:() => null, needsReferenceUpload:() => false,
     resolveReferenceAssetIds:resolve, referenceCountsForIds:ids => ({ image:ids.length, video:0, audio:0 }),
     renderTasks:() => {}, renderReferences:() => {}, mergeTasksIntoLoadedHistory:() => {}, setCreditBalance:() => {},

@@ -469,7 +469,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.ok(seededIssue);
   assert.equal(seededIssue.userCount, 1);
   const reported = await fetch(`${base}/api/errors`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ reports: [
-    { kind: 'error', message: 'TypeError: x is undefined', stack: 'TypeError: x is undefined\n    at render (http://127.0.0.1/app.js?v=615:10:2)', source: `${base}/app.js?v=615` },
+    { kind: 'error', message: 'TypeError: x is undefined', stack: 'TypeError: x is undefined\n    at render (http://127.0.0.1/app.js?v=616:10:2)', source: `${base}/app.js?v=616` },
     { kind: 'error', message: 'Script error.' },
   ] }) });
   assert.equal(reported.status, 200);
@@ -477,7 +477,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(webIssues.data.items.map(item => [item.category, item.message, item.location]), [['web.error', 'TypeError: x is undefined', 'render app.js']]);
   const issueDetail = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`);
   assert.equal(issueDetail.data.events.length, 1);
-  assert.equal(issueDetail.data.events[0].details.source, `${base}/app.js?v=615`);
+  assert.equal(issueDetail.data.events[0].details.source, `${base}/app.js?v=616`);
   const ignored = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`, { method: 'PATCH', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { status: 'ignored', note: '浏览器插件导致' } });
   assert.equal(ignored.response.status, 200);
   assert.equal(ignored.data.issue.status, 'ignored');
