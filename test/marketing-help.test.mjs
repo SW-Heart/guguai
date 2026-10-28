@@ -8,6 +8,7 @@ import { buildHelpHtml, renderHelpTable } from '../scripts/build-help.mjs';
 import { staticEntryFile } from '../server/static.mjs';
 import { initSiteInteractions } from '../public/site-interactions.js';
 import { initHomeMotion } from '../public/home-motion.js';
+import { accentColor, dotState, initHeroTitle, titleDuration } from '../public/hero-title.js';
 import { initHelpCopies } from '../public/help-copy.js';
 const read = file => readFile(new URL(`../${file}`, import.meta.url), 'utf8');
 
@@ -97,9 +98,9 @@ test('all modules have published static help; every website tutorial and preview
 test('all changed marketing entries and help imports use consistent current cache keys', async () => {
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
-    assert.ok(html.includes('/marketing.js?v=26'));
-    assert.ok(html.includes('/marketing.css?v=18'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-5])|css\?v=(?:[789]|1[0-7]))\b/);
+    assert.ok(html.includes('/marketing.js?v=27'));
+    assert.ok(html.includes('/marketing.css?v=19'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-6])|css\?v=(?:[789]|1[0-8]))\b/);
   }
   const help = await read('public/help.html');
   assert.ok(help.includes('/help.js?v=11'));
@@ -112,7 +113,7 @@ test('all changed marketing entries and help imports use consistent current cach
   assert.ok(script.includes('./help-search.js?v=3'));
   assert.doesNotMatch(script, /help-content\.js\?v=[1-9]\b/);
   assert.doesNotMatch(script, /help-search\.js\?v=[12]\b/);
-  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=3'));
+  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=4'));
   assert.ok((await read('public/site-interactions.js')).includes('./home-motion.js?v=2'));
   await access(new URL('../public/home-motion.js', import.meta.url));
 });
@@ -199,6 +200,36 @@ test('case films play only on screen and wait for the viewer under reduced motio
   assert.equal(h.videos[0].playing, false);
   const reduced = setup(true);
   assert.deepEqual(reduced.videos.map(video => video.controls), [true, true]);
+});
+
+test('headline dots type the prompt first, then fly from the caret and land exactly', () => {
+  assert.equal(accentColor(0), 'rgb(86,85,218)');
+  assert.equal(accentColor(1), 'rgb(79,143,232)');
+  const caret = { chars: 4, x: 400, y: 50 };
+  const first = { lead: true, x: 10, y: 50, char: 0, row: 0 };
+  const last = { lead: true, x: 300, y: 50, char: 3, row: 0 };
+  assert.equal(dotState(first, 0, caret).alpha, 0);
+  assert.equal(dotState(first, 1, caret).alpha, 1);
+  assert.equal(dotState(last, .3, caret).alpha, 0, 'later characters wait their turn');
+  const accent = { lead: false, x: 600, y: 60, order: .5, lift: 30 };
+  const before = dotState(accent, .5, caret);
+  assert.equal(before.alpha, 0);
+  const landed = dotState(accent, titleDuration(4), caret);
+  assert.deepEqual([landed.x, landed.y, landed.alpha].map(value => Math.round(value * 1000) / 1000), [600, 60, 1]);
+});
+
+test('the headline shows immediately under reduced motion or without canvas', () => {
+  for (const [reduced, canvas] of [[true, true], [false, false]]) {
+    const title = new Element();
+    const spans = new Map([['[data-title-lead]', new Element()], ['[data-title-accent]', new Element()]]);
+    title.querySelector = selector => spans.get(selector);
+    const doc = new Element();
+    doc.querySelector = () => title;
+    doc.createElement = () => ({ getContext: () => canvas ? {} : null });
+    initHeroTitle({ document: doc, window: { matchMedia: () => ({ matches: reduced }) } });
+    assert.equal(title.classList.contains('is-static'), true);
+    assert.equal(title.classList.contains('is-drawing'), false);
+  }
 });
 
 function homeMotionHarness({ reduced = false, autoplayBlocked = false } = {}) {
