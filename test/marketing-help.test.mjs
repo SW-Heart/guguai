@@ -97,9 +97,9 @@ test('all modules have published static help; every website tutorial and preview
 test('all changed marketing entries and help imports use consistent current cache keys', async () => {
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
-    assert.ok(html.includes('/marketing.js?v=25'));
-    assert.ok(html.includes('/marketing.css?v=16'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|20)|css\?v=(?:[789]|1[012345]))\b/);
+    assert.ok(html.includes('/marketing.js?v=26'));
+    assert.ok(html.includes('/marketing.css?v=17'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-5])|css\?v=(?:[789]|1[0-6]))\b/);
   }
   const help = await read('public/help.html');
   assert.ok(help.includes('/help.js?v=11'));
@@ -112,8 +112,8 @@ test('all changed marketing entries and help imports use consistent current cach
   assert.ok(script.includes('./help-search.js?v=3'));
   assert.doesNotMatch(script, /help-content\.js\?v=[1-9]\b/);
   assert.doesNotMatch(script, /help-search\.js\?v=[12]\b/);
-  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=2'));
-  assert.ok((await read('public/site-interactions.js')).includes('./home-motion.js?v=1'));
+  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=3'));
+  assert.ok((await read('public/site-interactions.js')).includes('./home-motion.js?v=2'));
   await access(new URL('../public/home-motion.js', import.meta.url));
 });
 
@@ -138,27 +138,37 @@ class Element {
   fire(name, event = {}) { this.listeners.get(name)?.(event); }
 }
 
-test('preview tabs support pointer and keyboard selection; mobile navigation closes on Escape', () => {
+test('homepage film assets resolve and every chapter starts inside the film', async () => {
+  const html = await read('public/home.html');
+  for (const match of html.matchAll(/(?:src|poster|srcset)="([^"]+)"/g)) {
+    for (const candidate of match[1].split(',')) {
+      const file = candidate.trim().split(/\s+/)[0].split('?')[0];
+      if (file.startsWith('/')) await access(new URL(`../public${file}`, import.meta.url));
+    }
+  }
+  const starts = [...html.matchAll(/data-film-chapter data-start="([\d.]+)"/g)].map(match => Number(match[1]));
+  assert.deepEqual(starts, [...starts].sort((a, b) => a - b));
+  assert.equal(starts[0], 0);
+  assert.ok(starts.every(start => start < 24), 'the film is 24 seconds long');
+  assert.match(html, /<video data-hero-film muted loop playsinline/);
+});
+
+test('mobile navigation closes on Escape; works rows repeat once for a seamless loop', () => {
   const menu = new Element({ 'aria-expanded': 'false' });
   const nav = new Element();
   const header = new Element();
   header.querySelector = selector => selector === '.menu-toggle' ? menu : nav;
   header.contains = () => true;
-  const tabs = ['image', 'video', 'drama'].map(key => { const tab = new Element({ 'aria-controls': `preview-${key}` }); tab.dataset.previewTab = key; return tab; });
-  const panels = new Map(tabs.map(tab => [tab.getAttribute('aria-controls'), new Element()]));
+  const row = new Element();
+  row.children = [new Element(), new Element()].map((item, index) => Object.assign(item, { id: index, cloneNode: () => Object.assign(new Element(), { copyOf: index }) }));
+  row.append = node => row.children.push(node);
   const doc = new Element();
-  doc.querySelector = () => header;
-  doc.querySelectorAll = selector => selector === '[data-preview-tab]' ? tabs : [];
-  doc.getElementById = id => panels.get(id);
+  doc.querySelector = selector => selector === '#site-header' ? header : null;
+  doc.querySelectorAll = selector => selector === '[data-works-marquee] .works-row' ? [row] : [];
   const win = { navigator: { platform: 'MacIntel' }, matchMedia: () => ({ addEventListener() {} }) };
   initSiteInteractions({ document: doc, window: win });
-  tabs[1].fire('click');
-  assert.equal(tabs[1].getAttribute('aria-selected'), 'true');
-  assert.equal(panels.get('preview-image').hidden, true);
-  assert.equal(panels.get('preview-video').hidden, false);
-  tabs[1].fire('keydown', { key: 'End', preventDefault() {} });
-  assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
-  assert.equal(tabs[2].focused, true);
+  assert.equal(row.children.length, 4);
+  assert.deepEqual(row.children.slice(2).map(item => [item.copyOf, item.getAttribute('aria-hidden')]), [[0, 'true'], [1, 'true']]);
   menu.fire('click');
   assert.equal(menu.getAttribute('aria-expanded'), 'true');
   doc.fire('keydown', { key: 'Escape' });
@@ -166,87 +176,125 @@ test('preview tabs support pointer and keyboard selection; mobile navigation clo
   assert.equal(menu.focused, true);
 });
 
-function homeMotionHarness({ reduced = false } = {}) {
+test('case films play only on screen and wait for the viewer under reduced motion', () => {
+  const makeVideo = () => Object.assign(new Element(), { playing: false, play() { this.playing = true; return Promise.resolve(); }, pause() { this.playing = false; } });
+  const setup = reduced => {
+    const videos = [makeVideo(), makeVideo()];
+    const doc = new Element();
+    doc.querySelector = () => null;
+    doc.querySelectorAll = selector => selector === '[data-case-video]' ? videos : [];
+    let observed;
+    const win = {
+      navigator: { platform: 'MacIntel' },
+      matchMedia: query => ({ matches: reduced && query.includes('reduced-motion'), addEventListener() {} }),
+      IntersectionObserver: class { constructor(callback) { observed = callback; } observe() {} },
+    };
+    initSiteInteractions({ document: doc, window: win });
+    return { videos, show: (video, isIntersecting) => observed([{ target: video, isIntersecting }]) };
+  };
+  const h = setup(false);
+  h.show(h.videos[0], true);
+  assert.deepEqual(h.videos.map(video => video.playing), [true, false]);
+  h.show(h.videos[0], false);
+  assert.equal(h.videos[0].playing, false);
+  const reduced = setup(true);
+  assert.deepEqual(reduced.videos.map(video => video.controls), [true, true]);
+});
+
+function homeMotionHarness({ reduced = false, autoplayBlocked = false } = {}) {
   const doc = new Element();
   const hero = new Element();
   hero.dataset.homeMotion = 'true';
-  const stage = new Element();
-  stage.contains = node => node === stage;
+  const video = new Element();
+  Object.assign(video, { currentTime: 0, duration: 24, playing: false, plays: 0 });
+  video.play = () => {
+    video.plays += 1;
+    if (autoplayBlocked) return Promise.reject(new Error('NotAllowedError'));
+    video.playing = true;
+    return Promise.resolve();
+  };
+  video.pause = () => { video.playing = false; };
   const productWindow = new Element();
   productWindow.style = { setProperty() {} };
   const toggle = new Element();
   const label = new Element();
+  const chapters = [0, 8, 13.2].map(start => {
+    const chapter = new Element();
+    chapter.dataset.start = String(start);
+    const progress = new Map();
+    chapter.style = { setProperty: (name, value) => progress.set(name, value) };
+    chapter.progress = () => Number(progress.get('--progress'));
+    return chapter;
+  });
   const nodes = new Map([
-    ['.product-stage', stage], ['#product-window', productWindow],
+    ['[data-hero-film]', video], ['#product-window', productWindow],
     ['[data-motion-toggle]', toggle], ['[data-motion-label]', label],
     ['[data-motion-pause]', new Element()], ['[data-motion-play]', new Element()],
   ]);
   hero.querySelector = selector => nodes.get(selector);
+  hero.querySelectorAll = selector => selector === '[data-film-chapter]' ? chapters : [];
   doc.querySelector = () => hero;
-  const tabs = [0, 1, 2].map(index => new Element({ 'aria-selected': String(index === 0) }));
   const preference = new Element();
   preference.matches = reduced;
-  const timers = new Map();
-  let timerId = 0;
   let observed;
   const win = {
     matchMedia: query => query.includes('reduced-motion') ? preference : { matches: false },
-    setTimeout: callback => { timers.set(++timerId, callback); return timerId; },
-    clearTimeout: id => timers.delete(id),
     IntersectionObserver: class { constructor(callback) { observed = callback; } observe() {} },
   };
-  const activate = tab => tabs.forEach(item => item.setAttribute('aria-selected', String(item === tab)));
-  initHomeMotion({ document: doc, window: win, tabs, activate });
-  const tick = () => {
-    const [id, callback] = [...timers][0];
-    timers.delete(id);
-    callback();
-  };
-  return { doc, hero, stage, toggle, label, tabs, timers, preference, tick, visible: isIntersecting => observed([{ isIntersecting }]) };
+  initHomeMotion({ document: doc, window: win });
+  const seek = time => { video.currentTime = time; video.fire('timeupdate'); };
+  return { doc, hero, video, toggle, label, chapters, preference, seek, visible: isIntersecting => observed([{ isIntersecting }]) };
 }
 
-test('homepage preview animation pauses for interaction, visibility and explicit control', () => {
+test('homepage film plays while visible, follows chapters and honours the pause button', () => {
   const h = homeMotionHarness();
-  assert.equal(h.timers.size, 1);
-  h.tick();
-  assert.equal(h.tabs[1].getAttribute('aria-selected'), 'true');
-  h.stage.fire('pointerenter');
-  assert.equal(h.timers.size, 0);
-  h.stage.fire('pointerleave');
-  assert.equal(h.timers.size, 1);
-  h.stage.fire('focusin');
-  assert.equal(h.timers.size, 0);
-  h.stage.fire('focusout', { relatedTarget: null });
-  assert.equal(h.timers.size, 1);
+  assert.equal(h.video.playing, true);
+  h.seek(10.6);
+  assert.equal(h.chapters[1].getAttribute('aria-current'), 'true');
+  assert.equal(h.chapters[0].getAttribute('aria-current'), undefined);
+  assert.equal(h.chapters[0].progress(), 1);
+  assert.equal(Math.round(h.chapters[1].progress() * 100), 50);
+  assert.equal(h.chapters[2].progress(), 0);
+  h.chapters[2].fire('click');
+  assert.equal(h.video.currentTime, 13.2);
+  assert.equal(h.chapters[2].getAttribute('aria-current'), 'true');
+  h.visible(false);
+  assert.equal(h.video.playing, false);
+  h.visible(true);
+  assert.equal(h.video.playing, true);
   h.doc.hidden = true;
   h.doc.fire('visibilitychange');
-  assert.equal(h.timers.size, 0);
+  assert.equal(h.video.playing, false);
   h.doc.hidden = false;
   h.doc.fire('visibilitychange');
-  assert.equal(h.timers.size, 1);
-  h.visible(false);
-  assert.equal(h.timers.size, 0);
-  h.visible(true);
-  assert.equal(h.timers.size, 1);
-  h.tabs[0].fire('pointerdown');
-  assert.equal(h.timers.size, 0, 'manual screenshot selection stays selected');
-  assert.equal(h.label.textContent, '播放动画');
   h.toggle.fire('click');
-  assert.equal(h.timers.size, 1);
+  assert.equal(h.video.playing, false);
+  assert.equal(h.label.textContent, '播放');
+  assert.equal(h.hero.dataset.motionPaused, 'true');
   h.toggle.fire('click');
-  assert.equal(h.timers.size, 0);
+  assert.equal(h.video.playing, true);
+  assert.equal(h.label.textContent, '暂停');
 });
 
-test('reduced motion keeps the homepage static and stops an already running preview', () => {
+test('reduced motion never starts the film by itself but the play button still works', () => {
   const reduced = homeMotionHarness({ reduced: true });
-  assert.equal(reduced.timers.size, 0);
-  assert.equal(reduced.toggle.hidden, true);
+  assert.equal(reduced.video.plays, 0);
+  assert.equal(reduced.label.textContent, '播放');
+  reduced.chapters[1].fire('click');
+  assert.equal(reduced.video.currentTime, 8);
+  assert.equal(reduced.video.plays, 0, 'choosing a chapter only moves the frame');
   reduced.toggle.fire('click');
-  assert.equal(reduced.timers.size, 0);
+  assert.equal(reduced.video.playing, true);
   const h = homeMotionHarness();
   h.preference.fire('change', { matches: true });
-  assert.equal(h.timers.size, 0);
-  assert.equal(h.toggle.hidden, true);
+  assert.equal(h.video.playing, false);
+  assert.equal(h.hero.dataset.motionPaused, 'true');
+});
+
+test('a refused autoplay falls back to the play button', async () => {
+  const h = homeMotionHarness({ autoplayBlocked: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.label.textContent, '播放');
   assert.equal(h.hero.dataset.motionPaused, 'true');
 });
 

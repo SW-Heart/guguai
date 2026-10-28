@@ -1,5 +1,5 @@
 import { createApiClient } from './api-client.js?v=4';
-import { initSiteInteractions } from './site-interactions.js?v=2';
+import { initSiteInteractions } from './site-interactions.js?v=3';
 import { modelLogoUrl } from './components/model-logo.js?v=9';
 
 initSiteInteractions();
@@ -42,6 +42,17 @@ initSiteInteractions();
     if (logo) return `<img src="${logo}" alt="" width="22" height="22" decoding="async">`;
     return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 0 8.5 8.5"/><path d="M12 7v5l3.5 2"/></svg>';
   };
+
+  // Homepage model families follow the live price list; the static list stays if it cannot load.
+  const modelStrip = document.querySelector('[data-model-strip]');
+  if (modelStrip) {
+    const families = [['bytedance', 'Seedance'], ['kling', 'Kling'], ['minimax', 'MiniMax'], ['openai', 'GPT Image'], ['midjourney', 'Midjourney'], ['qwen', 'Wan'], ['gemini', 'Veo'], ['grok', 'Grok']];
+    api('/api/public/model-prices', { responseShape: data => Boolean(data && Array.isArray(data.models)) }).then(payload => {
+      const logos = new Set(payload.models.map(model => modelLogoUrl(model.id)).filter(Boolean));
+      const items = families.map(([key, name]) => [[...logos].find(logo => logo.includes(`/${key}`)), name]).filter(([logo]) => logo);
+      if (items.length) modelStrip.innerHTML = items.map(([logo, name]) => `<li><img src="${logo}" alt="" width="28" height="28">${escapeHtml(name)}</li>`).join('');
+    }).catch(() => {});
+  }
 
   const pricePage = document.querySelector('[data-price-page]');
   if (!pricePage) return;

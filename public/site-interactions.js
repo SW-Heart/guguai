@@ -1,4 +1,4 @@
-import { initHomeMotion } from './home-motion.js?v=1';
+import { initHomeMotion } from './home-motion.js?v=2';
 
 export function initSiteInteractions({ document: doc = document, window: win = window } = {}) {
   const header = doc.querySelector('#site-header');
@@ -26,31 +26,25 @@ export function initSiteInteractions({ document: doc = document, window: win = w
     win.matchMedia('(min-width: 861px)').addEventListener?.('change', () => setOpen(false));
   }
 
-  const tabs = [...doc.querySelectorAll('[data-preview-tab]')];
-  const activate = tab => {
-    tabs.forEach(item => {
-      const active = item === tab;
-      item.setAttribute('aria-selected', String(active));
-      item.tabIndex = active ? 0 : -1;
-      const panel = doc.getElementById(item.getAttribute('aria-controls'));
-      if (panel) panel.hidden = !active;
-    });
-  };
-  tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => activate(tab));
-    tab.addEventListener('keydown', event => {
-      let next;
-      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
-      else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
-      else if (event.key === 'Home') next = 0;
-      else if (event.key === 'End') next = tabs.length - 1;
-      else return;
-      event.preventDefault();
-      activate(tabs[next]);
-      tabs[next].focus();
+  initHomeMotion({ document: doc, window: win });
+  // Case films play only while on screen; with reduced motion they wait for the viewer.
+  const caseVideos = [...doc.querySelectorAll('[data-case-video]')];
+  if (win.matchMedia('(prefers-reduced-motion: reduce)').matches) caseVideos.forEach(video => { video.controls = true; });
+  else if (caseVideos.length && 'IntersectionObserver' in win) {
+    const observer = new win.IntersectionObserver(entries => entries.forEach(entry => {
+      if (entry.isIntersecting) entry.target.play()?.catch?.(() => {});
+      else entry.target.pause();
+    }), { threshold: .4 });
+    caseVideos.forEach(video => observer.observe(video));
+  }
+  // The works rows scroll by half their width, so each row repeats its own items once.
+  doc.querySelectorAll('[data-works-marquee] .works-row').forEach(row => {
+    [...row.children].forEach(item => {
+      const copy = item.cloneNode(true);
+      copy.setAttribute('aria-hidden', 'true');
+      row.append(copy);
     });
   });
-  initHomeMotion({ document: doc, window: win, tabs, activate });
   const platform = String(win.navigator.userAgentData?.platform || win.navigator.platform || win.navigator.userAgent || '');
   // Mobile devices keep both installers equally available.
   const preferred = /iphone|ipad|android/i.test(platform) ? '' : /mac/i.test(platform) ? 'mac' : /win/i.test(platform) ? 'windows' : '';

@@ -7,7 +7,7 @@ import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import test from 'node:test';
 
 import { bodyJson, mutationAllowed, publicHttpErrorBody, requestTraceId, sendJson } from '../server/http-protocol.mjs';
-import { servePublicFile, serveStatic, staticCacheControl, staticEncoding, staticEntryFile } from '../server/static.mjs';
+import { parseByteRange, servePublicFile, serveStatic, staticCacheControl, staticEncoding, staticEntryFile } from '../server/static.mjs';
 
 test('HTTP protocol readers and writers keep one response contract', async () => {
   assert.deepEqual(await bodyJson(Readable.from(['{"ok":true}'])), { ok:true });
@@ -109,4 +109,40 @@ test('static directory requests answer 404 instead of crashing the server', asyn
     await serveStatic(res, '/images/', { headers:{}, url:'/images/' }, { publicDir, sendJson:(_, status, body) => sent.push({ status, body }) });
     assert.deepEqual(sent, [{ status:404, body:{ error:'静态文件不存在' } }]);
   } finally { rmSync(publicDir, { recursive:true, force:true }); }
+});
+
+test('videos answer byte ranges so every browser can play and seek them', async t => {
+  assert.deepEqual(parseByteRange('bytes=0-99', 1000), { start:0, end:99 });
+  assert.deepEqual(parseByteRange('bytes=900-', 1000), { start:900, end:999 });
+  assert.deepEqual(parseByteRange('bytes=-100', 1000), { start:900, end:999 });
+  assert.deepEqual(parseByteRange('bytes=0-5000', 1000), { start:0, end:999 });
+  assert.deepEqual(parseByteRange('bytes=1000-', 1000), { unsatisfiable:true });
+  assert.equal(parseByteRange('bytes=0-1,5-9', 1000), null, 'multi-range falls back to the whole file');
+  assert.equal(staticCacheControl('.mp4', { production:true, versioned:true }), 'public, max-age=31536000, immutable');
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'gugu-video-'));
+  t.after(() => rmSync(dir, { recursive:true, force:true }));
+  const video = path.join(dir, 'film.mp4');
+  writeFileSync(video, Buffer.from(Array.from({ length:1000 }, (_, index) => index % 256)));
+  const collect = () => {
+    const res = Object.assign(new PassThrough(), { preset:{}, getHeader:() => undefined, writeHead(status, values) { this.status = status; this.headers = values; } });
+    const chunks = [];
+    res.on('data', chunk => chunks.push(chunk));
+    return { res, done:new Promise(resolve => res.on('end', () => resolve(Buffer.concat(chunks)))) };
+  };
+  const partial = collect();
+  await servePublicFile(partial.res, video, 'video/mp4', 'no-cache', { headers:{ range:'bytes=10-19' } });
+  const body = await partial.done;
+  assert.equal(partial.res.status, 206);
+  assert.equal(partial.res.headers['Content-Range'], 'bytes 10-19/1000');
+  assert.equal(partial.res.headers['Content-Length'], 10);
+  assert.deepEqual([...body], [10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+  const whole = collect();
+  await servePublicFile(whole.res, video, 'video/mp4', 'no-cache', { headers:{} });
+  assert.equal((await whole.done).length, 1000);
+  assert.equal(whole.res.headers['Accept-Ranges'], 'bytes');
+  const outside = recordingResponse();
+  await servePublicFile(outside, video, 'video/mp4', 'no-cache', { headers:{ range:'bytes=2000-' } });
+  assert.equal(outside.status, 416);
+  assert.equal(outside.headers['Content-Range'], 'bytes */1000');
 });

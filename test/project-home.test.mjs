@@ -113,18 +113,18 @@ test('changed frontend modules are reachable through current cache keys', () => 
 
 test('the website leads with 智能画布 and 短剧工作台 and shows the real skills', () => {
   const home = read('home.html');
-  const tabs = [...home.matchAll(/data-preview-tab="(\w+)">([^<]+)</g)].map(match => `${match[1]}:${match[2]}`);
-  assert.deepEqual(tabs, ['canvas:智能画布', 'drama:短剧工作台', 'image:图像生成', 'video:视频生成']);
-  assert.match(home, /id="preview-canvas" role="tabpanel"[^>]*><div class="preview-caption">[\s\S]*?class="canvas-mock" role="img"/);
-  assert.match(home, /module-canvas is-primary[\s\S]*module-drama is-primary/);
-  const skills = [...home.matchAll(/<li class="skill-card"><img src="(\/images\/skills\/[\w-]+-thumb-v1\.webp)"/g)];
+  const chapters = [...home.matchAll(/data-film-chapter data-start="[\d.]+"><b>([^<]+)</g)].map(match => match[1]);
+  assert.deepEqual(chapters, ['智能画布', '短剧工作台', '成片']);
+  const guides = [...home.matchAll(/<a class="text-link" href="\/help#([\w-]+)">[^<]*教程</g)].map(match => match[1]);
+  assert.deepEqual(guides, ['agent-start', 'drama-start', 'image-start']);
+  const features = read('features.html');
+  const skills = [...features.matchAll(/<li class="skill-card"><img src="(\/images\/skills\/[\w-]+-thumb-v1\.webp)"/g)];
   assert.equal(skills.length, 10);
   for (const [, src] of skills) assert.ok(readFileSync(new URL(`../public${src}`, import.meta.url)).length > 0, src);
-  const features = read('features.html');
   assert.deepEqual([...features.matchAll(/<section class="feature-story[^"]*" id="(\w+)"/g)].map(match => match[1]), ['canvas', 'skills', 'drama', 'image', 'video', 'files']);
   for (const page of [home, features]) {
     assert.doesNotMatch(page, /创作助手|<h2>短剧创作<\/h2>|<\/span><h3>短剧创作</);
-    assert.match(page, /\/marketing\.css\?v=16/);
+    assert.match(page, /\/marketing\.css\?v=17/);
   }
 });
 

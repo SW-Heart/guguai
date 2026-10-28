@@ -12,8 +12,21 @@ async function statFile(file) {
   return stat;
 }
 
-function pipeFile(file, res) {
-  createReadStream(file).on('error', error => res.destroy(error)).pipe(res);
+function pipeFile(file, res, range = undefined) {
+  createReadStream(file, range).on('error', error => res.destroy(error)).pipe(res);
+}
+
+// Browsers (Safari in particular) only play <video> when byte ranges are honoured.
+export function parseByteRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    return suffix > 0 && size > 0 ? { start:Math.max(0, size - suffix), end:size - 1 } : { unsatisfiable:true };
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  return start < size && start <= end ? { start, end } : { unsatisfiable:true };
 }
 
 // /agent, /drama and /lab are older addresses; the app moves them to /create and /projects.
@@ -31,7 +44,7 @@ const isProjectRoute = pathname => /^\/projects\/(?:drama\/)?[\w-]+\/?$/.test(pa
 export function isDesktopRequest(req) { return String(req.headers['x-gugu-desktop'] || '') === '1'; }
 
 export function staticCacheControl(ext, { versioned = false, production = process.env.NODE_ENV === 'production' } = {}) {
-  if (['.js', '.css', '.webp'].includes(ext)) return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
+  if (['.js', '.css', '.webp', '.mp4'].includes(ext)) return production && versioned ? 'public, max-age=31536000, immutable' : 'no-cache';
   return ['.svg', '.woff', '.woff2'].includes(ext) ? 'public, max-age=604800, immutable' : 'no-cache';
 }
 
@@ -107,6 +120,17 @@ export async function servePublicFile(res, file, mimeType, cacheControl, req = n
     res.writeHead(200, { ...headers, 'Content-Encoding': encoding, 'Content-Length': body.length });
     return res.end(req?.method === 'HEAD' ? undefined : body);
   }
+  headers['Accept-Ranges'] = 'bytes';
+  const range = req?.headers?.range ? parseByteRange(req.headers.range, stat.size) : null;
+  if (range?.unsatisfiable) {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}` });
+    return res.end();
+  }
+  if (range) {
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`, 'Content-Length': range.end - range.start + 1 });
+    if (req?.method === 'HEAD') return res.end();
+    return pipeFile(file, res, range);
+  }
   res.writeHead(200, { ...headers, 'Content-Length': stat.size });
   if (req?.method === 'HEAD') return res.end();
   pipeFile(file, res);
@@ -118,8 +142,8 @@ export async function serveStatic(res, pathname, req = null, { publicDir, appOnl
   const file = path.resolve(publicDir, relative);
   if (!file.startsWith(`${publicDir}${path.sep}`) && file !== path.join(publicDir, 'index.html')) return sendJson(res, 403, { error: '禁止访问' });
   const ext = path.extname(file);
-  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon' }[ext] || 'application/octet-stream';
-  const versioned = ['.js', '.css', '.webp'].includes(ext) && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
+  const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon', '.mp4': 'video/mp4' }[ext] || 'application/octet-stream';
+  const versioned = ['.js', '.css', '.webp', '.mp4'].includes(ext) && Boolean(req?.url && new URL(req.url, 'http://localhost').searchParams.get('v'));
   const cacheControl = staticCacheControl(ext, { versioned });
   if (appOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname) || isProjectRoute(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
   try { await servePublicFile(res, file, mime, cacheControl, req); }

@@ -1,43 +1,53 @@
-export function initHomeMotion({ document: doc, window: win, tabs, activate }) {
+// Homepage product film: chapters follow playback, the window tilts toward the pointer.
+export function initHomeMotion({ document: doc, window: win }) {
   const hero = doc.querySelector('[data-home-motion]');
-  if (!hero?.dataset.homeMotion || tabs.length < 2) return;
+  const video = hero?.querySelector('[data-hero-film]');
+  if (!video) return;
 
-  const stage = hero.querySelector('.product-stage');
   const productWindow = hero.querySelector('#product-window');
   const toggle = hero.querySelector('[data-motion-toggle]');
   const label = hero.querySelector('[data-motion-label]');
   const pauseIcon = hero.querySelector('[data-motion-pause]');
   const playIcon = hero.querySelector('[data-motion-play]');
+  const chapters = [...hero.querySelectorAll('[data-film-chapter]')];
+  const starts = chapters.map(chapter => Number(chapter.dataset.start) || 0);
   const motionPreference = win.matchMedia('(prefers-reduced-motion: reduce)');
   const finePointer = win.matchMedia('(pointer: fine)');
   let reduced = motionPreference.matches;
+  // Reduced motion never starts the film by itself; the play button still works.
   let manuallyPaused = reduced;
-  let hovered = false;
-  let focused = false;
   let visible = true;
-  let timer = 0;
   let frame = 0;
 
-  const stop = () => {
-    win.clearTimeout(timer);
-    timer = 0;
+  const chapterAt = time => starts.reduce((found, start, index) => time >= start ? index : found, 0);
+  const renderChapters = () => {
+    const time = Number(video.currentTime) || 0;
+    const duration = Number(video.duration) || 0;
+    const current = chapterAt(time);
+    chapters.forEach((chapter, index) => {
+      const active = index === current;
+      chapter.classList.toggle('is-active', active);
+      if (active) chapter.setAttribute('aria-current', 'true');
+      else chapter.removeAttribute('aria-current');
+      const end = starts[index + 1] ?? duration;
+      const progress = active && end > starts[index] ? (time - starts[index]) / (end - starts[index]) : index < current ? 1 : 0;
+      chapter.style?.setProperty('--progress', String(Math.max(0, Math.min(1, progress))));
+    });
   };
   const sync = () => {
-    stop();
-    const paused = manuallyPaused || reduced;
-    const suspended = paused || hovered || focused || !visible || doc.hidden;
+    const paused = manuallyPaused;
+    const suspended = paused || !visible || doc.hidden;
     hero.dataset.motionPaused = String(suspended);
-    if (toggle) toggle.setAttribute('aria-label', paused ? '播放预览动画' : '暂停预览动画');
-    if (label) label.textContent = paused ? '播放动画' : '暂停动画';
+    if (toggle) toggle.setAttribute('aria-label', paused ? '播放演示视频' : '暂停演示视频');
+    if (label) label.textContent = paused ? '播放' : '暂停';
     if (pauseIcon) pauseIcon.hidden = paused;
     if (playIcon) playIcon.hidden = !paused;
-    if (suspended) return;
-    timer = win.setTimeout(() => {
-      timer = 0;
-      const current = tabs.findIndex(tab => tab.getAttribute('aria-selected') === 'true');
-      activate(tabs[(current + 1) % tabs.length]);
+    if (suspended) video.pause();
+    else video.play()?.catch?.(() => {
+      // Autoplay can be refused (e.g. data saver); fall back to the play button.
+      manuallyPaused = true;
       sync();
-    }, 5200);
+    });
   };
   const resetTilt = () => {
     if (frame) win.cancelAnimationFrame(frame);
@@ -45,27 +55,23 @@ export function initHomeMotion({ document: doc, window: win, tabs, activate }) {
     productWindow?.style.setProperty('--tilt-x', '0deg');
     productWindow?.style.setProperty('--tilt-y', '0deg');
   };
+
   toggle?.addEventListener('click', () => {
-    // Reduced motion always remains static, including after using this control.
-    if (reduced) return;
     manuallyPaused = !manuallyPaused;
-    if (manuallyPaused) resetTilt();
     sync();
   });
-  if (toggle) toggle.hidden = reduced;
-  stage?.addEventListener('pointerenter', () => { hovered = true; sync(); });
-  stage?.addEventListener('pointerleave', () => { hovered = false; resetTilt(); sync(); });
-  stage?.addEventListener('focusin', () => { focused = true; sync(); });
-  stage?.addEventListener('focusout', event => {
-    if (!stage.contains(event.relatedTarget)) { focused = false; sync(); }
-  });
-  tabs.forEach(tab => tab.addEventListener('pointerdown', () => {
-    // Touch selection stays on the chosen screenshot until animation is resumed.
-    manuallyPaused = true;
-    sync();
+  chapters.forEach((chapter, index) => chapter.addEventListener('click', () => {
+    video.currentTime = starts[index];
+    renderChapters();
+    if (!reduced) {
+      manuallyPaused = false;
+      sync();
+    }
   }));
+  video.addEventListener('timeupdate', renderChapters);
+  video.addEventListener('loadedmetadata', renderChapters);
   productWindow?.addEventListener('pointermove', event => {
-    if (reduced || manuallyPaused || !finePointer.matches || event.pointerType === 'touch' || frame) return;
+    if (reduced || !finePointer.matches || event.pointerType === 'touch' || frame) return;
     frame = win.requestAnimationFrame(() => {
       frame = 0;
       const bounds = productWindow.getBoundingClientRect();
@@ -77,21 +83,22 @@ export function initHomeMotion({ document: doc, window: win, tabs, activate }) {
     });
   });
   productWindow?.addEventListener('pointerleave', resetTilt);
-  doc.addEventListener('visibilitychange', () => { resetTilt(); sync(); });
+  doc.addEventListener('visibilitychange', sync);
   motionPreference.addEventListener?.('change', event => {
     reduced = event.matches;
-    if (reduced) manuallyPaused = true;
-    if (toggle) toggle.hidden = reduced;
-    resetTilt();
+    if (reduced) {
+      manuallyPaused = true;
+      resetTilt();
+    }
     sync();
   });
   if ('IntersectionObserver' in win) {
     const observer = new win.IntersectionObserver(entries => {
       visible = entries.some(entry => entry.isIntersecting);
-      if (!visible) resetTilt();
       sync();
     });
-    observer.observe(hero);
+    observer.observe(video);
   }
+  renderChapters();
   sync();
 }
