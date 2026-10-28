@@ -12,7 +12,7 @@ function submissionContext({ resolve, requests }) {
   const messages = [];
   const context = vm.createContext({
     state, generationSubmissionForms:new Set(), accountScope:{ snapshot:() => ({}), isCurrent:() => true },
-    hasUnresolvedReference:() => true, pendingReferenceJob:() => null, needsReferenceUpload:() => false,
+    videoPromptText:() => '视频', imagePromptText:() => '', pendingReferenceJob:() => null, needsReferenceUpload:() => false,
     resolveReferenceAssetIds:resolve, referenceCountsForIds:ids => ({ image:ids.length, video:0, audio:0 }),
     renderTasks:() => {}, renderReferences:() => {}, mergeTasksIntoLoadedHistory:() => {}, setCreditBalance:() => {},
     setVideoPromptText:() => {}, setImagePromptText:() => {}, videoPromptEditor:() => ({ dispatchEvent:() => {} }),
@@ -57,7 +57,7 @@ test('duplicate reference slots are quoted and submitted as separate positions',
 });
 
 test('eight local reference slots can resolve to the same cloud image without collapsing', async () => {
-  const source = frontend.slice(frontend.indexOf('async function resolveReferenceAssetIds('), frontend.indexOf('function hasUnresolvedReference(', frontend.indexOf('async function resolveReferenceAssetIds(')));
+  const source = frontend.slice(frontend.indexOf('async function resolveReferenceAssetIds('), frontend.indexOf('function referenceCountsForIds(', frontend.indexOf('async function resolveReferenceAssetIds(')));
   const ids = Array.from({ length:8 }, (_, index) => `local-${index}`);
   const context = vm.createContext({
     state:{ files:[] }, pendingReferenceJob:id => ({ id }), uploadPendingReferenceJob:async () => ({ id:'cloud-1' }),

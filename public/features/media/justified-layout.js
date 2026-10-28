@@ -1,3 +1,5 @@
+import { knownMediaRatio, rememberMediaRatio } from './media-ratio.js?v=1';
+
 // Keep input order: row boundaries change, never the order of the files.
 export function justifiedRows(ratios, width, { targetHeight = 220, gap = 12 } = {}) {
   if (!(width > 0)) return [];
@@ -53,6 +55,7 @@ export function createJustifiedFileLayout(grid) {
       if (posters.get(video) !== state || !card.contains(video)) return;
       if (image.naturalWidth > 0 && image.naturalHeight > 0) {
         dimensions.set(card, image.naturalWidth / image.naturalHeight);
+        rememberMediaRatio(card.dataset?.recordId, image.naturalWidth, image.naturalHeight);
         schedule();
       }
     };
@@ -78,9 +81,13 @@ export function createJustifiedFileLayout(grid) {
       const released = media?.dataset?.releasedSrc;
       const placeholder = media?.currentSrc?.startsWith('data:image/gif;base64,R0lGODlhAQABA');
       const ready = media?.tagName !== 'IMG' || media.complete;
-      if (!released && !placeholder && ready && mediaWidth > 0 && mediaHeight > 0) dimensions.set(card, mediaWidth / mediaHeight);
+      if (!released && !placeholder && ready && mediaWidth > 0 && mediaHeight > 0) {
+        dimensions.set(card, mediaWidth / mediaHeight);
+        rememberMediaRatio(card.dataset?.recordId, mediaWidth, mediaHeight);
+      }
       if (media?.tagName === 'VIDEO') readPoster(media, card);
-      return dimensions.get(card) || Number(card.dataset.aspectRatio) || 1;
+      // A re-rendered card is a new node; reuse what an earlier node measured.
+      return dimensions.get(card) || knownMediaRatio(card.dataset?.recordId) || Number(card.dataset.aspectRatio) || 1;
     });
     if (width === previousWidth && gap === previousGap && cards.length === previousCards.length
       && cards.every((card, index) => card === previousCards[index] && ratios[index] === previousRatios[index])) return;

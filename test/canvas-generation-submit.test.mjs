@@ -28,7 +28,7 @@ function fixture(result,{entity=null,links:linked=[],describe=()=>null,quote={pr
   const draft={id:'canvas-gen-draft',type:'image',prompt:'人物半身照',aspect:'3:4',attachments:[],taskId:'',...(entity?{entity}:{})};
   const workspace={generationDrafts:[draft],links:linked,positions:{[draft.id]:{x:10,y:20,width:280,height:320}}};
   const requests=[],messages=[],saves=[],uploads=[],focused=[],selected=[];
-  const context=vm.createContext({activeGenerationId:draft.id,generationSubmitting:false,epoch:1,generationDraft:id=>workspace.generationDrafts.find(item=>item.id===id),workspace:()=>workspace,
+  const context=vm.createContext({activeGenerationId:draft.id,submittingDrafts:new Map(),epoch:1,generationDraft:id=>workspace.generationDrafts.find(item=>item.id===id),workspace:()=>workspace,
     canvasGenerationPayload:request=>({type:request.type,prompt:request.prompt,referenceAssetIds:request.attachments.map(file=>file.id)}),generationConfig:()=>({}),renderGenerationComposer(){},syncCanvas(){},scheduleCanvasSave:now=>saves.push(now),crypto:{randomUUID},
     closeGenerationMenu(){},canvas:{selectNodes:ids=>{selected.push(...ids);const node=workspace.generationDrafts.find(item=>item.id===ids[0]);context.activeGenerationId=node?.taskId?'':node?.id||'';}},focusNewCanvasContent:ids=>focused.push(...ids),
     describeInput:describe,liveCanvasNodes:()=>[{id:'other',x:386,y:20,width:200,height:200}],nodeRect:node=>({x:node.x,y:node.y,width:node.width,height:node.height}),
@@ -121,7 +121,7 @@ test('a linked card without a finished picture stops the request with a clear re
 });
 test('empty response or rejected request reports failure without inventing a result',async()=>{
   for(const result of [{tasks:[]},new Error('余额不足')]){
-    const f=fixture(result);await f.submit();assert.equal(f.workspace.generationDrafts.length,1);assert.equal(f.draft.status,'');assert.equal(f.context.generationSubmitting,false);assert.equal(f.saves.length,0);assert.equal(f.messages.length,1);
+    const f=fixture(result);await f.submit();assert.equal(f.workspace.generationDrafts.length,1);assert.equal(f.draft.status,'');assert.equal(f.context.submittingDrafts.size,0);assert.equal(f.saves.length,0);assert.equal(f.messages.length,1);
     assert.equal(f.context.activeGenerationId,f.draft.id);assert.deepEqual(f.selected,[]);assert.deepEqual(f.focused,[]);
   }
 });
@@ -156,5 +156,22 @@ test('speech blocks submission until quoted and asks for renewed confirmation af
   await f.submit();assert.equal(f.requests.length,0);
   f.draft.speechQuote={priceVersion:'old',credits:.014};await f.submit();
   assert.equal(f.requests.length,1);assert.equal(f.workspace.generationDrafts.length,1);
-  assert.match(f.messages.at(-1),/费用已更新/);assert.equal(f.context.generationSubmitting,false);
+  assert.match(f.messages.at(-1),/费用已更新/);assert.equal(f.context.submittingDrafts.size,0);
+});
+
+test('the composer accepts the next click while an earlier generation is still being submitted', async () => {
+  const f = fixture({ id:'task-1', status:'queued' });
+  const api = f.context.bridge.agentApi;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.bridge.agentApi = async (url, options) => { await gate; return api(url, options); };
+  const first = f.submit();
+  assert.equal(f.draft.status, 'submitting');
+  const second = f.submit();
+  release();
+  await Promise.all([first, second]);
+  assert.equal(f.requests.filter(item => item.url === '/api/generations').length, 2);
+  assert.equal(f.draft.status, '');
+  assert.equal(f.context.submittingDrafts.size, 0);
+  assert.doesNotMatch(source, /正在开始|正在提交/);
 });

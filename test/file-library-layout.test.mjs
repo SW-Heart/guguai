@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { justifiedRows } from '../public/features/media/justified-layout.js';
+import { parseMediaRatio, mediaRatio, rememberMediaRatio, knownMediaRatio } from '../public/features/media/media-ratio.js';
+
+const ratioSource = readFileSync(new URL('../public/features/media/media-ratio.js', import.meta.url), 'utf8');
+// Inline the shared ratio cache so the layout can run in a plain script context.
+const withoutModules = source => `${ratioSource}\n${source}`.replace(/^import .*$/gm, '').replaceAll('export function', 'function');
 
 test('mixed image ratios fill every complete row without cropping or reordering', () => {
   for (const width of [320, 768, 1000, 1440]) {
@@ -40,9 +45,9 @@ test('single panoramas fit, unknown dimensions have a fallback, hidden grids def
 test('file library loads its layout through the current frontend cache chain', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=614'));
-  assert.ok(html.includes('/styles.css?v=436'));
-  assert.ok(app.includes('./features/media/justified-layout.js?v=3'));
+  assert.ok(html.includes('/app.js?v=615'));
+  assert.ok(html.includes('/styles.css?v=437'));
+  assert.ok(app.includes('./features/media/justified-layout.js?v=4'));
 });
 
 test('poster-only portrait videos use cover dimensions and retain them when offscreen', () => {
@@ -60,7 +65,7 @@ test('poster-only portrait videos use cover dimensions and retain them when offs
     ResizeObserver:class { observe() {} },
   });
   const source = readFileSync(new URL('../public/features/media/justified-layout.js', import.meta.url), 'utf8');
-  vm.runInContext(source.replaceAll('export function', 'function'), context);
+  vm.runInContext(withoutModules(source), context);
   const layout = context.createJustifiedFileLayout(grid);
   layout.schedule(); frames.shift()();
   assert.equal(parseFloat(card.style.height), 220);
@@ -96,7 +101,7 @@ function imageLayoutFixture() {
     ResizeObserver:class { observe() {} },
   });
   const source = readFileSync(new URL('../public/features/media/justified-layout.js', import.meta.url), 'utf8');
-  vm.runInContext(source.replaceAll('export function', 'function'), context);
+  vm.runInContext(withoutModules(source), context);
   const layout = context.createJustifiedFileLayout(grid);
   const draw = () => { layout.schedule(); frames.shift()(); };
   draw();
@@ -136,4 +141,54 @@ test('a newly discovered image ratio preserves the visible card position during 
   assert.ok(Math.abs(cards[1].getBoundingClientRect().top - originalTop) < 1e-8);
   assert.ok(grid.scrollTop > 50);
   assert.equal(grid.style.overflowAnchor, 'none');
+});
+
+test('media ratios parse requested aspects and sizes and prefer measured values', () => {
+  assert.equal(parseMediaRatio('16:9'), 16 / 9);
+  assert.equal(parseMediaRatio('1024x1536'), 1024 / 1536);
+  assert.equal(parseMediaRatio('auto'), 0);
+  assert.equal(parseMediaRatio(''), 0);
+  assert.equal(mediaRatio('ratio-unknown', [0, 0], '', '9:16'), 9 / 16);
+  assert.equal(mediaRatio('ratio-unknown', [1920, 1080], '9:16'), 1920 / 1080);
+  assert.ok(rememberMediaRatio('ratio-known', 720, 1280));
+  assert.equal(rememberMediaRatio('ratio-known', 720, 1280), false, 'an unchanged ratio needs no relayout');
+  assert.equal(mediaRatio('ratio-known', [1920, 1080], '16:9'), 720 / 1280);
+  assert.equal(knownMediaRatio(''), 0);
+});
+
+test('a re-rendered file card reuses the ratio measured by its previous node', () => {
+  const frames = [];
+  const makeCard = () => ({ classList:{ contains:() => true }, dataset:{ recordId:'asset-portrait', aspectRatio:'1' }, style:{}, querySelector:() => video });
+  const video = { tagName:'VIDEO', videoWidth:0, videoHeight:0, getAttribute:() => '' };
+  const first = makeCard();
+  const grid = { style:{}, clientWidth:1000, children:[first], classList:{ toggle() {} }, addEventListener() {} };
+  const context = vm.createContext({
+    requestAnimationFrame:callback => { frames.push(callback); return frames.length; },
+    getComputedStyle:() => ({ paddingLeft:'0', paddingRight:'0', columnGap:'12' }),
+    ResizeObserver:class { observe() {} },
+  });
+  const source = readFileSync(new URL('../public/features/media/justified-layout.js', import.meta.url), 'utf8');
+  vm.runInContext(withoutModules(source), context);
+  const layout = context.createJustifiedFileLayout(grid);
+  video.videoWidth = 720; video.videoHeight = 1280;
+  layout.schedule(); frames.shift()();
+  const width = first.style.width;
+  video.videoWidth = video.videoHeight = 0;
+  const second = makeCard();
+  grid.children = [second];
+  layout.schedule(); frames.shift()();
+  assert.equal(second.style.width, width);
+});
+
+test('generation cards reserve their media size before covers load and after release', () => {
+  const css = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.match(css, /\.card-media\.video video \{[^}]*aspect-ratio: var\(--media-ratio, 16 \/ 9\)/);
+  assert.match(css, /\.card-media img \{[^}]*aspect-ratio: var\(--media-ratio, auto\)/);
+  assert.ok(app.includes("./features/media/media-ratio.js?v=1"));
+  const start = app.indexOf('function cardMediaAttributes(');
+  const context = vm.createContext({ esc:String, mediaRatio:(key, ...candidates) => candidates.map(parseMediaRatio).find(Boolean) || 0, parseMediaRatio:value => Array.isArray(value) ? 0 : parseMediaRatio(value) });
+  vm.runInContext(app.slice(start, app.indexOf('function rememberCardMediaRatio(', start)), context);
+  assert.equal(context.cardMediaAttributes({ aspectRatio:'9:16' }, { id:'asset-a' }), ` data-media-key="asset-a" style="--media-ratio:${9 / 16}"`);
+  assert.equal(context.cardMediaAttributes({ size:'auto' }, { id:'asset-b' }), ' data-media-key="asset-b"');
 });

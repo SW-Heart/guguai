@@ -259,9 +259,12 @@ export function createDirectorWorkspace(host, bridge) {
   let agentClient, agentState=null, agentConfig=null, agentReady=false, sending=false, switchingConversation=false, skillUpdating=false, skillSelection=null, modelPreferencePicker=null, preferenceUpdating=false, connectionError='', conversations=[], historyOpen=false;
   let lastAgentCacheSignature='', lastCanvasContentSignature='', generationApproval=null;
   const syncAgentAssetMetadata=createAgentAssetMetadataSync({findFile:id=>bridge.canvasFile?.({assetId:id}),renameFile:(file,name)=>bridge.renameFile(file,name),current:()=>!stopped,onChange:()=>drawPanels({syncBoard:true}),onError:error=>bridge.toast(error.message)});
+  // Draft id → generations clicked but not yet returned. The composer never
+  // waits on them: each click is its own submission.
+  const submittingDrafts=new Map();
   let submissionQueue=[], drainingSubmissions=false, pendingMessages=[], retrySubmission=null;
   let attachments=[], documentAttachments=[], uploading=false, popoverEvents, attachmentPreviews, messagePreviews;
-  let activeGenerationId='', generationUploading=false, generationSubmitting=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null, speechLanguagePopover=null;
+  let activeGenerationId='', generationUploading=false, generationCostSequence=0, generationCostTimer=0, generationMenu='', generationMenuLayer=null, generationMenuElement=null, speechLanguagePopover=null;
   const autoOpenedGenerations=new Set();
   let cancelledNodeCleanup=null,mediaNameEditor=null,projectAssetsDrawer=null,canvasLibrary=null,lastCanvasMediaSignature='',connector=null,linkPopup=null;
   let canvasContextMenu=null;
@@ -498,7 +501,7 @@ export function createDirectorWorkspace(host, bridge) {
     const inputs=inputLinks(workspace().links,draft.id).filter(link=>!hiddenIds().has(link.from)).length;
     const {folded,total}=foldedResults(drafts,draft,id=>bridge.task(id));
     const parts=[
-      draft.status==='submitting'?'正在提交':running?`生成中 ${running} 个`:results.length?`已生成 ${results.length} 个`:'',
+      draft.status==='submitting'?'生成中…':running?`生成中 ${running} 个`:results.length?`已生成 ${results.length} 个`:'',
       inputs?`${inputs} 个输入`:'',
     ].filter(Boolean).map(text=>`<span>${escape(text)}</span>`);
     if(folded.length)parts.push(`<button type="button" class="dw-card-toggle" data-toggle-results="${escape(draft.id)}">展开较早的 ${folded.length} 个</button>`);
@@ -1812,7 +1815,7 @@ export function createDirectorWorkspace(host, bridge) {
     bridge.toast(`已将这张设为「${generatorLabel(parent)}」的主图`);
   }
   async function attachGenerationReference(draft,loadFile){
-    if(generationUploading||generationSubmitting||draft.taskId)return;
+    if(generationUploading||draft.taskId)return;
     const token=epoch,id=draft.id;generationUploading=true;closeGenerationMenu();renderGenerationComposer();
     try{
       const file=await loadFile(()=>token===epoch&&generationDraft(id)===draft&&!draft.taskId);
@@ -1985,8 +1988,8 @@ export function createDirectorWorkspace(host, bridge) {
     reconcileCanvasGenerationDraft(draft,generationConfig());
     const results=draftResults(liveDrafts(),draft.id),output=displayedResult(liveDrafts(),draft);
     panel.dataset.genType='audio';panel.setAttribute('role','group');panel.setAttribute('aria-label','语音生成');
-    panel.innerHTML=speechComposerMarkup(draft,{voices:speechVoices||systemVoices,results,selectedResult:output?.id,linked:linkedGenerationInputs(draft),busy:generationSubmitting,enabled:generationConfig().speech?.enabled===true,icons:genIcons});
-    panel.classList.toggle('is-submitting',generationSubmitting);panel.classList.remove('is-uploading');
+    panel.innerHTML=speechComposerMarkup(draft,{voices:speechVoices||systemVoices,results,selectedResult:output?.id,linked:linkedGenerationInputs(draft),busy:false,enabled:generationConfig().speech?.enabled===true,icons:genIcons});
+    panel.classList.remove('is-uploading');
     panel.hidden=false;if(field){const input=panel.querySelector(`[data-speech-field="${field}"]`);input?.focus({preventScroll:true});if(selection)input?.setSelectionRange?.(...selection);}
     positionGenerationComposer();updateGenerationCost(draft);if(keepMenu)renderGenerationMenu();
     if(!speechVoiceLoading&&!speechVoicesFetched){speechVoiceLoading=true;const token=epoch;bridge.agentApi('/api/speech/voices').then(result=>{if(token!==epoch)return;const nextVoices=result.voices||systemVoices,changed=JSON.stringify(nextVoices)!==JSON.stringify(speechVoices);speechVoices=nextVoices;speechVoicesFetched=true;if(activeGenerationId===draft.id){const trigger=panel.querySelector('[data-gen-menu="speech-voiceId"]'),voice=speechVoices.find(item=>item.id===draft.voiceId);if(trigger&&voice){trigger.querySelector('.dw-gen-chip-label').textContent=voice.name;trigger.setAttribute('aria-label',`音色：${voice.name}`);trigger.title=voice.name;}if(changed&&generationMenu.startsWith('speech-'))renderGenerationMenu();}}).catch(()=>{}).finally(()=>{speechVoiceLoading=false;});}
@@ -2004,7 +2007,7 @@ export function createDirectorWorkspace(host, bridge) {
     const currentModel=models.find(item=>item.id===draft.modelId);
     const video=draft.type==='video',firstLast=video&&draft.mode==='FIRST&LAST';
     const prompt=panel.querySelector('[data-gen-prompt]'),promptFocus=prompt&&document.activeElement===prompt?generationSelection(prompt):null;
-    const busy=generationSubmitting||generationUploading;
+    const busy=generationUploading;
     const linked=linkedGenerationInputs(draft);
     const linkedChips=linked.map(item=>{
       const thumb=item.kind==='image'&&item.file?.url?`<img src="${escape(item.file.url)}" alt="">`:item.kind==='video'&&item.file?.url?`<video src="${escape(item.file.url)}" muted playsinline preload="metadata"></video>`:`<span class="dw-gen-reference-icon" aria-hidden="true">${item.kind==='text'?canvasIcon('file-text'):genIcons[item.kind]||genIcons.image}</span>`;
@@ -2034,9 +2037,8 @@ export function createDirectorWorkspace(host, bridge) {
     const output=displayedResult(liveDrafts(),draft);
     const resultField=results.length>1?`<label class="dw-gen-name"><span>生成结果</span><select data-gen-result aria-label="选择生成结果">${results.map((item,index)=>`<option value="${escape(item.id)}" ${item.id===output?.id?'selected':''}>第 ${index+1} 个 · ${escape(labels[bridge.task(item.taskId)?.status||item.status]||'等待制作')}</option>`).join('')}</select></label>`:'';
     const nameField=draft.entity?`<label class="dw-gen-name"><span>${escape(entityKinds[draft.entity.kind])}名称</span><input data-gen-name maxlength="40" value="${escape(draft.entity.name)}" autocomplete="off"></label>`:draft.role==='shot'?`<label class="dw-gen-name"><span>分镜标题</span><input data-gen-name maxlength="80" value="${escape(draft.title||'')}" autocomplete="off"></label>`:'';
-    panel.innerHTML=`<div class="dw-gen-input">${nameField}${resultField}${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label><div id="canvasGenerationPrompt" class="dw-gen-rich-prompt" data-gen-prompt contenteditable="true" role="textbox" aria-multiline="true" aria-label="画面描述">${generationPromptMarkup(generationPromptView(draft,linked))}</div></div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="${generationSubmitting?'正在开始生成':'开始生成'}" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''} ${generationSubmitting?'aria-busy="true"':''}>${generationSubmitting?genIcons.loader:genIcons.sparkles}<span class="dw-gen-submit-label">${generationSubmitting?'正在开始':'生成'}</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
+    panel.innerHTML=`<div class="dw-gen-input">${nameField}${resultField}${references||slot?`<div class="dw-gen-references">${references}${slot}</div>`:''}<label class="dw-sr-only" for="canvasGenerationPrompt">画面描述</label><div id="canvasGenerationPrompt" class="dw-gen-rich-prompt" data-gen-prompt contenteditable="true" role="textbox" aria-multiline="true" aria-label="画面描述">${generationPromptMarkup(generationPromptView(draft,linked))}</div></div><div class="dw-gen-toolbar"><div class="dw-gen-options"><button type="button" class="dw-gen-attach" data-gen-upload aria-label="${video?'添加参考素材':'添加参考图片'}" title="${video?'添加参考素材':'添加参考图片'}" ${busy?'disabled':''}>${generationUploading?genIcons.loader:genIcons.paperclip}</button>${modelChip}${modeChip}${paramsChip}</div><button type="button" class="dw-gen-submit" data-gen-submit aria-label="开始生成" title="${empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）'}" ${busy||empty?'disabled':''}>${genIcons.sparkles}<span class="dw-gen-submit-label">生成</span><span class="dw-gen-price" data-gen-cost aria-live="polite">估算中…</span></button></div>`;
     panel.classList.toggle('is-uploading',generationUploading);
-    panel.classList.toggle('is-submitting',generationSubmitting);
     bindGenModelIcons(panel);
     panel.hidden=false;
     const input=panel.querySelector('[data-gen-prompt]');
@@ -2091,7 +2093,7 @@ export function createDirectorWorkspace(host, bridge) {
       let resolved;try{resolved=generationRequest(draft);}catch{cost.textContent='暂不可估';return;}
       if(draft.speechMode!=='design'&&!resolved.prompt.trim()){show(0);return;}
       const request={type:'audio',modelId:draft.modelId,speechMode:draft.speechMode,prompt:resolved.prompt.trim()||'试听',previewText:draft.previewText,voiceId:resolved.voiceId,speed:Number(draft.speed??1),emotion:draft.emotion||'auto'};
-      generationCostTimer=setTimeout(async()=>{try{const quote=await bridge.agentApi('/api/model-quote',{method:'POST',body:JSON.stringify(request)});show(quote.credits);if(sequence===generationCostSequence){draft.speechQuote={credits:quote.credits,priceVersion:quote.priceVersion};if(button)button.disabled=generationSubmitting||!generationConfig().speech?.enabled||(!resolved.prompt.trim());}if(sequence===generationCostSequence&&quote.voiceCredits>0)cost.insertAdjacentHTML('beforeend',`<small>含首次音色费用 ${escape(format(quote.voiceCredits))} 积分</small>`);}catch{if(sequence===generationCostSequence)cost.textContent='暂不可估';}},160);return;
+      generationCostTimer=setTimeout(async()=>{try{const quote=await bridge.agentApi('/api/model-quote',{method:'POST',body:JSON.stringify(request)});show(quote.credits);if(sequence===generationCostSequence){draft.speechQuote={credits:quote.credits,priceVersion:quote.priceVersion};if(button)button.disabled=!generationConfig().speech?.enabled||(!resolved.prompt.trim());}if(sequence===generationCostSequence&&quote.voiceCredits>0)cost.insertAdjacentHTML('beforeend',`<small>含首次音色费用 ${escape(format(quote.voiceCredits))} 积分</small>`);}catch{if(sequence===generationCostSequence)cost.textContent='暂不可估';}},160);return;
     }
     if(draft.type==='image'){
       const {config,pricing}=bridge.generationPricing?.()||{config:generationConfig(),pricing:{}};
@@ -2139,13 +2141,15 @@ export function createDirectorWorkspace(host, bridge) {
   }
   async function submitGenerationArea(){
     const draft=generationDraft(activeGenerationId);
-    if(!draft||draft.taskId||generationSubmitting)return;
+    if(!draft||draft.taskId)return;
     let payload,request;
     try{request=generationRequest(draft);payload=canvasGenerationPayload(request,generationConfig());}
     catch(error){bridge.toast(error.message);return;}
     const speechPrice=draft.type==='audio'?draft.speechQuote:null;
     if(draft.type==='audio'&&!speechPrice){bridge.toast('正在确认费用，请稍后再试');return;}
-    const token=epoch;generationSubmitting=true;draft.status='submitting';renderGenerationComposer();syncCanvas();
+    // A voice-over retry reuses its request id; a second one in flight would only repeat it.
+    if(draft.type==='audio'&&submittingDrafts.get(draft.id))return;
+    const token=epoch;submittingDrafts.set(draft.id,(submittingDrafts.get(draft.id)||0)+1);draft.status='submitting';syncCanvas();
     try{
       // References stay local until now; upload them only for this generation.
       if(request.attachments.length&&bridge.prepareCloudFiles){
@@ -2167,7 +2171,7 @@ export function createDirectorWorkspace(host, bridge) {
       const tasks=Array.isArray(result?.tasks)?result.tasks:result?.id?[result]:[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');
       // Keep the generator editable; ordinary generators show their output in place.
-      draft.status='';delete draft.pendingRequestId;delete draft.pendingPayloadKey;
+      delete draft.pendingRequestId;delete draft.pendingPayloadKey;
       const size=canvasGenerationFrameSize(draft.type,draft.aspect);
       const parent=workspace().positions[draft.id]||{x:0,y:0,...size};
       // Folded results keep their place, so new ones never land on top of them.
@@ -2192,8 +2196,14 @@ export function createDirectorWorkspace(host, bridge) {
       renderGenerationComposer();
       scheduleCanvasSave(true);
       bridge.toast(tasks.length>1?`已开始生成 ${tasks.length} 个`:'已开始生成');
-    }catch(error){if(token===epoch){draft.status='';bridge.toast(error.message);}}
-    finally{if(token===epoch){generationSubmitting=false;renderGenerationComposer();syncCanvas();}}
+    }catch(error){if(token===epoch)bridge.toast(error.message);}
+    finally{
+      if(token===epoch){
+        const left=(submittingDrafts.get(draft.id)||0)-1;
+        if(left>0)submittingDrafts.set(draft.id,left);else{submittingDrafts.delete(draft.id);draft.status='';}
+        syncCanvas();
+      }
+    }
   }
   function mount() {
     if(projectId===get().id&&host.querySelector('.dw-canvas')){drawPanels({syncBoard:true});return;}
@@ -2264,7 +2274,7 @@ export function createDirectorWorkspace(host, bridge) {
     const generationPanel=host.querySelector('.dw-generation-composer');
     generationPanel.addEventListener('input',event=>{
       const draft=generationDraft(activeGenerationId);if(!draft)return;
-      if(event.target.matches('[data-speech-field]')){const field=event.target.dataset.speechField;if(['prompt','previewText','voiceName'].includes(field)){draft[field]=event.target.value;const count=generationPanel.querySelector('[data-speech-count]');if(count)count.textContent=speechCharacters(draft.speechMode==='design'?draft.previewText.trim():generationRequest(draft).prompt.trim());scheduleCanvasSave();updateGenerationCost(draft);const button=generationPanel.querySelector('[data-gen-submit]');if(button)button.disabled=!draft.speechQuote||generationSubmitting||!generationConfig().speech?.enabled||(!draft.prompt.trim()&&!linkedGenerationInputs(draft).some(item=>item.kind==='text'&&item.text?.trim()));}return;}
+      if(event.target.matches('[data-speech-field]')){const field=event.target.dataset.speechField;if(['prompt','previewText','voiceName'].includes(field)){draft[field]=event.target.value;const count=generationPanel.querySelector('[data-speech-count]');if(count)count.textContent=speechCharacters(draft.speechMode==='design'?draft.previewText.trim():generationRequest(draft).prompt.trim());scheduleCanvasSave();updateGenerationCost(draft);const button=generationPanel.querySelector('[data-gen-submit]');if(button)button.disabled=!draft.speechQuote||!generationConfig().speech?.enabled||(!draft.prompt.trim()&&!linkedGenerationInputs(draft).some(item=>item.kind==='text'&&item.text?.trim()));}return;}
       if(event.target.matches('[data-gen-name]')){
         if(draft.role==='shot'){draft.title=event.target.value.replace(/[\r\n]/g,' ').slice(0,80);syncCanvas();scheduleCanvasSave();}
         return;
@@ -2282,7 +2292,7 @@ export function createDirectorWorkspace(host, bridge) {
         fitGenerationPrompt(event.target);
         const linkedText=linkedGenerationInputs(draft).some(item=>item.kind==='text'&&String(item.text||'').trim());
         const submit=generationPanel.querySelector('[data-gen-submit]'),empty=!draft.prompt.trim()&&!linkedText;
-        if(submit){submit.disabled=empty||generationSubmitting||generationUploading;submit.title=empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）';}
+        if(submit){submit.disabled=empty||generationUploading;submit.title=empty?'请先填写画面描述':'开始生成（⌘/Ctrl + Enter）';}
         positionGenerationComposer();scheduleCanvasSave();
         if(unlinked)syncCanvas();
         if(unlinked||previousCount!==draft.attachments.length)renderGenerationComposer();
@@ -2930,7 +2940,7 @@ export function createDirectorWorkspace(host, bridge) {
     workspaceFrames.forEach(frame=>cancelAnimationFrame(frame));workspaceFrames.clear();
     const surfaces=[...(mountedWorkspace?.querySelectorAll('canvas')||[])];
     releaseWorkspaceMedia(mountedWorkspace);
-    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;speechLanguagePopover=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;generationSubmitting=false;generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());pendingMessages=[];retrySubmission=null;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';lastCanvasContentSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
+    if(canvasFocusFrame)cancelAnimationFrame(canvasFocusFrame);canvasFocusFrame=0;canvasContentReady=false;seenCanvasNodeIds.clear();pendingCanvasFocus.clear();automaticImageSizing.clear();canvasContextMenu?.destroy();canvasContextMenu=null;generationMenuLayer?.remove();generationMenuLayer=null;generationMenuElement=null;speechLanguagePopover=null;clearEmptyEntry();host.querySelector('[data-conversation-loading]')?.remove();mediaLoadObserver?.disconnect();mediaLoadObserver=null;resizingChat=false;resizeCanvasSnapshot=null;if(resizeFinishFrame)cancelAnimationFrame(resizeFinishFrame);resizeFinishFrame=0;popoverEvents?.abort();messageScroller?.destroy();messageScroller=null;attachmentPreviews=null;messagePreviews=null;assetSizeLoads.forEach(image=>{image.onload=null;image.onerror=null;image.src='';});assetSizeLoads.clear();assetImages.clear();assetSizes.clear();attachments=[];documentAttachments=[];uploading=false;sending=false;switchingConversation=false;skillUpdating=false;skillSelection=null;modelPreferencePicker=null;preferenceUpdating=false;canvasLibrary=null;lastCanvasMediaSignature='';activeGenerationId='';generationMenu='';generationUploading=false;submittingDrafts.clear();generationCostSequence++;clearTimeout(generationCostTimer);submissionQueue.splice(0).forEach(request=>request.resolve?.());pendingMessages=[];retrySubmission=null;cancelAnimationFrame(streamFrame);streamFrame=0;visibleDraft='';targetDraft='';streamSession='';streamPacer.reset();settlingMessageId='';lastStreamTime=0;reasoning?.destroy();reasoning=null;resizeObserver?.disconnect();agentClient?.dispose();agentClient=null;agentState=null;agentConfig=null;agentReady=false;lastAgentCacheSignature='';lastCanvasContentSignature='';connectionError='';conversations=[];historyOpen=false;stopped=true;busy=false;clearTimeout(saveTimer);clearTimeout(viewportPersistTimer);if(edgeRenderFrame)cancelAnimationFrame(edgeRenderFrame);edgeRenderFrame=0;canvas?.getStage?.()?.off?.('.director-selection');mainLayer?.off?.('.director-edges');mainLayer=null;nativeTransformer?.off?.('.director-edges');nativeTransformer=null;for(const type of ['pointerdown','mousedown','touchstart'])canvas?.getContainer()?.removeEventListener(type,forwardCanvasDocumentPan,true);canvas?.getContainer()?.removeEventListener('wheel',forwardCanvasMediaWheel,true);canvasMount?.unmount?.();canvasMount=null;canvas=null;
     // Clear backing stores after the canvas engine has saved its history and disposed.
     surfaces.forEach(surface=>{surface.width=0;surface.height=0;});
     mountedWorkspace?.remove();mountedWorkspace=null;

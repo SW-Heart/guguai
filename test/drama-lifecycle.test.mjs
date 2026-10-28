@@ -274,7 +274,7 @@ test('the generation action retains edits made while the generation API is pendi
   context.projectBaseSnapshot=structuredClone(context.project);
   const remote=structuredClone(context.project);remote.revision=2;remote.shots[0].videoVersions=['task-a'];
   Object.assign(context,{
-    currentProfessionalShot:()=>context.project.shots[0],professionalGenerationPending:new Set(),professionalPreviewTaskIds:new Map(),
+    currentProfessionalShot:()=>context.project.shots[0],professionalGenerationPending:new Map(),professionalGenerationChecking:new Set(),professionalPreviewTaskIds:new Map(),
     refreshProfessionalPrices:async()=>{},projectRequest:()=>({}),ensureProfessionalVideoSettings(){},professionalProductionWarning:()=>'',
     shotGenerationReady:()=>true,isProjectRequestCurrent:()=>true,shotGenerationAssetIds:()=>[],videoRequestShot:shot=>shot,shotVideoPrompt:shot=>shot.script,
     promptPrecheck:{check:async({prompts})=>({action:'submit',prompts,fields:{}})},ensureCloudReferenceIds:async()=>[],
@@ -351,8 +351,8 @@ test('unloaded material previews keep mention identities through rendering and t
 test('storyboard save changes refresh the complete frontend cache chain',async()=>{
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   const app=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.ok(html.includes('/app.js?v=614'));
-  assert.ok(app.includes('./drama-studio.js?v=316'));
+  assert.ok(html.includes('/app.js?v=615'));
+  assert.ok(app.includes('./drama-studio.js?v=317'));
   assert.ok(source.includes('./features/drama/pure.js?v=4'));
   assert.doesNotMatch(html,/projectConflictDialog|applyProjectConflict|cancelProjectConflict/);
   assert.doesNotMatch(source,/chooseProjectConflict|settleProjectConflict|存在冲突|已合并保存/);

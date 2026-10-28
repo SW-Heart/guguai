@@ -12,7 +12,7 @@ for (const modelId of ['seedance-2.0', 'minimax-h3-15s']) {
     let selected = shots[1];
     let submitted;
     const context = {
-      projectBaseSnapshot:null, promptPrecheck:{check:async({prompts})=>({action:'submit',prompts,fields:{}})}, project:{ id:'project', shots }, professionalGenerationPending:new Set(),refreshProfessionalPrices:()=>Promise.resolve(),
+      projectBaseSnapshot:null, promptPrecheck:{check:async({prompts})=>({action:'submit',prompts,fields:{}})}, project:{ id:'project', shots }, professionalGenerationPending:new Map(),professionalGenerationChecking:new Set(),refreshProfessionalPrices:()=>Promise.resolve(),
       currentProfessionalShot:() => selected, projectRequest:() => ({}),
       ensureProfessionalVideoSettings:() => {}, professionalProductionWarning:() => '', shotGenerationReady:() => true,
       render:() => {}, flushSave:async () => { selected = shots[0]; },
@@ -38,3 +38,31 @@ for (const modelId of ['seedance-2.0', 'minimax-h3-15s']) {
     assert.equal(context.professionalGenerationPending.size, 0);
   });
 }
+
+test('a shot can be generated again while the previous click is still being submitted', async () => {
+  const shot = { id:'shot-1', script:'分镜内容', duration:15, aspectRatio:'9:16', generation:{ modelId:'seedance-2.0', type:'REFERENCE', quality:'720p', count:2 }, refs:[] };
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const submissions = [];
+  const context = {
+    projectBaseSnapshot:null, promptPrecheck:{ check:async ({ prompts }) => ({ action:'submit', prompts, fields:{} }) }, project:{ id:'project', shots:[shot] },
+    professionalGenerationPending:new Map(), professionalGenerationChecking:new Set(), refreshProfessionalPrices:() => Promise.resolve(),
+    currentProfessionalShot:() => shot, projectRequest:() => ({}), ensureProfessionalVideoSettings:() => {}, professionalProductionWarning:() => '', shotGenerationReady:() => true,
+    render:() => {}, flushSave:async () => {}, isProjectRequestCurrent:() => true, cloneProjectValue:structuredClone,
+    shotGenerationAssetIds:item => item.refs, videoRequestShot:item => item, shotVideoPrompt:item => item.script, ensureCloudReferenceIds:async refs => refs,
+    api:async (_url, options) => { submissions.push(JSON.parse(options.body)); await gate; return { id:`task-${submissions.length}`, balance:100 }; },
+    setCreditBalance:() => {}, state:{ tasks:[] }, scheduleTaskPoll:() => {}, toast:() => {}, loadCredits:async () => {},
+  };
+  vm.createContext(context);
+  vm.runInContext(generateSource, context);
+  const first = context.generateProfessionalVideo();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(context.professionalGenerationChecking.size, 0, 'the click is released once the request is on its way');
+  const second = context.generateProfessionalVideo();
+  assert.equal(context.professionalGenerationPending.get('shot-1'), 4, 'each click shows its own pending versions');
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await Promise.all([first, second]);
+  assert.equal(submissions.length, 2);
+  assert.equal(context.professionalGenerationPending.size, 0);
+});

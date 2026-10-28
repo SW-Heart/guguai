@@ -19,8 +19,9 @@ import { createNotificationController } from './features/notifications/controlle
 import { resetAccountState } from './state/account-state.js?v=2';
 import { createAccountLifecycle } from './state/account-lifecycle.js?v=1';
 import { createMediaController } from './features/media/controller.js?v=14';
-import { createVideoPreviews } from './features/media/video-previews.js?v=5';
-import { createJustifiedFileLayout } from './features/media/justified-layout.js?v=3';
+import { createVideoPreviews } from './features/media/video-previews.js?v=6';
+import { createJustifiedFileLayout } from './features/media/justified-layout.js?v=4';
+import { mediaRatio, rememberMediaRatio } from './features/media/media-ratio.js?v=1';
 import { createOffscreenImages } from './features/media/offscreen-images.js?v=1';
 import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createSupportLogController } from './features/support/controller.js?v=2';
@@ -307,7 +308,7 @@ function requireDesktopLocalAsset(file) {
 }
 // Desktops that advertise video covers return a still frame for local videos.
 const videoCoverUrl = src => window.guguDesktop?.capabilities?.videoCovers && String(src || '').startsWith('gugu-media://') ? imageThumbnailUrl(src) : '';
-const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, coverUrl:videoCoverUrl });
+const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, coverUrl:videoCoverUrl, onCoverSize:(video, width, height) => rememberCardMediaRatio(video, width, height) });
 // Library and picker grids keep every loaded page; free pictures far off screen.
 [['#fileGrid', '.file-card:not(.upload-job-card) img'], ['#referenceGrid', '.reference-option img']].forEach(([selector, images]) => {
   const root = document.querySelector(selector);
@@ -2237,8 +2238,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=183');
-const importDramaStudio = () => import('./drama-studio.js?v=316');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=184');
+const importDramaStudio = () => import('./drama-studio.js?v=317');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -2717,6 +2718,17 @@ function configureLocalFileAction(link, file) {
   if (labelNode) labelNode.textContent = '在文件夹中显示';
   link.onclick = event => { event.preventDefault(); void showDesktopAssetInFolder(file, link); };
 }
+// Cards are sized before their media loads, and keep that size when the
+// cover is released offscreen; otherwise the masonry columns reshuffle on scroll.
+function cardMediaAttributes(task, asset) {
+  const ratio = mediaRatio(asset.id, [asset.width, asset.height], task.aspectRatio, task.size, task.midjourneyOptions?.aspectRatio);
+  return ` data-media-key="${esc(asset.id)}"${ratio ? ` style="--media-ratio:${ratio}"` : ''}`;
+}
+function rememberCardMediaRatio(media, width, height) {
+  const holder = media?.closest?.('.card-media[data-media-key]');
+  if (!holder || !rememberMediaRatio(holder.dataset.mediaKey, width, height)) return;
+  holder.style.setProperty('--media-ratio', String(width / height));
+}
 function taskCard(task) {
   const asset = fileById(task.assetId);
   const localSyncing = taskLocalSyncing(task, asset);
@@ -2725,7 +2737,7 @@ function taskCard(task) {
   const progressMarkup = task.localPreparation || task.awaitingReferences ? generationPreparationMarkup(task, videoUpscale.preparationProgress(task)) : localSyncing ? desktopSyncMarkup(task) : videoProgressMarkup(task);
   const failure = task.status === 'failed' ? taskFailure(task) : null;
   const media = localReady
-    ? (task.type === 'image' ? `<div class="card-media">${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video">${videoPreviewMarkup(asset)}</div>`)
+    ? (task.type === 'image' ? `<div class="card-media"${cardMediaAttributes(task, asset)}>${assetImageMarkup(asset, asset.name)}</div>` : `<div class="card-media video"${cardMediaAttributes(task, asset)}>${videoPreviewMarkup(asset)}</div>`)
     : cloudCopyGone(asset)
       ? `<div class="card-failure"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 17h.01"/><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z"/></svg><b>${asset.remoteStatus === 'expired' ? '文件已过保存期限' : '文件保存在其他电脑上'}</b><p>${asset.remoteStatus === 'expired' ? '这个作品没有保存到本地，已无法下载' : '请在保存过它的电脑上查看'}</p></div>`
     : task.status === 'failed'
@@ -2869,6 +2881,12 @@ function syncGenerationTab() {
   if (!history) scheduleGenerationLayout();
 }
 window.addEventListener('resize', scheduleGenerationLayout, { passive:true });
+['load', 'loadedmetadata'].forEach(type => $('#generationGrid')?.addEventListener(type, event => {
+  const media = event.target;
+  // Released previews fall back to a 1px placeholder; never record that.
+  if (media.dataset?.releasedSrc || String(media.currentSrc || '').startsWith('data:')) return;
+  rememberCardMediaRatio(media, media.naturalWidth || media.videoWidth, media.naturalHeight || media.videoHeight);
+}, true));
 function taskRecency(task) { return String(task?.finishedAt || task?.updatedAt || task?.createdAt || ''); }
 function compareTasksByRecency(left, right) {
   const timeOrder = taskRecency(right).localeCompare(taskRecency(left));
@@ -4385,18 +4403,27 @@ function replacePendingReferenceId(oldId, newId) {
   $('#imagePrompt')?.querySelectorAll(`[data-image-prompt-mention-id="${CSS.escape(oldId)}"]`).forEach(node => { node.dataset.imagePromptMentionId=newId; });
   $('#videoPrompt')?.querySelectorAll(`[data-video-prompt-mention-id="${CSS.escape(oldId)}"]`).forEach(node => { node.dataset.videoPromptMentionId=newId; });
 }
+// Generations can be submitted back to back with the same references; they
+// share one upload per file instead of each sending it again.
+const referenceUploads = new Map();
+function sharedReferenceUpload(key, start) {
+  if (!referenceUploads.has(key)) referenceUploads.set(key, start().finally(() => referenceUploads.delete(key)));
+  return referenceUploads.get(key);
+}
 async function uploadPendingReferenceJob(job) {
   if (!job) throw new Error('参考素材不存在，请重新选择');
   const existing=job.assetId ? state.files.find(file => file.id === job.assetId) : null;
   if (existing && !existing.localOnly) return existing;
   if (!job.localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error(`${job.name} 未准备好，请重新选择`);
-  updateUploadJob(job, 8, '正在上传');
-  const result=await window.guguDesktop.media.syncLocal({ assetId:job.localAssetId });
-  const cloudAsset=cloudAssetFromDesktopSync(result);
-  if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材上传失败，请重新上传后再试');
-  const file={ ...cloudAsset, url:result.url, remoteUrl:cloudAsset.url, localId:job.localAssetId, localStatus:'saved', localPath:result.relativePath, sha256:cloudAsset.sha256 };
-  finishUploadJob(job, file, false);
-  return file;
+  return sharedReferenceUpload(`job:${job.id}`, async () => {
+    updateUploadJob(job, 8, '正在上传');
+    const result=await window.guguDesktop.media.syncLocal({ assetId:job.localAssetId });
+    const cloudAsset=cloudAssetFromDesktopSync(result);
+    if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材上传失败，请重新上传后再试');
+    const file={ ...cloudAsset, url:result.url, remoteUrl:cloudAsset.url, localId:job.localAssetId, localStatus:'saved', localPath:result.relativePath, sha256:cloudAsset.sha256 };
+    finishUploadJob(job, file, false);
+    return file;
+  });
 }
 async function resolveReferenceAssetIds(ids) {
   const resolved=[];
@@ -4406,7 +4433,7 @@ async function resolveReferenceAssetIds(ids) {
     if (needsReferenceUpload(file)) {
       const localAssetId=file.localId || (file.localOnly ? file.id : '');
       if (!localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
-      const result=await window.guguDesktop.media.syncLocal({ assetId:localAssetId, uploadForReference:true });
+      const result=await sharedReferenceUpload(`local:${localAssetId}`, () => window.guguDesktop.media.syncLocal({ assetId:localAssetId, uploadForReference:true }));
       const cloudAsset=cloudAssetFromDesktopSync(result);
       if (!cloudAsset?.id || cloudAsset.remoteStatus === 'local_only') throw new Error('参考素材上传失败，请重新上传后再试');
       const syncedFile={ ...cloudAsset, url:result.url || file.url, remoteUrl:cloudAsset.url, localId:localAssetId, localStatus:'saved', localPath:result.relativePath || file.localPath, sha256:cloudAsset.sha256 || file.sha256 };
@@ -4424,7 +4451,6 @@ async function resolveReferenceAssetIds(ids) {
   renderReferences();
   return resolved;
 }
-function hasUnresolvedReference(ids=currentVideoReferenceIds()) { return ids.some(id => { const file=state.files.find(item => item.id === id); return Boolean(pendingReferenceJob(id) || needsReferenceUpload(file)); }); }
 function referenceCountsForIds(ids) {
   const files = (Array.isArray(ids) ? ids : []).map(referenceFileById).filter(Boolean);
   return Object.fromEntries(['image','video','audio'].map(kind => [kind, files.filter(file => file.kind === kind).length]));
@@ -4436,10 +4462,11 @@ async function submitGeneration(type, form, payload, preparation) {
   }
   const requestAccount = accountScope.snapshot();
   const requestedReferenceIds = [...(type === 'video' ? (payload.referenceAssetIds || []) : state.refs[type])];
-  const unresolvedReferences = hasUnresolvedReference(requestedReferenceIds);
+  const submittedPromptText = type === 'video' ? videoPromptText() : imagePromptText();
+  // The click is the whole submission: the form is free again right away and
+  // references, pricing and the request continue behind the progress card.
+  preparation.release();
   const routedVideo = type === 'video' && ['wan-3.0','wan-3.0-value','kling-4.0','seedance-2.0','seedance-2.0-mini','seedance-2.0-mini-value','seedance-2.0-fast','seedance-2.0-fast-value','seedance-2.5','seedance-2.0-value','seedance-2.5-value'].includes(payload.modelId);
-  const setPreparationStage = progressStage => preparation.setStage(progressStage);
-  if (unresolvedReferences) setPreparationStage('preparing_references');
   let chargedTasks = [];
   const referenceJobs = requestedReferenceIds.map(pendingReferenceJob).filter(Boolean);
   referenceJobs.forEach(job => { job.inUse = (job.inUse || 0) + 1; });
@@ -4455,7 +4482,6 @@ async function submitGeneration(type, form, payload, preparation) {
       const unavailable = localAssetIds.find(id => !items.some(item => item.id === id && item.localStatus === 'saved'));
       if (unavailable) throw new Error('参考素材无法使用，请重新选择原图后再创作');
     }
-    if (unresolvedReferences) setPreparationStage('preparing_references');
     const referenceAssetIds = await resolveReferenceAssetIds(requestedReferenceIds);
     if (!accountScope.isCurrent(requestAccount)) return;
     const referenceCounts = referenceCountsForIds(referenceAssetIds);
@@ -4464,14 +4490,12 @@ async function submitGeneration(type, form, payload, preparation) {
     let expectedPriceVersion = '';
     if (routedVideo) {
       if (state.modelQuote?.signature !== quoteSignature) {
-        setPreparationStage('confirming_price');
         const quote=await api('/api/model-quote', { method:'POST', body:JSON.stringify(quoteInput) });
         if (!accountScope.isCurrent(requestAccount)) return;
         state.modelQuote={ ...quote, signature:quoteSignature };
       }
       expectedPriceVersion=state.modelQuote.priceVersion || '';
     }
-    setPreparationStage('submitting');
     const requestId = crypto.randomUUID();
     const result = await api('/api/generations', { method:'POST', headers:{ 'Idempotency-Key':requestId }, body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
     if (!accountScope.isCurrent(requestAccount)) return;
@@ -4482,11 +4506,15 @@ async function submitGeneration(type, form, payload, preparation) {
     mergeTasksIntoLoadedHistory(tasks);
     renderTasks();
     setCreditBalance(result.balance);
-    if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
-    (type === 'video' ? videoPromptEditor() : imagePromptEditor()).dispatchEvent(new Event('input', { bubbles:true }));
-    state.refs[type] = [];
-    if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
-    renderReferences();
+    // Only reset the composer when it still holds this submission; a prompt
+    // written for the next generation in the meantime must stay.
+    if ((type === 'video' ? videoPromptText() : imagePromptText()) === submittedPromptText) {
+      if (type === 'video') setVideoPromptText(''); else setImagePromptText('');
+      (type === 'video' ? videoPromptEditor() : imagePromptEditor()).dispatchEvent(new Event('input', { bubbles:true }));
+      state.refs[type] = [];
+      if (type === 'video') { state.videoFrames = { first:'', last:'' }; state.modelQuote = null; }
+      renderReferences();
+    }
     const totalCost = tasks.reduce((sum, task) => sum + (Number(task.creditCost) || 0), 0);
     toast(tasks.length > 1 ? `已开始生成 ${tasks.length} 张图片，预计消耗 ${creditText(totalCost)} 积分` : `已开始生成，消耗 ${tasks[0].creditCost} 积分`);
     await loadTasks();
@@ -4507,28 +4535,20 @@ async function submitGeneration(type, form, payload, preparation) {
   }
   finally { referenceJobs.forEach(job => { job.inUse = Math.max(0, (job.inUse || 0) - 1); if (!job.inUse && job.assetId) removeUploadJob(job.id); }); preparation.release(); if (type === 'image') { syncImagePromptState(); updateImageCost(); } else { syncVideoPromptState(); updateVideoCost(); } }
 }
-// Clicking generate shows a pressed button and a progress card right away; the
-// prompt check, reference uploads and pricing then run behind that card.
-function setGenerateButtonBusy(form, busy) {
+// Clicking generate only presses the button and adds a progress card; the
+// button itself never shows a busy state, so the next generation can start
+// at once. The prompt check, references and pricing run behind the card.
+function pressGenerateButton(form) {
   const button = form?.querySelector?.('.generate');
   if (!button) return;
-  const label = button.querySelector('span:first-child');
-  if (busy) {
-    button.classList.add('is-pressed');
-    clearTimeout(button.pressTimer);
-    button.pressTimer = setTimeout(() => button.classList.remove('is-pressed'), 160);
-    if (label && !button.dataset.idleLabel) button.dataset.idleLabel = label.textContent;
-    if (label) label.textContent = '生成中…';
-    button.setAttribute('aria-busy', 'true');
-  } else {
-    if (label && button.dataset.idleLabel) label.textContent = button.dataset.idleLabel;
-    delete button.dataset.idleLabel;
-    button.removeAttribute('aria-busy');
-  }
+  button.classList.add('is-pressed');
+  clearTimeout(button.pressTimer);
+  button.pressTimer = setTimeout(() => button.classList.remove('is-pressed'), 160);
 }
 function startGenerationPreparation(type, form, { prompt, count = 1 }) {
+  // Held only while the prompt check runs, so one click submits once.
   generationSubmissionForms.add(form);
-  setGenerateButtonBusy(form, true);
+  pressGenerateButton(form);
   const groupId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
   const preparations = Array.from({ length:Math.max(1, count) }, (_, index) => ({ id:`local-preparation-${groupId}-${index + 1}`, type, status:'running', progressStage:'submitting', prompt, createdAt, localPreparation:true }));
@@ -4536,17 +4556,12 @@ function startGenerationPreparation(type, form, { prompt, count = 1 }) {
   state.generationPreparations = [...preparations, ...state.generationPreparations];
   renderTasks();
   return {
-    setStage(progressStage) {
-      state.generationPreparations = state.generationPreparations.map(item => ids.has(item.id) ? { ...item, progressStage } : item);
-      renderTasks();
-    },
     clear() {
       state.generationPreparations = state.generationPreparations.filter(item => !ids.has(item.id));
       renderTasks();
     },
     release() {
       generationSubmissionForms.delete(form);
-      setGenerateButtonBusy(form, false);
     },
   };
 }

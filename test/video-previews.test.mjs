@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createVideoPreviews } from '../public/features/media/video-previews.js';
 
-function fixture({ count = 200, observe = true, limit, coverUrl, Image } = {}) {
+function fixture({ count = 200, observe = true, limit, coverUrl, Image, onCoverSize } = {}) {
   const videos = Array.from({ length:count }, (_, id) => ({
     dataset:{ previewSrc:`gugu-media://asset/${id}` }, isConnected:true,
     src:'', loads:0, pauses:0, currentTime:0, handlers:{},
@@ -20,7 +20,7 @@ function fixture({ count = 200, observe = true, limit, coverUrl, Image } = {}) {
   const observed = new Set();
   const events = {};
   const root = { addEventListener:(type, handler) => { events[type] = handler; }, removeEventListener:type => { delete events[type]; }, contains:video => videos.includes(video), querySelectorAll:() => videos.filter(video => video.isConnected) };
-  const previews = createVideoPreviews({ root, limit, coverUrl, Image,
+  const previews = createVideoPreviews({ root, limit, coverUrl, Image, onCoverSize,
     IntersectionObserver:observe ? class {
       constructor(callback) { intersect = callback; }
       observe(video) { observed.add(video); } unobserve(video) { observed.delete(video); }
@@ -126,9 +126,9 @@ test('missing IntersectionObserver leaves sources unloaded', () => {
 test('preview errors stop before the full-library refresh and cache URLs match', async () => {
   const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
   assert.match(app, /if \(media\.dataset\.previewSrc\) \{\s*videoPreviews\.fail\(media\);\s*return;/);
-  assert.ok(app.includes('./features/media/video-previews.js?v=5'));
+  assert.ok(app.includes('./features/media/video-previews.js?v=6'));
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=614'));
+  assert.ok(html.includes('/app.js?v=615'));
 });
 
 function probes() {
@@ -181,4 +181,14 @@ test('older desktops without frame support keep loading visible videos', async (
   const { videos, show } = fixture({ count:3 });
   show(videos);
   assert.equal(videos.filter(video => video.src).length, 3);
+});
+
+test('cover dimensions are reported so cards can keep their size offscreen', () => {
+  const { created, Image } = probes();
+  const sizes = [];
+  const { videos, show } = fixture({ count:1, Image, coverUrl:src => `${src}?thumbnail=1`, onCoverSize:(video, width, height) => sizes.push([video, width, height]) });
+  show(videos);
+  Object.assign(created[0], { naturalWidth:288, naturalHeight:512 });
+  created[0].onload();
+  assert.deepEqual(sizes, [[videos[0], 288, 512]]);
 });

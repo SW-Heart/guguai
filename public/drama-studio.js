@@ -71,7 +71,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   // Only smart projects use the canvas engine, the largest part of this page's
   // code, so it is fetched when one opens and warmed up while the list is idle.
   let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
-  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=207'), loadCanvasStyles()]).then(([module]) => {
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=208'), loadCanvasStyles()]).then(([module]) => {
     createDirectorWorkspace = module.createDirectorWorkspace;
     return module;
   }).catch(error => {
@@ -187,7 +187,10 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     void refreshProfessionalPrices({force:true});
     priceRefreshTimer=setInterval(()=>{void refreshProfessionalPrices();},30000);
   }
-  const professionalGenerationPending = new Set();
+  // Shot id → number of videos clicked but not yet returned by the server.
+  const professionalGenerationPending = new Map();
+  // Held only while the prompt check runs, so one click submits once.
+  const professionalGenerationChecking = new Set();
   let virtualShotResizeObserver = null;
   let virtualScrollFrame = 0;
   let virtualRangeKey = '';
@@ -1420,7 +1423,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       title:shot.title,
       editor:JSON.stringify([shot.script,shot.assetMentions]),
       settings:settings.modelSelect+settings.modeSelect+settings.specs,
-      pending:professionalGenerationPending.has(shot.id),
+      pending:professionalGenerationPending.get(shot.id)||0,
     });
     const row=card.querySelector('.wb-input-reference-row');
     if(row){
@@ -1460,7 +1463,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     const settings=workbenchShotSettings(shot,projectEditingLocked(project));
     const settingsSignature=settings.modelSelect+settings.modeSelect+settings.specs;
     if(snapshot.settings!==settingsSignature){refreshWorkbenchShotControls(card,settings);snapshot.settings=settingsSignature;}
-    const pending=professionalGenerationPending.has(shot.id);
+    const pending=professionalGenerationPending.get(shot.id)||0;
     if(snapshot.pending!==pending){shotPreviewSignatures.delete(shot.id);snapshot.pending=pending;}
     refreshWorkbenchShotStatus(card,shot);
     card.classList.toggle('is-active',shot.id===professionalShotId);
@@ -1955,12 +1958,12 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     const selectedState=videoPreviewVersionState(selectedTask,{ready:selectedReady,syncing:selectedSyncing});
     const showFailureDetails=selectedTask?.status==='failed'&&professionalPreviewTaskIds.get(shot?.id)===previewTaskId;
     const versions=(shot?.videoVersions||[]).map(id=>({id,file:taskAsset(id),task:task(id)}));
-    const pendingCount=generationPending?Math.max(1,Math.min(4,Number(shot?.generation?.count)||1)):0;
+    const pendingCount=professionalGenerationPending.get(shot?.id)||0;
     const pendingThumbs=Array.from({length:pendingCount},(_,index)=>`<div data-wb-version="pending-${index}" data-wb-thumb-content="pending" class="wb-preview-thumb is-pending" role="status" aria-label="第 ${index+1} 个视频版本生成中"><span class="wb-preview-thumb-pending"><i class="wb-preview-thumb-loader" aria-hidden="true"></i></span></div>`).join('');
     const media=generationPending?renderVideoGenerationLoading():selectedFile?`<button type="button" class="wb-preview-media" data-wb-preview-file="${esc(selectedFile.id)}" aria-label="点击查看${esc(shot?.title||'分镜')}大视频">${workbenchVideoMarkup(selectedFile)}<span class="wb-preview-expand">点击查看大视频</span></button>`:showFailureDetails?generationFailurePreviewMarkup(selectedTask):selectedState==='failed'?generationFailurePromptMarkup():selectedState==='syncing'?localDeliveryMarkup(selectedTask)||`<div class="wb-preview-empty"><b>正在准备文件…</b></div>`:selectedState==='pending'?workbenchVideoProgressMarkup(selectedTask):previewTaskId?`<div class="wb-preview-empty wb-preview-missing"><span class="wb-preview-missing-icon" aria-hidden="true">${generationFailureIcon}</span><b>${selectedTask?.status==='completed'&&selectedTask?.assetId?'视频文件未找到':'视频暂不可用'}</b><small>请刷新后重试，或重新生成此版本</small></div>`:`<div class="wb-preview-empty wb-preview-empty-state" aria-label="生成后在这里预览"><b>生成后在这里预览</b></div>`;
     const mediaKey=JSON.stringify([generationPending?pendingCount:0,previewTaskId,selectedState,selectedFile?.url||'',showFailureDetails,selectedFile?'':shot.aspectRatio,selectedTask?.error||'',selectedTask?.failure||null,localDeliverySignature(selectedTask?.assetId)]);
     const versionStrip=versions.length||generationPending?`<div class="wb-preview-versions" aria-label="视频版本">${pendingThumbs}${versions.map(item=>workbenchPreviewThumbMarkup(item,{selected:!generationPending&&item.id===previewTaskId,shotId:shot.id,shotTitle:shot.title})).join('')}</div>`:'';
-    return `<section class="wb-shot-preview" aria-label="${esc(shot?.title||'分镜')}预览"><header><b>预览</b><span>${generationPending?'正在准备…':versions.length?`${versions.length} 个版本`:'暂无视频'}</span></header><div class="wb-preview-stage" data-wb-preview-content="${esc(mediaKey)}" style="--video-ratio:${ratioCss(shot?.aspectRatio||'9:16')}">${media}</div>${versionStrip}</section>`;
+    return `<section class="wb-shot-preview" aria-label="${esc(shot?.title||'分镜')}预览"><header><b>预览</b><span>${generationPending?'生成中…':versions.length?`${versions.length} 个版本`:'暂无视频'}</span></header><div class="wb-preview-stage" data-wb-preview-content="${esc(mediaKey)}" style="--video-ratio:${ratioCss(shot?.aspectRatio||'9:16')}">${media}</div>${versionStrip}</section>`;
   }
 
   function workbenchTitleWidth(value){
@@ -2021,7 +2024,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   }
 
   function refreshWorkbenchShotStatus(card,shot){
-    if(!card||!shot)return;void refreshProfessionalPrices();const capability=professionalCapabilityState(shot);const cost=professionalVideoCostState(shot);const generate=card.querySelector('[data-wb-generate]');if(generate){generate.disabled=Boolean(project.finalAssetId||!capability.ok||professionalGenerationPending.has(shot.id));generate.title=capability.message||cost.message||'';const credits=card.querySelector('.wb-generation-cost');if(credits){credits.setAttribute('aria-label',cost.credits===null?cost.label:`预计 ${cost.label} 积分`);const value=credits.querySelector('[data-wb-credit-value]');setWorkbenchText(value,cost.credits===null?'—':cost.label);}}const optimize=card.querySelector('[data-wb-optimize]');if(optimize){optimize.disabled=Boolean(project.finalAssetId||!shot.script.trim());optimize.title=shot.script.trim()?'优化分镜内容':'请先填写分镜内容';}const editor=card.querySelector('.wb-rich-input');if(editor)editor.dataset.empty=shot.script.trim()?'false':'true';
+    if(!card||!shot)return;void refreshProfessionalPrices();const capability=professionalCapabilityState(shot);const cost=professionalVideoCostState(shot);const generate=card.querySelector('[data-wb-generate]');if(generate){generate.disabled=Boolean(project.finalAssetId||!capability.ok);generate.title=capability.message||cost.message||'';const credits=card.querySelector('.wb-generation-cost');if(credits){credits.setAttribute('aria-label',cost.credits===null?cost.label:`预计 ${cost.label} 积分`);const value=credits.querySelector('[data-wb-credit-value]');setWorkbenchText(value,cost.credits===null?'—':cost.label);}}const optimize=card.querySelector('[data-wb-optimize]');if(optimize){optimize.disabled=Boolean(project.finalAssetId||!shot.script.trim());optimize.title=shot.script.trim()?'优化分镜内容':'请先填写分镜内容';}const editor=card.querySelector('.wb-rich-input');if(editor)editor.dataset.empty=shot.script.trim()?'false':'true';
   }
   async function deletePreviewVideo(shotId,taskId,button){
     const id=String(taskId||'');
@@ -2741,7 +2744,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   }
   async function generateProfessionalVideo(){
     let shot=currentProfessionalShot();
-    if(!shot||!shot.script.trim()||professionalGenerationPending.has(shot.id))return;
+    if(!shot||!shot.script.trim()||professionalGenerationChecking.has(shot.id))return;
     void refreshProfessionalPrices();
     const targetProjectId=project.id;
     const targetShotId=shot.id;
@@ -2751,8 +2754,20 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
     let warning=professionalProductionWarning(shot);
     if(warning)return toast(warning);
     if(!shotGenerationReady(shot))return;
-    const clearPending=()=>professionalGenerationPending.delete(targetShotId);
-    professionalGenerationPending.add(targetShotId);
+    // The button never waits for this submission; each click adds its own
+    // pending versions to the preview and a new click can follow at once.
+    const pendingVideos=Math.max(1,Math.min(4,Number(shot.generation.count)||1));
+    let pendingHeld=true;
+    const releaseCheck=()=>professionalGenerationChecking.delete(targetShotId);
+    const clearPending=()=>{
+      releaseCheck();
+      if(!pendingHeld)return;
+      pendingHeld=false;
+      const left=(professionalGenerationPending.get(targetShotId)||0)-pendingVideos;
+      if(left>0)professionalGenerationPending.set(targetShotId,left);else professionalGenerationPending.delete(targetShotId);
+    };
+    professionalGenerationChecking.add(targetShotId);
+    professionalGenerationPending.set(targetShotId,(professionalGenerationPending.get(targetShotId)||0)+pendingVideos);
     // Paint the preview state before saving references,
     // or waiting for the generation API to return a task id.
     render(true,{focus:false});
@@ -2771,6 +2786,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
       const refs=shotGenerationAssetIds(shot); const requestShot=videoRequestShot(shot,refs); const count=Math.max(1,Math.min(4,Number(shot.generation.count)||1));
       const checked=await promptPrecheck.check({prompts:[shotVideoPrompt(requestShot)],modelId:shot.generation.modelId,source:'drama',scopeNote:true});
       if(checked.action==='cancel'){clearPending();render(true,{focus:false});return;}
+      releaseCheck();
       const finalPrompt=checked.prompts[0];
       const cloudRefs=await ensureCloudReferenceIds(refs);
       if(!isProjectRequestCurrent(request)){clearPending();return;}

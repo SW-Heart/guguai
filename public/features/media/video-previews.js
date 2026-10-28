@@ -5,7 +5,7 @@
 // When `coverUrl` yields a still frame, cards show it as the poster and never
 // open the video; players with controls load the source only when pressed.
 // A frame that fails to load falls back to opening the video as before.
-export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = Infinity, coverUrl = () => '', Image = globalThis.Image }) {
+export function createVideoPreviews({ root, IntersectionObserver, MutationObserver, limit = Infinity, coverUrl = () => '', onCoverSize = () => {}, Image = globalThis.Image }) {
   const covers = new WeakMap();
   const tracked = new Set();
   const visible = new Set();
@@ -49,7 +49,7 @@ export function createVideoPreviews({ root, IntersectionObserver, MutationObserv
     if (!state) {
       covers.set(video, 'pending');
       const probe = new Image();
-      probe.onload = () => { covers.set(video, 'ready'); if (visible.has(video)) showCover(video); };
+      probe.onload = () => { covers.set(video, 'ready'); onCoverSize(video, probe.naturalWidth, probe.naturalHeight); if (visible.has(video)) showCover(video); };
       probe.onerror = () => { covers.set(video, 'none'); fill(); };
       probe.src = cover;
     }
