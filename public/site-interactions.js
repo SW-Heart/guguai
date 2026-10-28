@@ -1,4 +1,3 @@
-import { initHeroTitle } from './hero-title.js?v=1';
 import { initHomeMotion } from './home-motion.js?v=2';
 
 export function initSiteInteractions({ document: doc = document, window: win = window } = {}) {
@@ -27,7 +26,6 @@ export function initSiteInteractions({ document: doc = document, window: win = w
     win.matchMedia('(min-width: 861px)').addEventListener?.('change', () => setOpen(false));
   }
 
-  initHeroTitle({ document: doc, window: win });
   initHomeMotion({ document: doc, window: win });
   // Case films play only while on screen; with reduced motion they wait for the viewer.
   const caseVideos = [...doc.querySelectorAll('[data-case-video]')];

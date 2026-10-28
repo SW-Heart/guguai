@@ -8,9 +8,12 @@ import { buildHelpHtml, renderHelpTable } from '../scripts/build-help.mjs';
 import { staticEntryFile } from '../server/static.mjs';
 import { initSiteInteractions } from '../public/site-interactions.js';
 import { initHomeMotion } from '../public/home-motion.js';
-import { accentColor, dotState, initHeroTitle, titleDuration } from '../public/hero-title.js';
 import { initHelpCopies } from '../public/help-copy.js';
 const read = file => readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+// hero-title.js is a classic script (it runs before the module graph), so load it in a sandbox.
+const heroContext = {};
+vm.runInNewContext(await read('public/hero-title.js'), heroContext);
+const { accentColor, dotState, initHeroTitle, titleDuration } = heroContext.guguHeroTitleParts;
 
 test('help search finds relevant module guides, combines words and handles empty input', () => {
   assert.ok(searchHelp(helpArticles, '首尾帧').some(result => result.article.id === 'video-reference'));
@@ -98,9 +101,9 @@ test('all modules have published static help; every website tutorial and preview
 test('all changed marketing entries and help imports use consistent current cache keys', async () => {
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
-    assert.ok(html.includes('/marketing.js?v=27'));
-    assert.ok(html.includes('/marketing.css?v=19'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-6])|css\?v=(?:[789]|1[0-8]))\b/);
+    assert.ok(html.includes('/marketing.js?v=28'));
+    assert.ok(html.includes('/marketing.css?v=20'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-7])|css\?v=(?:[789]|1[0-9]))\b/);
   }
   const help = await read('public/help.html');
   assert.ok(help.includes('/help.js?v=11'));
@@ -113,7 +116,7 @@ test('all changed marketing entries and help imports use consistent current cach
   assert.ok(script.includes('./help-search.js?v=3'));
   assert.doesNotMatch(script, /help-content\.js\?v=[1-9]\b/);
   assert.doesNotMatch(script, /help-search\.js\?v=[12]\b/);
-  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=4'));
+  assert.ok((await read('public/marketing.js')).includes('./site-interactions.js?v=5'));
   assert.ok((await read('public/site-interactions.js')).includes('./home-motion.js?v=2'));
   await access(new URL('../public/home-motion.js', import.meta.url));
 });
@@ -218,7 +221,7 @@ test('headline dots type the prompt first, then fly from the caret and land exac
   assert.deepEqual([landed.x, landed.y, landed.alpha].map(value => Math.round(value * 1000) / 1000), [600, 60, 1]);
 });
 
-test('the headline shows immediately under reduced motion or without canvas', () => {
+test('the headline is never hidden when the intro cannot play, and starts right after the h1 is parsed', async () => {
   for (const [reduced, canvas] of [[true, true], [false, false]]) {
     const title = new Element();
     const spans = new Map([['[data-title-lead]', new Element()], ['[data-title-accent]', new Element()]]);
@@ -227,9 +230,14 @@ test('the headline shows immediately under reduced motion or without canvas', ()
     doc.querySelector = () => title;
     doc.createElement = () => ({ getContext: () => canvas ? {} : null });
     initHeroTitle({ document: doc, window: { matchMedia: () => ({ matches: reduced }) } });
-    assert.equal(title.classList.contains('is-static'), true);
     assert.equal(title.classList.contains('is-drawing'), false);
   }
+  const html = await read('public/home.html');
+  const head = html.slice(0, html.indexOf('</head>'));
+  assert.match(head, /<script src="\/hero-title\.js\?v=\d+"><\/script>/, 'loaded with the stylesheet, not after the modules');
+  assert.match(html, /<\/h1>\s*<script>window\.guguHeroTitle && window\.guguHeroTitle\(\);<\/script>/);
+  const css = await read('public/marketing.css');
+  assert.doesNotMatch(css, /hero-title-wait/, 'the headline is not hidden by default');
 });
 
 function homeMotionHarness({ reduced = false, autoplayBlocked = false } = {}) {

@@ -93,11 +93,8 @@ section[id], article[id], .help-article section[id] { scroll-margin-top: 88px; }
 .hero-head { display: flex; flex-direction: column; align-items: center; text-align: center; }
 .home-hero h1 { margin: 0; font-size: clamp(56px, 7.6vw, 112px); font-weight: 700; line-height: 1.04; letter-spacing: -.05em; word-break: keep-all; animation: hero-arrive .9s var(--ease) both; }
 .home-hero h1 { position: relative; }
-.home-hero h1 span { display: inline-block; transition: opacity .35s var(--ease); animation: hero-title-wait 0s 3.2s both; }
-/* The headline waits for its particle intro; the delayed reveal guarantees it shows even without scripts. */
-@keyframes hero-title-wait { from { opacity: 0; } to { opacity: 1; } }
-.home-hero h1.is-static span, .home-hero h1.is-drawn span { animation: none; }
-.home-hero h1.is-drawing span { opacity: 0; animation: none; }
+.home-hero h1 span { display: inline-block; transition: opacity .3s var(--ease); }
+.home-hero h1.is-drawing span { opacity: 0; transition: none; }
 .hero-accent { padding-right: .04em; background: linear-gradient(100deg, #5655da 10%, #8b6cf0 55%, #4f8fe8 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero-description { margin: 28px 0 36px; max-width: 40em; word-break: keep-all; text-wrap: balance; color: var(--muted); font-size: 18px; line-height: 1.8; animation: hero-arrive .9s .06s var(--ease) both; }
 .hero-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; animation: hero-arrive .9s .12s var(--ease) both; }
