@@ -124,7 +124,7 @@ test('the website leads with 智能画布 and 短剧工作台 and shows the real
   assert.deepEqual([...features.matchAll(/<section class="feature-story[^"]*" id="(\w+)"/g)].map(match => match[1]), ['canvas', 'skills', 'drama', 'image', 'video', 'files']);
   for (const page of [home, features]) {
     assert.doesNotMatch(page, /创作助手|<h2>短剧创作<\/h2>|<\/span><h3>短剧创作</);
-    assert.match(page, /\/marketing\.css\?v=17/);
+    assert.match(page, /\/marketing\.css\?v=18/);
   }
 });
 

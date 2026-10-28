@@ -105,7 +105,7 @@ test('API console entry and marketing pages use current cache keys', async () =>
   const html = await readFile(new URL('../public/api-console.html', import.meta.url), 'utf8');
   assert.ok(html.includes('/api-console.js?v=1'));
   assert.ok(html.includes('/api-console.css?v=2'));
-  assert.ok(html.includes('/marketing.css?v=17'));
+  assert.ok(html.includes('/marketing.css?v=18'));
   for (const match of html.matchAll(/(?:src|href)="(\/[^"?]+\.(?:png|svg|js|css))(?:\?[^" ]*)?"/g)) await access(new URL(`../public${match[1]}`, import.meta.url));
   assert.doesNotMatch(html, /[↗→]/);
   for (const page of ['home', 'features', 'pricing', 'help']) {

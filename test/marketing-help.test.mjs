@@ -98,8 +98,8 @@ test('all changed marketing entries and help imports use consistent current cach
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
     assert.ok(html.includes('/marketing.js?v=26'));
-    assert.ok(html.includes('/marketing.css?v=17'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-5])|css\?v=(?:[789]|1[0-6]))\b/);
+    assert.ok(html.includes('/marketing.css?v=18'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-5])|css\?v=(?:[789]|1[0-7]))\b/);
   }
   const help = await read('public/help.html');
   assert.ok(help.includes('/help.js?v=11'));
