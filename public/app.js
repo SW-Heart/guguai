@@ -3271,7 +3271,7 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
     refreshProductSelect('videoModel');
     syncVideoModelParameters();
   }
-  if (includeReference) addTaskReference(task, target, { fallbackToOutput, forceOutput, replace:replaceReferences, restoreMentions });
+  const carriedReference = includeReference && addTaskReference(task, target, { fallbackToOutput, forceOutput, replace:replaceReferences, restoreMentions });
   if (target === 'video' && task.type === 'video') {
     const parameters = videoGenerationParameters().parameters;
     if (parameters?.aspectRatios.includes(task.aspectRatio)) $('#videoAspect').value = task.aspectRatio;
@@ -3281,7 +3281,14 @@ function continueFromTask(task, target=task.type, includeReference=false, { fall
   }
   if (carryPrompt) prompt.dispatchEvent(new Event('input', { bubbles:true }));
   $('#creatorPanel').scrollTo({ top:0, behavior:'smooth' }); prompt.focus();
-  toast(includeReference ? (carryPrompt ? '已带入参考素材和创作描述' : target === 'image' ? '已添加为参考图' : '已带入视频参考素材') : '已带入创作描述，可调整后重新生成');
+  toast(includeReference && (carriedReference || !carryPrompt) ? (carryPrompt ? '已带入参考素材和创作描述' : target === 'image' ? '已添加为参考图' : '已带入视频参考素材') : '已带入创作描述，可调整后重新生成');
+}
+// Retrying or remixing a past generation brings back the same reference
+// images; ones that are no longer in the open library are loaded first.
+async function regenerateFromTask(task) {
+  const ids = taskReferenceIds(task);
+  if (ids.some(id => !fileById(id))) await loadFilesByIds(ids).catch(error => console.warn('[generation] 参考素材加载失败', error.message));
+  continueFromTask(task, task.type, true, { replaceReferences:true, restoreMentions:true });
 }
 async function deleteGenerationTask(task, button = null) {
   if (!task) return false;
@@ -3335,7 +3342,7 @@ function handleTaskAction(action, id, button = null) {
   if (action === 'preview' || action === 'more') return openGenerationDetail(id);
   if (action === 'reference') { continueFromTask(task, 'image', true, { forceOutput:true, carryPrompt:false }); return; }
   if (action === 'video-reference') { continueFromTask(task, 'video', true, { forceOutput:true, carryPrompt:false }); return; }
-  if (action === 'regenerate') { continueFromTask(task, task.type, true, { replaceReferences:true, restoreMentions:true }); return; }
+  if (action === 'regenerate') { void regenerateFromTask(task); return; }
   if (action === 'copy') { void copyTaskAsset(task, button); return; }
   if (action === 'upscale') { void videoUpscale.open(task); return; }
   if (isVideoUpscaleTask(task) && (action === 'retry' || action === 'continue')) {
@@ -3344,7 +3351,7 @@ function handleTaskAction(action, id, button = null) {
     void videoUpscale.open(source);
     return;
   }
-  if (action === 'retry' || action === 'continue') { continueFromTask(task); return; }
+  if (action === 'retry' || action === 'continue') { void regenerateFromTask(task); return; }
   if (action === 'delete') return deleteGenerationTask(task, button);
 }
 function fitDetailMedia(media, width, height) { if (!media || !width || !height) return; const portrait=height>width; media.classList.toggle('portrait-media', portrait); media.classList.toggle('landscape-media', !portrait); }
