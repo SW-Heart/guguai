@@ -130,7 +130,7 @@ test('console.error 原样输出并入库，标签成为分类，未捕获异常
 
 test('前端上报过滤噪音，分来源归类', () => {
   const entries = clientErrorEntries({ appVersion: '0.8.4', platform: 'darwin', reports: [
-    { kind: 'unhandledrejection', message: 'TypeError: a is null', stack: 'TypeError: a is null\n    at go (https://guguai.xyz/app.js?v=617:1:1)' },
+    { kind: 'unhandledrejection', message: 'TypeError: a is null', stack: 'TypeError: a is null\n    at go (https://guguai.xyz/app.js?v=618:1:1)' },
     { kind: 'error', message: 'Script error.' },
     { kind: 'error', message: 'ResizeObserver loop limit exceeded' },
     { kind: 'error', message: 'oops', source: 'chrome-extension://abc/inject.js' },
@@ -147,7 +147,7 @@ test('页面上报器去重、跳过接口业务错误并批量发送', async ()
   const calls = [];
   const reporter = createErrorReporter({ fetchImpl: (url, options) => { calls.push([url, JSON.parse(options.body), options.headers]); return Promise.resolve(); }, headers: () => ({ 'X-GuGu-Desktop': '1' }), meta: () => ({ appVersion: '0.8.4' }), flushDelayMs: 5, location: { pathname: '/' }, navigator: { userAgent: 'test' } });
   const boom = new TypeError('x is undefined');
-  reporter.onError({ error: boom, message: boom.message, filename: 'https://guguai.xyz/app.js?v=617', lineno: 3, colno: 4 });
+  reporter.onError({ error: boom, message: boom.message, filename: 'https://guguai.xyz/app.js?v=618', lineno: 3, colno: 4 });
   reporter.onError({ error: boom, message: boom.message });
   reporter.onRejection({ reason: Object.assign(new Error('请先登录'), { status: 401 }) });
   reporter.onRejection({ reason: new Error('render failed') });

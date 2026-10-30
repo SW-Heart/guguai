@@ -36,6 +36,73 @@
       <button id="bootRetry" class="secondary-button boot-retry hidden" type="button">重试</button>
     </div>
   </section>
+  <script>
+    // 启动守护：本地缓存里的脚本损坏时 app.js 根本跑不起来，页面会一直停在启动画面，
+    // 它自己的错误上报也不存在。这段内联脚本不依赖任何外部文件：报告失败原因，
+    // 并让重试绕过本地缓存重新下载。
+    (() => {
+      const timeoutMs = 20000;
+      let failed = false;
+      let reported = false;
+      const started = () => window.guguAppStarted === true;
+      const report = (message, source = '', line = 0, column = 0) => {
+        if (reported) return;
+        reported = true;
+        try {
+          fetch('/api/errors', {
+            method: 'POST',
+            credentials: 'same-origin',
+            keepalive: true,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reports: [{ kind: 'boot', message: String(message).slice(0, 1000), source: String(source).slice(0, 300), line, column, page: location.pathname, userAgent: navigator.userAgent.slice(0, 300) }] }),
+          }).catch(() => {});
+        } catch {}
+      };
+      const reloadFresh = async () => {
+        if (typeof window.guguDesktop?.reloadFresh === 'function') return window.guguDesktop.reloadFresh();
+        // 旧版客户端没有清缓存入口：强制重新下载本页用过的每个文件，覆盖本地坏掉的副本。
+        const urls = new Set(performance.getEntriesByType('resource').map(entry => entry.name));
+        document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(node => urls.add(new URL(node.getAttribute('src') || node.getAttribute('href'), location.href).href));
+        const files = [...urls].filter(url => { try { const parsed = new URL(url); return parsed.origin === location.origin && !parsed.pathname.startsWith('/api/'); } catch { return false; } });
+        await Promise.allSettled(files.map(url => fetch(url, { cache: 'reload', credentials: 'same-origin' })));
+        location.reload();
+      };
+      const showFailure = () => {
+        if (failed || started()) return;
+        failed = true;
+        const title = document.getElementById('bootTitle');
+        const message = document.getElementById('bootMessage');
+        const retry = document.getElementById('bootRetry');
+        title.textContent = '页面没有加载完成';
+        message.textContent = '请点击重试。';
+        retry.classList.remove('hidden');
+        retry.onclick = async () => {
+          retry.disabled = true;
+          title.textContent = '正在重新加载…';
+          message.textContent = '';
+          try { await reloadFresh(); }
+          catch {
+            retry.disabled = false;
+            title.textContent = '页面没有加载完成';
+            message.textContent = '请检查网络后重试。';
+          }
+        };
+      };
+      window.addEventListener('error', event => {
+        if (started()) return;
+        const target = event.target;
+        if (target instanceof HTMLScriptElement) report(`脚本加载失败：${target.src}`, target.src);
+        else if (event instanceof ErrorEvent) report(event.message, event.filename, event.lineno, event.colno);
+        else return;
+        setTimeout(showFailure, 3000);
+      }, true);
+      setTimeout(() => {
+        if (started()) return;
+        report('页面启动超时');
+        showFailure();
+      }, timeoutMs);
+    })();
+  </script>
   <section id="authView" class="auth-view hidden">
     <aside class="auth-intro">
       <div class="intro-brand"><span class="brand-gem"></span><span><b>GuGu AI</b></span></div>
@@ -286,6 +353,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=617"></script>
+  <script type="module" src="/app.js?v=618"></script>
 </body>
 </html>

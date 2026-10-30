@@ -1656,6 +1656,13 @@ function registerIpc() {
     return { updateUrl: settings.updateUrl, restartRequired: app.isPackaged };
   }, { validateArgs: ([value]) => [ipcText(value, 2048, '更新地址')] });
   handle('desktop:retry', () => loadStudio());
+  // A damaged entry in the HTTP or compiled-script cache survives reinstalls and
+  // stops the studio page before its own error handling exists.
+  handle('desktop:reload-fresh', async () => {
+    await session.defaultSession.clearCache();
+    await session.defaultSession.clearCodeCaches({});
+    await loadStudio();
+  });
   handle('window:minimize', event => {
     if (!isMainWindowEvent(event)) return false;
     if (process.platform === 'win32' && !mainWindow.isMinimizable()) return false;
@@ -1879,8 +1886,10 @@ async function createWindow({ loadStudioAfter = true } = {}) {
     flushDesktopLog();
     recoverRendererCrash(details);
   });
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-    console.warn('[desktop] 页面加载失败', { errorCode, errorDescription, validatedURL });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 (ERR_ABORTED) is a navigation replaced by another one, not a failure.
+    const log = isMainFrame && errorCode !== -3 ? console.error : console.warn;
+    log('[desktop] 页面加载失败', { errorCode, errorDescription, validatedURL });
   });
   mainWindow.on('unresponsive', () => console.warn('[desktop] 主窗口无响应'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

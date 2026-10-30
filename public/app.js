@@ -5084,6 +5084,8 @@ $('#previewGenerationPromptToggle').onclick = () => { const prompt = $('#preview
 
 async function bootstrap() {
   prefetchRouteModule(routeFromPath(window.location.pathname));
+  // The inline boot guard in index.html stands down once this script runs.
+  window.guguAppStarted = true;
   const desktopReady = await initDesktopBridge().catch(error => { console.warn('[desktop] 初始化工作区桥接失败', error); return false; });
   if (!desktopReady) {
     showBoot('请使用 GuGu AI 客户端', '创作工作台不支持浏览器访问。');

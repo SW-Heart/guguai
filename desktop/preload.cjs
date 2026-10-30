@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
   setApiBase: value => invoke('desktop:set-api-base', value),
   setUpdateUrl: value => invoke('desktop:set-update-url', value),
   retry: () => invoke('desktop:retry'),
+  reloadFresh: () => invoke('desktop:reload-fresh'),
   window: Object.freeze({
     minimize: () => invoke('window:minimize'),
     toggleMaximize: () => invoke('window:toggle-maximize'),
