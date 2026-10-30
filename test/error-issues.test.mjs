@@ -8,7 +8,7 @@ import path from 'node:path';
 import { closeDatabase, openDatabase, resetForTests, sql } from '../lib/db.mjs';
 import { appendSystemEvent } from '../lib/audit.mjs';
 import { backfillIssues, errorFingerprint, findIssue, issueCounts, issueEvents, normalizeErrorMessage, pruneErrorHistory, resetIssueSampling, resolveOpenIssues, setIssueStatus, stackLocation } from '../lib/error-issues.mjs';
-import { clientErrorEntries, consoleErrorEntry, installServerErrorCapture, reportServerError } from '../lib/error-tracker.mjs';
+import { clientErrorEntries, consoleErrorEntry, installServerErrorCapture, isClientAbort, reportServerError } from '../lib/error-tracker.mjs';
 import { createErrorReporter, isExpectedFailure } from '../public/features/errors/reporter.js';
 
 function withDatabase(t) {
@@ -135,6 +135,10 @@ test('前端上报过滤噪音，分来源归类', () => {
     { kind: 'error', message: 'ResizeObserver loop limit exceeded' },
     { kind: 'error', message: 'oops', source: 'chrome-extension://abc/inject.js' },
     { kind: 'weird', message: 'TypeError: b', source: 'https://guguai.xyz/drama-studio.js?v=2' },
+    { kind: 'main', message: '(node:38942) ExperimentalWarning: SQLite is an experimental feature and might change at any time' },
+    { kind: 'main', message: "Error occurred in handler for 'media:download-remote': Error: net::ERR_TIMED_OUT" },
+    { kind: 'main', message: '(node:38942) electron: Failed to load URL: https://guguai.xyz/ with error: ERR_CONNECTION_CLOSED' },
+    { kind: 'main', message: "Error occurred in handler for 'media:download-remote': Error: 下载连接或传输停滞，请重试" },
   ] }, { source: 'desktop', userId: 'u1' });
   assert.deepEqual(entries.map(entry => [entry.category, entry.location, entry.userId]), [
     ['desktop.unhandledrejection', 'go app.js', 'u1'],
@@ -210,4 +214,11 @@ test('客户端主进程错误排队上报，连上服务后补发，崩溃立�
   assert.equal(mainErrorReport([new Error('x')]).stack.startsWith('Error: x'), true);
   const [crash] = clientErrorEntries({ reports: [{ kind: 'crash', message: 'Error: main boom', stack: 'Error: main boom\n    at boot (file:///C:/app/resources/app.asar/desktop/main.mjs:1:1)' }] }, { source: 'desktop' });
   assert.deepEqual([crash.category, crash.level, crash.location], ['desktop.crash', 'critical', 'boot desktop/main.mjs']);
+});
+
+test('用户中途断开的请求不算服务端错误', () => {
+  const aborted = Object.assign(new Error('aborted'), { code: 'ECONNRESET' });
+  assert.equal(isClientAbort(aborted), true);
+  assert.equal(isClientAbort(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })), false);
+  assert.equal(isClientAbort(new Error('aborted')), false);
 });

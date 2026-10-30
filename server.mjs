@@ -89,7 +89,7 @@ import { generationFailureCode } from './lib/generation-failure-code.mjs';
 import { buildShotVideoPrompt } from './public/video-prompt.js';
 import { getNotification, listNotifications, markAllNotificationsRead, markNotificationRead, unreadNotificationCount } from './lib/notifications.mjs';
 import { appendSystemEvent } from './lib/audit.mjs';
-import { handleClientErrorReport, installServerErrorCapture, reportServerError } from './lib/error-tracker.mjs';
+import { handleClientErrorReport, installServerErrorCapture, isClientAbort, reportServerError } from './lib/error-tracker.mjs';
 import { backfillIssues, pruneErrorHistory } from './lib/error-issues.mjs';
 import { notifyGenerationFailure } from './lib/feishu.mjs';
 import { putSupportLogObject, supportLogMaxBytes, supportLogObjectKey, supportLogStorageReady, SUPPORT_LOG_MIME } from './lib/support-logs.mjs';
@@ -3273,7 +3273,7 @@ const server = http.createServer(async (req, res) => {
       return res.end();
     }
     return await serveStatic(res, url.pathname, req, { publicDir, appOnly:desktopAppOnly, sendJson });
-  } catch (error) { if (!error.statusCode || error.statusCode >= 500) reportServerError(error, { category:'server.http', requestId, details:{ method:req.method, url:String(req.url || '').slice(0, 500) } }); if (res.headersSent) return res.end(); const isAdminRequest = String(req.url || '').split('?')[0].startsWith('/api/admin/'); const message = isAdminRequest ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), publicHttpErrorBody(error, message)); }
+  } catch (error) { if ((!error.statusCode || error.statusCode >= 500) && !isClientAbort(error)) reportServerError(error, { category:'server.http', requestId, details:{ method:req.method, url:String(req.url || '').slice(0, 500) } }); if (res.headersSent) return res.end(); const isAdminRequest = String(req.url || '').split('?')[0].startsWith('/api/admin/'); const message = isAdminRequest ? (error.message || '服务错误') : publicHttpErrorMessage(error); return sendJson(res, error.statusCode || (error.code === 'ENOENT' ? 404 : 500), publicHttpErrorBody(error, message)); }
 });
 
 // Importing server helpers from a test must never open the production port.
