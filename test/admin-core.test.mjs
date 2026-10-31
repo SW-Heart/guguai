@@ -174,11 +174,11 @@ test('admin core controls', async t => {
     const version = modelId => sql('SELECT version FROM model_controls WHERE model_id = :modelId').get({ modelId }).version;
     // Image defaults are gpt-image-2=0, gpt-image-2.5=1, midjourney=2.
     updateModelControl('midjourney', { sortOrder: 0 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
-    assert.deepEqual(order('image'), [['midjourney', 0], ['gpt-image-2', 1], ['gpt-image-2.5', 2]]);
+    assert.deepEqual(order('image'), [['midjourney', 0], ['gpt-image-2', 1], ['gpt-image-2.5', 2], ['nano-banana-2.1', 3], ['seedream-5.0', 4]]);
     assert.equal(version('gpt-image-2'), 2);
     assert.throws(() => updateModelControl('gpt-image-2', { enabled: false }, { actorUserId: admin.id, expectedVersion: 1 }), { statusCode: 409 });
     updateModelControl('midjourney', { sortOrder: 2 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
-    assert.deepEqual(order('image'), [['gpt-image-2', 0], ['gpt-image-2.5', 1], ['midjourney', 2]]);
+    assert.deepEqual(order('image'), [['gpt-image-2', 0], ['gpt-image-2.5', 1], ['midjourney', 2], ['nano-banana-2.1', 3], ['seedream-5.0', 4]]);
     // Video models are a separate group and were not touched.
     assert.equal(sql("SELECT COUNT(*) AS count FROM model_controls WHERE kind = 'video' AND version > 1").get().count, 0);
     // Saving without changing the order leaves historical duplicates alone.

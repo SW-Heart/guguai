@@ -58,3 +58,12 @@ test('canvas uses durations of the selected quality and resets unsupported choic
   assert.equal(draft.duration,5);
   assert.deepEqual(canvasGenerationOptions(draft,config).parameters.durations,[5,7]);
 });
+
+test('Nano Banana canvas keeps aspect ratios separate from resolution for reference images', () => {
+  const catalog = { ...config, imageModels:[{id:'nano-banana-2.1',label:'Nano Banana 2.1'}] };
+  for (const quality of ['1k','2k','4k']) {
+    const draft = {type:'image',modelId:'nano-banana-2.1',prompt:'猫',aspect:'16:9',quality,quantity:2,attachments:[{id:'ref-1',kind:'image'}]};
+    assert.deepEqual(canvasGenerationOptions(draft,catalog).qualities,['1k','2k','4k']);
+    assert.deepEqual(canvasGenerationPayload(draft,catalog),{type:'image',modelId:'nano-banana-2.1',prompt:'猫',size:'16:9',quality,quantity:2,referenceAssetIds:['ref-1']});
+  }
+});

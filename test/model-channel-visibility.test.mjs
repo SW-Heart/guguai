@@ -67,7 +67,7 @@ test('fixed video and image models require their own provider credential', () =>
   }
   resetForTests(); openDatabase({file:':memory:'});
   try {
-    for (const [modelId,key] of [['gpt-image-2','DUOMI_API_KEY'],['gpt-image-2.5','TUZI_DEFAULT_API_KEY'],['midjourney','DUOMI_API_KEY']]) {
+    for (const [modelId,key] of [['gpt-image-2','DUOMI_API_KEY'],['gpt-image-2.5','TUZI_DEFAULT_API_KEY'],['midjourney','DUOMI_API_KEY'],['nano-banana-2.1','DUOMI_API_KEY']]) {
       assert.equal(isImageModelAvailable(modelId, {}), false);
       assert.equal(isImageModelAvailable(modelId, {[key]:'configured'}), true);
       updateModelControl(modelId, {userVisible:false}, {actorUserId:null});

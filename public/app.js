@@ -1,4 +1,4 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=9';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=11';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
 import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=8';
@@ -310,10 +310,10 @@ function requireDesktopLocalAsset(file) {
 // Desktops that advertise video covers return a still frame for local videos.
 const videoCoverUrl = src => window.guguDesktop?.capabilities?.videoCovers && String(src || '').startsWith('gugu-media://') ? imageThumbnailUrl(src) : '';
 const videoPreviews = createVideoPreviews({ root:document.body, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, coverUrl:videoCoverUrl, onCoverSize:(video, width, height) => rememberCardMediaRatio(video, width, height) });
-// Library and picker grids keep every loaded page; free pictures far off screen.
-[['#fileGrid', '.file-card:not(.upload-job-card) img'], ['#referenceGrid', '.reference-option img']].forEach(([selector, images]) => {
+// Release decoded previews outside each scrolling workspace, including generation history.
+[['#fileGrid', '.file-card:not(.upload-job-card) img'], ['#referenceGrid', '.reference-option img'], ['#generationGrid', '.card-media img', '600px'], ['#generationHistory', '.history-thumb img', '600px']].forEach(([selector, images, margin]) => {
   const root = document.querySelector(selector);
-  if (root) createOffscreenImages({ root, selector:images, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, getComputedStyle:element => window.getComputedStyle(element) }).scan();
+  if (root) createOffscreenImages({ root, selector:images, margin, IntersectionObserver:window.IntersectionObserver, MutationObserver:window.MutationObserver, getComputedStyle:element => window.getComputedStyle(element) }).scan();
 });
 const fileLibraryLayout = createJustifiedFileLayout($('#fileGrid'));
 let videoPreviewScanFrame = 0;
@@ -2266,8 +2266,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=187');
-const importDramaStudio = () => import('./drama-studio.js?v=320');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=190');
+const importDramaStudio = () => import('./drama-studio.js?v=323');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -3119,6 +3119,8 @@ function generationModelName(task) {
   if (!modelId) return '—';
   if (modelId === 'gpt-image-2') return 'GPT-Image-2';
   if (modelId === 'gpt-image-2.5') return 'GPT Image 2.5';
+  if (modelId === 'seedream-5.0') return 'Seedream 5.0';
+  if (modelId === 'nano-banana-2.1') return 'Nano Banana 2.1';
   if (modelId === 'midjourney') return 'Midjourney';
   if (modelId === 'video-upscale') return '高清放大';
   const configuredModels = Array.isArray(state.config?.videoCapabilities?.models) ? state.config.videoCapabilities.models : [];
@@ -3157,6 +3159,9 @@ function generationParameterRows(task) {
       const selection = tuziSelectionForSize(task.size, task.quality);
       rows.push(detailRow('画面比例', selection.aspect === 'auto' ? '自动' : selection.aspect));
       rows.push(detailRow('输出尺寸', task.size === 'auto' ? '自动' : String(task.size || '—').replace('x', ' × ')));
+      rows.push(detailRow('清晰度', String(task.quality || '1k').toUpperCase()));
+    } else if (['nano-banana-2.1', 'seedream-5.0'].includes(task.modelId)) {
+      rows.push(detailRow('画面比例', task.size || '—'));
       rows.push(detailRow('清晰度', String(task.quality || '1k').toUpperCase()));
     } else {
       rows.push(detailRow('画面比例', task.size || '—'));
@@ -4326,6 +4331,19 @@ function syncImageModelParameters() {
   const modelId = $('#imageModel')?.value;
   const isMidjourney = modelId === 'midjourney';
   const isTuzi = modelId === 'gpt-image-2.5';
+  const isNanoBanana = modelId === 'nano-banana-2.1';
+  const isSeedream = modelId === 'seedream-5.0';
+  const qualitySelect = $('#imageQuality');
+  const qualityGroup = $('.segmented[data-select="imageQuality"]');
+  const qualities = isSeedream ? [['2k','2K'],['3k','3K'],['4k','4K']] : isNanoBanana ? [['1k','1K'],['2k','2K'],['4k','4K']] : [['low','低'],['medium','中'],['high','高']];
+  if (qualitySelect && qualityGroup) {
+    const current = qualitySelect.value;
+    qualitySelect.innerHTML = qualities.map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
+    qualitySelect.value = qualities.some(([value]) => value === current) ? current : isSeedream ? '2k' : isNanoBanana ? '1k' : 'medium';
+    qualityGroup.querySelectorAll('button').forEach((button,index) => { button.dataset.value = qualities[index][0]; button.textContent = qualities[index][1]; });
+    qualityGroup.parentElement.querySelector('.field-label').textContent = isSeedream || isNanoBanana ? '清晰度' : '质量';
+    syncSegmentedControl('imageQuality');
+  }
   $('#imageGptOptions')?.classList.toggle('hidden', isMidjourney || isTuzi);
   $('#imageTuziOptions')?.classList.toggle('hidden', !isTuzi);
   $('#imageMidjourneyOptions')?.classList.toggle('hidden', !isMidjourney);
@@ -4782,9 +4800,9 @@ function updateImageCost() {
   const count = imageQuantityValue(quantity.value) ?? imageQuantityConfig().min;
   const isMidjourney = $('#imageModel')?.value === 'midjourney';
   const selectedModel = $('#imageModel')?.value;
-  const selectedQuality = selectedModel === 'gpt-image-2.5' ? $('#imageTuziQuality')?.value : '标准';
+  const selectedQuality = selectedModel === 'gpt-image-2.5' ? $('#imageTuziQuality')?.value : ['nano-banana-2.1', 'seedream-5.0'].includes(selectedModel) ? $('#imageQuality')?.value : '标准';
   const configuredPrice = state.config.modelPrices?.find(item => item.modelId === selectedModel && item.quality.toLowerCase() === String(selectedQuality).toLowerCase());
-  const unitPrice = configuredPrice?.credits ?? (isMidjourney ? midjourneyImageCredits : selectedModel === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1);
+  const unitPrice = configuredPrice?.credits ?? (selectedModel === 'seedream-5.0' ? 2 : selectedModel === 'nano-banana-2.1' ? 1 : isMidjourney ? midjourneyImageCredits : selectedModel === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1);
   cost.textContent = creditText((isMidjourney ? count / 4 : count) * unitPrice);
   updateImageQuantityButtons(count);
 }

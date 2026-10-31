@@ -351,8 +351,8 @@ test('unloaded material previews keep mention identities through rendering and t
 test('storyboard save changes refresh the complete frontend cache chain',async()=>{
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   const app=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
-  assert.ok(html.includes('/app.js?v=636'));
-  assert.ok(app.includes('./drama-studio.js?v=320'));
+  assert.ok(html.includes('/app.js?v=640'));
+  assert.ok(app.includes('./drama-studio.js?v=323'));
   assert.ok(source.includes('./features/drama/pure.js?v=4'));
   assert.doesNotMatch(html,/projectConflictDialog|applyProjectConflict|cancelProjectConflict/);
   assert.doesNotMatch(source,/chooseProjectConflict|settleProjectConflict|存在冲突|已合并保存/);

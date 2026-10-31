@@ -101,7 +101,7 @@ test('all modules have published static help; every website tutorial and preview
 test('all changed marketing entries and help imports use consistent current cache keys', async () => {
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
-    assert.ok(html.includes('/marketing.js?v=28'));
+    assert.ok(html.includes('/marketing.js?v=30'));
     assert.ok(html.includes('/marketing.css?v=20'));
     assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-7])|css\?v=(?:[789]|1[0-9]))\b/);
   }

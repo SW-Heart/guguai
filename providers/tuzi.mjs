@@ -1,4 +1,5 @@
-import { isPreconnectFailure, transportErrorCodes } from './transport.mjs';
+import { SEEDREAM_MODEL_ID, SEEDREAM_UPSTREAM_MODEL_ID, seedreamSize } from '../lib/seedream.mjs';
+import { isPreconnectFailure, transportErrorCodes, transportErrorDiagnostics } from './transport.mjs';
 
 export function createTuziProvider({
   baseUrl,
@@ -75,34 +76,48 @@ export function createTuziProvider({
   }
 
   async function createImage(task, refs, hooks = {}) {
-    const form = new FormData();
-    form.append('model', task.model || 'gpt-image-2.5');
-    form.append('prompt', task.prompt);
-    if (task.size) form.append('size', task.size);
-    for (const reference of refs) form.append('input_reference', reference);
+    const isSeedream = task.model === SEEDREAM_MODEL_ID || task.model === SEEDREAM_UPSTREAM_MODEL_ID;
+    const size = isSeedream ? seedreamSize(task.size || '1:1', task.quality) : task.size;
+    if (isSeedream && !size) throw new Error('不支持的 Seedream 5.0 图片尺寸');
+    const form = isSeedream ? null : new FormData();
+    if (form) {
+      form.append('model', task.model || 'gpt-image-2.5');
+      form.append('prompt', task.prompt);
+      if (task.size) form.append('size', task.size);
+      for (const reference of refs) form.append('input_reference', reference);
+    }
     const submission = await trackProviderSubmission((async () => {
+      const startedAt = Date.now();
       const signal = AbortSignal.timeout(imageSubmitTimeoutMs);
       const maxSubmitAttempts = 5;
       let created;
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
         task.submissionAttemptCount = attempt;
+        const requestStartedAt = Date.now();
         try {
-          created = await fetchJson(`${baseUrl}/v1/videos`, {
+          created = await fetchJson(`${baseUrl}${isSeedream ? '/v1/images/generations' : '/v1/videos'}`, {
             method:'POST',
-            headers:{ Authorization:authorization() },
-            body:form,
+            headers:{ Authorization:authorization(), ...(isSeedream ? { 'Content-Type':'application/json' } : {}) },
+            body:isSeedream ? JSON.stringify({ model:SEEDREAM_UPSTREAM_MODEL_ID, prompt:task.prompt, size, response_format:'url', ...(refs.length ? { image:refs.length === 1 ? refs[0] : refs } : {}) }) : form,
             signal,
           });
           break;
         } catch (error) {
           const safeToRetry = isPreconnectFailure(error);
           const phase = error.requestPhase || (safeToRetry ? 'connect' : 'request');
+          const diagnostics = {
+            elapsedMs:Date.now() - startedAt, requestElapsedMs:Date.now() - requestStartedAt,
+            timeoutMs:imageSubmitTimeoutMs, deadlineAborted:signal.aborted,
+            ...(signal.aborted ? { abortReason:signal.reason?.name || 'AbortError' } : {}),
+            ...transportErrorDiagnostics(error),
+          };
           task.submissionAttempts = [...(task.submissionAttempts || []), {
             generationAttempt:(Number(task.generationRetryCount) || 0) + 1,
-            attempt, at:new Date().toISOString(), phase, codes:transportErrorCodes(error), safeToRetry,
+            attempt, at:new Date().toISOString(), phase, codes:transportErrorCodes(error), safeToRetry, ...diagnostics,
           }].slice(-20);
           console.error('[image] Tuzi submission transport failure', {
-            generationId:task.id, attempt, phase, safeToRetry,
+            generationId:task.id, model:task.model, mode:isSeedream ? 'synchronous' : 'asynchronous',
+            attempt, phase, safeToRetry, ...diagnostics,
             detail:upstreamRequestErrorDetail(error),
           });
           if (safeToRetry && attempt < maxSubmitAttempts && !signal.aborted) {
@@ -118,13 +133,18 @@ export function createTuziProvider({
           throw error;
         }
       }
+      if (isSeedream) {
+        const url = created?.data?.[0]?.url;
+        if (!url) throw Object.assign(new Error('Seedream 5.0 没有返回图片地址'), { provider:'tuzi', submissionUncertain:true });
+        return { provider:'tuzi', taskId:'', url };
+      }
       const taskId = created.id || created.task_id;
       if (!taskId) throw Object.assign(new Error('Tuzi 图片任务没有返回任务 ID'), { provider:'tuzi', submissionUncertain:true });
       await hooks.onSubmitted?.({ provider:'tuzi', taskId:String(taskId) });
       if (hooks.deferPolling) return { pending:true, provider:'tuzi', taskId:String(taskId) };
       return String(taskId);
     })());
-    if (submission?.pending) return submission;
+    if (submission?.pending || submission?.url) return submission;
     return pollImage(submission, hooks, videoPollStartedAt(task));
   }
 

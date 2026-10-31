@@ -7,7 +7,7 @@ import { createAgentAssetMetadataSync } from './agent-asset-metadata.js?v=1';
 import { mountMediaNameEditor } from './media-name-editor.js?v=1';
 import { mountProjectAssetsDrawer } from './project-assets.js?v=4';
 import { isDocumentCard, documentCardMarkup, mountDocumentCard, documentDownload } from './document-card.js?v=3';
-import { modelLogoMarkup } from '../../components/model-logo.js?v=9';
+import { modelLogoMarkup } from '../../components/model-logo.js?v=11';
 import { ImageCache, mapImagesWithLimit } from '../media/image-cache.js?v=1';
 import { canvasImageUrl } from '../media/thumbnail-url.js?v=2';
 import { cullOffscreenImages, isOffscreen } from './canvas-culling.js?v=1';
@@ -28,18 +28,18 @@ import { projectLoadingMarkup } from '../agent/project-loading.js?v=1';
 import { readCanvasSnapshot, writeCanvasSnapshot } from './local-snapshot.js?v=1';
 import { mountReferenceCanvas } from '../../vendor/director/reference-canvas.js?v=43';
 import { normalizeDirectorWorkspace, persistCanvasSnapshot, applyDirectorEdit, fitDirectorViewport } from './director-actions.js?v=21';
-import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=21';
+import { canvasGenerationModels, canvasGenerationOptions, canvasGenerationPayload, canvasGenerationRatios, canvasGenerationModeLabels, canvasGenerationModeDescriptions, canvasGenerationModelIcon, canvasGenerationQualityLabel, canvasGenerationFrameSize, createCanvasGenerationDraft, reconcileCanvasGenerationDraft } from './canvas-generation.js?v=24';
 import { generationFrameState, generationTaskStatus, renderGenerationPlaceholder } from './generation-status.js?v=5';
 import { generationPromptCodec, generationPromptMarkup, generationPromptSegments, removeGenerationMention, generationSelection, restoreGenerationSelection, bindGenerationRichPrompt } from './canvas-generation-editor.js?v=6';
 import { canvasIcon } from './canvas-icons.js?v=1';
-import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=13';
+import { addGenerationReference, admitLinkedReference, hydrateGenerationReferences } from './canvas-generation-references.js?v=16';
 import { addLink, removeLinks, normalizeLinks, inputLinks, isGenerator, isInlineGenerator, displayedResult, draftResults, primaryResult, generatorLabel, linkError, resolveGenerationInputs, generationRequestDraft, placeResults, linkCurve, entityKinds, migrateCanvasDrafts, foldedResults, FOLD_AFTER, uniqueEntityName, renameEntity } from './canvas-links.js?v=3';
 import { mountCanvasConnector, rectAt } from './canvas-connect.js?v=3';
-import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=8';
-import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=12';
+import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=11';
+import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=15';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=20';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=23';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 import { mountCanvasContextMenu } from './canvas-context-menu.js?v=2';
@@ -2098,9 +2098,9 @@ export function createDirectorWorkspace(host, bridge) {
     }
     if(draft.type==='image'){
       const {config,pricing}=bridge.generationPricing?.()||{config:generationConfig(),pricing:{}};
-      const quality=draft.modelId==='gpt-image-2.5'?draft.quality==='1k'?'1K':draft.quality.toUpperCase():'标准';
+      const quality=['gpt-image-2.5','nano-banana-2.1'].includes(draft.modelId)?draft.quality==='1k'?'1K':draft.quality.toUpperCase():'标准';
       const selected=config?.modelPrices?.find(item=>item.modelId===draft.modelId&&String(item.quality).toLowerCase()===quality.toLowerCase()&&item.available!==false);
-      const fallback=draft.modelId==='midjourney'?4:draft.modelId==='gpt-image-2.5'?({ '1k':1,'2k':2,'4k':4 }[draft.quality]||1):Number(pricing?.image)||1;
+      const fallback=draft.modelId==='nano-banana-2.1'?1:draft.modelId==='midjourney'?4:draft.modelId==='gpt-image-2.5'?({ '1k':1,'2k':2,'4k':4 }[draft.quality]||1):Number(pricing?.image)||1;
       const unit=Number(selected?.credits??fallback),total=unit*(draft.modelId==='midjourney'?Number(draft.quantity)/4:Number(draft.quantity));
       show(total);return;
     }

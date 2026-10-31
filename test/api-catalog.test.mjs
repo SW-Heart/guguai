@@ -122,3 +122,10 @@ test('cloud copies of API results follow the six-day retention', async () => {
   assert.equal(cloudCopyExpiresAt({ objectKey:'k', source:'generation', objectUploadedAt:uploadedAt, originDeviceId:API_DEVICE_ID }), Date.parse(uploadedAt) + 6 * day);
   assert.equal(cloudCopyExpiresAt({ objectKey:'k', source:'generation', objectUploadedAt:uploadedAt, originDeviceId:'desktop' }), Date.parse(uploadedAt) + 30 * day);
 });
+
+test('Nano Banana API exposes and validates three resolution tiers', () => {
+  const entry = buildApiModelCatalog({ imageModels:[{ id:'nano-banana-2.1', label:'Nano Banana 2.1' }], imageAspectRatios:['1:1','16:9'], prices:[], videoCapabilities:{ models:[] } }).find(m => m.id === 'nano-banana-2.1');
+  assert.deepEqual(entry.parameters.find(p => p.name === 'quality').values, ['1k','2k','4k']);
+  for (const quality of ['1K','2K','4K']) assert.deepEqual(normalizeImageRequest(entry, { prompt:'猫', size:'16:9', quality, n:2 }).input, { type:'image', modelId:'nano-banana-2.1', prompt:'猫', size:'16:9', quality:quality.toLowerCase(), quantity:2 });
+  assert.throws(() => normalizeImageRequest(entry, { prompt:'猫', quality:'high' }), error => error.apiParam === 'quality');
+});

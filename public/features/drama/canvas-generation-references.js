@@ -1,4 +1,4 @@
-import { canvasGenerationOptions } from './canvas-generation.js?v=21';
+import { canvasGenerationOptions } from './canvas-generation.js?v=24';
 
 
 export function addGenerationReference(draft, file, config) {

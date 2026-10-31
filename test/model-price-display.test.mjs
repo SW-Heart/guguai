@@ -60,8 +60,8 @@ test('Minimax price changes refresh both versioned frontend entries', async () =
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const drama = await readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.match(html, /src="\/app\.js\?v=636"/);
-  assert.match(app, /import\('\.\/drama-studio\.js\?v=320'\)/);
+  assert.match(html, /src="\/app\.js\?v=640"/);
+  assert.match(app, /import\('\.\/drama-studio\.js\?v=323'\)/);
   assert.doesNotMatch(html, /app\.js\?v=462\b/);
   assert.doesNotMatch(app, /drama-studio\.js\?v=205\b/);
   assert.match(drama, /限时特惠 ¥0\.05\/s 起/);
@@ -148,4 +148,11 @@ test('video billing changes refresh the admin and workspace cache entries', asyn
   const { readFile } = await import('node:fs/promises');
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
   assert.match(admin, /guguadmin\.js\?v=79/);
+});
+
+test('Nano Banana costs one credit at every resolution regardless of the generic image price', () => {
+  const pricing = { imagePerRequest:9, videoPerSecond:1, version:1 };
+  const prices = __test.publicPlatformPrices(pricing, { models:[] }).filter(item => item.modelId === 'nano-banana-2.1');
+  assert.deepEqual(prices.map(item => [item.quality,item.credits]), [['1K',1],['2K',1],['4K',1]]);
+  assert.deepEqual(modelPriceFields(pricing).filter(item => item.modelId === 'nano-banana-2.1').map(item => item.amount), [1,1,1]);
 });

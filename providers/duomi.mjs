@@ -29,6 +29,8 @@ export function createDuomiProvider({
     }
   }
 
+  const NANO_BANANA_MODEL_ID = 'nano-banana-2.1';
+  const isNanoBananaTask = task => task?.modelId === NANO_BANANA_MODEL_ID || task?.model === NANO_BANANA_MODEL_ID || task?.model === 'gemini-nano-banana-2.1';
   const MIDJOURNEY_MODEL_ID = 'midjourney';
   const isMidjourneyTask = task => task?.modelId === MIDJOURNEY_MODEL_ID || task?.model === MIDJOURNEY_MODEL_ID;
   function midjourneyPrompt(task, refs) {
@@ -54,6 +56,8 @@ export function createDuomiProvider({
 
   async function pollImage(taskId, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false, pollOnce = false, modelId = '' } = {}) {
     const midjourney = modelId === MIDJOURNEY_MODEL_ID;
+    const nanoBanana = modelId === NANO_BANANA_MODEL_ID;
+    const wrapped = midjourney || nanoBanana;
     let consecutiveErrors = 0;
     let firstRequest = true;
     for (;;) {
@@ -68,6 +72,7 @@ export function createDuomiProvider({
       try {
         const url = midjourney
           ? `${baseUrl}/api/midjourney/feed?task_id=${encodeURIComponent(taskId)}`
+          : nanoBanana ? `${baseUrl}/api/gemini/nano-banana/${encodeURIComponent(taskId)}`
           : `${baseUrl}/v1/tasks/${encodeURIComponent(taskId)}`;
         state = await fetchJson(url, {
           headers: { Authorization: apiKey },
@@ -88,12 +93,12 @@ export function createDuomiProvider({
         if (pollOnce) return { pending: true, provider: 'duomi', taskId };
         continue;
       }
-      if (midjourney && Number(state.code) >= 400) {
+      if (wrapped && state.code !== undefined && Number(state.code) !== 200) {
         throw Object.assign(new Error(errorMessage(state.msg || state.message || state.data || state, '图片生成失败')), {
           provider: 'duomi', providerTaskId: taskId, upstreamTerminal: true,
         });
       }
-      const result = midjourney && state.data && typeof state.data === 'object' ? state.data : state;
+      const result = wrapped && state.data && typeof state.data === 'object' ? state.data : state;
       const rawStatus = String(result.state || result.status || '').toLowerCase();
       const status = rawStatus === '3' ? 'succeeded' : rawStatus;
       if (['succeeded', 'completed', 'success', 'done'].includes(status)) {
@@ -115,10 +120,12 @@ export function createDuomiProvider({
 
   async function createImage(task, refs, hooks = {}) {
     const midjourney = isMidjourneyTask(task);
+    const nanoBanana = isNanoBananaTask(task);
     const payload = midjourney
       ? { action: 'generate', prompt: midjourneyPrompt(task, refs) }
+      : nanoBanana ? { model:'gemini-nano-banana-2.1', prompt:task.prompt, aspect_ratio:task.size, image_size:String(task.quality || '1k').toUpperCase(), ...(refs.length ? { image_urls:refs.slice(0, 7) } : { oversea:false }) }
       : { model: task.model, prompt: task.prompt, size: task.size, quality: task.quality };
-    if (!midjourney && refs.length) payload.image = refs.slice(0, 7);
+    if (!midjourney && !nanoBanana && refs.length) payload.image = refs.slice(0, 7);
     const submission = await trackProviderSubmission((async () => {
       const signal = AbortSignal.timeout(180_000);
       const maxSubmitAttempts = 5;
@@ -126,7 +133,7 @@ export function createDuomiProvider({
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt++) {
         task.submissionAttemptCount = attempt;
         try {
-          created = await fetchJson(midjourney ? `${baseUrl}/api/midjourney/imagine/fast` : `${baseUrl}/v1/images/generations?async=true`, {
+          created = await fetchJson(midjourney ? `${baseUrl}/api/midjourney/imagine/fast` : nanoBanana ? `${baseUrl}/api/gemini/${refs.length ? 'nano-banana-edit' : 'nano-banana'}` : `${baseUrl}/v1/images/generations?async=true`, {
             method: 'POST',
             headers: { Authorization: apiKey, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -156,15 +163,15 @@ export function createDuomiProvider({
           throw error;
         }
       }
-      if (midjourney && created.code !== undefined && Number(created.code) !== 200) throw Object.assign(new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败')), { upstreamTerminal:true });
-      const submittedTaskId = midjourney ? created.data?.task_id : (created.id || created.task_id);
+      if ((midjourney || nanoBanana) && created.code !== undefined && Number(created.code) !== 200) throw Object.assign(new Error(errorMessage(created.msg || created.data || created, '图片任务提交失败')), { upstreamTerminal:true });
+      const submittedTaskId = midjourney || nanoBanana ? created.data?.task_id : (created.id || created.task_id);
       if (!submittedTaskId) throw Object.assign(new Error('图片任务没有返回任务 ID，提交结果待核对'), { provider:'duomi', submissionUncertain:true });
       await hooks.onSubmitted?.({ provider: 'duomi', taskId: String(submittedTaskId) });
       if (hooks.deferPolling) return { pending: true, provider: 'duomi', taskId: String(submittedTaskId) };
       return String(submittedTaskId);
     })());
     if (submission?.pending) return submission;
-    return pollImage(submission, hooks, videoPollStartedAt(task), { modelId: midjourney ? MIDJOURNEY_MODEL_ID : '' });
+    return pollImage(submission, hooks, videoPollStartedAt(task), { modelId: midjourney ? MIDJOURNEY_MODEL_ID : nanoBanana ? NANO_BANANA_MODEL_ID : '' });
   }
 
   async function pollVideo(task, hooks = {}, pollStartedAt = Date.now(), { immediate = false, allowExpiredFinalCheck = false, pollOnce = false } = {}) {

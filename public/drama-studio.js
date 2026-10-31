@@ -3,7 +3,7 @@ import { imageThumbnailUrl } from './features/media/thumbnail-url.js?v=2';
 import { createWorkbenchMediaController } from './features/drama/workbench-media.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createRecordIndexes } from './state/records.js?v=2';
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=9';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=11';
 import { isRemoteReferenceReady, withoutSupersededLocalFiles } from './desktop-media-sync.js?v=16';
 import { canvasSnapshotKey, readCanvasSnapshot, writeCanvasSnapshot, deleteCanvasSnapshot } from './features/drama/local-snapshot.js?v=1';
 import { buildResourceImagePrompt } from './resource-prompt.js?v=4';
@@ -71,7 +71,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   // Only smart projects use the canvas engine, the largest part of this page's
   // code, so it is fetched when one opens and warmed up while the list is idle.
   let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
-  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=211'), loadCanvasStyles()]).then(([module]) => {
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=214'), loadCanvasStyles()]).then(([module]) => {
     createDirectorWorkspace = module.createDirectorWorkspace;
     return module;
   }).catch(error => {

@@ -31,8 +31,8 @@ function generationFixture({ mode = 'shadow', input, fingerprintInputs = [], pro
     generationRequestFingerprint:value => { fingerprintInputs.push(value.input); return 'fingerprint'; },
     enqueueGenerationJob:() => {}, saveGeneration:(_userId, task) => { records.set(task.id, task); return task; },
     ensureUserDirs:async () => {}, randomId:() => `generated-${++id}`, now:() => '2026-10-08T00:00:00.000Z',
-    isModelEnabled:() => true, fixedModels:{ image:'gpt-image-2' }, imageSizes:new Set(['1:1']), imageModelIds:new Set(['gpt-image-2']),
-    tuziImageModelId:'gpt-image-2.5', tuziImageSizes:new Set(), tuziImageTiers:new Set(), tuziImageCredits:{},
+    isModelEnabled:() => true, fixedModels:{ image:'gpt-image-2' }, imageSizes:new Set(['1:1']), imageModelIds:new Set(['gpt-image-2','nano-banana-2.1']),
+    tuziImageModelId:'gpt-image-2.5', tuziImageSizes:new Set(), tuziImageTiers:new Set(['1k','2k','4k']), tuziImageCredits:{},
     videoModelIds:{}, legacyVideoModelIds:{}, r2ReferenceConfigured:true, r2ReferencePublicBaseUrl:'https://reference.test',
     providerAvailability:{ duomi:true }, runtimeMetrics:{ idempotencyConflicts:0 }, activeGenerations:new Set(),
     promptPrecheck,
@@ -256,4 +256,18 @@ test('style application keeps precheck hit positions relative to visible content
   const response=await fixture.submit();
   assert.equal(response.body.code,'PROMPT_PRECHECK_REQUIRED');
   assert.deepEqual(response.body.precheck.hits,[{start:0,end:3,level:'banned',label:'涉及国家领导人'}]);
+});
+
+test('Nano Banana preview bills one credit per image for every tier and rejects unsupported quality', async () => {
+  for (const quality of ['1K','2K','4K']) {
+    const fixture = generationFixture({ input:{} });
+    const result = await fixture.handler.submit({ user:{id:'user-1'}, scope:{deviceId:'device-1',workspaceId:'workspace-1'}, input:{type:'image',modelId:'nano-banana-2.1',prompt:'猫',size:'1:1',quality,quantity:3}, previewOnly:true });
+    assert.equal(result.status, 200);
+    assert.equal(result.data.costMicro, 3_000_000);
+    assert.equal(result.data.quality, quality.toLowerCase());
+    assert.equal(fixture.charges(), 0);
+  }
+  const fixture = generationFixture({input:{}});
+  const invalid = await fixture.handler.submit({user:{id:'user-1'},scope:{},input:{type:'image',modelId:'nano-banana-2.1',prompt:'猫',quality:'high'},previewOnly:true});
+  assert.equal(invalid.status,400);
 });

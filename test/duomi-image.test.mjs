@@ -158,3 +158,35 @@ test('recovery leaves deferred reference uploads waiting for the client', async 
     sql('DELETE FROM users WHERE id = :id').run({ id:userId });
   }
 });
+
+test('Nano Banana submits each resolution to the documented text/edit endpoints', async () => {
+  for (const quality of ['1k','2k','4k']) for (const refs of [[], ['https://cdn.example/reference.png']]) {
+    let submitted = false;
+    const provider = isolatedDuomi(async (url, options) => {
+      assert.equal(url, `https://duomi.example/api/gemini/${refs.length ? 'nano-banana-edit' : 'nano-banana'}`);
+      assert.equal(options.headers.Authorization, 'test-key');
+      assert.deepEqual(JSON.parse(options.body), { model:'gemini-nano-banana-2.1', prompt:'一只猫', aspect_ratio:'16:9', image_size:quality.toUpperCase(), ...(refs.length ? { image_urls:refs } : { oversea:false }) });
+      return { code:200, data:{ task_id:'banana-task' } };
+    });
+    const result = await provider.createImage({ modelId:'nano-banana-2.1', prompt:'一只猫', size:'16:9', quality }, refs, { deferPolling:true, onSubmitted:async () => { submitted = true; } });
+    assert.equal(submitted, true);
+    assert.deepEqual(result, { pending:true, provider:'duomi', taskId:'banana-task' });
+  }
+});
+
+test('Nano Banana recovery unwraps results and preserves pending and failed states', async () => {
+  for (const state of ['running','succeeded','failed']) {
+    const provider = isolatedDuomi(async url => {
+      assert.equal(url, 'https://duomi.example/api/gemini/nano-banana/banana-task');
+      return { code:200, data:{ state, data:{ images:[{ url:'https://cdn.example/banana.png' }] }, msg:'生成失败' } };
+    });
+    const operation = provider.pollImage('banana-task', {}, Date.now(), { modelId:'nano-banana-2.1', immediate:true, pollOnce:true });
+    if (state === 'failed') await assert.rejects(operation, error => error.upstreamTerminal === true);
+    else { const result = await operation; assert.equal(state === 'running' ? result.pending : result.url, state === 'running' ? true : 'https://cdn.example/banana.png'); }
+  }
+});
+
+test('Nano Banana rejects provider errors without losing the failure', async () => {
+  const provider = isolatedDuomi(async () => ({ code:400, msg:'参数错误' }));
+  await assert.rejects(provider.createImage({ modelId:'nano-banana-2.1' }, []), error => error.upstreamTerminal === true);
+});

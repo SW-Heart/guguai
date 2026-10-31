@@ -1,3 +1,4 @@
+import { SEEDREAM_MODEL_ID, SEEDREAM_CREDITS, SEEDREAM_QUALITIES, seedreamSize, seedreamQualityForSize } from '../../lib/seedream.mjs';
 import { minimaxH3RecordedModel } from '../../providers/minimax-h3.mjs';
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice, videoBillingUnit } from '../../lib/pricing.mjs';
@@ -326,6 +327,8 @@ export function createGenerationRouteHandler({
     const requestedImageModelId = type === 'image' ? String(input.modelId ?? fixedModels.image).trim().toLowerCase() : '';
     if (type === 'image' && !supportedImageModelSet.has(requestedImageModelId)) return sendJson(res, 400, { error:'不支持的图片模型' }), true;
     const isMidjourney = requestedImageModelId === midjourneyModelId;
+    const isSeedream = requestedImageModelId === SEEDREAM_MODEL_ID;
+    const isNanoBanana = requestedImageModelId === 'nano-banana-2.1';
     const isTuziImage = requestedImageModelId === tuziImageModelId;
     const midjourneyOptions = isMidjourney ? normalizeMidjourneyOptions(input.midjourneyOptions) : null;
     const promptMaxLength = type === 'image' ? 5000 : [videoModelIds.MINIMAX_H3_15S, legacyVideoModelIds.GUGU_2].includes(requestedVideoModelId) ? 10000 : 4096;
@@ -339,12 +342,15 @@ export function createGenerationRouteHandler({
       if (!Number.isFinite(requestedDuration) || requestedDuration !== Number(dramaShot.duration)) return sendJson(res, 409, { error:`分镜时长已保存为 ${dramaShot.duration} 秒，请刷新页面后再生成` }), true;
       input.duration = Number(dramaShot.duration);
     }
-    const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || (isTuziImage ? 'auto' : '16:9'))) : null;
+    const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || (isSeedream ? '1:1' : isTuziImage ? 'auto' : '16:9'))) : null;
     if (type === 'image' && isTuziImage && !tuziImageSizes.has(size)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 图片尺寸' }), true;
-    if (type === 'image' && !isTuziImage && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
-    const imageQuality = String(input.quality || (isTuziImage ? '1k' : 'medium')).toLowerCase();
+    if (type === 'image' && !isSeedream && !isTuziImage && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
+    const imageQuality = String(input.quality || (isSeedream ? seedreamQualityForSize(size) || '2k' : isTuziImage || isNanoBanana ? '1k' : 'medium')).toLowerCase();
     if (type === 'image' && isTuziImage && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 清晰度' }), true;
-    if (type === 'image' && !isMidjourney && !isTuziImage && !imageQualities.has(imageQuality)) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
+    if (type === 'image' && isNanoBanana && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 Nano Banana 2.1 清晰度' }), true;
+    if (type === 'image' && isSeedream && !SEEDREAM_QUALITIES.includes(imageQuality)) return sendJson(res, 400, { error:'Seedream 5.0 清晰度可选 2K、3K、4K' }), true;
+    if (type === 'image' && isSeedream && !seedreamSize(size, imageQuality)) return sendJson(res, 400, { error:'Seedream 5.0 图片尺寸与清晰度不匹配，请重新选择' }), true;
+    if (type === 'image' && !isSeedream && !isNanoBanana && !isMidjourney && !isTuziImage && !imageQualities.has(imageQuality)) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? input.referenceAssetIds.map(safeId).filter(Boolean).length : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
     const suppliedReferenceCount = Object.values(suppliedReferenceCounts).reduce((sum, count) => sum + count, 0);
@@ -370,7 +376,7 @@ export function createGenerationRouteHandler({
     // preview only looks.
     const routeSelection = type === 'video' && videoRequest.provider === 'route' ? (previewOnly ? selectModelRoute : selectAndClaimModelRoute)({ logicalModelId:modelId, availableOnly:true, quality:videoRequest.quality, duration, aspectRatio, referenceCounts }) : null;
     if (type === 'video' && videoRequest.provider === 'route' && !routeSelection) return sendJson(res, 503, { error:'当前模型暂不可用，请稍后重试' }), true;
-    const provider = type === 'image' ? (isTuziImage ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
+    const provider = type === 'image' ? (isTuziImage || isSeedream ? 'tuzi' : 'duomi') : routeSelection?.provider || videoRequest.provider;
     if (type === 'video' && referenceCounts.image && !r2ReferencePublicBaseUrl) return sendJson(res, 503, { error:'图生视频参考图片暂时不可用，请稍后重试或联系支持' }), true;
     if (!routeSelection && !providerReady(provider, type, videoRequest)) return sendJson(res, 503, { error:type === 'image' ? '图片生成服务尚未配置' : '视频生成服务尚未配置' }), true;
     const pricing = currentPricing();
@@ -378,6 +384,10 @@ export function createGenerationRouteHandler({
       ? { ...pricing, videoPerSecondMicro:creditsToMicro(videoRequest.pricing.amount) }
       : isMidjourney
         ? { ...pricing, imagePerRequestMicro:creditsToMicro(midjourneyImageCredits) }
+      : isSeedream
+        ? { ...pricing, imagePerRequestMicro:creditsToMicro(SEEDREAM_CREDITS) }
+      : isNanoBanana
+        ? { ...pricing, imagePerRequestMicro:creditsToMicro(1) }
       : isTuziImage
         ? { ...pricing, imagePerRequestMicro:creditsToMicro(tuziImageCredits[imageQuality]) }
         : pricing;
@@ -392,7 +402,7 @@ export function createGenerationRouteHandler({
     const bindDramaTasks = Boolean(dramaProject && dramaShot && input.quantity !== undefined);
     pricingForTask = type === 'video'
       ? { ...pricingForTask, videoBillingUnit:videoBillingUnit(pricing, modelId), videoPerSecondMicro:creditsToMicro(modelPrice(pricing, modelId, videoRequest.quality, pricingForTask.videoPerSecondMicro / 1_000_000)) }
-      : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, modelId === 'gpt-image-2.5' ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
+      : { ...pricingForTask, imagePerRequestMicro:creditsToMicro(modelPrice(pricing, modelId, (isSeedream || isTuziImage || isNanoBanana) ? imageQuality : '标准', pricingForTask.imagePerRequestMicro / 1_000_000)) };
     const pricingSnapshotValue = routeSelection
       ? { version:pricing.version, contentType:type, ...modelRouteCharge(routeSelection, videoRequest.duration), routeId:routeSelection.id, routeVersion:routeSelection.version, upstreamModelId:routeSelection.upstreamModelId, markupPercent:20, priceVersion:publicRoutePriceVersion(routeSelection) }
       : pricingSnapshot(pricingForTask, type, type === 'video' ? duration : 1);

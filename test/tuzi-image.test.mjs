@@ -182,3 +182,93 @@ test('Tuzi waits for slow task IDs up to the configured submit timeout', async (
     clearTimeout(keepAlive);
   }
 });
+
+test('Seedream 5.0 uses synchronous JSON generations for text and reference images', async () => {
+  for (const refs of [[], ['https://cdn.example/ref.png'], ['https://cdn.example/one.png', 'https://cdn.example/two.png']]) {
+    let calls = 0;
+    const tuzi = provider(async (url, options) => {
+      calls++;
+      assert.equal(url, 'https://tuzi.example/v1/images/generations');
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers.Authorization, 'Bearer tuzi-test-key');
+      assert.equal(options.headers['Content-Type'], 'application/json');
+      assert.deepEqual(JSON.parse(options.body), {
+        model:'doubao-seedream-5-0-260128', prompt:'一只小兔子', size:'2048x2048', response_format:'url',
+        ...(refs.length ? { image:refs.length === 1 ? refs[0] : refs } : {}),
+      });
+      return { data:[{ url:'https://cdn.example/seedream.png' }] };
+    });
+    const result = await tuzi.createImage({ model:'seedream-5.0', prompt:'一只小兔子', size:'1:1' }, refs, {
+      deferPolling:true, onSubmitted:() => assert.fail('synchronous result must not create a polling task'),
+    });
+    assert.deepEqual(result, { provider:'tuzi', taskId:'', url:'https://cdn.example/seedream.png' });
+    assert.equal(calls, 1);
+  }
+});
+
+test('Seedream preserves guarded retries and never polls an incomplete synchronous response', async () => {
+  let calls = 0;
+  const tuzi = provider(async () => {
+    if (++calls === 1) throw Object.assign(new Error('DNS failure'), { code:'EAI_AGAIN' });
+    return { data:[{ url:'https://cdn.example/result.png' }] };
+  });
+  assert.equal((await tuzi.createImage({ model:'seedream-5.0', prompt:'test' }, [])).url, 'https://cdn.example/result.png');
+  assert.equal(calls, 2);
+  for (const response of [{}, { id:'unexpected-task' }, { data:[] }]) {
+    await assert.rejects(provider(async () => response).createImage({ model:'seedream-5.0', prompt:'test' }, []), error => error.submissionUncertain === true);
+  }
+  calls = 0;
+  await assert.rejects(provider(async () => { calls++; throw new Error('response lost'); }).createImage({ model:'seedream-5.0', prompt:'test' }, []), error => error.submissionUncertain === true);
+  assert.equal(calls, 1);
+});
+
+test('Seedream submits the selected 2K, 3K or 4K pixel dimensions', async () => {
+  for (const [quality, size] of [['2k','2048x2048'], ['3k','3072x3072'], ['4k','4096x4096']]) {
+    const tuzi = provider(async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.size, size);
+      assert.equal(body.model, 'doubao-seedream-5-0-260128');
+      return { data:[{ url:'https://cdn.example/result.png' }] };
+    });
+    await tuzi.createImage({ model:'seedream-5.0', prompt:'test', size:'1:1', quality }, []);
+    await tuzi.createImage({ model:'seedream-5.0', prompt:'test', size, quality }, []);
+  }
+  const tuzi = provider(() => assert.fail('invalid dimensions must not be submitted'));
+  await assert.rejects(tuzi.createImage({ model:'seedream-5.0', prompt:'test', size:'4096x4096', quality:'2k' }, []), /尺寸/);
+});
+
+test('Seedream records a socket disconnect separately from the local deadline and does not replay it', async () => {
+  let calls = 0;
+  const task = { model:'seedream-5.0', prompt:'test' };
+  const tuzi = provider(async () => {
+    calls++;
+    const socketError = Object.assign(new Error('other side closed'), {
+      name:'SocketError', code:'UND_ERR_SOCKET',
+      socket:{ remoteAddress:'203.0.113.1', remotePort:443, bytesWritten:100, bytesRead:0, privateField:'must not persist' },
+    });
+    throw new TypeError('fetch failed', { cause:socketError });
+  });
+  await assert.rejects(tuzi.createImage(task, []), error => error.submissionUncertain === true);
+  assert.equal(calls, 1);
+  const [failure] = task.submissionAttempts;
+  assert.equal(failure.deadlineAborted, false);
+  assert.equal(failure.timeoutMs, 360_000);
+  assert.ok(failure.elapsedMs >= 0 && failure.elapsedMs < failure.timeoutMs);
+  assert.equal(failure.causes.at(-1).message, 'other side closed');
+  assert.deepEqual(failure.socket, { remoteAddress:'203.0.113.1', remotePort:443, bytesWritten:100, bytesRead:0 });
+});
+
+test('Seedream timeout diagnostics record when the configured local deadline actually expires', async () => {
+  const task = { model:'seedream-5.0', prompt:'test' };
+  const tuzi = provider((_url, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once:true });
+  }), { imageSubmitTimeoutMs:20 });
+  const keepAlive = setTimeout(() => {}, 1000);
+  try {
+    await assert.rejects(tuzi.createImage(task, []), error => error.submissionUncertain === true);
+    const [failure] = task.submissionAttempts;
+    assert.equal(failure.deadlineAborted, true);
+    assert.equal(failure.abortReason, 'TimeoutError');
+    assert.equal(failure.timeoutMs, 20);
+  } finally { clearTimeout(keepAlive); }
+});

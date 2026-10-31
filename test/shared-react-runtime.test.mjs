@@ -43,14 +43,14 @@ test('shipped islands import the same immutable runtime without embedding React'
 
 test('both paths to React components use fresh cache keys from the HTML entry', () => {
   const entries = [
-    ['public/index.html', '/app.js?v=636'],
+    ['public/index.html', '/app.js?v=640'],
     ['public/app.js', './features/projects/library.js?v=5'],
-    ['public/app.js', './features/agent/workspace.js?v=187'],
-    ['public/app.js', './drama-studio.js?v=320'],
+    ['public/app.js', './features/agent/workspace.js?v=190'],
+    ['public/app.js', './drama-studio.js?v=323'],
     ['public/features/projects/library.js', '../../vendor/ui/create-project.js?v=5'],
     ['public/features/agent/workspace.js', '../../vendor/ui/create-project.js?v=5'],
-    ['public/features/agent/workspace.js', '../drama/director-workspace.js?v=211'],
-    ['public/drama-studio.js', './features/drama/director-workspace.js?v=211'],
+    ['public/features/agent/workspace.js', '../drama/director-workspace.js?v=214'],
+    ['public/drama-studio.js', './features/drama/director-workspace.js?v=214'],
     ['public/features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
   ];
   for (const [file, url] of entries) assert.ok(read(file).includes(url), `${file} must use ${url}`);

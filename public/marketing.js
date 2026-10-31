@@ -1,6 +1,6 @@
 import { createApiClient } from './api-client.js?v=4';
 import { initSiteInteractions } from './site-interactions.js?v=5';
-import { modelLogoUrl } from './components/model-logo.js?v=9';
+import { modelLogoUrl } from './components/model-logo.js?v=11';
 
 initSiteInteractions();
 

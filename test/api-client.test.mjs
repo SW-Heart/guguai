@@ -115,12 +115,12 @@ test('all versioned API-client entries use the new module and HTML cache keys', 
     ['app.js', './api-client.js?v=4'],
     ['guguadmin.js', './api-client.js?v=4'],
     ['marketing.js', './api-client.js?v=4'],
-    ['index.html', '/app.js?v=636'],
+    ['index.html', '/app.js?v=640'],
     ['guguadmin.html', '/guguadmin.js?v=79'],
-    ['home.html', '/marketing.js?v=28'],
-    ['features.html', '/marketing.js?v=28'],
-    ['pricing.html', '/marketing.js?v=28'],
-    ['help.html', '/marketing.js?v=28'],
+    ['home.html', '/marketing.js?v=30'],
+    ['features.html', '/marketing.js?v=30'],
+    ['pricing.html', '/marketing.js?v=30'],
+    ['help.html', '/marketing.js?v=30'],
   ]) {
     const source = await readFile(new URL(`../public/${file}`, import.meta.url), 'utf8');
     assert.ok(source.includes(expected), `${file} must reference ${expected}`);

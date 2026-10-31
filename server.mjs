@@ -297,16 +297,21 @@ const videoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2.5' });
-const imageModelIds = Object.freeze({ gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney' });
+const imageModelIds = Object.freeze({ seedream50:'seedream-5.0', gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney', nanoBanana21: 'nano-banana-2.1' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
+  { id:imageModelIds.seedream50, label:'Seedream 5.0', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.seedream50], qualityOptions:['2K', '3K', '4K'] },
   { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], qualityOptions:['1K', '2K', '4K'] },
   { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2] },
   { id:imageModelIds.midjourney, label:'Midjourney', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.midjourney] },
+  { id:imageModelIds.nanoBanana21, label:'Nano Banana 2.1', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.nanoBanana21], qualityOptions:['1K', '2K', '4K'] },
 ]);
 // Available image models with the descriptions written in the admin console.
 function availableImageModels() {
-  return withModelDescriptions(imageModelCatalog.filter(model => isImageModelAvailable(model.id)));
+  const controls = new Map(listModelControls().map(item => [item.modelId, item]));
+  const models = imageModelCatalog.filter(model => isImageModelAvailable(model.id))
+    .sort((a, b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999));
+  return withModelDescriptions(models, controls);
 }
 const invitationCodes = new Set();
 const creditPricing = Object.freeze({ image: 1, videoPerSecond: 1, signupBonus: 50 });
@@ -622,6 +627,7 @@ const publicCreditModelIds = new Set([
   fixedModels.image,
   imageModelIds.gptImage25,
   imageModelIds.midjourney,
+  imageModelIds.nanoBanana21,
   ...Object.values(VIDEO_MODEL_IDS),
   ...Object.values(LEGACY_VIDEO_MODEL_IDS),
 ]);
@@ -694,13 +700,12 @@ function publicPlatformPrices(pricing, videoCapabilities) {
       items.push({ modelId:model.id, label:model.label, quality, duration:null, available:true, enabled:model.enabled !== false, availability:model.availability || 'available', credits, yuan:credits * 0.1, unit:videoBillingUnit(pricing, model.id), priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${model.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
-  for (const imageModel of imageModelCatalog) {
-    if (!isImageModelAvailable(imageModel.id)) continue;
-    const qualities = imageModel.id === imageModelIds.gptImage25 ? ['1K', '2K', '4K'] : ['标准'];
+  for (const imageModel of availableImageModels()) {
+    const qualities = imageModel.qualityOptions?.length ? imageModel.qualityOptions : imageModel.id === imageModelIds.gptImage25 ? ['1K', '2K', '4K'] : ['标准'];
     for (const quality of qualities) {
       const credits = modelPrice(pricing, imageModel.id, quality, imageModel.id === imageModelIds.gptImage25
         ? tuziImageCredits[quality.toLowerCase()]
-        : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
+        : imageModel.id === imageModelIds.seedream50 ? 2 : imageModel.id === imageModelIds.nanoBanana21 ? 1 : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
       items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
@@ -737,11 +742,7 @@ function publicModelPriceState() {
   });
   const pricedModelIds = new Set(items.map(item => item.modelId));
   const models = [
-    ...withModelDescriptions([
-      { id: imageModelIds.gptImage2, label: 'GPT-Image-2', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2], availability: 'available', qualityOptions: ['标准'] },
-      { id: imageModelIds.gptImage25, label: 'GPT Image 2.5', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], availability: 'available', qualityOptions: ['1K', '2K', '4K'] },
-      { id: imageModelIds.midjourney, label: 'Midjourney', description: IMAGE_MODEL_DESCRIPTIONS[imageModelIds.midjourney], availability: 'available', qualityOptions: ['标准'] },
-    ]),
+    ...availableImageModels().map(model => ({ ...model, availability:'available', qualityOptions:model.qualityOptions || ['标准'] })),
     ...(videoCapabilities.models || []).map(model => ({
       id: model.id,
       label: model.label,
@@ -3100,7 +3101,7 @@ function agentMediaCatalog() {
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],
-    qualities:m.id === imageModelIds.gptImage25 ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
+    qualities:m.id === imageModelIds.seedream50 ? ['2k', '3k', '4k'] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
     quantity:m.id === imageModelIds.midjourney ? [4,8] : [1,2,3,4,5,6,7,8,9,10],
     referenceUsage:'referenceAssetIds 使用当前工作空间的素材 ID。Midjourney 比例、质量等设置在 midjourneyOptions。实际可用性与费用由 media_prepare 检查。',
   }));

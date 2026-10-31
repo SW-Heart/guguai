@@ -8,7 +8,7 @@
   <title>GuGu AI</title>
   <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml">
   <link rel="stylesheet" href="/styles/base.css?v=6">
-  <link rel="stylesheet" href="/styles.css?v=439">
+  <link rel="stylesheet" href="/styles.css?v=440">
   <link rel="stylesheet" href="/payment.css?v=7">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
 </head>
@@ -194,7 +194,7 @@
     <aside id="creatorPanel" class="creator-panel">
       <form id="imageForm" class="generator-form" data-panel="image">
         <span id="imagePromptLabel" class="field-label">创作描述</span><div class="prompt-box"><div id="imagePrompt" class="rich-prompt-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="imagePromptLabel" data-placeholder="描述商品、场景、光线与构图，或@参考图片"></div><div class="prompt-box-meta"><span class="prompt-count"><b id="imagePromptCount">0</b> / 5000</span></div></div>
-        <div class="image-model-control"><span class="field-label">模型</span><div class="product-select" data-for="imageModel" data-model="true" data-image-model="true"><button class="product-select-trigger" type="button" aria-label="选择图像模型" aria-haspopup="listbox" aria-expanded="false"></button><div class="product-select-menu hidden" role="listbox" aria-label="图像模型"></div><select id="imageModel" class="native-hidden"><option value="gpt-image-2.5" selected>GPT Image 2.5</option><option value="gpt-image-2">GPT-Image-2</option><option value="midjourney">Midjourney</option></select></div></div>
+        <div class="image-model-control"><span class="field-label">模型</span><div class="product-select" data-for="imageModel" data-model="true" data-image-model="true"><button class="product-select-trigger" type="button" aria-label="选择图像模型" aria-haspopup="listbox" aria-expanded="false"></button><div class="product-select-menu hidden" role="listbox" aria-label="图像模型"></div><select id="imageModel" class="native-hidden"><option value="gpt-image-2.5" selected>GPT Image 2.5</option><option value="gpt-image-2">GPT-Image-2</option><option value="nano-banana-2.1">Nano Banana 2.1</option><option value="midjourney">Midjourney</option></select></div></div>
         <div class="reference-head"><span class="field-label">参考图片</span></div><div id="imageReferences" class="reference-strip"><button class="add-reference pick-reference" data-target="image" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>添加</span></button></div>
         <div id="imageGptOptions" class="image-model-options"><div class="control-section"><span class="field-label">画面比例</span><div class="ratio-grid" data-select="imageSize">
           <button class="selected" type="button" data-value="1:1"><span class="ratio-frame"><i style="width:18px;height:18px"></i></span>1:1</button><button type="button" data-value="3:4"><span class="ratio-frame"><i style="width:16px;height:22px"></i></span>3:4</button><button type="button" data-value="4:3"><span class="ratio-frame"><i style="width:24px;height:18px"></i></span>4:3</button><button type="button" data-value="9:16"><span class="ratio-frame"><i style="width:13px;height:23px"></i></span>9:16</button><button type="button" data-value="16:9"><span class="ratio-frame"><i style="width:28px;height:16px"></i></span>16:9</button><button id="moreRatios" class="ratio-more-toggle" type="button" aria-expanded="false"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg><span>更多</span></button><button class="ratio-extra hidden" type="button" data-value="3:2"><span class="ratio-frame"><i style="width:24px;height:16px"></i></span>3:2</button><button class="ratio-extra hidden" type="button" data-value="2:3"><span class="ratio-frame"><i style="width:14px;height:21px"></i></span>2:3</button><button class="ratio-extra hidden" type="button" data-value="1:2"><span class="ratio-frame"><i style="width:11px;height:22px"></i></span>1:2</button><button class="ratio-extra hidden" type="button" data-value="2:1"><span class="ratio-frame"><i style="width:28px;height:14px"></i></span>2:1</button><button class="ratio-extra hidden" type="button" data-value="5:4"><span class="ratio-frame"><i style="width:25px;height:20px"></i></span>5:4</button><button class="ratio-extra hidden" type="button" data-value="4:5"><span class="ratio-frame"><i style="width:18px;height:23px"></i></span>4:5</button>
@@ -371,6 +371,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=636"></script>
+  <script type="module" src="/app.js?v=640"></script>
 </body>
 </html>

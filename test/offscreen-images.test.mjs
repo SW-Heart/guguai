@@ -46,3 +46,14 @@ test('library and picker grids release off-screen pictures but leave upload prev
   assert.ok(app.includes("['#fileGrid', '.file-card:not(.upload-job-card) img']"));
   assert.ok(app.includes("['#referenceGrid', '.reference-option img']"));
 });
+
+test('generation works and history release distant previews within a smaller preload margin', async () => {
+  const app = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
+  assert.ok(app.includes("['#generationGrid', '.card-media img', '600px']"));
+  assert.ok(app.includes("['#generationHistory', '.history-thumb img', '600px']"));
+  assert.ok(app.includes('root, selector:images, margin, IntersectionObserver:window.IntersectionObserver'));
+  const css = await readFile(new URL('../public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.task-card \{[^}]*contain: layout paint/);
+  assert.match(css, /\.card-workflow-actions \{[^}]*backdrop-filter: none/);
+  assert.match(css, /\.task-card:focus-within \.card-workflow-actions \{[^}]*backdrop-filter: blur/);
+});

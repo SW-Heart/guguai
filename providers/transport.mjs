@@ -28,6 +28,27 @@ export function transportErrorCodes(error) {
   return [...codes];
 }
 
+// Retain the underlying socket failure without serializing request objects,
+// headers or other connection fields that could contain credentials.
+export function transportErrorDiagnostics(error) {
+  const causes = [], seen = new Set();
+  let socket;
+  function visit(value) {
+    if (!value || seen.has(value) || seen.size >= 12) return;
+    seen.add(value);
+    causes.push({ name:value.name || 'Error', message:String(value.message || '').slice(0, 500), ...(value.code ? { code:value.code } : {}) });
+    if (!socket && value.socket) socket = Object.fromEntries(
+      ['remoteAddress', 'remotePort', 'remoteFamily', 'timeout', 'bytesWritten', 'bytesRead']
+        .filter(key => ['string', 'number'].includes(typeof value.socket[key]))
+        .map(key => [key, value.socket[key]]),
+    );
+    visit(value.cause);
+    for (const child of value.errors || []) visit(child);
+  }
+  visit(error);
+  return { causes, ...(socket ? { socket } : {}) };
+}
+
 export function createProviderTransport({
   fetchImpl = globalThis.fetch,
   errorMessage,
