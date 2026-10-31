@@ -2004,7 +2004,16 @@ async function bootstrap() {
   }
 }
 
-app.whenReady().then(bootstrap).catch(async error => {
+// 关闭窗口只是隐藏到托盘，再次点击桌面图标会拉起第二个进程。两个进程会
+// 共用同一个更新下载目录，互相清掉对方下载到一半的安装包，因此只保留一个实例，
+// 后启动的进程直接把已有窗口带到前台。开发模式不加锁，避免和已安装版本互相阻塞。
+const singleInstance = !app.isPackaged || app.requestSingleInstanceLock();
+if (!singleInstance) app.quit();
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) showMainWindow();
+});
+
+if (singleInstance) app.whenReady().then(bootstrap).catch(async error => {
   console.error('[desktop] 启动失败', error);
   await runDesktopAction('显示启动提示', () => openOfflinePage(`客户端启动失败：${error.message}`));
 });

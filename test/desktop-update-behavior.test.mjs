@@ -94,3 +94,9 @@ test('rail update entry sits above the account dock with Lucide state icons', as
   assert.match(bridgeSource, /status === 'error'\) \{ setUpdateState\('error'\); setUpdateProgress\(null\); setUpdateLabel\('重试'\)/);
   assert.match(bridgeSource, /updateButton\.dataset\.railTip = text;/);
 });
+
+test('packaged desktop keeps a single instance so updaters never share the pending download dir', () => {
+  assert.match(desktopMain, /const singleInstance = !app\.isPackaged \|\| app\.requestSingleInstanceLock\(\);\s*if \(!singleInstance\) app\.quit\(\);/);
+  assert.match(desktopMain, /app\.on\('second-instance', \(\) => \{\s*if \(mainWindow && !mainWindow\.isDestroyed\(\)\) showMainWindow\(\);/);
+  assert.match(desktopMain, /if \(singleInstance\) app\.whenReady\(\)\.then\(bootstrap\)/);
+});
