@@ -22,6 +22,7 @@ import {
   updateModelRoute,
   updateModelRouteCredential,
   updateRoutePolicy,
+  withModelRouteSnapshot,
 } from '../lib/model-routes.mjs';
 import { publicVideoCapabilitiesWithControls } from '../lib/model-controls.mjs';
 import { canvasGenerationOptions, canvasGenerationPayload, reconcileCanvasGenerationDraft } from '../public/features/drama/canvas-generation.js';
@@ -469,4 +470,19 @@ test('Minimax H3 uses AutoDL routes with configurable workflows, resolutions and
     assert.equal(fetched, 0);
     assert.deepEqual(items.map(item => item.catalogStatus), ['available', 'available']);
   });
+});
+
+test('catalog builds read the route table once instead of once per selection', () => {
+  freshDb();
+  try {
+    withModelRouteSnapshot(() => {
+      assert.equal(listModelRoutes(), listModelRoutes());
+      publicVideoCapabilitiesWithControls();
+      assert.equal(listModelRoutes(), listModelRoutes());
+    });
+    assert.notEqual(listModelRoutes(), listModelRoutes());
+    const route = listModelRoutes().find(item => item.catalogStatus === 'available');
+    sql("UPDATE model_routes SET catalog_status='missing' WHERE id=:id").run({ id: route.id });
+    assert.equal(withModelRouteSnapshot(() => listModelRoutes().find(item => item.id === route.id).catalogStatus), 'missing');
+  } finally { cleanupDb(); }
 });

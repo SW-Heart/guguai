@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { createTextModelCatalog } from '../lib/text-models.mjs';
+import { createTextModelCatalog,OFFICIAL_TEXT_MODEL_PRICES } from '../lib/text-models.mjs';
 import { agentConfig,createAgentGateway } from '../lib/agent/gateway.mjs';
 import { llmRatesFromEnv,llmCostMicro } from '../lib/billing.mjs';
 import { textModelName,textModelIcon,textModelLogoMarkup } from '../public/features/assistant/text-models.js';
@@ -16,6 +16,28 @@ test('text catalog persists editable names, prices, windows and order, with vers
  for(const changed of [{inputYuanPerMillion:-1},{outputYuanPerMillion:Infinity},{contextWindow:12},{sortOrder:0.2},{enabled:'yes'}])assert.throws(()=>c.save([row('bad',changed)],1),{statusCode:400});
  assert.equal(c.get().version,1);
  c.seed([{id:'old-env'}],llmRatesFromEnv());assert.equal(c.get().version,1);
+});
+test('models seeded from the existing setup stay available to creative and assistant chats',async()=>{
+ const c=fixture();c.seed([{id:'deepseek-v4-flash',contextWindow:1000000}],llmRatesFromEnv());
+ assert.deepEqual(c.list().map(i=>i.id),['deepseek-v4-flash']);
+ const gateway=createAgentGateway({config:agentConfig({AGENT_MODEL:'old-env'}),catalog:()=>c.list()});
+ assert.equal(gateway.config.model,'deepseek-v4-flash');
+ assert.ok(c.rates(gateway.config.model,llmRatesFromEnv()).inputMicroPerToken>0);
+ c.save([...c.get().items,row('new-model')],c.get().version);
+ assert.equal(c.get().items.find(i=>i.id==='new-model').testedAt,null);
+ c.recordTest('deepseek-v4-flash',c.get().version,false);
+ assert.deepEqual(c.list(),[]);
+});
+test('seeded DeepSeek models default to official peak prices and other models keep the configured price',()=>{
+ const c=fixture(),base=llmRatesFromEnv();
+ c.seed([{id:'deepseek-v4-pro'},{id:'deepseek-flash'},{id:'deepseek-v4-flash'},{id:'other-model'}],base);
+ const price=id=>{const {inputYuanPerMillion,outputYuanPerMillion,cacheReadYuanPerMillion,cacheCreationYuanPerMillion}=c.get().items.find(i=>i.id===id);return {inputYuanPerMillion,outputYuanPerMillion,cacheReadYuanPerMillion,cacheCreationYuanPerMillion};};
+ assert.deepEqual(price('deepseek-v4-pro'),{inputYuanPerMillion:9,outputYuanPerMillion:27,cacheReadYuanPerMillion:0.3,cacheCreationYuanPerMillion:9});
+ assert.deepEqual(price('deepseek-flash'),{inputYuanPerMillion:2,outputYuanPerMillion:8,cacheReadYuanPerMillion:0.04,cacheCreationYuanPerMillion:2});
+ assert.deepEqual(price('deepseek-v4-flash'),price('deepseek-flash'));
+ assert.deepEqual(price('other-model'),{inputYuanPerMillion:base.inputYuanPerMillion,outputYuanPerMillion:base.outputYuanPerMillion,cacheReadYuanPerMillion:base.cacheReadYuanPerMillion,cacheCreationYuanPerMillion:base.cacheCreationYuanPerMillion});
+ assert.ok(Object.isFrozen(OFFICIAL_TEXT_MODEL_PRICES));
+ assert.ok(c.rates('deepseek-flash',base).cacheReadMicroPerToken>0);
 });
 test('gateway uses the admin catalog and applies live order, availability and context without env model discovery',async()=>{
  const c=fixture();c.save([row('gpt-4o')],0);
