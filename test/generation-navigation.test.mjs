@@ -77,6 +77,6 @@ test('returning to loaded history does not clear records or reset pagination', (
 
 test('generation navigation fix uses the current versioned application entry', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=635'));
+  assert.ok(html.includes('/app.js?v=636'));
   assert.ok(!html.includes('/app.js?v=512'));
 });

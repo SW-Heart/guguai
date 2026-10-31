@@ -45,7 +45,7 @@ test('row menu stays on screen near the bottom of the sidebar and remains outsid
 });
 
 test('changed history actions are reachable through updated cached entry points',async()=>{
- for(const [file,urls] of [['public/index.html',['/app.js?v=635']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./history-actions.js?v=1','./presentation.js?v=8','./model-picker.js?v=8']],['public/features/assistant/model-picker.js',['./presentation.js?v=8']]]){
+ for(const [file,urls] of [['public/index.html',['/app.js?v=636']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./history-actions.js?v=1','./presentation.js?v=8','./model-picker.js?v=8']],['public/features/assistant/model-picker.js',['./presentation.js?v=8']]]){
   const source=await readFile(new URL(`../${file}`,import.meta.url),'utf8');for(const url of urls)assert.ok(source.includes(url),`${file}: ${url}`);
  }
 });

@@ -65,7 +65,7 @@ test('local skill action stays after the results and remains available with no m
 
 test('changed skill menu and entry assets use the current cache keys',async()=>{
  const {readFile}=await import('node:fs/promises');
- for(const [file,urls] of [['public/index.html',['/app.js?v=635']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./skill-picker.js?v=2']]]){
+ for(const [file,urls] of [['public/index.html',['/app.js?v=636']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./skill-picker.js?v=2']]]){
   const source=await readFile(new URL(`../${file}`,import.meta.url),'utf8');for(const url of urls)assert.ok(source.includes(url),`${file}: ${url}`);
  }
 });

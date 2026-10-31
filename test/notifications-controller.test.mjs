@@ -202,7 +202,7 @@ test('an unavailable message dialog preserves unread state', async () => {
   assert.equal(controller.openLatestUnread(), false);
   assert.equal(state.unreadNotifications, 1);
   assert.equal(state.notifications[0].isRead, false);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.filter(call => call.options).length, 0);
 });
 
 test('a failed startup read receipt restores unread state for the next launch', async () => {
@@ -228,6 +228,30 @@ test('opening a summarized message fetches its full body once', async () => {
   assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>');
   await controller.load();
   assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>', 'a later summary refresh keeps the loaded body');
+});
+
+test('unread summarized messages are fetched in full before their dialog opens', async () => {
+  const items = [
+    { id:'unread', title:'图文公告', contentText:'预览', summary:true, updatedAt:'v1', isRead:false },
+    { id:'read', title:'已读公告', contentText:'旧预览', summary:true, updatedAt:'v1', isRead:true },
+  ];
+  const { state, calls, controller } = startupHarness(items);
+  await controller.load();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.filter(call => !call.options).map(call => call.url), ['/api/notifications?limit=200&view=summary', '/api/notifications/unread']);
+  assert.equal(state.notifications[0].contentHtml, '<p>完整图文</p>');
+  assert.equal(controller.openLatestUnread(), true);
+  assert.equal(globalThis.document.querySelector('#notificationDialogBody').innerHTML, '<p>完整图文</p>');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.filter(call => call.url === '/api/notifications/unread').length, 1, 'the full body is fetched only once');
+});
+
+test('a summarized message shows its preview text while the full body loads', async () => {
+  const items = [{ id:'slow', title:'图文公告', contentText:'预览第一行\n第二行', summary:true, updatedAt:'v1', isRead:true }];
+  const { controller } = startupHarness(items);
+  await controller.load();
+  controller.openNotification(items[0]);
+  assert.equal(globalThis.document.querySelector('#notificationDialogBody').innerHTML, '<p>预览第一行<br>第二行</p>');
 });
 
 test('messages arriving while the app is open wait for the next page switch', async () => {

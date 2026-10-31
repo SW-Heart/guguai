@@ -130,7 +130,7 @@ test('project inventory inherits entity types for results and merges imported an
 test('asset drawer and persistence changes are connected through fresh cache versions',()=>{
   const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
   for(const [file,urls] of [
-    ['index.html',['/app.js?v=635','/styles.css?v=439']],
+    ['index.html',['/app.js?v=636','/styles.css?v=439']],
     ['app.js',['./drama-studio.js?v=320','./features/agent/workspace.js?v=187']],
     ['drama-studio.js',['./features/drama/director-workspace.js?v=211']],
     ['features/agent/workspace.js',['../drama/director-workspace.js?v=211','../drama/director-actions.js?v=21']],

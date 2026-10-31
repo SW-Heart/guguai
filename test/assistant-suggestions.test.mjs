@@ -48,7 +48,7 @@ test('suggestions appear below the composer and every changed entry uses fresh c
  const html=renderAssistantShell();assert.match(html,/<\/form>\s*<div data-suggestions class="assistant-suggestions"/);
  const rows=renderAssistantSuggestions(pickAssistantSuggestions(()=>0));assert.equal((rows.match(/class="gugu-lucide /g)||[]).length,3);assert.equal((rows.match(/class="assistant-suggestion-label"/g)||[]).length,3);assert.ok(!rows.includes('已填入'));assert.ok(!rows.includes('提供剧本和预期时长'));
  const markup=renderAssistantSuggestions([{id:'safe',title:'<img src=x>',description:'<script>'}]);assert.ok(!markup.includes('<img'));assert.ok(!markup.includes('<script>'));
- for(const [file,urls] of [['public/index.html',['/app.js?v=635']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./suggestions.js?v=5','./presentation.js?v=8','./model-picker.js?v=8']],['public/features/assistant/model-picker.js',['./presentation.js?v=8']]]){
+ for(const [file,urls] of [['public/index.html',['/app.js?v=636']],['public/app.js',['features/assistant/workspace.js?v=17','features/assistant/workspace.css?v=14']],['public/features/assistant/workspace.js',['./suggestions.js?v=5','./presentation.js?v=8','./model-picker.js?v=8']],['public/features/assistant/model-picker.js',['./presentation.js?v=8']]]){
   const source=await readFile(new URL(`../${file}`,import.meta.url),'utf8');for(const url of urls)assert.ok(source.includes(url),`${file}: ${url}`);
  }
 });

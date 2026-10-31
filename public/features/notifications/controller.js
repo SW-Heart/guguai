@@ -28,9 +28,10 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     return String(item?.contentText || item?.content || '').replace(/\r\n?/g, '\n').trim();
   }
 
+  // Until the full message arrives, the preview text fills the dialog so it never opens blank.
   function contentMarkup(item) {
     if (item?.contentHtml) return String(item.contentHtml);
-    return `<p>${esc(item?.content || '').replace(/\n/g, '<br>')}</p>`;
+    return `<p>${esc(item?.content || item?.contentText || '').replace(/\n/g, '<br>')}</p>`;
   }
 
   let notificationDialogRestoreFocus = null;
@@ -92,16 +93,48 @@ export function createNotificationController({ state, api, esc, toast, accountSn
     showDialogMessage(dialogQueue[dialogIndex]);
   }
 
-  // Background refreshes only carry previews; the full message is fetched when it is opened.
-  async function loadFullNotification(item, body) {
+  // Background refreshes only carry previews. Unread messages are fetched in full right after
+  // loading, so the dialog that pops up for them already has the complete body; one request per message.
+  const fullRequests = new Map();
+
+  function fetchFullNotification(item) {
+    const key = `${item.id}:${item.updatedAt || ''}`;
+    if (fullRequests.has(key)) return fullRequests.get(key);
     const requestAccount = accountSnapshot();
-    try {
-      const result = await api(`/api/notifications/${encodeURIComponent(item.id)}`);
-      const full = result?.item;
-      if (!full?.contentHtml || !isAccountCurrent(requestAccount)) return;
-      Object.assign(item, { contentHtml:full.contentHtml, contentText:full.contentText, summary:false });
-      if (openNotificationId === item.id && query('#notificationDialog')?.open) body.innerHTML = contentMarkup(item);
-    } catch {}
+    const request = Promise.resolve()
+      .then(() => api(`/api/notifications/${encodeURIComponent(item.id)}`))
+      .then(result => {
+        const full = result?.item;
+        if (!full?.contentHtml || !isAccountCurrent(requestAccount)) return null;
+        return { contentHtml:full.contentHtml, contentText:full.contentText };
+      })
+      .catch(() => null)
+      .then(full => {
+        if (!full) fullRequests.delete(key);
+        return full;
+      });
+    fullRequests.set(key, request);
+    return request;
+  }
+
+  function applyFull(item, full) {
+    if (!full || item.contentHtml) return;
+    Object.assign(item, { ...full, summary:false });
+    // The list may have been refreshed meanwhile; keep the current entry in step too.
+    const current = state.notifications.find(notification => notification.id === item.id && notification.updatedAt === item.updatedAt);
+    if (current && current !== item && !current.contentHtml) Object.assign(current, { ...full, summary:false });
+  }
+
+  async function loadFullNotification(item, body) {
+    const full = await fetchFullNotification(item);
+    applyFull(item, full);
+    if (full && openNotificationId === item.id && query('#notificationDialog')?.open) body.innerHTML = contentMarkup(item);
+  }
+
+  function prefetchUnread() {
+    for (const item of state.notifications.filter(notification => !notification.isRead && notification.summary && !notification.contentHtml).slice(0, MAX_DIALOG_MESSAGES)) {
+      void fetchFullNotification(item).then(full => applyFull(item, full));
+    }
   }
 
   function canOpenDialog(items) {
@@ -201,6 +234,7 @@ export function createNotificationController({ state, api, esc, toast, accountSn
       state.unreadNotifications = Number(result.unreadCount) || 0;
       trackArrivals(requestAccount);
       render();
+      prefetchUnread();
     } catch (error) {
       if (isAccountCurrent(requestAccount) && error.status === 401) location.reload();
     }

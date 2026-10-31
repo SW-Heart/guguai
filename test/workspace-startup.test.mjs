@@ -219,8 +219,8 @@ test('the workspace opens after configuration while other data loads, and messag
 
 test('notification startup changes update both the module and HTML cache keys', () => {
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.ok(source.includes('./features/notifications/controller.js?v=10'));
-  assert.ok(html.includes('/app.js?v=635'));
+  assert.ok(source.includes('./features/notifications/controller.js?v=11'));
+  assert.ok(html.includes('/app.js?v=636'));
   assert.doesNotMatch(source, /notifications\/controller\.js\?v=[67]\b/);
   assert.doesNotMatch(html, /app\.js\?v=467\b/);
 });
