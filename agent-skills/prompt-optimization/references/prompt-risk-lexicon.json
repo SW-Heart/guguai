@@ -1526,6 +1526,39 @@
    ]
   },
   {
+   "id": "sd-vital",
+   "category": "武器与攻击动作",
+   "label": "要害部位",
+   "precheck": "off",
+   "models": [
+    "seedance"
+   ],
+   "zh": [
+    "咽喉",
+    "喉咙",
+    "颈动脉",
+    "脖子",
+    "脖颈",
+    "颈部",
+    "太阳穴",
+    "心口"
+   ],
+   "en": [
+    "throat",
+    "carotid"
+   ],
+   "overrides": {},
+   "allow": [],
+   "modelCaps": {},
+   "context": "颈部、咽喉等部位本身是普通描写；与刀、枪同句时按武器抵住要害判断。",
+   "sourceIds": [
+    "gugu"
+   ],
+   "risk": [
+    "A.1.6"
+   ]
+  },
+  {
    "id": "sd-injury",
    "category": "伤害与遗体",
    "label": "暴力血腥",
@@ -2236,6 +2269,17 @@
    ],
    "window": "sentence",
    "context": "娱乐场所与偷拍视角组合。"
+  },
+  {
+   "id": "weapon-vital",
+   "label": "武器抵住要害",
+   "precheck": "suspect",
+   "all": [
+    "sd-weapons",
+    "sd-vital"
+   ],
+   "window": "sentence",
+   "context": "线上记录：刀锋抵住、逼近咽喉的持刀威胁戏在 Seedance 上连续被拒，改掉个别词仍未通过；单独出现刀或颈部不受影响。"
   }
  ],
  "sources": [

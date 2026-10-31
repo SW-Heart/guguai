@@ -34,6 +34,15 @@ test('touching toward the chest, open clothing and a coquettish look are marked 
     assert.deepEqual(marks(prompt, options), [], prompt);
 });
 
+test('a blade held at the throat is marked yellow on Seedance, while a knife or a neck alone stays quiet', () => {
+  const options = { modelId:'seedance-2.5' };
+  assert.deepEqual(marks('右手握匕首的指节微微发白，刀锋进一步逼近他的咽喉', options), [['匕首', 'suspect'], ['刀', 'suspect'], ['咽喉', 'suspect']]);
+  assert.equal(scanPromptRisk('刀刃抵在他的脖子上', options).hits[0].combo, 'weapon-vital');
+  for (const prompt of ['她把匕首放进抽屉', '围巾绕在脖子上', '刀锋闪过一道冷光。他摸了摸脖子'])
+    assert.deepEqual(marks(prompt, options), [], prompt);
+  assert.deepEqual(marks('刀刃抵在他的脖子上', { modelId:'minimax' }), []);
+});
+
 test('allow phrases remove cross-word false positives', () => {
   for (const prompt of ['蓝色情绪的女孩', '个性交流活动', '路口交通拥堵', '舞台独白', '过程中共同努力', '乌龟头部特写', '水乳交融', '做爱心便当',
     '新疆独特的风景', '向东突然转身', 'nude makeup look', 'naked eye view', 'rape flowers in spring', '鸦片战争纪录片', '大麻花'])
