@@ -43,7 +43,7 @@ test('shipped islands import the same immutable runtime without embedding React'
 
 test('both paths to React components use fresh cache keys from the HTML entry', () => {
   const entries = [
-    ['public/index.html', '/app.js?v=618'],
+    ['public/index.html', '/app.js?v=619'],
     ['public/app.js', './features/projects/library.js?v=5'],
     ['public/app.js', './features/agent/workspace.js?v=184'],
     ['public/app.js', './drama-studio.js?v=317'],

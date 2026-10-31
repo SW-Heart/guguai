@@ -2291,8 +2291,10 @@ function renderRouteLoadingShell(route) {
     return;
   }
   if (route === 'drama') {
+    const id = dramaProjectIdFromPath();
+    setDramaOpening(Boolean(id) && String(dramaController?.project?.id || '') !== id);
     const projects = $('#dramaProjects');
-    if (projects && !projects.children.length) projects.innerHTML = dramaProjectsLoadingSkeleton();
+    if (!id && projects && !projects.children.length) projects.innerHTML = dramaProjectsLoadingSkeleton();
   }
   if (route === 'agent') {
     // The creation page draws itself once its module is ready; until then the
@@ -2302,6 +2304,14 @@ function renderRouteLoadingShell(route) {
   }
 }
 
+// Opening a short-drama project waits for its module and data. Cover the list
+// meanwhile so the click visibly takes effect, as the canvas does.
+function setDramaOpening(opening) {
+  const loading = $('#dramaOpening');
+  if (!loading) return;
+  loading.hidden = !opening;
+  toggleClass($('#dramaView'), 'drama-opening', opening);
+}
 function cancelRouteContentRender() {
   if (routeRenderFrame) cancelAnimationFrame(routeRenderFrame);
   if (routeRenderTimer) window.clearTimeout(routeRenderTimer);
@@ -2353,7 +2363,8 @@ function scheduleRouteContentRender(route, routeChanged) {
           const id = dramaProjectIdFromPath();
           if (id && controller.project?.id !== id) return controller.open(id);
           if (!id && controller.project) return controller.close();
-        }).catch(error => { console.error('[drama] 页面加载失败', error); toast('项目页暂时无法打开，请刷新后重试'); });
+        }).catch(error => { console.error('[drama] 页面加载失败', error); toast('项目页暂时无法打开，请刷新后重试'); })
+          .finally(() => { if (epoch === routeRenderEpoch && state.route === 'drama') setDramaOpening(false); });
         return;
       }
       renderTasks();
@@ -2364,6 +2375,7 @@ function scheduleRouteContentRender(route, routeChanged) {
 }
 // Short-drama projects open inside the 项目 page at /projects/drama/:id.
 function syncDramaProjectLocation(id, { replace = false, created = false } = {}) {
+  setDramaOpening(false);
   const path = id ? `/projects/drama/${encodeURIComponent(id)}` : routePaths.drama;
   if (state.route !== 'drama') {
     // A project created from the 创作 home opens on the 项目 page.

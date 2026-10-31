@@ -144,8 +144,8 @@ test('confirming red marks opens a separate dialog above the editor', async () =
 test('every submit entry passes through the check and versioned URLs are bumped together', () => {
   const app = read('app.js'), drama = read('drama-studio.js'), director = read('features/drama/director-workspace.js'), html = read('index.html');
   assert.match(app, /from '\.\/features\/prompt-precheck\/guard\.js\?v=3'/);
-  assert.match(html, /\/app\.js\?v=618"/);
-  assert.match(html, /\/styles\.css\?v=437"/);
+  assert.match(html, /\/app\.js\?v=619"/);
+  assert.match(html, /\/styles\.css\?v=438"/);
   assert.match(app, /\.\/drama-studio\.js\?v=317'/);
   assert.match(app, /\.\/features\/agent\/workspace\.js\?v=184'/);
   assert.match(drama, /director-workspace\.js\?v=208'/);

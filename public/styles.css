@@ -7243,3 +7243,12 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 
 .director-workspace .reference-canvas-host .dw-cancelled-removing{opacity:0!important;pointer-events:none!important;transition:opacity 300ms ease-out}
 @media(prefers-reduced-motion:reduce){.director-workspace .reference-canvas-host .dw-cancelled-removing{transition:none}}
+/* Shown while a short-drama project opens; matches the canvas opening screen. */
+.drama-view.drama-opening { position:relative; }
+.drama-view.drama-opening>#dramaProjects,.drama-view.drama-opening>#dramaStudio { display:none !important; }
+.drama-project-loading { position:absolute; inset:0; display:grid; align-content:center; justify-items:center; gap:10px; padding:24px; box-sizing:border-box; text-align:center; color:var(--theme-muted, #777b94); }
+.drama-project-loading[hidden] { display:none; }
+.drama-project-loading .button-spinner { width:26px; height:26px; margin:0 0 8px; border:2px solid #6560c929; border-top-color:#6560c9; }
+.drama-project-loading strong { color:var(--theme-ink-soft, #43465f); font-size:15px; font-weight:500; }
+.drama-project-loading>span:last-child { font-size:13px; }
+@media(prefers-reduced-motion:reduce){ .drama-project-loading .button-spinner { animation:none; } }
