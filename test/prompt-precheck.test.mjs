@@ -23,6 +23,17 @@ test('explicit content is marked red and context words stay quiet', () => {
   assert.deepEqual(marks('律师查看合同', { modelId:'seedance-2.5', includeOff:true }).map(([term]) => term), ['律师', '合同']);
 });
 
+test('touching toward the chest, open clothing and a coquettish look are marked yellow on Seedance', () => {
+  const options = { modelId:'seedance-2.5' };
+  assert.deepEqual(marks('她的右手缓慢向上，一直抚摸到胸部。', options), [['抚摸到胸部', 'suspect']]);
+  // Open clothing and touching the chest in one sentence is the undressing-body combo.
+  assert.deepEqual(marks('她右手先触碰他敞开衣服的腹部，再缓慢向上抚摸一直抚摸到胸部。', options), [['敞开衣服', 'banned'], ['抚摸到胸部', 'banned']]);
+  assert.deepEqual(marks('她眼神妩媚，头部靠近他的颈部', options), [['眼神妩媚', 'suspect']]);
+  assert.deepEqual(marks('他衣襟敞开站在风里', options), [['衣襟敞开', 'suspect']]);
+  for (const prompt of ['她轻轻抚摸小猫的头', '他胸口起伏，喘着气跑到终点', '妩媚的江南水乡', '右手放在胸口发誓'])
+    assert.deepEqual(marks(prompt, options), [], prompt);
+});
+
 test('allow phrases remove cross-word false positives', () => {
   for (const prompt of ['蓝色情绪的女孩', '个性交流活动', '路口交通拥堵', '舞台独白', '过程中共同努力', '乌龟头部特写', '水乳交融', '做爱心便当',
     '新疆独特的风景', '向东突然转身', 'nude makeup look', 'naked eye view', 'rape flowers in spring', '鸦片战争纪录片', '大麻花'])

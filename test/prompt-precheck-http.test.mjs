@@ -205,10 +205,13 @@ test('admin stats read events and generations from the database', async () => {
     const insert = (id, doc) => sql(`INSERT INTO generations(id,user_id,type,status,created_at,updated_at,doc_json) VALUES(?,?,?,?,?,?,?)`).run(id, 'u', 'video', doc.status, new Date().toISOString(), new Date().toISOString(), JSON.stringify(doc));
     insert('g-ok', { status:'completed', prompt:'斩首' });
     insert('g-miss', { status:'failed', prompt:'普通描述', error:'返回错误码 710082022，疑似包含侵权/违规内容' });
+    // Refused once, then the very same words came out: not a missing term.
+    insert('g-wobble', { status:'failed', prompt:'同一段 描述', error:"The request failed because the input text 'content[0]' may contain sensitive information." });
+    insert('g-wobble-ok', { status:'completed', prompt:'同一段描述' });
     const { hits, lexiconVersion } = scanPromptRisk('斩首', {});
     recordPromptPrecheckEvent({ userId:'u', source:'video', modelId:'', lexiconVersion, mode:'enforce', outcome:'confirmed_banned', hits, generationIds:['g-ok'] });
     const stats = promptPrecheckStats({ days:7 });
-    assert.equal(stats.summary.generationTotal, 2);
+    assert.equal(stats.summary.generationTotal, 4);
     assert.deepEqual(stats.accuracy.redRejectedRate, 0);
     assert.deepEqual(stats.misses.map(item => [item.id, item.prompt]), [['g-miss', '普通描述']]);
   } finally { closeDatabase({ checkpoint:false }); }
