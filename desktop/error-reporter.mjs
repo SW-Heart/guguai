@@ -8,7 +8,8 @@ const MAX_REPORTS_PER_SESSION = 30;
 const MAX_QUEUE = 30;
 const FLUSH_DELAY_MS = 5_000;
 // Node 每次启动都会提示 node:sqlite 仍属实验特性，与用户问题无关。
-const IGNORED_MESSAGES = [/ExperimentalWarning: SQLite/, /net::ERR_(?:INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED|CONNECTION_(?:RESET|CLOSED|REFUSED|TIMED_OUT)|ABORTED)/i, /fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i];
+// 增量更新缺少本地旧安装包时，electron-updater 会自动改为完整下载，属于正常回退。
+const IGNORED_MESSAGES = [/ExperimentalWarning: SQLite/, /Cannot download differentially, fallback to full download/, /net::ERR_(?:INTERNET_DISCONNECTED|NETWORK_CHANGED|NAME_NOT_RESOLVED|CONNECTION_(?:RESET|CLOSED|REFUSED|TIMED_OUT)|ABORTED)/i, /fetch failed|ENOTFOUND|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i];
 
 export function mainErrorReport(args, kind = 'main') {
   const error = args.find(arg => arg instanceof Error) || args.find(arg => arg?.error instanceof Error)?.error || null;

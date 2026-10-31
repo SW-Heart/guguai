@@ -139,6 +139,7 @@ test('前端上报过滤噪音，分来源归类', () => {
     { kind: 'main', message: "Error occurred in handler for 'media:download-remote': Error: net::ERR_TIMED_OUT" },
     { kind: 'main', message: '(node:38942) electron: Failed to load URL: https://guguai.xyz/ with error: ERR_CONNECTION_CLOSED' },
     { kind: 'main', message: "Error occurred in handler for 'media:download-remote': Error: 下载连接或传输停滞，请重试" },
+    { kind: 'main', message: "Cannot download differentially, fallback to full download: Error: ENOENT: no such file or directory, open 'C:\\Users\\u\\AppData\\Local\\model-studio-updater\\installer.exe'" },
   ] }, { source: 'desktop', userId: 'u1' });
   assert.deepEqual(entries.map(entry => [entry.category, entry.location, entry.userId]), [
     ['desktop.unhandledrejection', 'go app.js', 'u1'],
