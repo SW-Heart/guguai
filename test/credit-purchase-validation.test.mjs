@@ -86,7 +86,7 @@ test('purchase validation ships accessible feedback and fresh script and style e
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.match(html, /aria-describedby="wechatAmountHint wechatCustomAmountError"/);
   assert.match(html, /id="wechatCustomAmountError"[^>]*aria-live="polite"/);
-  assert.match(html, /\/app\.js\?v=640"/);
+  assert.match(html, /\/app\.js\?v=641"/);
   assert.match(html, /\/payment\.css\?v=7"/);
   const customInput = html.match(/<input id="wechatCustomAmount"[^>]*>/)[0];
   assert.doesNotMatch(customInput, /maxlength=/);

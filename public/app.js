@@ -1,4 +1,5 @@
 import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=11';
+import { releaseNotesFor } from './features/updates/release-notes.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
 import { officialPriceDiscount, requestPricePerSecond } from './state/official-model-prices.js?v=8';
@@ -1438,6 +1439,12 @@ function renderDesktopUpdateDialog(payload, { open = false } = {}) {
   const setProgressLabel = text => progressWrap.setAttribute('aria-label', text);
   current.textContent = currentVersion;
   next.textContent = version;
+  const notes = $('#desktopUpdateNotes');
+  const noteItems = ['available', 'downloading', 'downloaded'].includes(status) && !(isWindows071() && legacyWindowsUpdateStatuses.has(status)) ? releaseNotesFor(desktopUpdateState.version) : [];
+  if (notes) {
+    notes.innerHTML = noteItems.map(item => `<li><strong>${esc(item.title)}</strong>${esc(item.text)}</li>`).join('');
+    toggleClass(notes, 'hidden', !noteItems.length);
+  }
   dialog.classList.toggle('update-ready', status === 'downloaded');
   dialog.classList.toggle('update-error', status === 'error');
   progress.classList.remove('is-indeterminate');

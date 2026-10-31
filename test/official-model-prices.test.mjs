@@ -121,8 +121,8 @@ test('Kling 4.0 compares 720p and 1080p against its converted official list pric
 
 test('discount feature refreshes the script and style entry cache keys', async () => {
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  assert.match(html, /\/app\.js\?v=640/);
-  assert.match(html, /\/styles\.css\?v=440/);
+  assert.match(html, /\/app\.js\?v=641/);
+  assert.match(html, /\/styles\.css\?v=441/);
   assert.match(app, /official-model-prices\.js\?v=8/);
 });
 

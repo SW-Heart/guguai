@@ -1237,6 +1237,10 @@ dialog::backdrop { background: rgba(24,24,27,.48); backdrop-filter: blur(3px); }
 .desktop-restart-summary strong { color: var(--theme-ink-soft, #454b69); font: 600 13px var(--mono); }
 .desktop-update-versions i,
 .desktop-restart-summary i { width: 22px; height: 1px; flex: 0 0 22px; background: rgba(99,102,241,.22); }
+.desktop-update-notes { position: relative; z-index: 1; margin: -5px 0 20px; padding: 0 2px; list-style: none; display: grid; gap: 9px; }
+.desktop-update-notes li { position: relative; padding-left: 15px; color: var(--theme-muted, #747991); font-size: 12px; line-height: 1.6; }
+.desktop-update-notes li::before { position: absolute; top: .62em; left: 2px; width: 5px; height: 5px; border-radius: 50%; background: #6366f1; content: ""; }
+.desktop-update-notes strong { margin-right: 6px; color: var(--theme-ink-soft, #454b69); font-weight: 600; }
 .desktop-update-progress-wrap { min-height: 39px; }
 .desktop-update-progress-track { height: 6px; background: rgba(99,102,241,.1); box-shadow: inset 0 1px rgba(99,102,241,.05); }
 .desktop-update-progress { background: linear-gradient(90deg, #6166e9, #a178ee); box-shadow: 0 0 14px rgba(99,102,241,.26); }

@@ -95,7 +95,7 @@ test('reopening during a request keeps submission disabled and applies the succe
 test('redemption entries have a user-facing label and all changed entries have fresh caches', () => {
   assert.equal(createCreditPresentation().creditEarnType({ type:'code_redemption' }), '兑换码兑换');
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
-  assert.match(read('index.html'), /\/app\.js\?v=640"/);
+  assert.match(read('index.html'), /\/app\.js\?v=641"/);
   assert.match(read('index.html'), /\/payment\.css\?v=7"/);
   assert.match(read('guguadmin.html'), /\/guguadmin\.js\?v=79"/);
   assert.match(read('app.js'), /credits\/redemption\.js\?v=1/);
