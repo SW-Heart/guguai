@@ -7,9 +7,10 @@ directories:
   buildResources: desktop/resources
 files:
   - desktop/**
+  - lib/agent/local-skills.mjs
   - package.json
   - node_modules/ffmpeg-static/**
-  # The desktop process only needs electron-updater. Keep server-only SDKs
+  # The desktop process needs electron-updater and the local skill YAML reader. Keep server-only SDKs
   # (S3 and Alipay) out of the ASAR to reduce installer size and cold-start
   # filesystem scanning on machines with endpoint security enabled.
   - '!node_modules/@aws-sdk/**'

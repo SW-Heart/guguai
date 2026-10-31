@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
+import { redeemCreditCode } from '../../lib/ledger.mjs';
+import { createLoginAttemptLimiter } from '../../lib/auth.mjs';
 import { createWechatOrder, queryWechatOrder, wechatOrderForUser, handleWechatNotification, refundWechatOrder } from '../../lib/wechat-payments.mjs';
+
+const redemptionLimiter = createLoginAttemptLimiter({ maxAttempts:10, windowMs:10 * 60_000 });
 
 export function createAccountRouteHandler({
   bodyForm,
@@ -72,6 +76,21 @@ export function createAccountRouteHandler({
       return true;
     }
     if (publicOnly) return false;
+    if (url.pathname === '/api/credits/redeem' && req.method === 'POST') {
+      const user = requireUser(req, res);
+      if (!user) return true;
+      if (redemptionLimiter.isBlocked(req, user.id)) {
+        sendJson(res, 429, { error:'尝试次数过多，请 10 分钟后再试' });
+        return true;
+      }
+      const input = await bodyJson(req);
+      try { sendJson(res, 200, await redeemCreditCode(user.id, input?.code)); }
+      catch (error) {
+        if (error.statusCode === 400 || error.statusCode === 409) redemptionLimiter.recordFailure(req, user.id);
+        throw error;
+      }
+      return true;
+    }
     if (url.pathname === '/api/config' && req.method === 'GET') {
       const user = requireUser(req, res);
       if (!user) return true;

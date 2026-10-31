@@ -5897,7 +5897,7 @@ body .app-shell.drama-director-open .drama-stage{height:calc(100dvh - 56px);min-
 .agent-content-copy:focus-visible{outline:2px solid var(--theme-brand-line, #a8a1dd);outline-offset:2px}
 .agent-content-copy:active{transform:scale(.94)}
 .agent-content-copy.is-copied{color:var(--theme-ink-soft, #4d7f71);background:var(--theme-surface, #e9f1ee)}
-.dw-message-content .agent-code-viewport{display:flex;gap:14px;max-height:280px;max-width:100%;overflow:auto;margin:0;padding:12px 14px;border:0;border-radius:0;background:transparent;font:12px/20px var(--mono),monospace;white-space:pre;scrollbar-width:thin;scrollbar-color:#d2cfe2 transparent;overscroll-behavior:contain}
+.dw-message-content .agent-code-viewport{display:flex;gap:14px;max-height:280px;max-width:100%;overflow:auto;margin:0;padding:12px 14px;border:0;border-radius:0;background:transparent;font:12px/20px var(--mono),monospace;white-space:pre;scrollbar-width:thin;scrollbar-color:#d2cfe2 transparent;overscroll-behavior-x:contain;overscroll-behavior-y:auto}
 .agent-code-lines{flex:none;min-width:18px;color:#bbb7c9;text-align:right;user-select:none}
 .dw-message-content .agent-code-viewport code{display:block;flex:none;min-width:0;font:inherit;color:inherit}
 @media(max-width:480px){.agent-code-header{gap:6px;padding:6px 8px}.agent-code-language{display:none}}
@@ -7252,3 +7252,9 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .drama-project-loading strong { color:var(--theme-ink-soft, #43465f); font-size:15px; font-weight:500; }
 .drama-project-loading>span:last-child { font-size:13px; }
 @media(prefers-reduced-motion:reduce){ .drama-project-loading .button-spinner { animation:none; } }
+
+/* Copyable prose uses the conversation typography and wraps long descriptions. */
+.agent-text-block .agent-code-icon,.agent-text-block .agent-code-lines{display:none}
+.agent-text-block .agent-code-name{font-family:var(--sans);white-space:normal;overflow-wrap:anywhere;color:inherit}
+.dw-message-content .agent-text-block .agent-code-viewport{font:inherit;line-height:1.8;white-space:pre-wrap}
+.dw-message-content .agent-text-block .agent-code-viewport code{flex:1;white-space:pre-wrap;overflow-wrap:anywhere}

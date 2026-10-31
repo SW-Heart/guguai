@@ -13,3 +13,117 @@
 
 .wechat-web-amounts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
 .wechat-web-amounts button[aria-pressed="true"] { outline:2px solid #6366f1; outline-offset:2px; background:#eef2ff; color:#4338ca; }
+
+/* Purchase sheet: quiet glass surface, aligned amounts, and a fixed checkout. */
+.credit-purchase-dialog {
+  width: min(600px, calc(100% - 32px));
+  border-radius: 20px;
+  background: linear-gradient(150deg, rgb(var(--theme-panel-rgb, 255 255 255) / .97), rgb(var(--theme-panel-rgb, 255 255 255) / .91));
+  box-shadow: 0 32px 96px rgba(30, 27, 75, .2), 0 4px 16px rgba(30, 27, 75, .06), inset 0 1px 0 rgb(var(--theme-highlight-rgb, 255 255 255) / .8);
+}
+.credit-purchase-head { padding: 28px 32px 24px; align-items: flex-start; border-bottom: 1px solid var(--line); }
+.credit-purchase-head::before { content: none; }
+.credit-purchase-modes { position: relative; isolation: isolate; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 0 0 auto; margin: 20px 32px 0; padding: 4px; border-radius: 12px; background: var(--theme-brand-soft, #f0f1ff); box-shadow: inset 0 0 0 1px var(--line); }
+.credit-purchase-modes::before { position: absolute; z-index: -1; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / 2); border-radius: 8px; background: var(--panel-raised); box-shadow: 0 2px 6px rgba(30, 27, 75, .08), inset 0 0 0 1px rgb(var(--theme-highlight-rgb, 255 255 255) / .7); content: ""; pointer-events: none; transition: transform 240ms cubic-bezier(.2, .8, .2, 1); }
+.credit-purchase-modes:has(#creditRedeemTab[aria-selected="true"])::before { transform: translateX(100%); }
+.credit-purchase-modes button { position: relative; min-width: 0; min-height: 40px; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: 600 13px/1.5 var(--sans); cursor: pointer; transition: color 180ms ease; }
+.credit-purchase-modes button:hover { color: var(--ink); }
+.credit-purchase-modes button[aria-selected="true"] { color: var(--brand); }
+.credit-purchase-modes button:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.credit-buy-panel { display: flex; flex-direction: column; min-height: 0; }
+#creditBuyPanel[hidden], #creditRedeemPanel[hidden] { display: none; }
+.credit-redeem-panel { padding: 28px 32px 32px; overflow-y: auto; min-height: 0; }
+.credit-redeem-form { display: grid; }
+.credit-redeem-form label { color: var(--ink); font-size: 14px; font-weight: 600; }
+.credit-redeem-form > p:first-of-type { margin: 8px 0 20px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.credit-redeem-form input { width: 100%; box-sizing: border-box; min-height: 48px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: var(--panel-raised); font: 400 14px/1.5 var(--sans); }
+.credit-redeem-form input::placeholder { color: var(--muted); }
+.credit-redeem-form input:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.credit-redeem-form input[aria-invalid="true"] { border-color: var(--danger); }
+.credit-redeem-form input[aria-invalid="true"]:focus-visible { outline-color: var(--danger); }
+.credit-redeem-feedback { min-height: 40px; margin: 10px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.credit-redeem-feedback[data-tone="error"] { color: var(--danger); }
+.credit-redeem-feedback[data-tone="success"] { color: var(--brand); }
+.credit-redeem-form .alipay-pay-button { justify-self: end; }
+.credit-purchase-head h2 { font-size: 22px; font-weight: 650; line-height: 1.4; letter-spacing: -.03em; }
+.credit-purchase-balance { margin-top: 8px; padding: 0; gap: 6px; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-size: 13px; line-height: 1.6; flex-wrap: wrap; }
+.credit-purchase-balance b { margin-left: 4px; overflow-wrap: anywhere; }
+.credit-purchase-dialog .detail-close { width: 32px; height: 32px; flex-basis: 32px; border-radius: 8px; }
+.credit-purchase-body { padding: 24px 32px 28px; }
+.credit-purchase-label { margin-bottom: 12px; font-size: 13px; line-height: 1.5; font-weight: 600; }
+.credit-purchase-label:not(:first-child) { margin-top: 24px; }
+.credit-purchase-options { gap: 12px; }
+.credit-purchase-options button {
+  min-height: 96px;
+  padding: 18px;
+  gap: 12px;
+  border-radius: 10px;
+  background: rgb(var(--theme-panel-rgb, 255 255 255) / .65);
+  box-shadow: inset 0 1px 0 rgb(var(--theme-highlight-rgb, 255 255 255) / .7);
+  transition: border-color var(--ease), background var(--ease), box-shadow var(--ease);
+}
+.credit-purchase-options button:hover,
+.credit-purchase-dialog .payment-method-options button:hover { transform: none; box-shadow: none; background: var(--panel-raised); }
+.credit-purchase-options button:active,
+.credit-purchase-dialog .payment-method-options button:active { transform: none; }
+.credit-purchase-options button.active,
+.credit-purchase-dialog .payment-method-options button.active {
+  border-color: var(--brand);
+  background: var(--theme-brand-soft, #f0f1ff);
+  box-shadow: inset 0 0 0 .5px var(--brand);
+}
+.credit-package-amount { gap: 5px; }
+.credit-package-amount b { font-size: 25px; line-height: 1.1; font-weight: 600; letter-spacing: -.04em; }
+.credit-package-price { font-size: 12px; line-height: 1.4; font-weight: 400; }
+.credit-package-check { top: 10px; right: 10px; width: 16px; height: 16px; border: 0; background: transparent; opacity: 0; }
+.credit-purchase-options button.active .credit-package-check { opacity: 1; background: var(--brand); box-shadow: none; }
+.credit-package-check svg { width: 10px; height: 10px; stroke-width: 2; }
+.credit-purchase-dialog .payment-custom-amount { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 16px 0 0; padding: 16px 0 20px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font-size: 13px; }
+.payment-custom-copy { display: grid; gap: 5px; }
+.credit-purchase-dialog .payment-custom-amount small { color: var(--muted); font-size: 12px; }
+.payment-custom-control { flex: 0 1 220px; min-width: 0; display: grid; gap: 6px; }
+.payment-custom-input { position: relative; display: block; min-width: 0; }
+.credit-purchase-dialog .payment-custom-input input { min-height: 44px; padding: 10px 38px 10px 14px; border-color: var(--line-strong); border-radius: 8px; background: rgb(var(--theme-panel-rgb, 255 255 255) / .75); color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.credit-purchase-dialog .payment-custom-input input::placeholder { color: var(--muted); opacity: 1; }
+.credit-purchase-dialog .payment-custom-input input:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.credit-purchase-dialog .payment-custom-input input[aria-invalid="true"] { border-color: var(--danger); background: var(--danger-soft); }
+.credit-purchase-dialog .payment-custom-input input[aria-invalid="true"]:focus-visible { outline-color: var(--danger); }
+.credit-purchase-dialog .payment-custom-amount .payment-custom-error { min-height: 18px; color: var(--danger); font-size: 12px; line-height: 1.5; }
+.credit-purchase-dialog .alipay-pay-button:disabled:not([aria-busy="true"]) { cursor: not-allowed; box-shadow: none; opacity: .45; }
+.payment-custom-input > span { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.credit-purchase-dialog .payment-method-options button { min-height: 52px; border-radius: 10px; box-shadow: none; }
+.credit-purchase-dialog .payment-method-mark { box-shadow: none; border-radius: 6px; }
+.credit-purchase-dialog .payment-method-name { font-size: 13px; font-weight: 500; }
+.credit-purchase-dialog .payment-method-radio { width: 16px; height: 16px; flex-basis: 16px; }
+.credit-purchase-dialog .payment-method-options button.active .payment-method-radio { border-width: 4px; }
+.credit-purchase-status { flex-wrap: wrap; }
+.credit-purchase-footer { gap: 24px; padding: 22px 32px 26px; background: rgb(var(--theme-panel-rgb, 255 255 255) / .6); }
+.credit-purchase-summary { grid-template-columns: auto 1fr; align-items: baseline; gap: 7px 12px; }
+.credit-purchase-summary strong { font-size: 28px; font-weight: 600; letter-spacing: -.04em; }
+.credit-purchase-summary small { grid-column: 1 / -1; font-size: 12px; line-height: 1.6; }
+.credit-purchase-dialog .alipay-pay-button { min-width: 160px; min-height: 46px; border-radius: 10px; box-shadow: 0 4px 12px rgba(91, 92, 232, .16), inset 0 1px 0 rgba(255, 255, 255, .22); }
+.credit-purchase-dialog .alipay-pay-button:hover:not(:disabled) { transform: none; box-shadow: 0 6px 16px rgba(91, 92, 232, .2); }
+@media (max-width: 560px) {
+  .credit-purchase-dialog { width: calc(100% - 24px); border-radius: 16px; }
+  .credit-purchase-head { padding: 22px 20px 20px; }
+  .credit-purchase-modes { margin: 16px 20px 0; }
+  .credit-redeem-panel { padding: 24px 20px; }
+  .credit-purchase-body { padding: 20px; }
+  .credit-purchase-options { gap: 8px; }
+  .credit-purchase-options button { min-height: 86px; padding: 14px 12px; }
+  .credit-package-amount b { font-size: 22px; }
+  .credit-purchase-footer { padding: 20px; gap: 16px; }
+  .credit-purchase-summary { grid-template-columns: 1fr; gap: 4px; }
+  .credit-purchase-summary strong { font-size: 25px; }
+  .credit-purchase-dialog .alipay-pay-button { min-width: 128px; padding: 0 18px; }
+}
+@media (max-width: 380px) {
+  #wechatAmountPackages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .credit-purchase-dialog .payment-custom-amount { align-items: stretch; flex-direction: column; gap: 10px; }
+  .payment-custom-control { flex-basis: auto; }
+  .credit-purchase-footer { flex-direction: column; align-items: stretch; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .credit-purchase-modes::before, .credit-purchase-modes button { transition: none; }
+  .credit-purchase-options button { transition: none; }
+}

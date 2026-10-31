@@ -130,10 +130,10 @@ test('project inventory inherits entity types for results and merges imported an
 test('asset drawer and persistence changes are connected through fresh cache versions',()=>{
   const read=file=>readFileSync(new URL(`../public/${file}`,import.meta.url),'utf8');
   for(const [file,urls] of [
-    ['index.html',['/app.js?v=619','/styles.css?v=438']],
-    ['app.js',['./drama-studio.js?v=317','./features/agent/workspace.js?v=184']],
-    ['drama-studio.js',['./features/drama/director-workspace.js?v=208']],
-    ['features/agent/workspace.js',['../drama/director-workspace.js?v=208','../drama/director-actions.js?v=21']],
+    ['index.html',['/app.js?v=635','/styles.css?v=439']],
+    ['app.js',['./drama-studio.js?v=320','./features/agent/workspace.js?v=187']],
+    ['drama-studio.js',['./features/drama/director-workspace.js?v=211']],
+    ['features/agent/workspace.js',['../drama/director-workspace.js?v=211','../drama/director-actions.js?v=21']],
     ['features/drama/director-workspace.js',['./director-actions.js?v=21','./project-assets.js?v=4','./media-name-editor.js?v=1','../../vendor/director/reference-canvas.js?v=43']],
     ['features/drama/director-actions.js',['./project-assets.js?v=4']],
   ])for(const url of urls)assert.ok(read(file).includes(url),`${file}: ${url}`);

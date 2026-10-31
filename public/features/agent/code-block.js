@@ -14,14 +14,16 @@ export function renderCodeBlock(code,info='',streaming=false) {
   const parts=metadata.replace(/(?:filename|title)=(?:"[^"]*"|'[^']*'|[^\s]+)/gi,'').trim().split(/\s+/);
   const language=parts[0]||'';
   const name=filename?(filename[1]??filename[2]??filename[3]):parts.slice(1).join(' ');
+  const prose=/^(prompt|text|plaintext)$/i.test(language);
   const numbers=String(code).split('\n').map((_,index)=>index+1).join('\n');
-  return `<div class="agent-code-block" data-state="${streaming?'streaming':'complete'}" aria-busy="${streaming}"><div class="agent-code-header"><span class="agent-code-icon">${fileIcon}</span><span class="agent-code-name">${escape(name||language||'代码')}</span>${name&&language?`<span class="agent-code-language">${escape(language)}</span>`:''}<span class="agent-code-status">${streaming?'正在生成':'已完成'}</span>${copyButtonMarkup('data-code-copy','复制代码')}</div><pre class="agent-code-viewport"><span class="agent-code-lines" aria-hidden="true">${numbers}</span><code>${escape(code)}</code></pre></div>`;
+  return `<div class="agent-code-block${prose?' agent-text-block':''}" data-state="${streaming?'streaming':'complete'}" aria-busy="${streaming}"><div class="agent-code-header"><span class="agent-code-icon">${fileIcon}</span><span class="agent-code-name">${escape(name||(prose?(language.toLowerCase()==='prompt'?'画面描述':'文字稿'):language)||'代码')}</span>${name&&language&&!prose?`<span class="agent-code-language">${escape(language)}</span>`:''}<span class="agent-code-status">${streaming?'正在生成':'已完成'}</span>${copyButtonMarkup('data-code-copy',prose?'复制内容':'复制代码')}</div><pre class="agent-code-viewport"><span class="agent-code-lines" aria-hidden="true">${prose?'':numbers}</span><code>${escape(code)}</code></pre></div>`;
 }
 
 // Keep the header, copy feedback and reader's scroll position mounted while
 // new tokens arrive. Copy always reads the current code, without line numbers.
 export function patchCodeBlock(current,next) {
   if(!current?.classList.contains('agent-code-block')||!next?.classList.contains('agent-code-block'))return false;
+  if(current.classList.contains('agent-text-block')!==next.classList.contains('agent-text-block'))return false;
   const viewport=current.querySelector('.agent-code-viewport');
   const follow=viewport.scrollHeight-viewport.scrollTop-viewport.clientHeight<24;
   for(const selector of ['code','.agent-code-lines','.agent-code-name','.agent-code-status'])current.querySelector(selector).textContent=next.querySelector(selector).textContent;

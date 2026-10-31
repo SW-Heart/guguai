@@ -20,3 +20,7 @@ Source:
 https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/kling-color.svg
 The light variant preserves the original asset; the dark variant lightens the
 deep blue gradient stop for contrast while preserving its geometry.
+
+Text model marks (DeepSeek, Claude, Kimi, Zhipu) use the Lobe Icons MIT
+`*-color.svg` assets, preserving their original brand colors in both themes.
+The earlier monochrome files remain available for cached clients.

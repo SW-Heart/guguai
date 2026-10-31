@@ -1,3 +1,4 @@
+import { createLocalSkillRegistry } from './local-skills.mjs';
 import { createStartupUpdateGate } from './startup-update.mjs';
 import { createUpdateCheckScheduler } from './update-check-scheduler.mjs';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, session, shell, Tray, WebContentsView } from 'electron';
@@ -270,6 +271,7 @@ async function setWorkspaceRoot(root, { persist = true } = {}) {
 
 async function activateWorkspaceAccount(accountId, { persist = true } = {}) {
   const normalizedAccountId = normalizeAccountId(accountId);
+  if(workspaceAccountId!==normalizedAccountId)clearLocalSkillRegistry();
   if (!workspaceRoot) {
     workspaceRoot = configuredWorkspaceRoot(settings, path.join(app.getPath('documents'), 'GuGu AI Projects'));
   }
@@ -301,6 +303,7 @@ async function activateWorkspaceAccount(accountId, { persist = true } = {}) {
 }
 
 async function deactivateWorkspaceAccount({ persist = true } = {}) {
+  clearLocalSkillRegistry();
   workspaceEpoch += 1;
   remoteDownloadLocks.clear();
   closeLocalLibrary();
@@ -1595,6 +1598,17 @@ function createTray() {
   tray.on('right-click', () => tray?.popUpContextMenu(trayMenu));
 }
 
+let localSkillRegistry=null,localSkillRegistryScope='';
+function clearLocalSkillRegistry(){localSkillRegistry?.close();localSkillRegistry=null;localSkillRegistryScope='';}
+function currentLocalSkillRegistry(){
+  if(!workspaceAccountId)throw new Error('请先登录后添加本地技能');
+  const scope=createHash('sha256').update(`${configuredApiBase()}\n${workspaceAccountId}`).digest('hex');
+  if(scope!==localSkillRegistryScope){
+    localSkillRegistry?.close();localSkillRegistryScope=scope;
+    localSkillRegistry=createLocalSkillRegistry({file:path.join(app.getPath('userData'),'local-skills',scope+'.json'),onChange:()=>sendToWindow(mainWindow,'local-skills:changed',{})});
+  }
+  return localSkillRegistry;
+}
 function registerIpc() {
   const handle = createIpcRegistrar({
     ipcMain,
@@ -1718,6 +1732,17 @@ function registerIpc() {
     if (!paymentWindow || paymentWindow.isDestroyed() || event.sender !== paymentWindow.webContents) return false;
     return closePaymentWindow();
   }, { allowPaymentWindow:true });
+  handle('local-skills:list',async()=>{const registry=currentLocalSkillRegistry(),result=await registry.list();if(registry!==currentLocalSkillRegistry())throw new Error('账号已切换，请重新打开技能列表');return result;});
+  handle('local-skills:choose',async()=>{
+    const registry=currentLocalSkillRegistry();
+    const result=await dialog.showOpenDialog(mainWindow,{title:'添加本地 Skill',message:'选择技能文件夹。使用技能时，会将其说明和所需资料发送给当前对话。',properties:['openDirectory']});
+    if(result.canceled||!result.filePaths[0])return {canceled:true};
+    if(registry!==currentLocalSkillRegistry())throw new Error('账号已切换，请重新添加');
+    const added=await registry.add(result.filePaths[0]);
+    if(registry!==currentLocalSkillRegistry())throw new Error('账号已切换，请重新添加');
+    return {canceled:false,...added};
+  });
+  handle('local-skills:snapshot',async(_event,name)=>{try{const registry=currentLocalSkillRegistry(),result=await registry.snapshot(name);if(registry!==currentLocalSkillRegistry())throw new Error('本地技能所属账号已切换，请重新选择');return result;}catch(error){if(/^(技能|本地技能)/.test(error.message))throw error;throw new Error('无法读取本地技能，请检查文件后重试');}},{validateArgs:([name])=>[ipcId(name,'技能标识')]});
   handle('workspace:get', () => ({ ...activeWorkspaceInfo(), assetCount: workspace ? countLocalAssets() : 0 }));
   handle('workspace:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { title: '选择 GuGu AI 工作区', properties: ['openDirectory', 'createDirectory'] });
@@ -1990,6 +2015,7 @@ app.on('will-quit', () => {
   powerMonitor.removeListener('resume', checkUpdatesAfterResume);
   clearInterval(backgroundTaskPollTimer);
   backgroundTaskPollTimer = null;
+  clearLocalSkillRegistry();
   closeLocalLibrary();
   tray?.destroy();
   tray = null;

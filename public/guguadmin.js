@@ -1,6 +1,9 @@
 import { createApiClient } from './api-client.js?v=4';
+import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/admin/log-details.js?v=1';
 
 (() => {
+  const logDrawer = createLogDrawer({ copy:(...args) => copyText(...args), formatDate:value => date(value), statusText:value => statusLabels[value] || value || '' });
+  let disposeLogHeader = () => {};
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const state = {
@@ -30,7 +33,7 @@ import { createApiClient } from './api-client.js?v=4';
   };
   const { request: requestApi } = createApiClient({ scopeHeaders: () => state.csrf ? { 'X-CSRF-Token': state.csrf } : {}, responseShapeFor: () => 'object' });
 
-  const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '邀请码', announcements: '消息通知', models: '模型与价格', credentials: '渠道与 Key', issues: '异常中心', logs: '日志中心' };
+  const viewTitles = { overview: '总览', users: '用户管理', orders: '付费订单', invites: '兑换码', announcements: '消息通知', textModels:'文本模型', models: '模型与价格', credentials: '渠道与 Key', issues: '异常中心', logs: '日志中心' };
   const routeModelLabels = {
     'wan-3.0': 'Wan 3.0',
     'wan-3.0-value': 'Wan 3.0 特价',
@@ -62,6 +65,7 @@ import { createApiClient } from './api-client.js?v=4';
 
   const ICONS = {
     refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    calendar: '<path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
@@ -617,6 +621,8 @@ import { createApiClient } from './api-client.js?v=4';
 
   /* ---------- 会话、导航 ---------- */
   function showLogin(message = '') {
+    logDrawer.close();
+    disposeLogHeader();
     clearTimeout(logRefreshTimer);
     if (adminDialogResolver) finishAdminDialog(null);
     state.csrf = '';
@@ -640,7 +646,7 @@ import { createApiClient } from './api-client.js?v=4';
     }
   }
 
-  const loaders = { overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, precheck: loadPrecheck, models: loadModels, credentials: loadCredentials, issues: loadIssues, logs: loadLogs };
+  const loaders = { textModels:async()=>{const {loadTextModels}=await import('./features/admin/text-models.js?v=5');return loadTextModels({root:$('#view-textModels'),api,esc,toast,pageHead,showAdminDialog});}, overview: loadOverview, users: loadUsers, orders: loadOrders, invites: loadInvites, announcements: loadAnnouncements, precheck: loadPrecheck, models: loadModels, credentials: loadCredentials, issues: loadIssues, logs: loadLogs };
   const viewFromHash = () => { const name = location.hash.replace(/^#\/?/, ''); return loaders[name] ? name : 'overview'; };
   function scrollAdminToTop() {
     const scroller = document.scrollingElement || document.documentElement;
@@ -655,6 +661,8 @@ import { createApiClient } from './api-client.js?v=4';
   function showView(name, { force = false } = {}) {
     if (!loaders[name]) return;
     if (state.view === name && !force) return;
+    disposeLogHeader();
+    logDrawer.close();
     if (name === 'users') resetPager('users');
     if (name === 'orders') resetPager('orders');
     if (name === 'invites') resetPager('invites');
@@ -760,7 +768,7 @@ import { createApiClient } from './api-client.js?v=4';
               <button class="shortcut" type="button" data-jump="users">${icon('users')}查找用户或调整积分</button>
               <button class="shortcut" type="button" data-jump="orders">${icon('card')}查看付费订单</button>
               <button class="shortcut" type="button" data-jump="models" data-models-tab="routes">${icon('box')}检查模型线路</button>
-              <button class="shortcut" type="button" data-jump="invites">${icon('ticket')}创建邀请码</button>
+              <button class="shortcut" type="button" data-jump="invites">${icon('ticket')}创建兑换码</button>
               <button class="shortcut" type="button" data-jump="announcements">${icon('megaphone')}发布消息通知</button>
             </div>
           </section>
@@ -890,7 +898,7 @@ import { createApiClient } from './api-client.js?v=4';
         <div class="user-detail-metric"><small>生成任务</small><strong>${money(user.generations)}</strong></div>
         <div class="user-detail-metric"><small>积分流水</small><strong>${money(user.creditEntries)}</strong></div>
         <div class="user-detail-metric"><small>LLM 调用</small><strong>${money(user.llmUsage)}</strong></div>
-        <div class="user-detail-metric"><small>注册邀请码</small><strong title="${esc(user.inviteCode || '')}">${esc(user.inviteCode || '—')}</strong></div>
+        <div class="user-detail-metric"><small>历史注册来源</small><strong title="${esc(user.inviteCode || '')}">${esc(user.inviteCode || '—')}</strong></div>
       </div>
       <div class="user-recent"><h3>最近生成记录</h3><div class="user-recent-list">${generations || emptyMarkup('暂无生成记录')}</div></div>
       <div class="user-recent"><h3>最近积分流水</h3><div class="user-recent-list">${credits || emptyMarkup('暂无积分流水')}</div></div>`;
@@ -1116,14 +1124,14 @@ import { createApiClient } from './api-client.js?v=4';
     }
   }
 
-  /* ---------- 邀请码 ---------- */
+  /* ---------- 兑换码 ---------- */
   async function loadInvites() {
     const root = $('#view-invites');
     const filters = state.filters.invites;
-    root.innerHTML = pageHead('invitesTitle', '邀请码', '管理注册名额、有效期和注册赠送积分', `${refreshButton('invites')}<button class="btn btn-primary" id="addInvite" type="button">${icon('plus')}新建邀请码</button>`) + `
+    root.innerHTML = pageHead('invitesTitle', '兑换码', '管理兑换次数、有效期和兑换积分', `${refreshButton('invites')}<button class="btn btn-primary" id="addInvite" type="button">${icon('plus')}新建兑换码</button>`) + `
       <div class="panel">
         <form id="inviteFilters" class="toolbar" role="search">
-          <label class="field is-wide"><span class="field-label">搜索</span><span class="search-input">${icon('search')}<input id="inviteQuery" data-search value="${esc(filters.query)}" placeholder="输入邀请码" autocomplete="off" spellcheck="false" autocapitalize="characters"></span></label>
+          <label class="field is-wide"><span class="field-label">搜索</span><span class="search-input">${icon('search')}<input id="inviteQuery" data-search value="${esc(filters.query)}" placeholder="输入兑换码" autocomplete="off" spellcheck="false" autocapitalize="characters"></span></label>
           <label class="field"><span class="field-label">启用状态</span><select id="inviteEnabled"><option value="">全部</option><option value="1">已启用</option><option value="0">已停用</option></select></label>
           <div class="toolbar-actions"><button class="btn btn-ghost" type="button" data-reset>${icon('rotate')}重置</button><button class="btn btn-primary" type="submit">${icon('search')}查询</button></div>
         </form>
@@ -1142,37 +1150,33 @@ import { createApiClient } from './api-client.js?v=4';
 
   async function createInvite() {
     const created = await showAdminDialog({
-      kicker: '邀请码',
-      title: '新建邀请码',
-      description: '邀请码可用于新用户注册，注册成功后自动赠送积分。',
-      submit: '创建',
+      title: '新建兑换码',
+      description: '自动生成兑换码，每个码只能兑换一次，长期有效。',
+      submit: '创建兑换码',
       busyLabel: '创建中…',
       fields: [
-        { name: 'code', label: '邀请码', type: 'text', value: '', placeholder: '留空自动生成', maxLength: 64, autocapitalize: 'characters', help: '仅支持字母、数字和连字符，保存时自动转为大写。' },
-        { name: 'maxUses', label: '可使用次数', type: 'number', value: '1', min: 1, step: 1, inputmode: 'numeric', required: true },
-        { name: 'signupBonus', label: '注册赠送积分', type: 'text', value: '50', inputmode: 'decimal', required: true },
-        { name: 'expiresAt', label: '有效期至', type: 'datetime-local', value: '', help: '留空表示长期有效。' },
-        { name: 'note', label: '备注', type: 'textarea', value: '', placeholder: '例如：渠道合作、活动名称', maxLength: 500 },
+        { name: 'credits', label: '兑换积分', type: 'text', value: '50', inputmode: 'decimal', required: true },
+        { name: 'quantity', label: '数量', type: 'number', value: '1', min: 1, max: 1000, step: 1, inputmode: 'numeric', required: true, help: '一次最多创建 1000 个。' },
       ],
       validate: values => {
-        if (values.code.trim() && !/^[A-Za-z0-9-]+$/.test(values.code.trim())) return '邀请码只能包含字母、数字和连字符。';
-        const uses = Number(values.maxUses);
-        if (!Number.isSafeInteger(uses) || uses < 1) return '可使用次数必须是大于 0 的整数。';
-        const bonus = Number(values.signupBonus);
-        if (!Number.isFinite(bonus) || bonus < 0) return '注册赠送积分必须是不小于 0 的数字。';
-        if (values.expiresAt && new Date(values.expiresAt) <= new Date()) return '有效期需要晚于当前时间。';
+        if (!/^\d+(?:\.\d{1,6})?$/.test(values.credits.trim()) || Number(values.credits) <= 0 || Number(values.credits) > 1000000) return '兑换积分须大于 0、最多 1,000,000，支持最多 6 位小数。';
+        const quantity = Number(values.quantity);
+        if (!/^\d+$/.test(values.quantity) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 1000) return '数量须为 1–1000 的整数。';
         return null;
       },
-      onSubmit: async values => {
-        const data = await api('/api/admin/invite-codes', { method: 'POST', body: JSON.stringify({ code: values.code.trim(), maxUses: Number(values.maxUses), signupBonus: values.signupBonus, expiresAt: values.expiresAt ? inputToIso(values.expiresAt) : null, note: values.note }) });
-        return data.invite;
-      },
+      onSubmit: values => api('/api/admin/redemption-codes', { method: 'POST', body: JSON.stringify({ credits: values.credits.trim(), quantity: Number(values.quantity) }) }),
     });
-    if (!created?.code) return;
+    if (!created?.redemptionCodes?.length) return;
     resetPager('invites');
-    fetchInvites();
-    const copy = await showAdminDialog({ kicker: '邀请码', title: '邀请码已创建', tone: 'success', size: 'narrow', html: `<div class="invite-created"><code>${esc(created.code)}</code><span>可使用 ${money(created.maxUses)} 次 · 注册赠送 ${money(created.signupBonus)} 积分${created.expiresAt ? ` · ${date(created.expiresAt)} 前有效` : ' · 长期有效'}</span></div>`, submit: '复制邀请码', cancel: '完成' });
-    if (copy) copyText(created.code, '邀请码');
+    void fetchInvites();
+    const codes = created.redemptionCodes.map(item => item.code).join('\n');
+    await showAdminDialog({
+      title: '兑换码已创建',
+      description: `共 ${money(created.quantity)} 个，每个可兑换 ${money(created.credits)} 积分。`,
+      tone: 'success', submit: '完成', hideCancel: true,
+      html: `<label class="field span-full"><span class="field-label">兑换码</span><textarea id="createdRedemptionCodes" rows="8" readonly spellcheck="false">${esc(codes)}</textarea></label><div class="span-full"><button id="copyRedemptionCodes" class="btn btn-primary" type="button">复制全部兑换码</button></div>`,
+      onRender: () => { $('#copyRedemptionCodes').onclick = () => { void copyText(codes, '兑换码'); }; },
+    });
   }
 
   async function fetchInvites() {
@@ -1185,24 +1189,24 @@ import { createApiClient } from './api-client.js?v=4';
     if (currentCursor('invites')) params.set('cursor', currentCursor('invites'));
     markLoading(table);
     try {
-      const data = await api(`/api/admin/invite-codes?${params}`);
+      const data = await api(`/api/admin/redemption-codes?${params}`);
       if (isStale('invites', token)) return;
       const items = data.items || [];
       const filtered = filters.query || filters.enabled;
-      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="邀请码列表"><thead><tr><th>邀请码</th><th>状态</th><th>使用情况</th><th class="is-num">注册赠送</th><th>有效期至</th><th>备注</th><th>创建时间</th><th class="is-actions">操作</th></tr></thead><tbody>${items.map(invite => {
+      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="兑换码列表"><thead><tr><th>兑换码</th><th>状态</th><th>使用情况</th><th class="is-num">兑换积分</th><th>有效期至</th><th>备注</th><th>创建时间</th><th class="is-actions">操作</th></tr></thead><tbody>${items.map(invite => {
         const percent = invite.maxUses ? Math.min(100, (invite.usedCount / invite.maxUses) * 100) : 0;
         return `<tr>
-          <td>${idText(invite.code, '邀请码', true)}</td>
+          <td>${idText(invite.code, '兑换码', true)}</td>
           <td>${badge(invite.status)}</td>
           <td><div class="usage"><span>${money(invite.usedCount)} / ${money(invite.maxUses)}</span><div class="meter${percent >= 100 ? ' is-warn' : ' is-brand'}"><span style="width:${percent}%"></span></div></div></td>
-          <td class="is-num">${money(invite.signupBonus)}</td>
+          <td class="is-num">${money(invite.credits)}</td>
           <td>${invite.expiresAt ? date(invite.expiresAt) : '<span class="muted">长期有效</span>'}</td>
           <td><span class="cell-clip" title="${esc(invite.note || '')}">${plain(invite.note)}</span></td>
           <td>${date(invite.createdAt)}</td>
           <td class="is-actions"><div class="actions"><button class="btn btn-sm" data-invite-uses="${esc(invite.code)}" type="button">使用记录</button>${invite.enabled ? `<button class="btn btn-sm btn-danger-ghost" data-invite-code="${esc(invite.code)}" data-invite-enabled="true" type="button">停用</button>` : `<button class="btn btn-sm" data-invite-code="${esc(invite.code)}" data-invite-enabled="false" type="button">启用</button>`}</div></td>
         </tr>`;
       }).join('')}</tbody></table></div>${pageControls('invites', data.total, data.nextCursor, items.length)}`
-        : emptyMarkup(filtered ? '没有符合条件的邀请码' : '还没有邀请码', filtered ? '换个关键词或状态后再试。' : '创建邀请码后，新用户即可使用它注册。', filtered ? '' : `<button class="btn btn-primary btn-sm" type="button" data-empty-create>${icon('plus')}新建邀请码</button>`);
+        : emptyMarkup(filtered ? '没有符合条件的兑换码' : '还没有兑换码', filtered ? '换个关键词或状态后再试。' : '创建兑换码后，用户即可在客户端兑换积分。', filtered ? '' : `<button class="btn btn-primary btn-sm" type="button" data-empty-create>${icon('plus')}新建兑换码</button>`);
       doneLoading(table);
       $('[data-empty-create]', table)?.addEventListener('click', createInvite);
       $$('[data-invite-uses]', table).forEach(button => button.onclick = () => showInviteUses(button.dataset.inviteUses));
@@ -1219,23 +1223,22 @@ import { createApiClient } from './api-client.js?v=4';
   async function toggleInvite(code, enabled) {
     const nextEnabled = !enabled;
     await showAdminDialog({
-      kicker: '邀请码',
-      title: nextEnabled ? '启用邀请码？' : '停用邀请码？',
-      html: `<p class="admin-dialog-confirmation${nextEnabled ? '' : ' is-danger'}"><code>${esc(code)}</code><br>${nextEnabled ? '启用后可以继续用于注册。' : '停用后将不能再用于注册，已注册的用户不受影响。'}</p>`,
+      title: nextEnabled ? '启用兑换码？' : '停用兑换码？',
+      html: `<p class="admin-dialog-confirmation${nextEnabled ? '' : ' is-danger'}"><code>${esc(code)}</code><br>${nextEnabled ? '启用后可以继续兑换积分。' : '停用后将无法继续兑换，已到账的积分不受影响。'}</p>`,
       submit: nextEnabled ? '确认启用' : '确认停用',
       busyLabel: '处理中…',
       danger: !nextEnabled,
       tone: nextEnabled ? 'info' : '',
       size: 'narrow',
-      onSubmit: async () => { await api(`/api/admin/invite-codes/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify({ enabled: nextEnabled }) }); toast(`邀请码已${nextEnabled ? '启用' : '停用'}`); await fetchInvites(); },
+      onSubmit: async () => { await api(`/api/admin/redemption-codes/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify({ enabled: nextEnabled }) }); toast(`兑换码已${nextEnabled ? '启用' : '停用'}`); await fetchInvites(); },
     });
   }
 
   async function showInviteUses(code) {
     try {
-      const data = await api(`/api/admin/invite-codes/${encodeURIComponent(code)}/uses`);
+      const data = await api(`/api/admin/redemption-codes/${encodeURIComponent(code)}/uses`);
       const items = data.items || [];
-      await showAdminDialog({ kicker: '邀请码', title: `${code} 的使用记录`, description: items.length ? `共 ${items.length} 次使用` : '', size: 'wide', submit: '关闭', hideCancel: true, html: items.length ? `<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>用户</th><th class="is-num">赠送积分</th><th>使用时间</th></tr></thead><tbody>${items.map(item => `<tr><td><div class="cell-stack"><b>${esc(item.username || '—')}</b>${idText(item.userId, '用户 ID')}</div></td><td class="is-num">${money(item.bonus)}</td><td>${date(item.usedAt)}</td></tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无使用记录', '还没有用户使用这个邀请码注册。') });
+      await showAdminDialog({ title: `${code} 的使用记录`, description: items.length ? `共 ${items.length} 次使用` : '', size: 'wide', submit: '关闭', hideCancel: true, html: items.length ? `<div class="table-wrap"><table style="min-width:520px"><thead><tr><th>用户</th><th class="is-num">兑换积分</th><th>使用时间</th></tr></thead><tbody>${items.map(item => `<tr><td><div class="cell-stack"><b>${esc(item.username || '—')}</b>${idText(item.userId, '用户 ID')}</div></td><td class="is-num">${money(item.credits)}</td><td>${date(item.usedAt)}</td></tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无使用记录', '还没有用户使用这个兑换码兑换积分。') });
     } catch (error) { toastError(error); }
   }
 
@@ -2160,8 +2163,9 @@ import { createApiClient } from './api-client.js?v=4';
     try { return JSON.stringify(value, null, pretty ? 2 : 0) || '暂无详情'; } catch { return String(value); }
   }
   function logDetailCells(item, category, detailId, colspan, trailing = '') {
-    const fullDetails = stringifyLogDetails(compactLogDetailData(logDetailData(item, category)), true);
-    return `${trailing}</tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>完整记录</strong><div><span>${date(item.createdAt)}</span><button class="btn btn-sm btn-ghost" type="button" data-copy-log>${icon('copy')}复制</button></div></div><pre>${esc(fullDetails)}</pre></div></td></tr>`;
+    const summary = logSummary(item, category).replace(/\s+/g, ' ').trim();
+    const short = summary.length > 240 ? `${summary.slice(0, 240)}…` : summary;
+    return `${trailing}</tr><tr id="${detailId}" class="log-detail-row" hidden><td colspan="${colspan}"><div class="log-detail-panel"><div class="log-detail-head"><strong>记录摘要</strong><button class="btn btn-sm" type="button" data-log-full="${esc(item.id)}" aria-haspopup="dialog">查看详情</button></div><p class="log-summary-text">${esc(short)}</p></div></td></tr>`;
   }
   // 整行可点击展开；行内的复制、下载等控件自己处理点击，不触发展开。
   const logRow = (item, category, index, cells, colspan, trailing = '') => {
@@ -2227,12 +2231,22 @@ import { createApiClient } from './api-client.js?v=4';
     if (category === 'client') return table('客户端诊断日志', ['时间', '编号', '用户', '版本 / 平台', '问题描述', '日志包'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td><code>${esc(item.reference)}</code></td><td>${userCell(item.userId, item.userNickname, item.username)}</td><td><div class="cell-stack"><span>${plain(item.appVersion)}</span><span class="detail">${esc(item.platform || '—')}</span></div></td><td><div class="cell-stack"><span class="cell-clip" title="${esc(item.note || '')}">${plain(item.note)}</span><span class="detail">${money(Math.max(1, Math.round((item.size || 0) / 1024)))} KB</span></div></td><td>${item.downloadable ? `<a class="btn btn-sm" href="/api/admin/logs/client/${encodeURIComponent(item.id)}/download">${icon('download')}下载</a>` : '<span class="muted">—</span>'}</td>`, 6)).join(''));
     return table('系统异常日志', ['时间', '级别', '分类', '消息', '用户', '模型'], items.map((item, index) => logRow(item, category, index, `<td>${date(item.createdAt)}</td><td>${badge(item.level, item.level === 'error' || item.level === 'critical' ? 'bad' : item.level === 'info' ? 'info' : 'warn')}</td><td><code>${esc(item.category || '—')}</code></td><td><span class="cell-clip" title="${esc(item.message || '')}">${plain(item.message)}</span></td><td>${userCell(item.userId, item.userNickname)}</td><td>${logModelName(item)}</td>`, 6)).join(''));
   }
-  function bindLogDetails(root) {
+  function bindLogDetails(root, items, category) {
+    const byId = new Map(items.map(item => [String(item.id), item]));
     const toggle = row => {
       const expanded = row.getAttribute('aria-expanded') === 'true';
       row.setAttribute('aria-expanded', String(!expanded));
       row.classList.toggle('is-expanded', !expanded);
-      document.getElementById(row.getAttribute('aria-controls')).hidden = expanded;
+      const detail = document.getElementById(row.getAttribute('aria-controls'));
+      detail.hidden = expanded;
+      if (!expanded) {
+        const current = row._generationLogItem || byId.get(row.dataset.logId);
+        const summary = $('.log-summary-text', detail);
+        if (current && summary) {
+          const text = logSummary(current, category).replace(/\s+/g, ' ').trim();
+          summary.textContent = text.length > 240 ? `${text.slice(0, 240)}…` : text;
+        }
+      }
     };
     $$('[data-log-expand]', root).forEach(row => {
       row.addEventListener('click', event => {
@@ -2246,12 +2260,54 @@ import { createApiClient } from './api-client.js?v=4';
         toggle(row);
       });
     });
-    $$('[data-copy-log]', root).forEach(button => button.addEventListener('click', () => copyText($('pre', button.closest('.log-detail-panel'))?.textContent || '', '日志详情')));
+    $$('[data-log-full]', root).forEach(button => button.addEventListener('click', () => {
+      const item = byId.get(button.dataset.logFull);
+      const row = $$('[data-log-expand]', root).find(row => row.dataset.logId === button.dataset.logFull);
+      const current = row?._generationLogItem || item;
+      if (current) logDrawer.open({ item:current, category, data:compactLogDetailData(logDetailData(current, category)), label:logLabels[category], trigger:button });
+    }));
   }
 
   function syncTaskFilter(category = state.logCategory) {
     const input = $('#logTaskId');
     if (input) input.disabled = !taskFilterCategories.has(category);
+  }
+
+  function logTimeRangeLabel(filters) {
+    if (!filters.from && !filters.to) return '全部时间';
+    const quick = activeQuickRange(filters);
+    if (quick) return quickRanges.find(([key]) => key === quick)[1];
+    const format = value => value.replace('T', ' ').replaceAll('-', '/');
+    return `${filters.from ? format(filters.from) : '不限'} 至 ${filters.to ? format(filters.to) : '今'}`;
+  }
+
+  function selectLogTimeRange(filters) {
+    const fields = [
+      { name:'from', label:'开始时间', type:'datetime-local', value:filters.from, help:'留空表示不限开始时间。' },
+      { name:'to', label:'结束时间', type:'datetime-local', value:filters.to, help:'留空表示至今。' },
+    ];
+    return showAdminDialog({
+      title:'选择时间范围', submit:'应用', cancel:'取消', fields,
+      html:`<div class="span-full">${quickRangeChips('log-time', filters)}</div>${adminDialogFieldsMarkup(fields)}`,
+      validate: values => {
+        if ([values.from, values.to].some(value => value && Number.isNaN(new Date(value).getTime()))) return '请选择有效的日期和时间。';
+        if (values.from && values.to && new Date(values.from) >= new Date(values.to)) return '结束时间需晚于开始时间。';
+        return null;
+      },
+      onRender: body => {
+        const from = $('[data-admin-dialog-field="from"]', body);
+        const to = $('[data-admin-dialog-field="to"]', body);
+        const buttons = $$('[data-quick-range="log-time"]', body);
+        const sync = () => {
+          const values = { from:from.value, to:to.value };
+          const active = activeQuickRange(values);
+          buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.value ? button.dataset.value === active : !values.from && !values.to)));
+          $('#adminDialogError').textContent = '';
+        };
+        buttons.forEach(button => button.onclick = () => { from.value = rangeStart(button.dataset.value); to.value = ''; sync(); });
+        from.oninput = to.oninput = sync;
+      },
+    });
   }
 
   function logFiltersMarkup() {
@@ -2262,21 +2318,21 @@ import { createApiClient } from './api-client.js?v=4';
     const statusField = !statusSpec ? '' : statusSpec.options
       ? `<label class="field"><span class="field-label">${esc(statusSpec.label)}</span><select id="logStatus">${statusSpec.options.map(([value, label]) => `<option value="${esc(value)}" ${value === filters.status ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`
       : `<label class="field"><span class="field-label">${esc(statusSpec.label)}</span><input id="logStatus" value="${esc(filters.status)}" placeholder="${esc(statusSpec.placeholder || '')}" autocomplete="off" spellcheck="false"></label>`;
-    return `${spec.taskId ? `<label class="field is-wide"><span class="field-label">任务 ID</span><span class="search-input">${icon('search')}<input id="logTaskId" data-search value="${esc(filters.taskId)}" placeholder="精确匹配任务 ID" autocomplete="off" spellcheck="false"></span></label>` : ''}
+    return `<div class="log-filter-row" role="group" aria-label="日志筛选条件" tabindex="0">${spec.taskId ? `<label class="field is-wide"><span class="field-label">任务 ID</span><span class="search-input">${icon('search')}<input id="logTaskId" data-search value="${esc(filters.taskId)}" placeholder="精确匹配任务 ID" autocomplete="off" spellcheck="false"></span></label>` : ''}
       <label class="field${spec.taskId ? '' : ' is-wide'}"><span class="field-label">${esc(spec.userLabel || '用户 ID')}</span><input id="logUserId" ${spec.taskId ? '' : 'data-search'} value="${esc(filters.userId)}" placeholder="完整 ID" autocomplete="off" spellcheck="false"></label>
       ${spec.modelId ? `<label class="field"><span class="field-label">模型 ID</span><input id="logModelId" value="${esc(filters.modelId)}" placeholder="例如 seedance-2.0" autocomplete="off" spellcheck="false"></label>` : ''}
       ${statusField}
-      <label class="field is-date"><span class="field-label">开始时间</span><input id="logFrom" type="datetime-local" value="${esc(filters.from)}"></label>
-      <label class="field is-date"><span class="field-label">结束时间</span><input id="logTo" type="datetime-local" value="${esc(filters.to)}"></label>
+      <div class="field is-range"><span id="logTimeRangeLabel" class="field-label">时间范围</span><button id="logTimeRange" class="log-time-trigger" type="button" aria-haspopup="dialog" aria-labelledby="logTimeRangeLabel logTimeRangeValue" title="${esc(logTimeRangeLabel(filters))}">${icon('calendar')}<span id="logTimeRangeValue">${esc(logTimeRangeLabel(filters))}</span></button></div>
       <div class="toolbar-actions"><button class="btn btn-ghost" type="button" data-reset>${icon('rotate')}重置</button><button class="btn btn-primary" type="submit">${icon('search')}查询</button></div>
-      <div id="logQuickRange" style="width:100%">${quickRangeChips('logs', filters)}</div>`;
+      </div>`;
   }
 
   async function loadLogs() {
+    disposeLogHeader();
     const root = $('#view-logs');
     const categories = Object.keys(logLabels);
     if (!categories.includes(state.logCategory)) state.logCategory = 'generations';
-    root.innerHTML = pageHead('logsTitle', '日志中心', '按类型、用户、模型和时间范围查找运营记录，点击日志行查看完整内容', refreshButton('logs')) + `
+    root.innerHTML = pageHead('logsTitle', '日志中心', '按类型、用户、模型和时间范围查找记录，点击日志行展开摘要', refreshButton('logs')) + `
       <div class="tabs" role="tablist" aria-label="日志类型">${categories.map(key => `<button class="tab" role="tab" type="button" data-log-tab="${key}" aria-selected="${String(key === state.logCategory)}" tabindex="${key === state.logCategory ? 0 : -1}" aria-controls="logPanel">${esc(logLabels[key])}</button>`).join('')}</div>
       <div class="panel" id="logPanel" role="tabpanel">
         <form id="logFilters" class="toolbar" role="search"></form>
@@ -2293,14 +2349,18 @@ import { createApiClient } from './api-client.js?v=4';
         filters.userId = value('#logUserId');
         if ($('#logModelId', form)) filters.modelId = value('#logModelId');
         filters.status = value('#logStatus');
-        filters.from = $('#logFrom', form).value;
-        filters.to = $('#logTo', form).value;
       };
-      const apply = () => { readFilters(); $('#logQuickRange', form).innerHTML = quickRangeChips('logs', state.filters.logs); bindQuick(); resetPager('log'); fetchLogs(); };
-      const bindQuick = () => $$('[data-quick-range="logs"]', form).forEach(button => button.onclick = () => { $('#logFrom', form).value = rangeStart(button.dataset.value); $('#logTo', form).value = ''; apply(); });
-      bindQuick();
+      const apply = () => { readFilters(); resetPager('log'); fetchLogs(); };
       form.onsubmit = event => { event.preventDefault(); apply(); };
-      $('#logFrom', form).onchange = $('#logTo', form).onchange = apply;
+      $('#logTimeRange', form).onclick = async () => {
+        const selected = await selectLogTimeRange(state.filters.logs);
+        if (!selected) return;
+        Object.assign(state.filters.logs, { from:selected.from, to:selected.to });
+        const label = logTimeRangeLabel(state.filters.logs);
+        $('#logTimeRangeValue', form).textContent = label;
+        $('#logTimeRange', form).title = label;
+        apply();
+      };
       const statusControl = $('#logStatus', form);
       if (statusControl?.tagName === 'SELECT') statusControl.onchange = apply;
       $('[data-reset]', form).onclick = () => { Object.assign(state.filters.logs, { taskId: '', userId: '', modelId: '', status: '', from: '', to: '' }); renderFilters(); resetPager('log'); fetchLogs(); };
@@ -2312,6 +2372,7 @@ import { createApiClient } from './api-client.js?v=4';
       state.filters.logs.status = '';
       tabs.forEach(tab => { const active = tab.dataset.logTab === key; tab.setAttribute('aria-selected', String(active)); tab.tabIndex = active ? 0 : -1; });
       renderFilters();
+      disposeLogHeader();
       $('#logTable').innerHTML = skeletonMarkup();
       resetPager('log');
       fetchLogs();
@@ -2371,12 +2432,14 @@ import { createApiClient } from './api-client.js?v=4';
       }
       const filtered = [...params.keys()].some(key => !['limit', 'cursor'].includes(key));
       const scrollLeft = $('.table-wrap', table)?.scrollLeft || 0;
-      table.innerHTML = items.length ? `<div class="table-wrap" style="border:0;border-radius:0">${renderLogRows(category, items)}</div>${pageControls('log', data.total, data.nextCursor, items.length)}`
+      disposeLogHeader();
+      table.innerHTML = items.length ? `<div class="log-table-region"><div class="table-wrap" style="border:0;border-radius:0">${renderLogRows(category, items)}</div></div>${pageControls('log', data.total, data.nextCursor, items.length)}`
         : emptyMarkup(`暂无${logLabels[category]}`, filtered ? '尝试放宽筛选条件或调整时间范围。' : '有新的记录时会显示在这里。');
       doneLoading(table);
       const wrap = $('.table-wrap', table);
       if (wrap) wrap.scrollLeft = scrollLeft;
-      bindLogDetails(table);
+      bindLogDetails(table, items, category);
+      disposeLogHeader = bindLogStickyHeader(table);
       if (category === 'generations') bindGenerationControls(table, items);
       bindPageControls(table, 'log', fetchLogs, data.nextCursor);
       if (category === 'generations' && items.some(item => ['queued', 'running'].includes(item.status))) scheduleLogRefresh();
@@ -2384,6 +2447,7 @@ import { createApiClient } from './api-client.js?v=4';
       if (isStale('logs', token) || category !== state.logCategory || state.view !== 'logs') return;
       if (background) { scheduleLogRefresh(); return; }
       doneLoading(table);
+      disposeLogHeader();
       table.innerHTML = errorMarkup(error.message, 'logs');
       bindRetry(table, 'logs', fetchLogs);
     }
