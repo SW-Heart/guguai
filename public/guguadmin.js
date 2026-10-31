@@ -186,6 +186,26 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     }
   }
 
+  // 手动刷新时按钮进入加载状态，结束后给出明确结果；数据没有变化时也要让管理员知道已刷新。
+  function bindRefresh(button, load) {
+    if (!button) return;
+    button.onclick = async () => {
+      if (button.dataset.busy) return;
+      const view = button.closest('.view');
+      setButtonBusy(button, true, '刷新中…');
+      try {
+        await load();
+        if (!button.isConnected) return;
+        if (view?.querySelector('.error-state')) toast('刷新失败，请稍后重试', 'error');
+        else toast('已刷新');
+      } catch (error) {
+        toastError(error);
+      } finally {
+        setButtonBusy(button, false);
+      }
+    };
+  }
+
   async function copyText(value, label = '内容') {
     try { await navigator.clipboard.writeText(value); toast(`${label}已复制`); }
     catch { toast(`复制失败，请手动复制${label}`, 'error'); }
@@ -718,7 +738,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
   async function loadOverview() {
     const root = $('#view-overview');
     root.innerHTML = pageHead('overviewTitle', '总览', '平台用户、积分、生成任务与待处理事项', `${segmented('overviewRange', overviewRanges, state.overviewRange, '统计时间范围')}${refreshButton('overview')}`) + `<div id="overviewBody">${skeletonMarkup(8)}</div>`;
-    $('[data-refresh="overview"]', root).onclick = fetchOverview;
+    bindRefresh($('[data-refresh="overview"]', root), fetchOverview);
     $$('[data-seg="overviewRange"]', root).forEach(button => button.onclick = () => {
       state.overviewRange = button.dataset.value;
       $$('[data-seg="overviewRange"]', root).forEach(item => item.setAttribute('aria-pressed', String(item === button)));
@@ -836,7 +856,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     $('#userQuery').addEventListener('input', debounce(apply, 400));
     $('#userStatus').onchange = $('#userRole').onchange = apply;
     $('[data-reset]', root).onclick = () => { $('#userQuery').value = ''; $('#userStatus').value = ''; $('#userRole').value = ''; apply(); };
-    $('[data-refresh="users"]', root).onclick = fetchUsers;
+    bindRefresh($('[data-refresh="users"]', root), fetchUsers);
     await fetchUsers();
   }
 
@@ -1004,7 +1024,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     $('#orderQuery').addEventListener('input', debounce(apply, 400));
     $('#orderFrom').onchange = $('#orderTo').onchange = apply;
     $('[data-reset]', root).onclick = () => { $('#orderQuery').value = ''; $('#orderFrom').value = ''; $('#orderTo').value = ''; apply(); };
-    $('[data-refresh="orders"]', root).onclick = fetchOrders;
+    bindRefresh($('[data-refresh="orders"]', root), fetchOrders);
     await fetchOrders();
   }
 
@@ -1055,7 +1075,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     const root = $('#view-precheck');
     state.precheckDays ||= '7';
     root.innerHTML = pageHead('precheckTitle', '提示词检查', '提交前检查的弹窗、用户选择和识别准确度', `${segmented('precheckRange', precheckRanges, state.precheckDays, '统计时间范围')}${refreshButton('precheck')}`) + `<div id="precheckBody">${skeletonMarkup(8)}</div>`;
-    $('[data-refresh="precheck"]', root).onclick = fetchPrecheck;
+    bindRefresh($('[data-refresh="precheck"]', root), fetchPrecheck);
     $$('[data-seg="precheckRange"]', root).forEach(button => button.onclick = () => {
       state.precheckDays = button.dataset.value;
       $$('[data-seg="precheckRange"]', root).forEach(item => item.setAttribute('aria-pressed', String(item === button)));
@@ -1143,7 +1163,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     $('#inviteQuery').addEventListener('input', debounce(apply, 400));
     $('#inviteEnabled').onchange = apply;
     $('[data-reset]', root).onclick = () => { $('#inviteQuery').value = ''; $('#inviteEnabled').value = ''; apply(); };
-    $('[data-refresh="invites"]', root).onclick = fetchInvites;
+    bindRefresh($('[data-refresh="invites"]', root), fetchInvites);
     $('#addInvite').onclick = createInvite;
     await fetchInvites();
   }
@@ -1384,7 +1404,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
         <div id="announcementTable" data-table>${skeletonMarkup()}</div>
       </div>`;
     $('#addAnnouncement').onclick = () => editAnnouncement();
-    $('[data-refresh="announcements"]', root).onclick = fetchAnnouncements;
+    bindRefresh($('[data-refresh="announcements"]', root), fetchAnnouncements);
     $$('[data-seg="announcementStatus"]', root).forEach(button => button.onclick = () => {
       filters.status = button.dataset.value;
       $$('[data-seg="announcementStatus"]', root).forEach(item => item.setAttribute('aria-pressed', String(item === button)));
@@ -1463,7 +1483,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     const head = pageHead('credentialsTitle', '渠道与 Key', '管理上游渠道和不同权限的 API Key，并检查每个 Key 可调用的模型', `${refreshButton('credentials')}<button class="btn btn-primary" id="addCredential" type="button">${icon('plus')}新增渠道 Key</button>`);
     if (!$('#credentialTable', root)) root.innerHTML = `${head}<div class="panel"><p class="panel-note">${icon('info')}Key 仅显示掩码。停用 Key 后，关联线路会被自动跳过。</p><div id="credentialTable" data-table>${skeletonMarkup()}</div></div>`;
     $('#addCredential').onclick = addCredential;
-    $('[data-refresh="credentials"]', root).onclick = loadCredentials;
+    bindRefresh($('[data-refresh="credentials"]', root), loadCredentials);
     const table = $('#credentialTable');
     const token = nextRequest('credentials');
     markLoading(table);
@@ -2093,7 +2113,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     form.onsubmit = event => { event.preventDefault(); apply(); };
     $('#issueSource', form).onchange = $('#issueLevel', form).onchange = apply;
     $('[data-reset]', form).onclick = () => { Object.assign(filters, { source: '', level: '', query: '' }); loadIssues(); };
-    $('[data-refresh="issues"]', root).onclick = () => fetchIssues();
+    bindRefresh($('[data-refresh="issues"]', root), () => fetchIssues());
     $('[data-resolve-all]', root).onclick = resolveAllIssues;
     bindIssueTabs();
     await fetchIssues();
@@ -2386,7 +2406,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
       };
     });
     renderFilters();
-    $('[data-refresh="logs"]', root).onclick = fetchLogs;
+    bindRefresh($('[data-refresh="logs"]', root), fetchLogs);
     await fetchLogs();
   }
 

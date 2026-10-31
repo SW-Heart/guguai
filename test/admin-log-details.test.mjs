@@ -80,7 +80,7 @@ test('sticky table header matches horizontal scrolling, mobile navigation and re
 
 test('new log presentation is reachable through fresh cached entries', () => {
   const read = path => readFileSync(new URL(`../public/${path}`, import.meta.url), 'utf8');
-  assert.match(read('guguadmin.html'), /\/guguadmin\.js\?v=78"/);
+  assert.match(read('guguadmin.html'), /\/guguadmin\.js\?v=79"/);
   assert.match(read('guguadmin.html'), /\/guguadmin\.css\?v=39"/);
   assert.match(read('guguadmin.js'), /features\/admin\/log-details\.js\?v=1/);
   assert.match(read('guguadmin.html'), /id="logDetailDrawer"/);

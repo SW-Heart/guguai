@@ -71,7 +71,7 @@ test('brand names remain readable and matching logos exist with safe fallback',(
 test('text-model frontend cache chains include their versioned imports and admin entry',async()=>{
  const {readFile}=await import('node:fs/promises');
  const read=name=>readFile(new URL('../public/'+name,import.meta.url),'utf8');
- assert.match(await read('guguadmin.html'),/guguadmin.js\?v=78/);
+ assert.match(await read('guguadmin.html'),/guguadmin.js\?v=79/);
  assert.match(await read('guguadmin.html'),/guguadmin.css\?v=39/);
  assert.match(await read('guguadmin.js'),/features\/admin\/text-models.js\?v=5/);
  assert.match(await read('features/admin/text-models.js'),/text-models.js\?v=2/);

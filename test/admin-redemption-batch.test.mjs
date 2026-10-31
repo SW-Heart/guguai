@@ -23,5 +23,5 @@ test('redemption creation asks only for credits and quantity and sends those val
 
 test('admin entry references the current bulk-creation script', () => {
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=78"/);
+  assert.match(html, /\/guguadmin\.js\?v=79"/);
 });

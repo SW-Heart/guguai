@@ -69,6 +69,6 @@ test('range control summarizes custom dates and current entries have fresh cache
   const { context } = fixture();
   assert.equal(context.logTimeRangeLabel({ from:'2026-10-01T09:30', to:'2026-10-02T12:00' }), '2026/10/01 09:30 至 2026/10/02 12:00');
   const html = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(html, /\/guguadmin\.js\?v=78"/);
+  assert.match(html, /\/guguadmin\.js\?v=79"/);
   assert.match(html, /\/guguadmin\.css\?v=39"/);
 });
