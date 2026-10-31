@@ -100,3 +100,8 @@ test('packaged desktop keeps a single instance so updaters never share the pendi
   assert.match(desktopMain, /app\.on\('second-instance', \(\) => \{\s*if \(mainWindow && !mainWindow\.isDestroyed\(\)\) showMainWindow\(\);/);
   assert.match(desktopMain, /if \(singleInstance\) app\.whenReady\(\)\.then\(bootstrap\)/);
 });
+
+test('automatic update download failures surface through the error event, not as unhandled rejections', () => {
+  assert.match(desktopMain, /const result = await autoUpdater\.checkForUpdates\(\);\s*(?:\/\/.*\n\s*)*result\?\.downloadPromise\?\.catch\?\.\(\(\) => \{\}\);/);
+  assert.match(desktopMain, /autoUpdater\.on\('error', error => sendUpdateStatus\('error', \{ message: error\.message \}\)\);/);
+});

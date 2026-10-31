@@ -1285,6 +1285,9 @@ async function checkForUpdates({ promptOnStartup = false } = {}) {
     if (!updateConfigured) return { status: 'unconfigured' };
     updateCheckScheduler.recordCheck();
     const result = await autoUpdater.checkForUpdates();
+    // 自动下载失败时 electron-updater 已经通过 error 事件把状态推给界面，
+    // 这里只接住返回的下载 Promise，免得同一次失败再记成未处理异常。
+    result?.downloadPromise?.catch?.(() => {});
     return { status: result?.isUpdateAvailable ? 'available' : 'current', version: result?.updateInfo?.version || '' };
   } catch (error) {
     sendUpdateStatus('error', { message: error.message });
