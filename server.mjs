@@ -4,7 +4,8 @@ import { speechModels } from './public/features/speech/catalog.js';
 import { tuziImageRetryUrl } from './desktop/media-retry.mjs';
 import { editVideoLayers } from './services/agent-video-edit.mjs';
 import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
-import { createAgentGateway } from './lib/agent/gateway.mjs';
+import { textModels } from './lib/text-models.mjs';
+import { createAgentGateway, agentConfig } from './lib/agent/gateway.mjs';
 import { createAgentSkills } from './lib/agent/skills.mjs';
 import { createAgentTools } from './lib/agent/tools.mjs';
 import { createModelExperienceRepository } from './repositories/model-experience.mjs';
@@ -3074,7 +3075,9 @@ function startApiPlatformSweeper() {
 }
 
 
-const agentGateway = createAgentGateway();
+const legacyAgentGateway = createAgentGateway({config:agentConfig(runtimeBootstrapEnabled&&textModels.get().version?{...process.env,AGENT_MODEL:'configured',AGENT_MODELS:'',AGENT_MODEL_CONTEXT_WINDOWS:''}:process.env)});
+if(runtimeBootstrapEnabled&&!textModels.get().version)textModels.seed(await legacyAgentGateway.listModels(),llmRates);
+const agentGateway = runtimeBootstrapEnabled ? createAgentGateway({config:{...legacyAgentGateway.config,configured:Boolean(legacyAgentGateway.config.apiKey&&legacyAgentGateway.config.baseUrl!=='/v1')},catalog:()=>textModels.list()}) : legacyAgentGateway;
 const agentRepository = createAgentSessionRepository({ sql, tx });
 const projectListRoute = createProjectListRouteHandler({ sendJson, requireUser, requireDesktopWorkspaceScope, listDramaProjects,
   listCanvasProjects:(userId, scope) => agentRepository.listProjects(userId, scope) });
@@ -3177,7 +3180,7 @@ const agentTools = createAgentTools({
 });
 const agentRuntime = createAgentRuntime({
   repository:agentRepository, gateway:agentGateway, tools:agentTools, skills:agentSkills,
-  billing:{ rates:llmRates, reserve:reserveLlmCredits, settle:settleLlmCredits, release:releaseLlmCredits, reconcile:markLlmBillingReconcile },
+  billing:{ rates:llmRates, ratesFor:model=>textModels.rates(model,llmRates), reserve:reserveLlmCredits, settle:settleLlmCredits, release:releaseLlmCredits, reconcile:markLlmBillingReconcile },
   contextFor:async session => {
     const project = session.projectId ? await loadDramaProject(session.userId,session.projectId,session.scope) : null;
     return {

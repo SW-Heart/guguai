@@ -114,3 +114,9 @@ test('without the Clipboard API, copies through a temporary selection and report
   assert.deepEqual(errors,['复制失败，请重试']);
   assert.equal(button.getAttribute('aria-label'),'复制内容');
 });
+
+test('streaming replaces an unfinished fence header when it becomes a prose block',()=>{
+  const node=prose=>({classList:{contains:name=>name==='agent-code-block'||(prose&&name==='agent-text-block')}});
+  assert.equal(patchCodeBlock(node(false),node(true)),false);
+  assert.equal(patchCodeBlock(node(true),node(false)),false);
+});

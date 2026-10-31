@@ -58,7 +58,12 @@ function client(base) {
 test('admin HTTP permissions and core workflows', async t => {
   // Keep the startup catalog probe local so real provider responses cannot
   // overwrite the route availability used by these HTTP assertions.
+  let textTestFails=false;
   const catalog = createServer((_req, res) => {
+    if(_req.url==='/v1/chat/completions'){
+      res.setHeader('Content-Type','application/json');
+      res.end(JSON.stringify(textTestFails?{error:{message:'unavailable'}}:{choices:[{message:{content:'你好'},finish_reason:'stop'}]}));return;
+    }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ data: [
       ...DEFAULT_MODEL_ROUTES.map(route => ({ id: route.upstreamModelId })),
@@ -105,7 +110,7 @@ test('admin HTTP permissions and core workflows', async t => {
     .run({ userId: refundedUserId, docJson: paymentDoc });
   closeDatabase({ checkpoint: false });
 
-  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', DIW_API_BASE:catalogBase, WJ_API_BASE:catalogBase, CNTCN_API_BASE:catalogBase, DIW_KEY:'test-diw', DUOMI_API_KEY:'test-duomi', TUZI_DEFAULT_API_KEY:'test-tuzi', AUTODL_COMFYUI_KEY:'test-autodl', TTAPI_API_KEY:'test-ttapi', OAIAPI_GEMINI_KEY:'test-gemini', OAIAPI_VEO_KEY:'test-veo', OAIAPI_MINIMAX_KEY:'test-minimax', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['server.mjs'], { cwd: path.resolve(new URL('..', import.meta.url).pathname), env: { ...process.env, NODE_ENV: 'development', GUGU_TEST_ALLOW_BROWSER_WORKSPACE:'1', AGENT_API_BASE:catalogBase, AGENT_API_KEY:'test-text', AGENT_MODEL:'gpt-4o', AGENT_MODELS:'gpt-4o', DIW_API_BASE:catalogBase, WJ_API_BASE:catalogBase, CNTCN_API_BASE:catalogBase, DIW_KEY:'test-diw', DUOMI_API_KEY:'test-duomi', TUZI_DEFAULT_API_KEY:'test-tuzi', AUTODL_COMFYUI_KEY:'test-autodl', TTAPI_API_KEY:'test-ttapi', OAIAPI_GEMINI_KEY:'test-gemini', OAIAPI_VEO_KEY:'test-veo', OAIAPI_MINIMAX_KEY:'test-minimax', DATA_DIR: workDir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { child.kill('SIGTERM'); rmSync(workDir, { recursive: true, force: true }); });
   const base = await waitForServer(child, port);
   function markRouteAvailable(id = null) {
@@ -124,12 +129,32 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=69/);
+  assert.match(adminHtml, /guguadmin\.js\?v=78/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
   assert.ok(login.data.csrfToken);
   const csrf = login.data.csrfToken;
+  const textCatalog=await admin.call('/api/admin/text-models');
+  assert.equal(textCatalog.response.status,200);
+  const textInput={expectedVersion:textCatalog.data.version,items:[{id:'gpt-4o',label:'GPT 4o',enabled:true,sortOrder:10,contextWindow:256000,inputYuanPerMillion:2,outputYuanPerMillion:6,cacheReadYuanPerMillion:1,cacheCreationYuanPerMillion:2}]};
+  assert.equal((await admin.call('/api/admin/text-models',{method:'PUT',body:textInput})).response.status,403);
+  const savedTexts=await admin.call('/api/admin/text-models',{method:'PUT',headers:{Origin:base,'X-CSRF-Token':csrf},body:textInput});
+  assert.equal(savedTexts.response.status,200,JSON.stringify(savedTexts.data));
+  assert.equal(savedTexts.data.items[0].label,'GPT 4o');
+  assert.equal((await admin.call('/api/admin/text-models',{method:'PUT',headers:{Origin:base,'X-CSRF-Token':csrf},body:textInput})).response.status,409);
+
+
+  const testedText=await admin.call('/api/admin/text-models/test',{method:'POST',headers:{Origin:base,'X-CSRF-Token':csrf},body:{id:'gpt-4o',expectedVersion:savedTexts.data.version}});
+  assert.equal(testedText.response.status,200,JSON.stringify(testedText.data));
+  assert.equal(testedText.data.passed,true);
+  assert.ok(testedText.data.items[0].testedAt);
+  assert.equal(testedText.data.message,'测试成功，模型已可用');
+  textTestFails=true;
+  const failedText=await admin.call('/api/admin/text-models/test',{method:'POST',headers:{Origin:base,'X-CSRF-Token':csrf},body:{id:'gpt-4o',expectedVersion:testedText.data.version}});
+  assert.equal(failedText.response.status,200);
+  assert.equal(failedText.data.passed,false);
+  assert.equal(failedText.data.items[0].testedAt,null);
 
   const models = await admin.call('/api/admin/models');
   assert.equal(models.response.status, 200);
@@ -312,6 +337,75 @@ test('admin HTTP permissions and core workflows', async t => {
   const userCookie = userResponse.headers.get('set-cookie').split(';')[0];
 
   const userClient = client(base); userClient.cookie = userCookie;
+  await t.test('admin redemption codes can be managed and redeemed by a client account', async () => {
+    const headers = { Origin:base, 'X-CSRF-Token':csrf };
+    assert.equal((await admin.call('/api/admin/redemption-codes', { method:'POST', body:{ credits:10, quantity:1 } })).response.status, 403);
+    for (const credits of ['0', '-1', '1.1234567']) {
+      assert.equal((await admin.call('/api/admin/redemption-codes', { method:'POST', headers, body:{ credits, quantity:1 } })).response.status, 400);
+    }
+    const created = await admin.call('/api/admin/redemption-codes', { method:'POST', headers, body:{ credits:'12.5', quantity:3 } });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.data.redemptionCodes.length, 3);
+    assert.equal(new Set(created.data.redemptionCodes.map(item => item.code)).size, 3);
+    assert.ok(created.data.redemptionCodes.every(item => item.credits === 12.5 && item.maxUses === 1 && item.expiresAt === null));
+    const code = created.data.redemptionCodes[0].code;
+    const codePath = `/api/admin/redemption-codes/${code}`;
+    for (const quantity of [0, -1, 1.5, 1001, 'oops', true]) {
+      const invalid = await admin.call('/api/admin/redemption-codes', { method:'POST', headers, body:{ credits:10, quantity } });
+      assert.equal(invalid.response.status, 400);
+    }
+    const defaultQuantity = await admin.call('/api/admin/redemption-codes', { method:'POST', headers, body:{ credits:5 } });
+    assert.equal(defaultQuantity.response.status, 201);
+    assert.equal(defaultQuantity.data.redemptionCodes.length, 1);
+    openDatabase({ file:path.join(workDir, 'studio.db') });
+    sql(`CREATE TRIGGER reject_partial_redemption_batch BEFORE INSERT ON redemption_codes
+      WHEN NEW.credits_micro = 33000000 AND EXISTS(SELECT 1 FROM redemption_codes WHERE credits_micro = 33000000)
+      BEGIN SELECT RAISE(ABORT, 'test batch failure'); END`).run();
+    const auditCount = sql("SELECT COUNT(*) AS n FROM audit_events WHERE action = 'redemption.create'").get().n;
+    closeDatabase({ checkpoint:false });
+    try {
+      const failed = await admin.call('/api/admin/redemption-codes', { method:'POST', headers, body:{ credits:33, quantity:3 } });
+      assert.equal(failed.response.status, 500);
+      openDatabase({ file:path.join(workDir, 'studio.db') });
+      assert.equal(sql('SELECT COUNT(*) AS n FROM redemption_codes WHERE credits_micro = 33000000').get().n, 0);
+      assert.equal(sql("SELECT COUNT(*) AS n FROM audit_events WHERE action = 'redemption.create'").get().n, auditCount);
+    } finally {
+      openDatabase({ file:path.join(workDir, 'studio.db') });
+      sql('DROP TRIGGER reject_partial_redemption_batch').run();
+      closeDatabase({ checkpoint:false });
+    }
+    assert.equal((await userClient.call('/api/admin/redemption-codes')).response.status, 401);
+    const register = await fetch(`${base}/api/auth/register`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ username:'redeem_client_account', password:'redeem-password-123' }) });
+    assert.equal(register.status, 201);
+    const redeemer = client(base); redeemer.cookie = register.headers.get('set-cookie').split(';')[0];
+    await register.json();
+    assert.equal((await admin.call(codePath, { method:'PATCH', headers, body:{ enabled:false } })).response.status, 200);
+    assert.equal((await redeemer.call('/api/credits/redeem', { method:'POST', body:{ code } })).response.status, 409);
+    await admin.call(codePath, { method:'PATCH', headers, body:{ enabled:true } });
+    const result = await redeemer.call('/api/credits/redeem', { method:'POST', body:{ code:code.toLowerCase() } });
+    assert.equal(result.response.status, 200);
+    assert.equal(result.data.balance, 12.5);
+    assert.equal(result.data.credits, 12.5);
+    assert.equal((await redeemer.call('/api/credits/redeem', { method:'POST', body:{ code } })).response.status, 409);
+    const listed = await admin.call(`/api/admin/redemption-codes?query=${code}`);
+    assert.equal(listed.data.items[0].usedCount, 1);
+    assert.equal(listed.data.items[0].remaining, 0);
+    const another = client(base);
+    const otherRegister = await fetch(`${base}/api/auth/register`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ username:'redeem_second_account', password:'redeem-password-123' }) });
+    assert.equal(otherRegister.status, 201);
+    another.cookie = otherRegister.headers.get('set-cookie').split(';')[0];
+    await otherRegister.json();
+    assert.equal((await another.call('/api/credits/redeem', { method:'POST', body:{ code } })).response.status, 409);
+    const secondCode = created.data.redemptionCodes[1].code;
+    const secondResult = await another.call('/api/credits/redeem', { method:'POST', body:{ code:secondCode } });
+    assert.equal(secondResult.response.status, 200);
+    assert.equal(secondResult.data.balance, 12.5);
+    const uses = await admin.call(`${codePath}/uses`);
+    assert.equal(uses.data.items.length, 1);
+    assert.equal(uses.data.items[0].credits, 12.5);
+    const credits = await redeemer.call('/api/credits');
+    assert.ok(credits.data.transactions.some(entry => entry.type === 'code_redemption' && entry.amount === 12.5));
+  });
   const quote = await userClient.call('/api/model-quote', { method:'POST', body:{ modelId:'grok', generationType:'TEXT', quality:'720p', duration:10, aspectRatio:'16:9' } });
   assert.equal(quote.response.status, 200);
   assert.equal(quote.data.credits, 27.5);
@@ -469,7 +563,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.ok(seededIssue);
   assert.equal(seededIssue.userCount, 1);
   const reported = await fetch(`${base}/api/errors`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ reports: [
-    { kind: 'error', message: 'TypeError: x is undefined', stack: 'TypeError: x is undefined\n    at render (http://127.0.0.1/app.js?v=616:10:2)', source: `${base}/app.js?v=616` },
+    { kind: 'error', message: 'TypeError: x is undefined', stack: 'TypeError: x is undefined\n    at render (http://127.0.0.1/app.js?v=635:10:2)', source: `${base}/app.js?v=635` },
     { kind: 'error', message: 'Script error.' },
   ] }) });
   assert.equal(reported.status, 200);
@@ -477,7 +571,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.deepEqual(webIssues.data.items.map(item => [item.category, item.message, item.location]), [['web.error', 'TypeError: x is undefined', 'render app.js']]);
   const issueDetail = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`);
   assert.equal(issueDetail.data.events.length, 1);
-  assert.equal(issueDetail.data.events[0].details.source, `${base}/app.js?v=616`);
+  assert.equal(issueDetail.data.events[0].details.source, `${base}/app.js?v=635`);
   const ignored = await admin.call(`/api/admin/error-issues/${webIssues.data.items[0].fingerprint}`, { method: 'PATCH', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { status: 'ignored', note: '浏览器插件导致' } });
   assert.equal(ignored.response.status, 200);
   assert.equal(ignored.data.issue.status, 'ignored');

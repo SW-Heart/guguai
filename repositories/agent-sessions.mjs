@@ -102,7 +102,7 @@ export function createAgentSessionRepository({ sql, tx }) {
   function listProjects(userId,scope){
     // Earlier standalone conversations become projects on first visit.
     tx(()=>{
-      const legacy=sql("SELECT s.id,(SELECT text FROM agent_inputs WHERE session_id=s.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions s WHERE s.user_id=:userId AND s.device_id=:deviceId AND s.workspace_id=:workspaceId AND s.project_id='' AND s.agent_project_id='' AND (EXISTS(SELECT 1 FROM agent_inputs WHERE session_id=s.id) OR EXISTS(SELECT 1 FROM agent_canvases WHERE session_id=s.id))").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId});
+      const legacy=sql("SELECT s.id,(SELECT text FROM agent_inputs WHERE session_id=s.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions s WHERE s.user_id=:userId AND s.device_id=:deviceId AND s.workspace_id=:workspaceId AND s.project_id='' AND s.agent_project_id='' AND COALESCE(json_extract(s.settings_json,'$.mode'),'creative')!='assistant' AND (EXISTS(SELECT 1 FROM agent_inputs WHERE session_id=s.id) OR EXISTS(SELECT 1 FROM agent_canvases WHERE session_id=s.id))").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId});
       for(const item of legacy){const project=createProject(userId,scope,messageTitle(item.title)||'旧对话');sql('UPDATE agent_sessions SET agent_project_id=:projectId WHERE id=:id').run({projectId:project.id,id:item.id});sql('INSERT INTO agent_project_canvases(project_id,data_json,revision,updated_at) SELECT :projectId,data_json,revision,updated_at FROM agent_canvases WHERE session_id=:id').run({projectId:project.id,id:item.id});}
     });
     return sql("SELECT p.*, (SELECT s.id FROM agent_sessions s WHERE s.agent_project_id=p.id ORDER BY s.updated_at DESC LIMIT 1) AS session_id, (SELECT text FROM agent_inputs i JOIN agent_sessions s ON s.id=i.session_id WHERE s.agent_project_id=p.id ORDER BY i.seq LIMIT 1) AS first_text, COALESCE((SELECT MAX(s.updated_at) FROM agent_sessions s WHERE s.agent_project_id=p.id),p.updated_at) AS activity_at FROM agent_projects p WHERE p.user_id=:userId AND p.device_id=:deviceId AND p.workspace_id=:workspaceId ORDER BY activity_at DESC,p.id DESC").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId}).map(row=>({...projectRow(row),title:row.title==='新项目'&&row.first_text?messageTitle(row.first_text)||row.title:row.title,updatedAt:row.activity_at}));
@@ -124,7 +124,13 @@ export function createAgentSessionRepository({ sql, tx }) {
     });
   }
   function list(userId, scope, projectId) {
-    return sql('SELECT id,state,updated_at,(SELECT text FROM agent_inputs WHERE session_id=agent_sessions.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions WHERE user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND project_id=:projectId AND EXISTS (SELECT 1 FROM agent_inputs WHERE session_id=agent_sessions.id) ORDER BY updated_at DESC,id DESC LIMIT 100').all({userId, deviceId:scope.deviceId, workspaceId:scope.workspaceId, projectId}).map(row => ({id:row.id, title:messageTitle(row.title) || '新对话', state:row.state, updatedAt:row.updated_at}));
+    return sql("SELECT id,state,updated_at,(SELECT text FROM agent_inputs WHERE session_id=agent_sessions.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions WHERE user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND project_id=:projectId AND COALESCE(json_extract(settings_json,'$.mode'),'creative')!='assistant' AND EXISTS (SELECT 1 FROM agent_inputs WHERE session_id=agent_sessions.id) ORDER BY updated_at DESC,id DESC LIMIT 100").all({userId, deviceId:scope.deviceId, workspaceId:scope.workspaceId, projectId}).map(row => ({id:row.id, title:messageTitle(row.title) || '新对话', state:row.state, updatedAt:row.updated_at}));
+  }
+  function listAssistant(userId,scope) {
+    return sql("SELECT id,state,updated_at,settings_json,(SELECT text FROM agent_inputs WHERE session_id=agent_sessions.id ORDER BY seq LIMIT 1) AS first_text FROM agent_sessions WHERE user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND json_extract(settings_json,'$.mode')='assistant' ORDER BY updated_at DESC,rowid DESC LIMIT 100").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId}).map(row=>({id:row.id,state:row.state,updatedAt:row.updated_at,model:JSON.parse(row.settings_json).model,title:JSON.parse(row.settings_json).title||messageTitle(row.first_text)||'新对话'}));
+  }
+  function deleteAssistant(session) {
+    return sql("DELETE FROM agent_sessions WHERE id=:id AND user_id=:userId AND device_id=:deviceId AND workspace_id=:workspaceId AND json_extract(settings_json,'$.mode')='assistant'").run({id:session.id,userId:session.userId,deviceId:session.scope.deviceId,workspaceId:session.scope.workspaceId});
   }
   function listProjectSessions(userId,scope,agentProjectId){return sql("SELECT s.id,s.state,s.updated_at,(SELECT text FROM agent_inputs WHERE session_id=s.id ORDER BY seq LIMIT 1) AS title FROM agent_sessions s WHERE s.user_id=:userId AND s.device_id=:deviceId AND s.workspace_id=:workspaceId AND s.agent_project_id=:agentProjectId AND EXISTS(SELECT 1 FROM agent_inputs WHERE session_id=s.id) ORDER BY s.updated_at DESC LIMIT 100").all({userId,deviceId:scope.deviceId,workspaceId:scope.workspaceId,agentProjectId}).map(row=>({id:row.id,title:messageTitle(row.title)||'新对话',state:row.state,updatedAt:row.updated_at}));}
   function artifacts(session) {
@@ -279,6 +285,11 @@ export function createAgentSessionRepository({ sql, tx }) {
   }
   function settings(session, value) {
     return tx(() => {
+      if(session.settings.mode==='assistant' && value.model!==session.settings.model){
+        const current=get(session.id,session.userId,session.scope);
+        if(!current)throw Object.assign(new Error('对话不存在'),{statusCode:404});
+        if(current.leaseUntil>Date.now()||['running','queued','waiting_job'].includes(current.state))throw Object.assign(new Error('请等待回复结束后切换模型'),{statusCode:409});
+      }
       if (value.modelPreferences !== undefined) saveUserModelPreferences(session.userId, value.modelPreferences);
       sql('UPDATE agent_sessions SET settings_json=:settings WHERE id=:id').run({ id: session.id, settings: JSON.stringify(value) });
     });
@@ -322,5 +333,5 @@ export function createAgentSessionRepository({ sql, tx }) {
       sql("UPDATE agent_sessions SET doc_json=:doc,state='queued',wake_at=0,interrupted=0 WHERE id=:id").run({ id: session.id, doc: JSON.stringify(current.doc) });
     });
   }
-  return { get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, editCanvas, saveCanvas, editDocument, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
+  return { listAssistant, deleteAssistant, get, getForUser, create, list, listProjectSessions, getProject, createProject, renameProject, deleteProject, listProjects, artifacts, enqueue, inputs, messageInputs, canvas, editCanvas, saveCanvas, editDocument, readObservation, listObservations, saveObservation, listTranscripts, saveTranscript, settings, control, claim, save, release, renew, approve, userModelPreferences, saveUserModelPreferences };
 }

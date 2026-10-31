@@ -146,6 +146,46 @@ test('existing v1 database gains the WeChat payment table without changing its b
   }
 });
 
+test('existing v1 database adds redemption tables, preserving metadata and balances across restarts', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'redemption-schema-extension-'));
+  const file = path.join(dir, 'studio.db');
+  const userId = randomUUID();
+  const creator = await isolatedDbModule();
+  const reopener = await isolatedDbModule();
+  try {
+    const original = creator.openDatabase({ file });
+    original.exec('DROP TABLE redemption_code_uses; DROP TABLE redemption_codes;');
+    const createdAt = new Date().toISOString();
+    original.prepare(`INSERT INTO users(id, username, password_hash, credit_balance_micro, credit_held_micro, created_at, doc_json)
+      VALUES(:id, :username, 'test', 17250000, 2000000, :createdAt, :docJson)`)
+      .run({ id:userId, username:`migration-${userId}`, createdAt, docJson:JSON.stringify({ id:userId, credits:17.25 }) });
+    const user = original.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    const metadata = original.prepare('SELECT * FROM schema_migrations').all();
+    assert.equal(metadata[0].checksum, '9c3d92303b67350bfe587df0fef690017db492f1664b805671ec5085974c1e29');
+    creator.closeDatabase({ checkpoint:false });
+
+    const upgraded = reopener.openDatabase({ file });
+    assert.deepEqual(upgraded.prepare('SELECT * FROM schema_migrations').all(), metadata);
+    assert.deepEqual(upgraded.prepare('SELECT * FROM users WHERE id = ?').get(userId), user);
+    upgraded.prepare(`INSERT INTO redemption_codes(code, max_uses, credits_micro, created_at, updated_at)
+      VALUES('UPGRADE-TEST-CODE', 1, 5000000, :at, :at)`).run({ at:createdAt });
+    upgraded.prepare(`INSERT INTO redemption_code_uses(id, code, user_id, username_snapshot, credits_micro, used_at)
+      VALUES('upgrade-use', 'UPGRADE-TEST-CODE', :userId, 'migration', 5000000, :at)`).run({ userId, at:createdAt });
+    reopener.closeDatabase({ checkpoint:false });
+
+    const restarted = reopener.openDatabase({ file });
+    assert.equal(restarted.prepare('SELECT COUNT(*) AS count FROM redemption_codes').get().count, 1);
+    assert.equal(restarted.prepare('SELECT COUNT(*) AS count FROM redemption_code_uses').get().count, 1);
+    assert.deepEqual(restarted.prepare('SELECT * FROM schema_migrations').all(), metadata);
+    assert.deepEqual(restarted.prepare('SELECT * FROM users WHERE id = ?').get(userId), user);
+    assert.deepEqual(restarted.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    creator.closeDatabase({ checkpoint:false });
+    reopener.closeDatabase({ checkpoint:false });
+    rmSync(dir, { recursive:true, force:true });
+  }
+});
+
 test('existing R2 baseline adds the drama project revision column without losing data', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'drama-revision-migration-'));
   const file = path.join(dir, 'studio.db');

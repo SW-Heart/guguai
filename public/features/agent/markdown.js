@@ -1,5 +1,5 @@
 // HTML is always escaped; links accept only explicit web/mail protocols.
-import { renderCodeBlock } from './code-block.js?v=1';
+import { renderCodeBlock } from './code-block.js?v=2';
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const openingFence=line=>line.match(/^\s*(`{3,}|~{3,})(.*)$/);
 const closesFence=(line,fence)=>new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`).test(line);

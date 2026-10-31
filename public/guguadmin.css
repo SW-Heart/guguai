@@ -149,6 +149,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   min-width: 0;
   min-height: 36px;
   padding: 7px 11px;
+  padding-inline-start: var(--admin-input-leading-padding, 11px);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   color: var(--text);
@@ -164,9 +165,9 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .field input:disabled, .field select:disabled { color: var(--subtle); background: var(--surface-sunken); cursor: not-allowed; }
 .field select, .admin-dialog-field select { padding-right: 34px; appearance: none; -webkit-appearance: none; background-image: var(--select-arrow); background-position: right 10px center; background-repeat: no-repeat; background-size: 16px; cursor: pointer; }
 .field textarea, .admin-dialog-field textarea { min-height: 88px; resize: vertical; line-height: 1.55; }
-.search-input { position: relative; display: block; }
-.search-input .icon { position: absolute; top: 50%; left: 11px; color: var(--subtle); transform: translateY(-50%); pointer-events: none; }
-.field .search-input input { padding-left: 34px; }
+.search-input { --admin-input-leading-padding: 38px; position: relative; display: block; min-width: 0; }
+.search-input > .icon { position: absolute; top: 50%; left: 12px; width: 16px; height: 16px; color: var(--subtle); transform: translateY(-50%); pointer-events: none; transition: color var(--ease); }
+.search-input:focus-within > .icon { color: var(--brand); }
 .input-with-action { position: relative; display: block; }
 .input-with-action input { padding-right: 42px !important; }
 .input-action { position: absolute; top: 50%; right: 4px; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; transform: translateY(-50%); }
@@ -406,7 +407,19 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 
 /* Logs */
 #logPanel { border-radius: 16px; box-shadow: 0 4px 20px rgba(24, 24, 40, .035); }
-#logFilters { gap: 14px; padding: 20px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+#logFilters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+#logFilters .log-filter-row { display: flex; align-items: flex-end; flex-wrap: nowrap; gap: 10px; min-width: 0; padding: 3px 3px 8px; overflow-x: auto; overscroll-behavior-x: contain; }
+#logFilters .log-filter-row:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: var(--radius-sm); }
+#logFilters .log-filter-row > .field { flex: 1 1 130px; min-width: 120px; max-width: none; }
+#logFilters .log-filter-row > .field.is-wide { flex: 1.4 1 180px; min-width: 180px; }
+#logFilters .log-filter-row > .field.is-range { flex: 1.5 1 300px; min-width: 220px; }
+.log-time-trigger { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; width: 100%; padding: 7px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); font-size: 13px; text-align: left; }
+.log-time-trigger > .icon { flex: 0 0 16px; width: 16px; height: 16px; color: var(--subtle); }
+.log-time-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-time-trigger:hover { border-color: #c4c4cc; }
+.log-time-trigger:focus-visible { outline: 0; border-color: var(--brand); box-shadow: var(--ring); }
+#logFilters .log-filter-row > .toolbar-actions { display: flex; flex: 0 0 auto; flex-wrap: nowrap; gap: 8px; width: auto; margin-left: auto; }
+#logFilters .log-filter-row .btn { flex: 0 0 auto; white-space: nowrap; }
 #logPanel .pagination { padding: 16px 20px; background: var(--surface); }
 .log-table { min-width: 0; table-layout: fixed; }
 .log-table th, .log-table td { padding: 14px clamp(6px, 1vw, 16px); }
@@ -455,6 +468,37 @@ tr:hover .id-text .icon-button, .id-text .icon-button:focus-visible { opacity: 1
 .log-detail-head strong { color: var(--text-soft); font-weight: 600; }
 .log-detail-head > div { display: flex; align-items: center; gap: 8px; }
 .log-detail-panel pre { max-height: 380px; margin: 0; padding: 12px; overflow: auto; color: var(--text-soft); font: 12px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-summary-text { margin: 0; padding: 14px; color: var(--text-soft); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-table-region { position: relative; min-width: 0; }
+.log-sticky-header { position: sticky; z-index: 5; overflow: hidden; pointer-events: none; background: #f8f9fc; box-shadow: 0 1px 0 var(--line); }
+.log-table-region.has-sticky-header > .table-wrap > table > thead { opacity: 0; }
+.log-sticky-header table { margin: 0; }
+html:has(body.log-drawer-open) { scrollbar-gutter: stable; }
+body.log-drawer-open { overflow: hidden; }
+.log-detail-drawer { position: fixed; inset: 0 0 0 auto; width: min(680px, 100%); max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-left: 1px solid var(--line); border-radius: 0; color: var(--text); background: var(--surface); box-shadow: -16px 0 64px rgba(24, 24, 40, .14); overflow: hidden; }
+.log-detail-drawer[open] { display: flex; flex-direction: column; animation: log-drawer-in 200ms cubic-bezier(.2,.8,.2,1); }
+.log-detail-drawer::backdrop { background: rgba(24,24,27,.32); }
+@keyframes log-drawer-in { from { transform: translateX(32px); opacity: 0; } }
+.log-drawer-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line-soft); }
+.log-drawer-head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.log-drawer-body { flex: 1 1 auto; min-height: 0; padding: 24px; overflow-y: auto; overscroll-behavior: contain; }
+.log-drawer-body h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+.log-record-result { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); }
+.log-record-result.is-error { border-color: var(--danger-line); background: var(--danger-soft); }
+.log-record-result p { margin: 0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-record-info { margin: 24px 0; }
+.log-record-info dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; }
+.log-record-info dt { color: var(--muted); font-size: 12px; }
+.log-record-info dd { margin: 4px 0 0; color: var(--text); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-record-block { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.log-record-block summary { padding: 12px 14px; font-size: 13px; font-weight: 550; cursor: pointer; }
+.log-record-block pre { margin: 0; padding: 14px; border-top: 1px solid var(--line-soft); color: var(--text-soft); background: var(--surface-muted); font: 12px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-drawer-footer { display: flex; flex: none; justify-content: flex-end; padding: 16px 24px; border-top: 1px solid var(--line-soft); }
+@media (max-width: 640px) {
+  .log-drawer-head, .log-drawer-footer { padding: 16px; }
+  .log-drawer-body { padding: 16px; }
+  .log-record-info dl { grid-template-columns: 1fr; }
+}
 .cell-clip { display: block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 异常中心 */
@@ -763,7 +807,7 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover { opacity:
   .icon-button, .icon-button.is-xs { width: 44px; height: 44px; }
   .input, .field input:not([type="checkbox"]):not([type="radio"]), .field select, .field textarea,
   .admin-dialog-field input, .admin-dialog-field select, .admin-dialog-field textarea,
-  .select-trigger, .route-policy .select-trigger, .select-search input { min-height: 44px; font-size: 16px; }
+  .select-trigger, .route-policy .select-trigger, .select-search input, .log-time-trigger { min-height: 44px; font-size: 16px; }
   .select-option { min-height: 44px; }
   .select-option-text > span, .select-option-text small { white-space: normal; overflow-wrap: anywhere; }
   .select-search .icon { top: 17px; }
@@ -778,3 +822,5 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover { opacity:
 .log-table .log-elapsed.is-green { color: #16a34a; }
 .log-table .log-elapsed.is-yellow { color: #a16207; }
 .log-table .log-elapsed.is-red { color: #dc2626; }
+
+#view-textModels .model-logo{display:inline-grid;width:20px;height:20px;vertical-align:middle;margin-right:6px}#view-textModels .model-logo img{grid-area:1/1;width:100%;height:100%;object-fit:contain}#view-textModels .model-logo-night{display:none}#view-textModels .text-muted{padding:12px 18px;color:var(--muted);font-size:12px}

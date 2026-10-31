@@ -37,6 +37,19 @@ test('Markdown escapes HTML and disallows unsafe link protocols',()=>{
 });
 test('conversation assets use the updated cache chain',async()=>{
  const {readFile}=await import('node:fs/promises');
- const entries=[['public/features/agent/markdown.js',['./code-block.js?v=1']],['public/index.html',['/app.js?v=619','/styles.css?v=438']],['public/app.js',['./drama-studio.js?v=317','./features/agent/workspace.js?v=184']],['public/drama-studio.js',['./features/drama/director-workspace.js?v=208','./features/drama/local-snapshot.js?v=1']],['public/features/agent/workspace.js',['../drama/director-workspace.js?v=208','./project-loading.js?v=1','./default-title.js?v=1']],['public/features/drama/director-workspace.js',["./director-actions.js?v=21", "./canvas-generation.js?v=21", "./local-snapshot.js?v=1", "../agent/client.js?v=15", "../agent/project-loading.js?v=1", "../agent/markdown.js?v=3", "../agent/code-block.js?v=1", "../agent/stream-pacer.js?v=1", "../agent/reasoning-text.js?v=4", "../agent/message-scroller.js?v=7", "../agent/image-bounds.js?v=1", "../agent/frames.js?v=4", "../../vendor/director/reference-canvas.js?v=43"]]];
+ const entries=[['public/features/agent/markdown.js',['./code-block.js?v=2']],['public/index.html',['/app.js?v=635','/styles.css?v=439']],['public/app.js',['./drama-studio.js?v=320','./features/agent/workspace.js?v=187']],['public/drama-studio.js',['./features/drama/director-workspace.js?v=211','./features/drama/local-snapshot.js?v=1']],['public/features/agent/workspace.js',['../drama/director-workspace.js?v=211','./project-loading.js?v=1','./default-title.js?v=1']],['public/features/drama/director-workspace.js',["./director-actions.js?v=21", "./canvas-generation.js?v=21", "./local-snapshot.js?v=1", "../agent/client.js?v=15", "../agent/project-loading.js?v=1", "../agent/markdown.js?v=4", "../agent/code-block.js?v=2", "../agent/stream-pacer.js?v=1", "../agent/reasoning-text.js?v=4", "../agent/message-scroller.js?v=7", "../agent/image-bounds.js?v=1", "../agent/frames.js?v=4", "../../vendor/director/reference-canvas.js?v=43"]]];
  for(const [path,urls] of entries){const source=await readFile(new URL(`../${path}`,import.meta.url),'utf8');for(const url of urls)assert.ok(source.includes(url),`${path}: ${url}`);}
+});
+
+test('prompt and text outputs render independently copyable prose with safe titles during streaming and history',()=>{
+ const source='```prompt title="分镜 01"\n雨夜，女孩停步。\n逐字对白：“谁？”\n```\n\n```prompt title="<img src=x>"\n第二镜 & 尾声\n```\n\n```text title="剧本"\n第一场\n人物：对白\n```';
+ const html=renderMarkdown(source);
+ assert.equal((html.match(/agent-text-block/g)||[]).length,3);
+ assert.equal((html.match(/aria-label="复制内容"/g)||[]).length,3);
+ assert.ok(!html.includes('agent-code-language'));
+ assert.ok(!html.includes('<img'));
+ assert.ok(html.includes('<code>雨夜，女孩停步。\n逐字对白：“谁？”</code>'));
+ assert.ok(html.includes('class="agent-code-lines" aria-hidden="true"></span>'));
+ const [draft]=renderStreamingMarkdownBlocks('```prompt title="分镜 01"\n雨夜，女孩');
+ assert.match(draft,/agent-text-block/);assert.match(draft,/data-state="streaming"/);assert.match(draft,/<code>雨夜，女孩<\/code>/);
 });

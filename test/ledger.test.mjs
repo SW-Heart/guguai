@@ -284,3 +284,16 @@ test('ledger', async t => {
     }
   });
 });
+
+test('model-specific holds settle at their captured price after global or catalog prices change',async()=>{
+  freshDb();
+  try{
+    const userId=makeUser(100);
+    const selectedRates=llmRatesFromEnv({YUAN_PER_CREDIT:'.1',LLM_INPUT_PRICE_YUAN_PER_MILLION:'.5',LLM_OUTPUT_PRICE_YUAN_PER_MILLION:'1'});
+    await reserveLlmCredits(userId,'model-priced',1000000,{configuredModel:'selected-model',llmRates:selectedRates});
+    configureLedger({llmRates:llmRatesFromEnv({LLM_INPUT_PRICE_YUAN_PER_MILLION:'100',LLM_OUTPUT_PRICE_YUAN_PER_MILLION:'100'}),llmModel:'other-model'});
+    const settled=await settleLlmCredits(userId,'model-priced',llmResult(10000,3000),{configuredModel:'selected-model'});
+    assert.equal(settled.chargedMicro,80000);
+    assertInvariants(userId);
+  }finally{cleanupDb();}
+});

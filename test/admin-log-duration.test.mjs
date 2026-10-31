@@ -51,8 +51,8 @@ test('generation log places elapsed time after model and keeps detail rows align
 
 test('admin entry uses the fresh script cache key', () => {
   const entry = readFileSync(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.ok(entry.includes('/guguadmin.js?v=69'));
-  assert.ok(entry.includes('/guguadmin.css?v=34'));
+  assert.ok(entry.includes('/guguadmin.js?v=78'));
+  assert.ok(entry.includes('/guguadmin.css?v=39'));
   assert.ok(!entry.includes('/guguadmin.js?v=61'));
 });
 

@@ -78,11 +78,11 @@ function fixture() {
 }
 const answer = (content, tool_calls) => ({ message:{role:'assistant',content,...(tool_calls?{tool_calls}:{})},usage:{inputTokens:10,outputTokens:5},model:'test-model',providerRequestId:'req-1' });
 const call = (name,args,id='call-a')=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
-function runtimeFixture(f, complete, tools, skills = {search:async()=>[]}, model = 'test-model') {
+function runtimeFixture(f, complete, tools, skills = {search:async()=>[]}, model = 'test-model', waitForRetry = async()=>{}) {
   const counts={reserve:0,settle:0,reconcile:0,release:0};
   const billing={rates:llmRatesFromEnv(),...Object.fromEntries(Object.keys(counts).map(k=>[k,async()=>{counts[k]++;return {};}]))};
   const gateway={config:{model,maxTokens:1000},contextWindow:async()=>384000,complete};
-  const runtime=createAgentRuntime({repository:f.repo,gateway,tools:tools||{definitions:()=>[],images:async()=>[],get:()=>({}),execute:async()=>({ok:true})},skills,billing});
+  const runtime=createAgentRuntime({repository:f.repo,gateway,tools:tools||{definitions:()=>[],images:async()=>[],get:()=>({}),execute:async()=>({ok:true})},skills,billing,waitForRetry});
   return {runtime,counts};
 }
 
@@ -237,17 +237,38 @@ test('gateway normalizes custom endpoint and preserves selectable model IDs',asy
   await assert.rejects(gateway.complete({model:'not-in-catalog',messages:[],tools:[]}),/不可用/);
 });
 
-test('model windows use a 1M DeepSeek cap and require metadata for other models',async()=>{
+test('model windows preserve configured and reported limits and default to 256K without metadata',async()=>{
   assert.equal(agentConfig({}).modelContextWindows['deepseek-v4-flash'],1000000);
   const config=agentConfig({AGENT_API_BASE:'https://gateway.example',AGENT_API_KEY:'secret',AGENT_MODEL:'deepseek-v4-flash',AGENT_MODEL_CONTEXT_WINDOWS:'custom:32768'});
   const gateway=createAgentGateway({config,fetchImpl:async()=>new Response(JSON.stringify({data:[{id:'deepseek-v4-flash',context_window:1000000},{id:'custom',context_window:16000},{id:'unknown'}]}))});
   assert.equal(await gateway.contextWindow('deepseek-v4-flash'),1000000);
   assert.equal(await gateway.contextWindow('custom'),16000);
-  await assert.rejects(gateway.contextWindow('unknown'),/暂时无法使用/);
+  assert.equal(await gateway.contextWindow('unknown'),256000);
   assert.throws(()=>agentConfig({AGENT_MODEL_CONTEXT_WINDOWS:'broken'}),/配置无效/);
   const explicit=agentConfig({AGENT_API_BASE:'https://gateway.example',AGENT_API_KEY:'secret',AGENT_MODEL:'custom',AGENT_MODELS:'custom'});
   const discovered=createAgentGateway({config:explicit,fetchImpl:async()=>new Response(JSON.stringify({data:[{id:'custom',context_window:65536}]}))});
   assert.equal(await discovered.contextWindow('custom'),65536);
+});
+
+test('256K fallback handles missing, invalid and unavailable metadata without repeated discovery',async()=>{
+  const config=agentConfig({AGENT_API_BASE:'https://gateway.example',AGENT_API_KEY:'secret',AGENT_MODEL:'custom',AGENT_MODELS:'custom'});
+  for(const response of [
+    ()=>new Response(JSON.stringify({data:[{id:'custom'}]})),
+    ()=>new Response(JSON.stringify({data:[{id:'custom',context_window:'invalid'}]})),
+    ()=>new Response('',{status:503}),
+    ()=>{throw new Error('metadata unavailable');},
+  ]){
+    let calls=0;
+    const gateway=createAgentGateway({config,fetchImpl:async()=>{calls++;return response();}});
+    assert.equal(await gateway.contextWindow('custom'),256000);
+    assert.equal(await gateway.contextWindow('custom'),256000);
+    assert.equal(calls,1);
+    await assert.rejects(gateway.contextWindow('not-configured'),/不可用/);
+  }
+  const reported=createAgentGateway({config,fetchImpl:async()=>new Response(JSON.stringify({data:[{id:'custom',context_window:512000}]}))});
+  assert.equal(await reported.contextWindow('custom'),512000);
+  const configured=createAgentGateway({config:{...config,modelContextWindows:{custom:128000}},fetchImpl:async()=>{throw new Error('configured models need no discovery');}});
+  assert.equal(await configured.contextWindow('custom'),128000);
 });
 
 test('SSE handles split UTF-8 and multiple fragmented tool calls with trailing usage',async()=>{
@@ -1371,4 +1392,50 @@ test('document edit API saves only in the authenticated account and workspace',a
     const saved={};await route({method:'PATCH'},saved,url);assert.equal(saved.status,200);assert.equal(saved.data.document.text,input.text);assert.equal(saved.data.document.revision,2);
     assert.equal(f.get().doc.documents[0].text,input.text);
   }finally{f.db.close();}
+});
+
+test('HTTP 200 stream errors are not accepted as successful replies or repeatedly retried as empty output',async()=>{
+ const config={...agentConfig({AGENT_MODEL:'test-model',AGENT_MODELS:'test-model'}),configured:true};
+ const payload={error:{code:'service_capacity_unavailable',message:'private-token secret provider body'},usage:{prompt_tokens:0,completion_tokens:0}};
+ const gateway=createAgentGateway({config,fetchImpl:async()=>new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}})});
+ const response=await gateway.complete({model:'test-model',messages:[]});
+ assert.equal(response.invalidOutputReason,'upstream_error');assert.equal(response.upstreamError.code,'service_busy');
+ assert.doesNotMatch(JSON.stringify(response),/private-token|secret provider/);
+ const f=fixture();f.repo.enqueue(f.session,{clientId:'stream-error',text:'你好'});
+ let calls=0;const {runtime,counts}=runtimeFixture(f,async()=>{calls++;return response;});
+ try{await runtime.kick(f.session.id);assert.equal(f.get().state,'paused');assert.match(f.get().doc.lastError,/服务繁忙/);assert.equal(calls,3);assert.equal(counts.settle,3);assert.equal(f.get().doc.messages.some(m=>m.role==='assistant'),false);}finally{await runtime.stop();f.db.close();}
+});
+
+test('capacity failures retry with backoff and retain exactly one completed reply',async()=>{
+ const f=fixture();f.repo.enqueue(f.session,{clientId:'capacity-recovery',text:'你好'});
+ const delays=[];let calls=0;
+ const {runtime,counts}=runtimeFixture(f,async()=>{
+  calls++;
+  return calls<3?{message:{role:'assistant',content:null},usage:{inputTokens:0,outputTokens:0},invalidOutput:true,upstreamError:{code:'service_busy',message:'这个模型当前服务繁忙，请稍后重试或切换模型。',retryable:true}}:answer('恢复后的回复');
+ },undefined,undefined,'test-model',async(ms,signal)=>{delays.push(ms);assert.equal(signal.aborted,false);assert.match(f.get().doc.activity,/正在重试/);});
+ try{await runtime.kick(f.session.id);assert.equal(f.get().state,'completed');assert.deepEqual(delays,[1000,2000]);assert.equal(calls,3);assert.equal(counts.settle,3);assert.equal(f.get().doc.messages.filter(m=>m.role==='user').length,1);assert.deepEqual(f.get().doc.messages.filter(m=>m.role==='assistant').map(m=>m.content),['恢复后的回复']);}finally{await runtime.stop();f.db.close();}
+});
+
+test('gateway retries temporary HTTP failures but not invalid requests or credentials',async()=>{
+ const config={...agentConfig({AGENT_MODEL:'m',AGENT_MODELS:'m'}),configured:true};
+ for(const status of [400,401,403,404,408,429,503]){
+  const gateway=createAgentGateway({config,fetchImpl:async()=>new Response('private-provider-details',{status})});
+  await assert.rejects(gateway.complete({model:'m',messages:[]}),error=>{
+   assert.equal(error.retryableReply,[408,429,503].includes(status));assert.doesNotMatch(error.message,/private-provider/);return true;
+  });
+ }
+});
+
+test('cancelling during retry backoff prevents another model request',async()=>{
+ const f=fixture();f.repo.enqueue(f.session,{clientId:'cancel-retry',text:'你好'});let calls=0;
+ let runtime;
+ ({runtime}=runtimeFixture(f,async()=>{calls++;throw Object.assign(new Error('连接中断'),{beforeRequest:true,retryableReply:true});},undefined,undefined,'test-model',async(_ms,signal)=>{runtime.interrupt(f.session.id);assert.equal(signal.aborted,true);throw Object.assign(new Error('已停止'),{name:'AbortError'});}));
+ try{await runtime.kick(f.session.id);assert.equal(calls,1);assert.equal(f.get().state,'paused');}finally{await runtime.stop();f.db.close();}
+});
+
+test('resource shortages reported as api_error also enable bounded busy retries',async()=>{
+ const config={...agentConfig({AGENT_MODEL:'m',AGENT_MODELS:'m'}),configured:true};
+ const payload={error:{type:'api_error',message:'资源不足,稍后再试 (private request details)'},usage:{prompt_tokens:0,completion_tokens:0}};
+ const gateway=createAgentGateway({config,fetchImpl:async()=>new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}})});
+ const result=await gateway.complete({model:'m',messages:[]});assert.equal(result.upstreamError.retryable,true);assert.equal(result.upstreamError.code,'service_busy');assert.doesNotMatch(JSON.stringify(result),/private request details/);
 });

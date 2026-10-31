@@ -77,7 +77,7 @@ test('the sidebar lists 创作, 项目 and 文件库, with 图像 and 视频 und
   const html = read('index.html');
   const rail = html.slice(html.indexOf('<div class="rail-nav">'), html.indexOf('<div class="rail-footer">'));
   const routes = [...rail.matchAll(/data-route="(\w+)" data-rail-tip="([^"]+)"/g)].map(match => `${match[1]}:${match[2]}`);
-  assert.deepEqual(routes, ['agent:创作', 'drama:项目', 'files:文件库', 'image:图像', 'video:视频']);
+  assert.deepEqual(routes, ['agent:创作', 'drama:项目', 'files:文件库', 'image:图像', 'video:视频', 'assistant:通用助手']);
   const group = rail.slice(rail.indexOf('class="rail-group"'));
   assert.match(group, /<span id="railQuickTitle" class="rail-group-title">快速创作<\/span>/);
   assert.ok(group.includes('data-route="image"') && group.includes('data-route="video"'));
@@ -100,8 +100,8 @@ test('the 创作 home offers project creation, a quiet one-line start and a side
 
 test('changed frontend modules are reachable through current cache keys', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=619', '/styles.css?v=438']],
-    ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=184', './drama-studio.js?v=317']],
+    ['index.html', ['/app.js?v=635', '/styles.css?v=439']],
+    ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=187', './drama-studio.js?v=320']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8', '../../vendor/ui/create-project.js?v=5']],
     ['features/projects/library.js', ['../../vendor/ui/create-project.js?v=5']],
   ]) {

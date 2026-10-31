@@ -12,7 +12,8 @@ import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=5';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=6';
 import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=2';
-import { createCreditPresentation } from './features/credits/presentation.js?v=6';
+import { createCreditPresentation } from './features/credits/presentation.js?v=7';
+import { createCreditRedemptionController } from './features/credits/redemption.js?v=1';
 import { createPromptEditorCodec, linkTextMentions, pastePlainText, textMentionEntries } from './components/prompt-editor.js?v=3';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=10';
@@ -51,7 +52,7 @@ const failedWorkRetentionMs = 5 * 60 * 1000;
 const transientFailureDeadlines = new Map();
 const transientFailureTimers = new Map();
 // The 创作 home keeps the internal route name "agent"; the 项目 page keeps "drama".
-const routePaths = Object.freeze({ agent:'/create', image:'/image', video:'/video', drama:'/projects', files:'/files' });
+const routePaths = Object.freeze({ agent:'/create', assistant:'/assistant', image:'/image', video:'/video', drama:'/projects', files:'/files' });
 const legacyRoutePaths = Object.freeze({ '/agent':'agent', '/lab':'agent', '/drama':'drama' });
 const authPath = '/login';
 const dramaProjectPath = /^\/projects\/drama(?:\/([\w-]+))?\/?$/;
@@ -962,6 +963,13 @@ function selectedWechatAmount() {
 function validWechatAmount(value) {
   return /^\d{1,5}$/.test(value) && Number(value) >= 1 && Number(value) <= 10000;
 }
+function wechatAmountError(value) {
+  if (validWechatAmount(value)) return '';
+  if (/^\d+(?:\.\d+)?$/.test(value) && Number(value) > 10000) return '金额不能超过 10,000 元';
+  if (/^-?\d+(?:\.\d+)?$/.test(value) && Number(value) < 1) return '金额不能低于 1 元';
+  if (/^\d+\.\d+$/.test(value)) return '请输入整数金额，不支持小数';
+  return '请输入 1–10,000 元的整数金额';
+}
 function renderCreditPurchase() {
   const rate = Number(state.pricing?.yuanPerCredit) || .1;
   $$('[data-alipay-credits]').forEach(button => {
@@ -985,17 +993,22 @@ function renderCreditPurchase() {
   $('#wechatAmountPackages').hidden = !wechat;
   $('#wechatCustomAmountField').hidden = !wechat;
   $$('[data-wechat-amount]').forEach(button => {
-    const selected = button.dataset.wechatAmount === state.wechatTopupAmount;
+    const selected = !state.wechatCustomAmount.trim() && button.dataset.wechatAmount === state.wechatTopupAmount;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-checked', String(selected));
-    button.tabIndex = selected ? 0 : -1;
+    button.tabIndex = button.dataset.wechatAmount === state.wechatTopupAmount ? 0 : -1;
   });
   const amount = selectedWechatAmount();
   const valid = validWechatAmount(amount);
+  const error = wechat && state.wechatCustomAmount.trim() ? wechatAmountError(amount) : '';
+  $('#wechatCustomAmountError').textContent = error;
+  $('#wechatCustomAmount').setAttribute('aria-invalid', String(Boolean(error)));
+  const purchaseButton = $('#alipayTopupButton');
+  purchaseButton.disabled = (wechat && !valid) || purchaseButton.getAttribute('aria-busy') === 'true';
   const selectedCredits = wechat ? (valid ? Math.round(Number(amount) * 100) / 10 : 0) : state.alipayTopupCredits;
-  $('#alipayTopupAmount').textContent = wechat ? (valid ? `¥${Number(amount).toFixed(2)}` : '请输入金额') : `¥${(selectedCredits * rate).toFixed(2)}`;
+  $('#alipayTopupAmount').textContent = wechat ? (valid ? `¥${Number(amount).toFixed(2)}` : '—') : `¥${(selectedCredits * rate).toFixed(2)}`;
   const meta = $('#alipayTopupMeta');
-  if (meta) meta.textContent = `${creditText(selectedCredits)} 积分 · 1 元 = ${creditText(wechat ? 10 : 1 / rate)} 积分`;
+  if (meta) meta.textContent = `${wechat && !valid ? '' : `${creditText(selectedCredits)} 积分 · `}1 元 = ${creditText(wechat ? 10 : 1 / rate)} 积分`;
   const balance = $('#creditPurchaseBalance');
   if (balance) balance.textContent = creditText(state.credits);
   $('#alipayRefreshPayment').classList.toggle('hidden', !state.alipayOrderNo);
@@ -1109,13 +1122,17 @@ async function startAlipayTopup() {
   const requestAccount = accountScope.snapshot();
   const button = $('#alipayTopupButton');
   const retryButton = $('#wechatPayCheck');
-  for (const target of [button, retryButton]) { target.disabled = true; target.setAttribute('aria-busy', 'true'); }
   const provider = state.purchaseProvider === 'wechat' ? 'wechat' : 'alipay';
+  const amount = selectedWechatAmount();
+  if (provider === 'wechat' && !validWechatAmount(amount)) {
+    renderCreditPurchase();
+    $('#wechatCustomAmount').focus();
+    return;
+  }
+  for (const target of [button, retryButton]) { target.disabled = true; target.setAttribute('aria-busy', 'true'); }
   const methodLabel = provider === 'wechat' ? '微信' : '支付宝';
   setAlipayStatus(`正在创建${methodLabel}支付订单…`);
   try {
-    const amount = selectedWechatAmount();
-    if (provider === 'wechat' && !validWechatAmount(amount)) throw new Error('请输入 1–10000 元的整数金额');
     const input = provider === 'wechat' ? { amount } : { credits:state.alipayTopupCredits };
     const result = await api(`/api/payments/${provider}/orders`, { method:'POST', body:JSON.stringify(input) });
     if (!accountScope.isCurrent(requestAccount)) return;
@@ -1136,7 +1153,10 @@ async function startAlipayTopup() {
     scheduleAlipayPaymentPolling();
   } catch (error) {
     if (accountScope.isCurrent(requestAccount)) setAlipayStatus(error.message || '支付订单创建失败', 'error');
-  } finally { for (const target of [button, retryButton]) { target.disabled = false; target.removeAttribute('aria-busy'); } }
+  } finally {
+    for (const target of [button, retryButton]) { target.disabled = false; target.removeAttribute('aria-busy'); }
+    renderCreditPurchase();
+  }
 }
 function setCreditDetailTab(tab) { state.creditDetailTab = tab === 'earn' ? 'earn' : 'spend'; creditDetailPage = 1; renderCreditDetail(); }
 // The sidebar shows a short balance; the full value stays available to
@@ -1274,6 +1294,7 @@ async function openCreditDetail() {
 }
 async function openCreditPurchase() {
   const dialog = $('#creditPurchaseDialog'); if (!dialog || dialog.open) return;
+  creditRedemption.reset();
   const active = document.activeElement;
   state.creditPurchaseRestoreFocus = active?.closest?.('#creditDetailEntry, #creditDetailPurchase, #creditPopoverPurchase') ? $('#creditBalance') : active;
   setNotificationPanelOpen(false);
@@ -1287,6 +1308,12 @@ async function openCreditPurchase() {
   await loadCredits();
 }
 const creditControl = $('#creditControl');
+const creditRedemption = createCreditRedemptionController({ api, accountScope, formatCredits:creditText,
+  onRedeemed(result) {
+    state.creditTransactionsLoaded = false;
+    setCreditBalance(result.balance);
+  },
+});
 ensureCreditPopoverEntry();
 creditControl?.addEventListener('mouseenter', () => setCreditPopoverOpen(true));
 creditControl?.addEventListener('mouseleave', scheduleCreditPopoverClose);
@@ -1316,7 +1343,7 @@ function bindPurchaseRadioGroup(selector, select) {
   });
 }
 bindPurchaseRadioGroup('[data-alipay-credits]', button => { state.alipayTopupCredits = Number(button.dataset.alipayCredits); setAlipayStatus(); renderCreditPurchase(); });
-bindPurchaseRadioGroup('[data-wechat-amount]', button => { state.wechatTopupAmount = button.dataset.wechatAmount; setAlipayStatus(); renderCreditPurchase(); });
+bindPurchaseRadioGroup('[data-wechat-amount]', button => { state.wechatTopupAmount = button.dataset.wechatAmount; state.wechatCustomAmount = ''; $('#wechatCustomAmount').value = ''; setAlipayStatus(); renderCreditPurchase(); });
 $('#wechatCustomAmount').oninput = event => { state.wechatCustomAmount = event.target.value; setAlipayStatus(); renderCreditPurchase(); };
 bindPurchaseRadioGroup('[data-payment-provider]', button => { state.purchaseProvider = button.dataset.paymentProvider === 'wechat' ? 'wechat' : 'alipay'; renderCreditPurchase(); });
 $('#alipayTopupButton').onclick = () => { void startAlipayTopup(); };
@@ -1648,6 +1675,7 @@ function clearDesktopAccountState() {
   });
   dramaCreateDialog.close();
   dramaController?.resetForAccount?.();
+  assistantController?.dispose();assistantController=null;
   projectLibrary.reset();
   notificationController.closeNotificationDialog();
   resetAccountState(state);
@@ -2238,11 +2266,20 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=184');
-const importDramaStudio = () => import('./drama-studio.js?v=317');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=187');
+const importDramaStudio = () => import('./drama-studio.js?v=320');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
+}
+let assistantController = null;
+let assistantStyles;
+function loadAssistantStyles() {
+  if(!assistantStyles)assistantStyles=new Promise((resolve,reject)=>{
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/features/assistant/workspace.css?v=14';
+    link.onload=resolve;link.onerror=()=>{link.remove();assistantStyles=null;reject(new Error('页面样式加载失败，请重试'));};document.head.append(link);
+  });
+  return assistantStyles;
 }
 let agentController = null;
 let agentControllerPromise = null;
@@ -2332,6 +2369,13 @@ function scheduleRouteContentRender(route, routeChanged) {
       if (epoch !== routeRenderEpoch || state.route !== route) return;
       if (route === 'files') {
         renderFiles();
+        return;
+      }
+      if (route === 'assistant') {
+        void Promise.all([import('./features/assistant/workspace.js?v=17'),loadAssistantStyles()]).then(([{mountAssistant}])=>{
+          if(epoch!==routeRenderEpoch||state.route!=='assistant')return;
+          if(!assistantController)assistantController=mountAssistant({host:$('#assistantView'),api,toast,setCreditBalance});
+        }).catch(error=>toast(`助手打开失败：${error.message}`));
         return;
       }
       if (route === 'agent') {
@@ -2430,6 +2474,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
   if (creativeRoutes.includes(state.route) && !creativeRoutes.includes(nextRoute)) agentController?.suspend?.();
   else if (state.route === 'project' && nextRoute === 'agent') agentController?.showHome?.();
   else if (nextRoute === 'project') agentController?.prepareProject?.(window.location.pathname.split('/').filter(Boolean).at(-1));
+  if (state.route === 'assistant' && nextRoute !== 'assistant'){assistantController?.dispose();assistantController=null;}
   if (state.route === 'drama' && nextRoute !== 'drama') dramaController?.suspend?.();
   // Keep an open short-drama path on load and back/forward; a sidebar click shows the list.
   const keepDramaPath=nextRoute==='drama'&&historyMode!=='push'&&Boolean(dramaProjectIdFromPath());
@@ -2438,7 +2483,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
     window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({ route:nextRoute }, '', targetPath);
   }
   state.route = nextRoute;
-  const routeTitles = { agent:'创作', project:'创作', image:'图像生成', video:'视频生成', drama:'项目', files:'文件库' };
+  const routeTitles = { assistant:'通用助手', agent:'创作', project:'创作', image:'图像生成', video:'视频生成', drama:'项目', files:'文件库' };
   $('#routeTitle').textContent = routeTitles[nextRoute];
   document.title = `${routeTitles[nextRoute]} · GuGu AI`;
   $$('.rail-button[data-route]').forEach(button => {
@@ -2451,10 +2496,12 @@ function navigate(route, { historyMode = 'push' } = {}) {
   const agent = nextRoute === 'agent';
   const project = nextRoute === 'project';
   const creative = agent || project;
-  const wide = files || drama || creative;
+  const assistant = nextRoute==='assistant';
+  const wide = files || drama || creative || assistant;
   toggleClass($('#appView'), 'library-mode', files);
-  toggleClass($('#appView'), 'wide-mode', drama || creative);
+  toggleClass($('#appView'), 'wide-mode', drama || creative || assistant);
   toggleClass($('#appView'), 'agent-route', creative);
+  toggleClass($('#appView'), 'assistant-route', assistant);
   toggleClass($('#appView'), 'agent-project-open', project);
   toggleClass($('#appView'), 'drama-project-open', drama && Boolean(state.dramaProject));
   toggleClass($('#appView'), 'drama-professional-open', drama && state.dramaProject?.mode === 'professional');
@@ -2463,6 +2510,7 @@ function navigate(route, { historyMode = 'push' } = {}) {
   toggleClass($('#filesView'), 'hidden', !files);
   toggleClass($('#dramaView'), 'hidden', !drama);
   toggleClass($('#agentView'), 'hidden', !creative);
+  toggleClass($('#assistantView'),'hidden',!assistant);
   cancelRouteContentRender();
   if (!wide) {
     $$('[data-panel]').forEach(panel => toggleClass(panel, 'hidden', panel.dataset.panel !== nextRoute));

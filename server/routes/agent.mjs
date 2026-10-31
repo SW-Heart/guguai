@@ -1,3 +1,5 @@
+import { isLocalSkill, validateLocalSkillSnapshot, publicLocalSkill } from '../../lib/agent/local-skills.mjs';
+import { assistantSkillAllowed, assistantSkillCatalog } from '../../lib/agent/assistant-skills.mjs';
 import { generationFrames } from '../../public/features/agent/frames.js';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import mammoth from 'mammoth';
@@ -6,6 +8,8 @@ import { normalizeModelPreferences, validateModelPreferences } from '../../lib/a
 import { publicStoryboard } from '../../lib/agent/storyboard-tools.mjs';
 
 // Clients replay recent assistant edits; what an edit replaced stays on the server.
+function publicAssistantSettings(settings){const {localSkill,...rest}=settings;return localSkill?{...rest,localSkill:publicLocalSkill(localSkill)}:rest;}
+
 function publicCanvas(canvas) {
   if (!canvas) return null;
   const {canvasEdits = [], ...rest} = canvas;
@@ -91,7 +95,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
   async function snapshot(session, { conversationOnly = false } = {}) {
     const { doc } = session;
     if(conversationOnly)return {
-      id:session.id,state:session.state,version:doc.version||0,settings:{...session.settings,model:gateway.config.model},
+      id:session.id,state:session.state,version:doc.version||0,settings:{...session.settings,model:session.settings.mode==='assistant'?session.settings.model:gateway.config.model},
       messages:[],draft:'',activity:'',approval:null,agentProjectId:session.agentProjectId,
       workspaceUnchanged:true,balance:walletOf(session.userId).balance,
     };
@@ -120,9 +124,14 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       return messageView(input ? `input-${input.seq}` : `${session.id}-${i}`, m.role, m.content, input);
     });
     for (const input of repo.inputs(session)) messages.push(messageView(`input-${input.seq}`, 'user', input.text, input));
+    if(session.settings.mode==='assistant')return {
+      id:session.id,state:session.state,version:doc.version||0,settings:publicAssistantSettings(session.settings),
+      messages,draft:doc.draft||'',activity:doc.activity||'',approval:null,canvas:null,
+      balance:walletOf(session.userId).balance,
+    };
     const project = session.projectId ? await loadProject(session.userId, session.projectId, session.scope) : null;
     return {
-      id: session.id, state: session.state, version: doc.version || 0, settings: {...session.settings,model:gateway.config.model},
+      id: session.id, state: session.state, version: doc.version || 0, settings: {...session.settings,model:session.settings.mode==='assistant'?session.settings.model:gateway.config.model},
       messages, draft: doc.draft || '', activity: doc.activity || '', approval: doc.approval?.decision ? null : doc.approval || null,
       documents: artifacts.documents.map(({ id, title, text, revision, conversationId }) => ({ id, title, text, revision, conversationId })),
       sourceObservations:(session.agentProjectId?repo.listObservations(session):Object.values(doc.sourceObservations||{})).filter(item=>findAsset?.(session.userId,item.assetId,session.scope)).map(({assetId,assetName,overview,revision,events,updatedAt})=>({assetId,assetName,overview,revision,eventCount:events.length,updatedAt})),
@@ -135,11 +144,29 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       tasks: artifacts.generations.filter(g => !g.placeholder).map(g => findGeneration(session.userId, g.id, session.scope)).filter(Boolean).map(publicGeneration),
       project: project ? publicProject(project) : null,
       agentProjectId:session.agentProjectId || '',
-      canvas: session.projectId ? null : publicCanvas(repo.canvas?.(session)),
+      canvas: session.projectId || session.settings.mode==='assistant' ? null : publicCanvas(repo.canvas?.(session)),
       balance: walletOf(session.userId).balance,
     };
   }
   async function settings(input, previous = {}) {
+    if (input.mode !== undefined && !['creative','assistant'].includes(input.mode)) throw Object.assign(new Error('对话类型无效'),{statusCode:400});
+    if (previous.model && input.mode !== undefined && input.mode !== (previous.mode||'creative')) throw Object.assign(new Error('请新建对话后重试'),{statusCode:400});
+    if ((previous.mode || input.mode) === 'assistant') {
+      const model = input.model ?? previous.model ?? gateway.config.model;
+      if ((input.model!==undefined||!previous.model) && !(await gateway.listModels()).some(item=>item.id===model)) throw Object.assign(new Error('所选对话模型不可用'),{statusCode:400});
+      const title = input.title === undefined ? previous.title || '' : String(input.title).replace(/[\r\n\u0000-\u001f]/g,' ').trim();
+      if (input.title !== undefined && (!title || title.length>80)) throw Object.assign(new Error('名称需为 1 到 80 个字'),{statusCode:400});
+      const skill=input.skill??previous.skill??'';
+      let localSkill=null;
+      if(input.localSkill!=null&&!isLocalSkill(skill))throw Object.assign(new Error('本地技能信息无效'),{statusCode:400});
+      if(isLocalSkill(skill)){
+        try{localSkill=input.localSkill?validateLocalSkillSnapshot(input.localSkill):previous.localSkill;}
+        catch(error){throw Object.assign(error,{statusCode:400});}
+        if(!localSkill||localSkill.name!==skill)throw Object.assign(new Error('请在这台电脑重新选择本地技能'),{statusCode:400});
+      }
+      if(typeof skill!=='string'||skill.length>64||skill&&(!assistantSkillAllowed(skill,localSkill)||!localSkill&&!(await skills.search()).some(item=>item.name===skill)))throw Object.assign(new Error('所选技能暂时不可用，请重新选择'),{statusCode:400});
+      return {mode:'assistant',model,title,autoGenerate:false,generationBudgetMicro:0,skill,...(localSkill?{localSkill}:{})};
+    }
     const result = { model: gateway.config.model, autoGenerate: previous.autoGenerate || false, generationBudgetMicro: previous.generationBudgetMicro || 0, skill:previous.skill||'', modelPreferences:normalizeModelPreferences(previous.modelPreferences) };
     if (input.modelPreferences !== undefined) result.modelPreferences = validateModelPreferences(input.modelPreferences, await mediaCatalog());
     if (input.autoGenerate !== undefined) { if (typeof input.autoGenerate !== 'boolean') throw Object.assign(new Error('生成设置无效'), { statusCode: 400 }); result.autoGenerate = input.autoGenerate; }
@@ -190,10 +217,10 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       return true;
     }
     if (url.pathname === '/api/agent/config' && req.method === 'GET') {
-      sendJson(res, 200, { configured: gateway.config.configured, defaultModel: gateway.config.model, models: await gateway.listModels(), skills: await skills.search() }); return true;
+      sendJson(res, 200, { configured: gateway.config.configured, defaultModel: gateway.config.model, models: await gateway.listModels(), skills: url.searchParams.get('mode')==='assistant'?assistantSkillCatalog(await skills.search()):await skills.search() }); return true;
     }
     if (url.pathname === '/api/agent/skills' && req.method === 'GET') {
-      sendJson(res, 200, { skills: await skills.search() }); return true;
+      sendJson(res, 200, { skills: url.searchParams.get('mode')==='assistant'?assistantSkillCatalog(await skills.search()):await skills.search() }); return true;
     }
     if (url.pathname === '/api/agent/media-models' && req.method === 'GET') {
       const models = (await mediaCatalog()).map(({id, label, kind, description, iconKey}) => ({id, label, kind, description, iconKey}));
@@ -236,6 +263,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       sendJson(res,200,{deleted:true,id:removed.id});return true;
     }
     if (url.pathname === '/api/agent/sessions' && req.method === 'GET') {
+      if(url.searchParams.get('mode')==='assistant'){sendJson(res,200,{sessions:repo.listAssistant(user.id,scope)});return true;}
       const projectId = url.searchParams.get('projectId') || '';
       const agentProjectId=url.searchParams.get('agentProjectId')||'';
       if(agentProjectId){
@@ -249,6 +277,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       const input = await bodyJson(req);
       const projectId = String(input.projectId || '');
       const agentProjectId=String(input.agentProjectId||'');
+      if(input.mode==='assistant'&&(projectId||agentProjectId)){sendJson(res,400,{error:'请单独创建助手对话'});return true;}
       if(projectId&&agentProjectId){sendJson(res,400,{error:'请选择一个项目'});return true;}
       if(agentProjectId&&!repo.getProject(agentProjectId,user.id,scope)){sendJson(res,404,{error:'项目不存在'});return true;}
       if (projectId && !await loadProject(user.id, projectId, scope)) { sendJson(res, 404, { error: '画布不存在' }); return true; }
@@ -262,6 +291,10 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
     if (!match) { sendJson(res, 404, { error: '接口不存在' }); return true; }
     const session = repo.get(match[1], user.id, scope);
     if (!session) { sendJson(res, 404, { error: '对话不存在' }); return true; }
+    if(session.settings.mode==='assistant') {
+      if(!match[2]&&req.method==='DELETE'){runtime.interrupt(session.id);repo.deleteAssistant(session);sendJson(res,200,{deleted:true});return true;}
+      if(['canvas','documents','approval'].includes(match[2])){sendJson(res,400,{error:'此对话暂不支持该操作'});return true;}
+    }
     if(match[2]==='documents'){
       if(req.method!=='PATCH'){sendJson(res,405,{error:'请求方式不支持'});return true;}
       const input=await bodyJson(req);
@@ -286,12 +319,20 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       if (!text || text.length > 30000 || !/^[\w-]{8,80}$/.test(input.clientId || '')) { sendJson(res, 400, { error: '消息内容或标识无效' }); return true; }
       if(input.documents!==undefined&&(!Array.isArray(input.documents)||input.documents.length>10||input.documents.some(item=>!item||typeof item.title!=='string'||item.title.length>160||typeof item.text!=='string'||item.text.length>300_000)||input.documents.reduce((total,item)=>total+(typeof item?.text==='string'?item.text.length:0),0)>1_000_000)){sendJson(res,400,{error:'附带文件内容无效或过多'});return true;}
       const selection = Array.isArray(input.selection) ? [...new Set(input.selection.filter(v => typeof v === 'string' && v.length <= 200))] : [];
+      if(session.settings.mode==='assistant'){
+        if(input.selection!==undefined&&(!Array.isArray(input.selection)||input.selection.some(id=>typeof id!=='string'||!id||id.length>200))){sendJson(res,400,{error:'图片信息无效'});return true;}
+        if(selection.length+(input.documents?.length||0)>10){sendJson(res,400,{error:'一次最多添加 10 个文件'});return true;}
+        if(selection.some(id=>findAsset?.(session.userId,id,session.scope)?.kind!=='image')){sendJson(res,400,{error:'图片已不可用，请重新添加'});return true;}
+        if(selection.length&&(await gateway.listModels()).find(model=>model.id===session.settings.model)?.supportsImages===false){sendJson(res,400,{error:'当前模型不支持图片，请切换模型后发送'});return true;}
+      }
       if (selection.length > 50) { sendJson(res, 400, { error: '一次最多选择 50 个素材或画布内容' }); return true; }
-      const modelPreferences = input.modelPreferences === undefined ? undefined : validateModelPreferences(input.modelPreferences, await mediaCatalog(), {allowUnavailable:true});
+      const modelPreferences = session.settings.mode==='assistant'||input.modelPreferences === undefined ? undefined : validateModelPreferences(input.modelPreferences, await mediaCatalog(), {allowUnavailable:true});
       repo.enqueue(session, { text, clientId: input.clientId, selection, documents:input.documents||[], modelPreferences });
     } else if (match[2] === 'settings') {
+      if(session.settings.mode==='assistant'&&(input.localSkill!==undefined||input.skill!==undefined&&input.skill!==session.settings.skill)&&(session.leaseUntil>Date.now()||['running','queued','waiting_job'].includes(session.state))){sendJson(res,409,{error:'请等待回复结束后更换技能'});return true;}
+      if(session.settings.mode==='assistant'&&input.model!==undefined&&(session.leaseUntil>Date.now()||['running','queued','waiting_job'].includes(session.state))){sendJson(res,409,{error:'请等待回复结束后切换模型'});return true;}
       const next = await settings(input, session.settings);
-      if (input.modelPreferences === undefined && repo.userModelPreferences) next.modelPreferences = repo.userModelPreferences(user.id);
+      if (next.mode!=='assistant' && input.modelPreferences === undefined && repo.userModelPreferences) next.modelPreferences = repo.userModelPreferences(user.id);
       repo.settings(session, next);
     }
     else if (match[2] === 'interrupt') { repo.control(session, 'interrupt'); runtime.interrupt(session.id); }

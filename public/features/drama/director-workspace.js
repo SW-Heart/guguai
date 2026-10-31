@@ -1,3 +1,4 @@
+import { textModelLogoMarkup } from '../assistant/text-models.js?v=2';
 import { createVoiceFilterState,voiceFilterOptions,toggleVoiceFilter,voiceMatchesFilters } from '../speech/voice-filters.js?v=2';
 import { speechComposerMarkup,speechParameterOptions,speechVoiceMenuMarkup,speechLanguageFilterMarkup } from '../speech/composer.js?v=5';
 import { systemVoices,speechCharacters } from '../speech/catalog.js?v=2';
@@ -15,8 +16,8 @@ import { attachmentCardMarkup, mountAttachmentPreviews } from '../agent/attachme
 import { mountGenerationApproval } from '../agent/generation-approval.js?v=2';
 import { bindDirectorMentions } from './director-mentions.js?v=5';
 import { importedImageBounds } from '../agent/image-bounds.js?v=1';
-import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=3';
-import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=1';
+import { renderMarkdown, renderStreamingMarkdownBlocks } from '../agent/markdown.js?v=4';
+import { copyButtonMarkup, mountContentCopy, patchCodeBlock } from '../agent/code-block.js?v=2';
 import { createStreamPacer } from '../agent/stream-pacer.js?v=1';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
 import { createMessageScroller } from '../agent/message-scroller.js?v=7';
@@ -1309,7 +1310,7 @@ export function createDirectorWorkspace(host, bridge) {
     modelButton?.setAttribute('title',`切换模型：${models.find(m=>m.id===currentModel)?.label||'正在加载'}`);
     if(modelButton)modelButton.disabled=!agentReady||conversationBusy||!models.length;
     const modelList=root.querySelector('[data-agent-model-list]');
-    const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${conversationBusy?'disabled':''}>${escape(m.label)}${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
+    const options=models.map(m=>`<button type="button" data-agent-model="${escape(m.id)}" aria-pressed="${m.id===currentModel}" ${conversationBusy?'disabled':''}><span>${textModelLogoMarkup(m.id,m.label)} ${escape(m.label)}</span>${m.id===currentModel?'<span aria-hidden="true">✓</span>':''}</button>`).join('');
     if(modelList&&modelList.innerHTML!==options)modelList.innerHTML=options;
     const uploadButton=root.querySelector('[data-agent-upload]');
     if(uploadButton){uploadButton.disabled=!agentReady||uploading||switchingConversation;uploadButton.title=uploading?'正在上传…':bridge.agentMode?'添加文件':'上传文件';}

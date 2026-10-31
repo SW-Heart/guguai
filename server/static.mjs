@@ -30,7 +30,7 @@ export function parseByteRange(header, size) {
 }
 
 // /agent, /drama and /lab are older addresses; the app moves them to /create and /projects.
-const frontendRoutePaths = new Set(['/login', '/create', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
+const frontendRoutePaths = new Set(['/assistant', '/login', '/create', '/image', '/video', '/drama', '/agent', '/projects', '/lab', '/files']);
 const marketingRouteFiles = new Map([
   ['/help', 'help.html'],
   ['/help/', 'help.html'],

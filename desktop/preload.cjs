@@ -53,6 +53,15 @@ contextBridge.exposeInMainWorld('guguDesktop', Object.freeze({
     open: paymentHtml => invoke('payments:open-alipay', paymentHtml),
     complete: () => invoke('payments:complete-alipay'),
   }),
+  localSkills: Object.freeze({
+    list: () => invoke('local-skills:list'),
+    choose: () => invoke('local-skills:choose'),
+    snapshot: name => invoke('local-skills:snapshot', name),
+    onChanged: callback => {
+      const listener=()=>callback();ipcRenderer.on('local-skills:changed',listener);
+      return ()=>ipcRenderer.removeListener('local-skills:changed',listener);
+    },
+  }),
   workspace: Object.freeze({
     get: () => invoke('workspace:get'),
     choose: () => invoke('workspace:choose'),
