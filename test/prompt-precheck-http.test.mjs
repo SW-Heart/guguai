@@ -208,12 +208,14 @@ test('admin stats read events and generations from the database', async () => {
     // Refused once, then the very same words came out: not a missing term.
     insert('g-wobble', { status:'failed', prompt:'同一段 描述', error:"The request failed because the input text 'content[0]' may contain sensitive information." });
     insert('g-wobble-ok', { status:'completed', prompt:'同一段描述' });
+    // Missed when submitted, but today's lexicon would already warn about it.
+    insert('g-covered', { status:'failed', prompt:'她一丝不挂地站着', error:'返回错误码 710082022，疑似包含侵权/违规内容' });
     const { hits, lexiconVersion } = scanPromptRisk('斩首', {});
     recordPromptPrecheckEvent({ userId:'u', source:'video', modelId:'', lexiconVersion, mode:'enforce', outcome:'confirmed_banned', hits, generationIds:['g-ok'] });
     const stats = promptPrecheckStats({ days:7 });
-    assert.equal(stats.summary.generationTotal, 4);
+    assert.equal(stats.summary.generationTotal, 5);
     assert.deepEqual(stats.accuracy.redRejectedRate, 0);
-    assert.deepEqual(stats.misses.map(item => [item.id, item.prompt]), [['g-miss', '普通描述']]);
+    assert.deepEqual(stats.misses.map(item => [item.id, item.prompt, item.coveredBy]).sort(), [['g-covered', '她一丝不挂地站着', ['露骨色情']], ['g-miss', '普通描述', []]]);
   } finally { closeDatabase({ checkpoint:false }); }
 });
 

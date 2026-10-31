@@ -1075,12 +1075,14 @@ import { createApiClient } from './api-client.js?v=4';
       const data = await api(`/api/admin/prompt-precheck?days=${encodeURIComponent(state.precheckDays)}`);
       if (isStale('precheck', token)) return;
       const { summary, accuracy } = data;
+      const openMisses = data.misses.filter(item => !item.coveredBy?.length);
+      const coveredMisses = data.misses.length - openMisses.length;
       body.innerHTML = `
         <div class="cards">
           <div class="stat"><span class="stat-head">弹窗次数</span><strong>${money(summary.shown)}</strong><span class="stat-sub">占同期生成任务 ${percent(summary.shownRate)} · 共 ${money(summary.generationTotal)} 个任务</span></div>
           <div class="stat tone-success"><span class="stat-head">修改后提交</span><strong>${money(summary.edited)}</strong><span class="stat-sub">取消 ${money(summary.cancelled)} 次</span></div>
           <div class="stat tone-warn"><span class="stat-head">照原样提交</span><strong>${money(summary.kept)}</strong><span class="stat-sub">其中标红后确认 ${money(summary.confirmedRed)} 次</span></div>
-          <div class="stat ${data.misses.length ? 'tone-danger' : ''}"><span class="stat-head">漏报</span><strong>${money(data.misses.length)}</strong><span class="stat-sub">因描述被拒但没有标出</span></div>
+          <div class="stat ${openMisses.length ? 'tone-danger' : ''}"><span class="stat-head">漏报</span><strong>${money(openMisses.length)}</strong><span class="stat-sub">${coveredMisses ? `另有 ${money(coveredMisses)} 条现已能标出` : '因描述被拒但没有标出'}</span></div>
         </div>
         <div class="overview-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
           <section class="overview-card"><h3>标红的准确度</h3><p>标红后仍提交的任务中，真的因描述被拒的比例；越高说明标红越准</p>
@@ -1096,9 +1098,9 @@ import { createApiClient } from './api-client.js?v=4';
         </div>
         <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>误报候选</h3><p>至少 3 次照原样提交、且八成以上生成成功的词，建议降级或加放行短语</p></div></header>
           ${data.falsePositives.length ? precheckTermTable(data.falsePositives, '误报候选') : emptyMarkup('暂无误报候选', '照原样提交的次数还不够多。')}</section>
-        <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>漏报</h3><p>因描述被拒、却没有任何标记的任务，可以从中补充词表</p></div></header>
-          ${data.misses.length ? `<div class="table-wrap"><table aria-label="漏报任务"><thead><tr><th>任务</th><th>模型</th><th>描述</th><th>失败原因</th><th>时间</th></tr></thead><tbody>${data.misses.map(item => `<tr>
-            <td>${idText(item.id, '任务 ID')}</td><td>${esc(item.modelId || '—')}</td><td style="max-width:420px;white-space:normal">${esc(item.prompt)}</td><td style="max-width:220px;white-space:normal">${esc(item.error)}</td><td>${date(item.createdAt)}</td>
+        <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>漏报</h3><p>因描述被拒、提交时没有任何标记的任务；“当前词表”按现在的词表重新检查，显示已能标出的规则，“待补充”的才需要处理</p></div></header>
+          ${data.misses.length ? `<div class="table-wrap"><table aria-label="漏报任务"><thead><tr><th>任务</th><th>模型</th><th>描述</th><th>失败原因</th><th>当前词表</th><th>时间</th></tr></thead><tbody>${data.misses.map(item => `<tr>
+            <td>${idText(item.id, '任务 ID')}</td><td>${esc(item.modelId || '—')}</td><td style="max-width:420px;white-space:normal">${esc(item.prompt)}</td><td style="max-width:220px;white-space:normal">${esc(item.error)}</td><td style="max-width:180px;white-space:normal">${item.coveredBy?.length ? `已能标出：${esc(item.coveredBy.join('、'))}` : '<b>待补充</b>'}</td><td>${date(item.createdAt)}</td>
           </tr>`).join('')}</tbody></table></div>` : emptyMarkup('暂无漏报', '因描述被拒的任务都已被标出。')}</section>
         <section class="panel" style="margin-top:16px"><header class="panel-head"><div><h3>词条触发排行</h3><p>按触发次数排序，最多 50 条</p></div></header>
           ${data.terms.length ? precheckTermTable(data.terms, '词条触发排行') : emptyMarkup('所选时间内没有触发记录')}</section>
