@@ -1309,32 +1309,65 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     rememberAnnouncementSelection(editor);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  function readAnnouncementImage(file) {
+  const ANNOUNCEMENT_IMAGE_MAX_LENGTH = 420_000;
+  function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(new Error('图片读取失败，请重试'));
-      reader.onload = () => {
-        const image = new Image();
-        image.onerror = () => reject(new Error('图片格式暂不支持'));
-        image.onload = () => {
-          const maxEdge = 1600;
-          const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
-          canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
-          canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob(blob => {
-            if (!blob) { resolve(String(reader.result)); return; }
-            const compressed = new FileReader();
-            compressed.onload = () => resolve(String(compressed.result));
-            compressed.onerror = () => reject(new Error('图片压缩失败，请重试'));
-            compressed.readAsDataURL(blob);
-          }, 'image/webp', .82);
-        };
-        image.src = String(reader.result);
-      };
+      reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
+  }
+  function loadAnnouncementImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onerror = () => reject(new Error('图片格式暂不支持'));
+      image.onload = () => resolve(image);
+      image.src = src;
+    });
+  }
+  function canvasToDataUrl(canvas, quality) {
+    return new Promise(resolve => canvas.toBlob(blob => {
+      if (!blob) { resolve(''); return; }
+      readFileAsDataUrl(blob).then(resolve, () => resolve(''));
+    }, 'image/webp', quality));
+  }
+  async function compressAnnouncementImage(src) {
+    const image = await loadAnnouncementImage(src);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    for (const [maxEdge, quality] of [[1600, .82], [1600, .7], [1280, .7], [1024, .6]]) {
+      const scale = Math.min(1, maxEdge / Math.max(width, height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const result = await canvasToDataUrl(canvas, quality);
+      if (result && result.length <= ANNOUNCEMENT_IMAGE_MAX_LENGTH) return result;
+    }
+    throw new Error('图片压缩后仍然过大，请选择尺寸更小的图片');
+  }
+  async function readAnnouncementImage(file) {
+    return compressAnnouncementImage(await readFileAsDataUrl(file));
+  }
+  function isSavableAnnouncementImage(src) {
+    const value = String(src || '').trim();
+    if (/^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(value)) return value.length <= ANNOUNCEMENT_IMAGE_MAX_LENGTH;
+    return /^(?:https?:\/\/|\/)/i.test(value);
+  }
+  // Pasted or dropped pictures arrive as raw screenshots, blob: links or oversized data URLs; shrink them so they survive saving.
+  async function normalizeAnnouncementImages(editor) {
+    for (const image of $$('img', editor)) {
+      const src = image.getAttribute('src') || '';
+      if (isSavableAnnouncementImage(src)) continue;
+      try { image.setAttribute('src', await compressAnnouncementImage(src)); }
+      catch { throw new Error('有图片无法保存，请删除后通过“图片”按钮重新插入'); }
+    }
+  }
+  function clipboardImageFiles(transfer) {
+    const files = Array.from(transfer?.files || []).filter(file => file.type.startsWith('image/'));
+    if (files.length) return files;
+    return Array.from(transfer?.items || []).filter(item => item.kind === 'file' && item.type.startsWith('image/')).map(item => item.getAsFile()).filter(Boolean);
   }
   function bindAnnouncementEditor(initialContent = '') {
     const editor = $('#adminAnnouncementEditor');
@@ -1353,19 +1386,39 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     const imageButton = $('[data-rich-image]', container);
     imageButton?.addEventListener('mousedown', event => event.preventDefault());
     imageButton?.addEventListener('click', () => { rememberAnnouncementSelection(editor); imageInput?.click(); });
+    const insertImageFiles = async files => {
+      setButtonBusy(imageButton, true, '处理中');
+      try {
+        for (const file of files) {
+          const src = await readAnnouncementImage(file);
+          insertAnnouncementHtml(editor, `<img src="${src}" alt="${esc(String(file.name || '').replace(/\.[^.]+$/, ''))}"><br>`);
+        }
+        toast('图片已插入');
+      } catch (error) { toast(error.message || '图片插入失败', 'error'); }
+      finally { setButtonBusy(imageButton, false); }
+    };
     imageInput?.addEventListener('change', async () => {
       const file = imageInput.files?.[0];
       imageInput.value = '';
       if (!file) return;
       if (!file.type.startsWith('image/')) { toast('请选择图片文件', 'error'); return; }
-      setButtonBusy(imageButton, true, '处理中');
-      try {
-        const src = await readAnnouncementImage(file);
-        if (src.length > 420_000) throw new Error('图片压缩后仍然过大，请选择尺寸更小的图片');
-        insertAnnouncementHtml(editor, `<img src="${src}" alt="${esc(file.name.replace(/\.[^.]+$/, ''))}"><br>`);
-        toast('图片已插入');
-      } catch (error) { toast(error.message || '图片插入失败', 'error'); }
-      finally { setButtonBusy(imageButton, false); }
+      await insertImageFiles([file]);
+    });
+    editor.addEventListener('paste', event => {
+      const pastedHtml = event.clipboardData?.getData('text/html') || '';
+      const files = richTextPlainText(pastedHtml) ? [] : clipboardImageFiles(event.clipboardData);
+      if (!files.length) { setTimeout(() => normalizeAnnouncementImages(editor).catch(error => toast(error.message, 'error')), 0); return; }
+      event.preventDefault();
+      rememberAnnouncementSelection(editor);
+      void insertImageFiles(files);
+    });
+    editor.addEventListener('drop', event => {
+      const files = clipboardImageFiles(event.dataTransfer);
+      if (!files.length) return;
+      event.preventDefault();
+      const range = editor.ownerDocument.caretRangeFromPoint?.(event.clientX, event.clientY);
+      if (range && editor.contains(range.startContainer)) editor._announcementRange = range;
+      void insertImageFiles(files);
     });
     updateCount();
   }
@@ -1381,6 +1434,8 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
       html: announcementEditorMarkup(),
       validate: values => values.title.trim() ? (richTextPlainText(values.content) || /<img\b/i.test(values.content) ? null : '请填写公告正文。') : '请填写公告标题。',
       onSubmit: async values => {
+        const editor = $('#adminAnnouncementEditor');
+        if (editor) { await normalizeAnnouncementImages(editor); values.content = editor.innerHTML; }
         const body = { title: values.title, content: values.content, status: values.status };
         if (editing) await api(`/api/admin/announcements/${encodeURIComponent(announcement.id)}`, { method: 'PATCH', body: JSON.stringify({ ...body, expectedVersion: announcement.version }) });
         else await api('/api/admin/announcements', { method: 'POST', body: JSON.stringify(body) });

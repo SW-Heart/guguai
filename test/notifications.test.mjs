@@ -79,3 +79,12 @@ test('background summaries leave out full bodies and inline pictures', () => {
   assert.equal(getNotification('notification-user-a', announcement.id).contentHtml, '<p>已更新</p>', 'edited announcements are not served from the old cached body');
   assert.throws(() => getNotification('notification-user-a', 'missing'), /消息不存在/);
 });
+
+test('announcement images are kept, image-only content is allowed, and unsavable images fail loudly', () => {
+  const image = 'data:image/webp;base64,AAAA';
+  const imageOnly = createAnnouncement({ title: '仅图片', content: `<img src="${image}" alt="截图">`, status: 'published' }, { actorUserId: 'notification-admin' });
+  assert.match(imageOnly.contentHtml, /<img src="data:image\/webp;base64,AAAA"/);
+  const oversized = `<div>说明</div><img src="data:image/png;base64,${'A'.repeat(500_000)}">`;
+  assert.throws(() => createAnnouncement({ title: '大图', content: oversized, status: 'draft' }, { actorUserId: 'notification-admin' }), /有图片无法保存/);
+  assert.throws(() => updateAnnouncement(imageOnly.id, { content: '<div>说明</div><img src="blob:https://example.com/1">', expectedVersion: imageOnly.version }, { actorUserId: 'notification-admin' }), /有图片无法保存/);
+});

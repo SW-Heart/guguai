@@ -147,7 +147,7 @@ test('per-request video prices reach cards and preserve credit units', () => {
 test('video billing changes refresh the admin and workspace cache entries', async () => {
   const { readFile } = await import('node:fs/promises');
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
-  assert.match(admin, /guguadmin\.js\?v=79/);
+  assert.match(admin, /guguadmin\.js\?v=80/);
 });
 
 test('Nano Banana costs one credit at every resolution regardless of the generic image price', () => {
