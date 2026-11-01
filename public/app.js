@@ -3103,7 +3103,7 @@ function renderTasks() {
   tasks.sort(compareTasksByRecency);
   const hasInitialData = state.initialSyncReady || state.tasks.length > 0 || state.generationPreparations.length > 0;
   const empty = hasInitialData
-    ? emptyState(`还没有商品${state.route === 'image' ? '图' : '视频'}`, state.route === 'image' ? '从商品主图、场景图或细节特写开始制作。' : '上传商品素材，制作第一条营销视频。')
+    ? emptyState(`还没有${state.route === 'image' ? '图像' : '视频'}作品`, state.route === 'image' ? '写下想法或添加参考图，生成第一张图像。' : '用文字、图片或首尾帧，生成第一段视频。')
     : generationLoadingSkeleton();
   reconcileCards($('#generationGrid'), hasInitialData ? tasks : [], { card:taskCard, signature:taskRenderSignature, bind:bindTaskCard, empty });
   scheduleGenerationLayout();

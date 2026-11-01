@@ -100,7 +100,7 @@ test('the 创作 home offers project creation, a quiet one-line start and a side
 
 test('changed frontend modules are reachable through current cache keys', () => {
   for (const [file, urls] of [
-    ['index.html', ['/app.js?v=642', '/styles.css?v=441']],
+    ['index.html', ['/app.js?v=643', '/styles.css?v=441']],
     ['app.js', ['./features/projects/library.js?v=5', './features/agent/workspace.js?v=190', './drama-studio.js?v=323']],
     ['features/agent/workspace.js', ['./skill-gallery.js?v=8', '../../vendor/ui/create-project.js?v=5']],
     ['features/projects/library.js', ['../../vendor/ui/create-project.js?v=5']],
@@ -114,7 +114,7 @@ test('changed frontend modules are reachable through current cache keys', () => 
 test('the website leads with 智能画布 and 短剧工作台 and shows the real skills', () => {
   const home = read('home.html');
   const chapters = [...home.matchAll(/data-film-chapter data-start="[\d.]+"><b>([^<]+)</g)].map(match => match[1]);
-  assert.deepEqual(chapters, ['智能画布', '短剧工作台', '成片']);
+  assert.deepEqual(chapters, ['智能画布', '短剧工作台', '快速创作', '成片']);
   const guides = [...home.matchAll(/<a class="text-link" href="\/help#([\w-]+)">[^<]*教程</g)].map(match => match[1]);
   assert.deepEqual(guides, ['agent-start', 'drama-start', 'image-start']);
   const features = read('features.html');
@@ -124,7 +124,7 @@ test('the website leads with 智能画布 and 短剧工作台 and shows the real
   assert.deepEqual([...features.matchAll(/<section class="feature-story[^"]*" id="(\w+)"/g)].map(match => match[1]), ['canvas', 'skills', 'drama', 'image', 'video', 'files']);
   for (const page of [home, features]) {
     assert.doesNotMatch(page, /创作助手|<h2>短剧创作<\/h2>|<\/span><h3>短剧创作</);
-    assert.match(page, /\/marketing\.css\?v=20/);
+    assert.match(page, /\/marketing\.css\?v=21/);
   }
 });
 

@@ -121,7 +121,7 @@ section[id], article[id], .help-article section[id] { scroll-margin-top: 88px; }
 .motion-toggle:hover { color: var(--blue-deep); }
 .motion-toggle span { display: inline-flex; }
 .motion-toggle svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
-.film-chapters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 28px 0 0; padding: 0; list-style: none; }
+.film-chapters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin: 28px 0 0; padding: 0; list-style: none; }
 .film-chapters button { position: relative; display: block; width: 100%; padding: 16px 0 0; border-top: 1px solid var(--line-strong); background: none; text-align: left; opacity: .55; transition: opacity .3s var(--ease); }
 .film-chapters button:hover, .film-chapters button.is-active { opacity: 1; }
 .film-chapters b { display: block; font-size: 15px; font-weight: 650; }

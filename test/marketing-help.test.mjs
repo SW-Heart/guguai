@@ -102,8 +102,8 @@ test('all changed marketing entries and help imports use consistent current cach
   for (const page of ['home', 'features', 'pricing', 'help']) {
     const html = await read(`public/${page}.html`);
     assert.ok(html.includes('/marketing.js?v=30'));
-    assert.ok(html.includes('/marketing.css?v=20'));
-    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-7])|css\?v=(?:[789]|1[0-9]))\b/);
+    assert.ok(html.includes('/marketing.css?v=21'));
+    assert.doesNotMatch(html, /marketing\.(?:js\?v=(?:1[6789]|2[0-7])|css\?v=(?:[789]|1[0-9]|20))\b/);
   }
   const help = await read('public/help.html');
   assert.ok(help.includes('/help.js?v=11'));
@@ -153,7 +153,8 @@ test('homepage film assets resolve and every chapter starts inside the film', as
   const starts = [...html.matchAll(/data-film-chapter data-start="([\d.]+)"/g)].map(match => Number(match[1]));
   assert.deepEqual(starts, [...starts].sort((a, b) => a - b));
   assert.equal(starts[0], 0);
-  assert.ok(starts.every(start => start < 24), 'the film is 24 seconds long');
+  assert.equal(starts.length, 4);
+  assert.ok(starts.every(start => start < 64), 'the film is about 64 seconds long');
   assert.match(html, /<video data-hero-film muted loop playsinline/);
 });
 
