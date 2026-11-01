@@ -51,6 +51,9 @@ export function patchAssistantDraft(content,text){
 export const assistantMessageFiles=messages=>messages.flatMap(message=>(message.attachments||[]).map(file=>({...file,key:`${message.id}:${file.id}`,removable:false})));
 
 export function renderAssistantMessages(history,messages,welcome){
+  // Tool calls can leave whitespace-only assistant messages in saved history.
+  // They have no reply to display or copy, including while a turn is running.
+  messages=messages.filter(message=>message.role!=='assistant'||String(message.text??'').trim());
   if(!messages.length){if(!history.querySelector('.assistant-welcome'))history.innerHTML=welcome();return;}
   history.querySelector('.assistant-welcome')?.remove();
   const existing=new Map([...history.children].map(node=>[node.dataset.messageId,node]));

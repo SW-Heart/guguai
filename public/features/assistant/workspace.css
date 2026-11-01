@@ -16,7 +16,8 @@
 .assistant-workspace.is-sidebar-open { grid-template-columns:228px minmax(0,1fr); }
 .assistant-workspace *, .assistant-conversation-menu * { box-sizing:border-box; }
 .assistant-workspace button, .assistant-conversation-menu button { font:inherit; cursor:pointer; }
-.assistant-workspace button:disabled, .assistant-workspace select:disabled { cursor:default; opacity:.42; }
+.assistant-workspace button:disabled, .assistant-workspace select:disabled { cursor:default; }
+.assistant-workspace :is(button,select):disabled:not([data-session],[data-history-more],[data-new]) { opacity:.42; }
 .assistant-workspace :is(button,input,textarea,select):focus-visible,
 .assistant-conversation-menu button:focus-visible { outline:2px solid var(--theme-brand-line,#a7a2e4); outline-offset:3px; }
 .assistant-workspace svg, .assistant-conversation-menu svg { width:18px; height:18px; flex:none; }

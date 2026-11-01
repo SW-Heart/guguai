@@ -139,9 +139,9 @@ test('assistant appears below quick creation and each versioned entry loads its 
   assert.match(html,/<button class="rail-button" data-route="assistant" data-rail-tip="通用助手"/);
   assert.match(html,/data-route="video"[^\n]+\n\s*<\/div>\n\s*<button[^>]+data-route="assistant"/);
   assert.match(html,/id="assistantView" class="hidden"/);
-  assert.match(html,/\/app.js\?v=641/);
-  assert.match(app,/features\/assistant\/workspace.js\?v=17/);
-  assert.match(app,/features\/assistant\/workspace.css\?v=14/);
+  assert.match(html,/\/app.js\?v=642/);
+  assert.match(app,/features\/assistant\/workspace.js\?v=19/);
+  assert.match(app,/features\/assistant\/workspace.css\?v=15/);
   const workspace=await readFile(new URL('../public/features/assistant/workspace.js',import.meta.url),'utf8');
   assert.match(workspace,/presentation.js\?v=8/);
   assert.match(workspace,/model-picker.js\?v=8/);

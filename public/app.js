@@ -2283,7 +2283,7 @@ let assistantController = null;
 let assistantStyles;
 function loadAssistantStyles() {
   if(!assistantStyles)assistantStyles=new Promise((resolve,reject)=>{
-    const link=document.createElement('link');link.rel='stylesheet';link.href='/features/assistant/workspace.css?v=14';
+    const link=document.createElement('link');link.rel='stylesheet';link.href='/features/assistant/workspace.css?v=15';
     link.onload=resolve;link.onerror=()=>{link.remove();assistantStyles=null;reject(new Error('页面样式加载失败，请重试'));};document.head.append(link);
   });
   return assistantStyles;
@@ -2379,7 +2379,7 @@ function scheduleRouteContentRender(route, routeChanged) {
         return;
       }
       if (route === 'assistant') {
-        void Promise.all([import('./features/assistant/workspace.js?v=17'),loadAssistantStyles()]).then(([{mountAssistant}])=>{
+        void Promise.all([import('./features/assistant/workspace.js?v=19'),loadAssistantStyles()]).then(([{mountAssistant}])=>{
           if(epoch!==routeRenderEpoch||state.route!=='assistant')return;
           if(!assistantController)assistantController=mountAssistant({host:$('#assistantView'),api,toast,setCreditBalance});
         }).catch(error=>toast(`助手打开失败：${error.message}`));

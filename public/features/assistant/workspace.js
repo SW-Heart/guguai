@@ -1,13 +1,13 @@
-import { renameAssistantConversation, deleteAssistantConversation, assistantConversationMenuPosition } from './history-actions.js?v=1';
+import { createAssistantHistoryRenderer, renameAssistantConversation, deleteAssistantConversation, assistantConversationMenuPosition } from './history-actions.js?v=2';
 import { mountAssistantSuggestions, applySuggestionSkill } from './suggestions.js?v=5';
 import { mountAssistantSkillPicker } from './skill-picker.js?v=2';
 import { attachmentAccept, maxAttachments, validateAttachment, readDocument, uploadAssistantImage, assistantAttachmentMessage } from './attachments.js?v=1';
 import { mountAttachmentPreviews } from '../agent/attachment-preview.js?v=5';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
 import { createCreativeAgentClient } from '../agent/client.js?v=15';
-import { createAssistantStream, patchAssistantDraft, renderAssistantMessages, assistantMessageFiles } from './conversation.js?v=4';
+import { createAssistantStream, patchAssistantDraft, renderAssistantMessages, assistantMessageFiles } from './conversation.js?v=5';
 import { createMessageScroller } from '../agent/message-scroller.js?v=7';
-import { renderAssistantHistory, renderAssistantShell, renderAssistantWelcome } from './presentation.js?v=8';
+import { renderAssistantShell, renderAssistantWelcome } from './presentation.js?v=8';
 import { mountAssistantModelPicker } from './model-picker.js?v=8';
 import { mountContentCopy } from '../agent/code-block.js?v=2';
 
@@ -39,7 +39,7 @@ export function mountAssistant({ host, api, toast, setCreditBalance = () => {} }
   const events = new AbortController();
   let localSkills=[],localSkillRefresh=0;
   const nativeSkills=globalThis.guguDesktop?.localSkills;
-  let disposed = false, client, current, config, busy = false, renderedId = '', selectedModel = '', items = [], historySignature = '', menuTarget=null, menuAnchor=null, renameTarget=null, deleteTarget=null;
+  let disposed = false, client, current, config, busy = false, renderedId = '', selectedModel = '', items = [], menuTarget=null, menuAnchor=null, renameTarget=null, deleteTarget=null;
   const request = async (...args) => {
     if(disposed)throw new Error('对话已关闭');
     const result = await api(...args);
@@ -49,7 +49,8 @@ export function mountAssistant({ host, api, toast, setCreditBalance = () => {} }
   host.innerHTML = renderAssistantShell();
   const $ = selector => host.querySelector(selector);
   const input = $('#assistantMessage'), status = $('[data-status]');
-  const suggestions=mountAssistantSuggestions($('[data-suggestions]'),input,{signal:events.signal,onDraft:toast,onUse:async item=>{let applied=false;await perform(async()=>{await applySuggestionSkill(item,{catalog:config?.skills,selected:current.settings.skill,select:saveSkill});applied=true;});return applied;}});
+  const renderHistory=createAssistantHistoryRenderer($('[data-history]'));
+  const suggestions=mountAssistantSuggestions($('[data-suggestions]'),input,{signal:events.signal,onDraft:toast,onUse:async item=>{if(!item.skill||item.skill===current?.settings.skill)return true;let applied=false;await perform(async()=>{await applySuggestionSkill(item,{catalog:config?.skills,selected:current.settings.skill,select:saveSkill});applied=true;});return applied;}});
   let attachments=[],uploading=false,attachmentEpoch=0;
   const revoke=file=>{if(file.previewUrl?.startsWith('blob:'))URL.revokeObjectURL(file.previewUrl);};
   function clearAttachments(){attachmentEpoch++;attachments.forEach(revoke);attachments=[];uploading=false;drawAttachments();}
@@ -195,12 +196,9 @@ export function mountAssistant({ host, api, toast, setCreditBalance = () => {} }
   function history() {
     const query=$('[data-history-search]').value;
     const title=current?.settings?.title||items.find(item=>item.id===current?.id)?.title||'新对话';
-    $('[data-conversation-title]').textContent=title;
+    if($('[data-conversation-title]').textContent!==title)$('[data-conversation-title]').textContent=title;
     $('[data-conversation-title]').title=title;
-    const next=JSON.stringify([current?.id,items,query]);
-    if(historySignature===next)return;
-    historySignature=next;
-    $('[data-history]').innerHTML = renderAssistantHistory(items,current?.id,query);
+    renderHistory(items,current?.id,query);
   }
   function controls() {
     const running = activeReply(current?.state), ready = Boolean(current && config?.configured && !busy);
