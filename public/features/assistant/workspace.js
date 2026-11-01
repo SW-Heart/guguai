@@ -5,7 +5,7 @@ import { attachmentAccept, maxAttachments, validateAttachment, readDocument, upl
 import { mountAttachmentPreviews } from '../agent/attachment-preview.js?v=5';
 import { createReasoningText, reasoningPhrases } from '../agent/reasoning-text.js?v=4';
 import { createCreativeAgentClient } from '../agent/client.js?v=15';
-import { createAssistantStream, patchAssistantDraft, renderAssistantMessages, assistantMessageFiles } from './conversation.js?v=5';
+import { createAssistantStream, patchAssistantDraft, renderAssistantMessages, assistantMessageFiles } from './conversation.js?v=7';
 import { createMessageScroller } from '../agent/message-scroller.js?v=7';
 import { renderAssistantShell, renderAssistantWelcome } from './presentation.js?v=8';
 import { mountAssistantModelPicker } from './model-picker.js?v=8';
@@ -127,7 +127,7 @@ export function mountAssistant({ host, api, toast, setCreditBalance = () => {} }
   const draftContent=document.createElement('div');draftContent.className='dw-message-content';
   $('.dw-message-draft').replaceChildren(draftContent);
   const stream=createAssistantStream({immediate:()=>reducedMotion.matches,render:(view,{frameOnly})=>{
-    if(!frameOnly){renderAssistantMessages($('.dw-message-history'),view.messages,renderAssistantWelcome);messagePreviews.update(assistantMessageFiles(view.messages));}
+    if(!frameOnly){renderAssistantMessages($('.dw-message-history'),view.messages,renderAssistantWelcome,{working:view.working});messagePreviews.update(assistantMessageFiles(view.messages));}
     patchAssistantDraft(draftContent,view.draft);
     $('.dw-message-draft').hidden=!view.draft;
     reasoning.update({active:Boolean(config?.configured)&&view.working,phrases:reasoningPhrases({activity:view.activity,streaming:Boolean(view.draft)})});

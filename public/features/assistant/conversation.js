@@ -46,17 +46,27 @@ export function patchAssistantDraft(content,text){
     next._streamHTML=html;if(current)current.replaceWith(next);else content.append(next);
   });
   while(content.children.length>blocks.length)content.lastElementChild.remove();
+  // Even a closed document block is still part of an unfinished reply.
+  for(const button of content.querySelectorAll('[data-code-copy],[data-doc-copy]'))button.hidden=true;
 }
 
 export const assistantMessageFiles=messages=>messages.flatMap(message=>(message.attachments||[]).map(file=>({...file,key:`${message.id}:${file.id}`,removable:false})));
 
-export function renderAssistantMessages(history,messages,welcome){
+export function renderAssistantMessages(history,messages,welcome,{working=false}={}){
   // Tool calls can leave whitespace-only assistant messages in saved history.
   // They have no reply to display or copy, including while a turn is running.
   messages=messages.filter(message=>message.role!=='assistant'||String(message.text??'').trim());
   if(!messages.length){if(!history.querySelector('.assistant-welcome'))history.innerHTML=welcome();return;}
   history.querySelector('.assistant-welcome')?.remove();
   const existing=new Map([...history.children].map(node=>[node.dataset.messageId,node]));
+  const turnStart=messages.findLastIndex(message=>message.role==='user');
+  // A user question owns all following assistant segments, including messages
+  // surrounding tool calls. Only the last segment gets the full-answer action.
+  const replyCopies=new Map();
+  let segments=[];
+  const finishTurn=()=>{if(segments.length)replyCopies.set(segments.at(-1).id,segments.map(message=>message.text).join('\n\n'));segments=[];};
+  for(const message of messages){if(message.role==='user')finishTurn();else if(message.role==='assistant')segments.push(message);}
+  finishTurn();
   for(const [index,message] of messages.entries()){
     let node=existing.get(message.id);existing.delete(message.id);
     if(!node){node=document.createElement('article');node.dataset.messageId=message.id;}
@@ -72,6 +82,16 @@ export function renderAssistantMessages(history,messages,welcome){
         actions.innerHTML=copyButtonMarkup('data-response-action="copy"','复制回复');node.append(actions);
       }
       node._signature=signature;
+    }
+    // Intermediate assistant messages can be saved before tool work finishes.
+    // Keep previous turns copyable while locking every segment of this turn.
+    if(message.role==='assistant'){
+      const pending=working&&index>turnStart;
+      for(const control of node.querySelectorAll('[data-code-copy],[data-doc-copy]'))control.hidden=pending;
+      for(const actions of node.querySelectorAll('.dw-message-actions')){
+        actions.hidden=pending||!replyCopies.has(message.id);
+        actions.dataset.copyText=replyCopies.get(message.id)||'';
+      }
     }
     // Appending only when out of position preserves focus, selection and scroll.
     if(history.children[index]!==node)history.insertBefore(node,history.children[index]||null);

@@ -2379,7 +2379,7 @@ function scheduleRouteContentRender(route, routeChanged) {
         return;
       }
       if (route === 'assistant') {
-        void Promise.all([import('./features/assistant/workspace.js?v=19'),loadAssistantStyles()]).then(([{mountAssistant}])=>{
+        void Promise.all([import('./features/assistant/workspace.js?v=21'),loadAssistantStyles()]).then(([{mountAssistant}])=>{
           if(epoch!==routeRenderEpoch||state.route!=='assistant')return;
           if(!assistantController)assistantController=mountAssistant({host:$('#assistantView'),api,toast,setCreditBalance});
         }).catch(error=>toast(`助手打开失败：${error.message}`));
