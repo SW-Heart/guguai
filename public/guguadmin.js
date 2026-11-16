@@ -2263,7 +2263,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
   const userCell = (_userId, nickname, extra = '') => nickname || extra ? `<span class="cell-clip log-user" title="${esc(nickname || extra)}">${esc(nickname || extra)}</span>` : '<span class="muted">—</span>';
   const signedAmount = value => `<b class="${Number(value) < 0 ? 'danger-text' : 'success-text'}">${Number(value) >= 0 ? '+' : ''}${money(value)}</b>`;
   function logModelName(item) {
-    const names = { ...routeModelLabels, 'gpt-image-2': 'GPT Image 2', 'gpt-image-2.5': 'GPT Image 2.5', midjourney: 'Midjourney', grok: 'Grok 1.5', oai: 'Omni Flash', 'veo-31': 'Veo 3.1', veo: 'Veo 3.1 Fast', 'minimax-h3': 'Minimax H3', 'video-upscale': '视频高清放大', 'seedance-2.0-text': 'Seedance 2.0', 'seedance-2.0-img': 'Seedance 2.0' };
+    const names = { ...routeModelLabels, 'gpt-image-2': 'GPT Image 2', 'gpt-image-2.5': 'GPT Image 2.5', 'gpt-image-2.6': 'GPT Image 2.6', midjourney: 'Midjourney', grok: 'Grok 1.5', oai: 'Omni Flash', 'veo-31': 'Veo 3.1', veo: 'Veo 3.1 Fast', 'minimax-h3': 'Minimax H3', 'video-upscale': '视频高清放大', 'seedance-2.0-text': 'Seedance 2.0', 'seedance-2.0-img': 'Seedance 2.0' };
     const name = item.modelName || names[item.modelId] || item.modelId || '—';
     const doc = item.details || {};
     const quality = item.quality || item.resolution || doc.quality || doc.resolution || '';

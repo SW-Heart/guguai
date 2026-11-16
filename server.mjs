@@ -42,6 +42,8 @@ import { visibleGenerationPrompt } from './lib/drama-style.mjs';
 import { createDirectorService } from './services/director.mjs';
 import { createDuomiProvider } from './providers/duomi.mjs';
 import { createTuziProvider } from './providers/tuzi.mjs';
+import { createWjImageProvider } from './providers/wj-image.mjs';
+import { GPT_IMAGE_26_ASPECTS } from './lib/gpt-image-26.mjs';
 import { createTtapiProvider } from './providers/ttapi.mjs';
 import { createCntcnProvider } from './providers/cntcn.mjs';
 import { createRoutedProvider } from './providers/routed.mjs';
@@ -120,6 +122,7 @@ const mediaTmpMaxAgeMs = Math.max(60_000, Number(process.env.MEDIA_TMP_MAX_AGE_M
 const port = Number(process.env.PORT || 4317);
 const duomiBase = (process.env.DUOMI_API_BASE || 'https://duomiapi.com').replace(/\/$/, '');
 const tuziBase = (process.env.TUZI_API_BASE || 'https://api.tu-zi.com').replace(/\/$/, '');
+const wjImageBase = (process.env.WJ_API_BASE || 'https://www.weijinapi.top').replace(/\/$/, '');
 const ttapiBase = (process.env.TTAPI_API_BASE || 'https://api.ttapi.io').replace(/\/$/, '');
 const configuredCntcnBase = (process.env.CNTCN_API_BASE || 'https://api.ai.cntcn.com').replace(/\/$/, '');
 const cntcnBase = /\/v1$/i.test(configuredCntcnBase) ? configuredCntcnBase : `${configuredCntcnBase}/v1`;
@@ -297,9 +300,10 @@ const videoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2.5' });
-const imageModelIds = Object.freeze({ seedream50:'seedream-5.0', gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney', nanoBanana21: 'nano-banana-2.1' });
+const imageModelIds = Object.freeze({ gptImage26:'gpt-image-2.6', seedream50:'seedream-5.0', gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney', nanoBanana21: 'nano-banana-2.1' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
+  { id:imageModelIds.gptImage26, label:'GPT Image 2.6', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage26], qualityOptions:['1K', '2K', '4K'] },
   { id:imageModelIds.seedream50, label:'Seedream 5.0', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.seedream50], qualityOptions:['2K', '3K', '4K'] },
   { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], qualityOptions:['1K', '2K', '4K'] },
   { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2] },
@@ -628,6 +632,7 @@ const publicCreditModelIds = new Set([
   imageModelIds.gptImage25,
   imageModelIds.midjourney,
   imageModelIds.nanoBanana21,
+  imageModelIds.gptImage26,
   ...Object.values(VIDEO_MODEL_IDS),
   ...Object.values(LEGACY_VIDEO_MODEL_IDS),
 ]);
@@ -705,7 +710,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     for (const quality of qualities) {
       const credits = modelPrice(pricing, imageModel.id, quality, imageModel.id === imageModelIds.gptImage25
         ? tuziImageCredits[quality.toLowerCase()]
-        : imageModel.id === imageModelIds.seedream50 ? 2 : imageModel.id === imageModelIds.nanoBanana21 ? 1 : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
+        : imageModel.id === imageModelIds.seedream50 ? 2 : [imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(imageModel.id) ? 1 : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
       items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
@@ -806,6 +811,13 @@ const tuziProvider = createTuziProvider({
   imageMaxPollDurationMs,
   imageSubmitTimeoutMs:tuziImageSubmitTimeoutMs,
   errorMessage,
+});
+const wjImageProvider = createWjImageProvider({
+  baseUrl:wjImageBase,
+  apiKey:process.env.WJ_IMAGE_KEY,
+  ...providerTransport,
+  sleep,
+  imageSubmitTimeoutMs:tuziImageSubmitTimeoutMs,
 });
 const ttapiProvider = createTtapiProvider({
   submitTimeoutMs: providerTaskIdTimeoutMs,
@@ -2264,7 +2276,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
       const refs = task.type === 'image'
         ? await resolveImageRefs(userId, task.referenceAssetIds, task)
         : await resolveRefs(userId, task.referenceAssetIds, task);
-      const hooks = task.type === 'image' && ['duomi', 'tuzi'].includes(task.provider)
+      const hooks = task.type === 'image' && ['duomi', 'tuzi', 'wj'].includes(task.provider)
         ? imagePersistenceHooks(userId, task)
         : task.provider === 'oai'
         ? oaiPersistenceHooks(userId, task)
@@ -2279,7 +2291,7 @@ function startGeneration(userId, task, { deferPolling = false } = {}) {
             : {};
       hooks.deferPolling = deferPolling;
       const result = task.type === 'image'
-        ? await (task.provider === 'tuzi' ? tuziProvider : duomiProvider).createImage(task, refs, hooks)
+        ? await (task.provider === 'tuzi' ? tuziProvider : task.provider === 'wj' ? wjImageProvider : duomiProvider).createImage(task, refs, hooks)
         : await createVideo(task, refs, hooks);
       if (result?.pending) return;
       if (!result.url) throw new Error('模型任务完成，但没有返回结果地址');
@@ -2957,6 +2969,7 @@ const generationRoute = createGenerationRouteHandler({
   providerAvailability:{
     duomi:Boolean(process.env.DUOMI_API_KEY),
     tuzi:Boolean(process.env.TUZI_DEFAULT_API_KEY),
+    wjImage:Boolean(process.env.WJ_IMAGE_KEY),
     ttapi:ttapiConfigured,
     cntcn:cntcnConfigured,
     autodl:autodlConfigured,
@@ -3100,8 +3113,8 @@ function agentMediaCatalog() {
   const images = availableImageModels()
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
-    sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : [...imageSizes],
-    qualities:m.id === imageModelIds.seedream50 ? ['2k', '3k', '4k'] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
+    sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : m.id === imageModelIds.gptImage26 ? [...GPT_IMAGE_26_ASPECTS] : [...imageSizes],
+    qualities:m.id === imageModelIds.seedream50 ? ['2k', '3k', '4k'] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
     quantity:m.id === imageModelIds.midjourney ? [4,8] : [1,2,3,4,5,6,7,8,9,10],
     referenceUsage:'referenceAssetIds 使用当前工作空间的素材 ID。Midjourney 比例、质量等设置在 midjourneyOptions。实际可用性与费用由 media_prepare 检查。',
   }));

@@ -1,8 +1,9 @@
 import { speechModels,speechDesignModel,systemVoices } from '../speech/catalog.js?v=2';
-import { modelLogoUrl } from '../../components/model-logo.js?v=11';
+import { modelLogoUrl } from '../../components/model-logo.js?v=12';
 import { defaultVideoDuration } from '../generation/video-defaults.js?v=5';
 import { replaceAssetMentions } from '../../video-prompt.js?v=6';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
+const imageRatiosFor=modelId=>modelId==='gpt-image-2.6'?imageRatios.filter(ratio=>!['1:2','2:1'].includes(ratio)):imageRatios;
 const tuziDimensions={
   '1:1':['1024x1024','2048x2048','2880x2880'],'2:3':['816x1232','1360x2048','2352x3520'],
   '3:2':['1232x816','2048x1360','3520x2352'],'3:4':['880x1184','1552x2080','2336x3120'],
@@ -46,7 +47,7 @@ export function createCanvasGenerationDraft(type,config={}){
 export function canvasGenerationOptions(draft,config={}){
   if(draft.type==='audio')return {model:speechModels.find(m=>m.id===draft.modelId),modes:[],parameters:null,aspects:[],qualities:[]};
   const model=canvasGenerationModels(draft.type,config).find(item=>item.id===draft.modelId);
-  if(draft.type==='image')return {model,modes:[],parameters:null,aspects:imageRatios,qualities:draft.modelId==='seedream-5.0'?['2k','3k','4k']:draft.modelId==='midjourney'?['0.25','0.5','1','2','4']:['gpt-image-2.5','nano-banana-2.1'].includes(draft.modelId)?['1k','2k','4k']:['low','medium','high']};
+  if(draft.type==='image')return {model,modes:[],parameters:null,aspects:imageRatiosFor(draft.modelId),qualities:draft.modelId==='seedream-5.0'?['2k','3k','4k']:draft.modelId==='midjourney'?['0.25','0.5','1','2','4']:['gpt-image-2.5','nano-banana-2.1','gpt-image-2.6'].includes(draft.modelId)?['1k','2k','4k']:['low','medium','high']};
   const modes=model?.modes||[];
   const base=modes.find(item=>item.generationType===draft.mode)||modes[0]||null;
   const quality=base?.qualityOptions?.includes(draft.quality)?draft.quality:base?.qualityOptions?.[0];
@@ -62,7 +63,7 @@ export function reconcileCanvasGenerationDraft(draft,config={}, {resetDuration=f
   if(!models.some(item=>item.id===draft.modelId&&item.availability!=='coming-soon'))draft.modelId=models.find(item=>item.availability!=='coming-soon')?.id||'';
   const options=canvasGenerationOptions(draft,config);
   if(draft.type==='image'){
-    if(!imageRatios.includes(draft.aspect))draft.aspect='1:1';
+    if(!options.aspects.includes(draft.aspect))draft.aspect='1:1';
     if(!options.qualities.includes(draft.quality))draft.quality=options.qualities.includes('medium')?'medium':options.qualities.includes('1k')?'1k':options.qualities[0];
     const midjourney=draft.modelId==='midjourney';
     draft.quantity=midjourney?(Number(draft.quantity)>=8?8:4):Math.max(1,Math.min(10,Math.round(Number(draft.quantity)||1)));

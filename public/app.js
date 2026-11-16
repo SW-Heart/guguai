@@ -1,4 +1,4 @@
-import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=11';
+import { modelLogoUrls, modelLogoMarkup } from './components/model-logo.js?v=12';
 import { releaseNotesFor } from './features/updates/release-notes.js?v=1';
 import { defaultVideoDuration } from './features/generation/video-defaults.js?v=5';
 import { createConfigSync } from './state/config-sync.js?v=2';
@@ -2273,8 +2273,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=190');
-const importDramaStudio = () => import('./drama-studio.js?v=323');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=191');
+const importDramaStudio = () => import('./drama-studio.js?v=324');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -3126,6 +3126,7 @@ function generationModelName(task) {
   if (!modelId) return '—';
   if (modelId === 'gpt-image-2') return 'GPT-Image-2';
   if (modelId === 'gpt-image-2.5') return 'GPT Image 2.5';
+  if (modelId === 'gpt-image-2.6') return 'GPT Image 2.6';
   if (modelId === 'seedream-5.0') return 'Seedream 5.0';
   if (modelId === 'nano-banana-2.1') return 'Nano Banana 2.1';
   if (modelId === 'midjourney') return 'Midjourney';
@@ -3167,7 +3168,7 @@ function generationParameterRows(task) {
       rows.push(detailRow('画面比例', selection.aspect === 'auto' ? '自动' : selection.aspect));
       rows.push(detailRow('输出尺寸', task.size === 'auto' ? '自动' : String(task.size || '—').replace('x', ' × ')));
       rows.push(detailRow('清晰度', String(task.quality || '1k').toUpperCase()));
-    } else if (['nano-banana-2.1', 'seedream-5.0'].includes(task.modelId)) {
+    } else if (['nano-banana-2.1', 'seedream-5.0', 'gpt-image-2.6'].includes(task.modelId)) {
       rows.push(detailRow('画面比例', task.size || '—'));
       rows.push(detailRow('清晰度', String(task.quality || '1k').toUpperCase()));
     } else {
@@ -4334,12 +4335,28 @@ function syncVideoModelOptions() {
   refreshProductSelect('videoModel');
   syncVideoModelParameters();
 }
+// GPT Image 2.6 has no 1:2 or 2:1 output; hide those ratios while it is selected.
+const gptImage26UnsupportedSizes = new Set(['1:2', '2:1']);
+function syncImageSizeChoices(modelId) {
+  const restricted = modelId === 'gpt-image-2.6';
+  $('.ratio-grid[data-select="imageSize"]')?.querySelectorAll('button[data-value]').forEach(button => {
+    button.hidden = restricted && gptImage26UnsupportedSizes.has(button.dataset.value);
+  });
+  const select = $('#imageSize');
+  if (!select) return;
+  [...select.options].forEach(option => { option.disabled = restricted && gptImage26UnsupportedSizes.has(option.value); });
+  if (restricted && gptImage26UnsupportedSizes.has(select.value)) {
+    select.value = '1:1';
+    syncRatioGridSelection($('.ratio-grid[data-select="imageSize"]'), '1:1');
+  }
+}
 function syncImageModelParameters() {
   const modelId = $('#imageModel')?.value;
   const isMidjourney = modelId === 'midjourney';
   const isTuzi = modelId === 'gpt-image-2.5';
-  const isNanoBanana = modelId === 'nano-banana-2.1';
+  const isNanoBanana = modelId === 'nano-banana-2.1' || modelId === 'gpt-image-2.6';
   const isSeedream = modelId === 'seedream-5.0';
+  syncImageSizeChoices(modelId);
   const qualitySelect = $('#imageQuality');
   const qualityGroup = $('.segmented[data-select="imageQuality"]');
   const qualities = isSeedream ? [['2k','2K'],['3k','3K'],['4k','4K']] : isNanoBanana ? [['1k','1K'],['2k','2K'],['4k','4K']] : [['low','低'],['medium','中'],['high','高']];
@@ -4807,9 +4824,9 @@ function updateImageCost() {
   const count = imageQuantityValue(quantity.value) ?? imageQuantityConfig().min;
   const isMidjourney = $('#imageModel')?.value === 'midjourney';
   const selectedModel = $('#imageModel')?.value;
-  const selectedQuality = selectedModel === 'gpt-image-2.5' ? $('#imageTuziQuality')?.value : ['nano-banana-2.1', 'seedream-5.0'].includes(selectedModel) ? $('#imageQuality')?.value : '标准';
+  const selectedQuality = selectedModel === 'gpt-image-2.5' ? $('#imageTuziQuality')?.value : ['nano-banana-2.1', 'seedream-5.0', 'gpt-image-2.6'].includes(selectedModel) ? $('#imageQuality')?.value : '标准';
   const configuredPrice = state.config.modelPrices?.find(item => item.modelId === selectedModel && item.quality.toLowerCase() === String(selectedQuality).toLowerCase());
-  const unitPrice = configuredPrice?.credits ?? (selectedModel === 'seedream-5.0' ? 2 : selectedModel === 'nano-banana-2.1' ? 1 : isMidjourney ? midjourneyImageCredits : selectedModel === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1);
+  const unitPrice = configuredPrice?.credits ?? (selectedModel === 'seedream-5.0' ? 2 : ['nano-banana-2.1', 'gpt-image-2.6'].includes(selectedModel) ? 1 : isMidjourney ? midjourneyImageCredits : selectedModel === 'gpt-image-2.5' ? tuziImageCredits[$('#imageTuziQuality')?.value] || 1 : Number(state.pricing.image) || 1);
   cost.textContent = creditText((isMidjourney ? count / 4 : count) * unitPrice);
   updateImageQuantityButtons(count);
 }
