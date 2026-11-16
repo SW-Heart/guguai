@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily GuGu AI database backup
+
+[Timer]
+# 20:30 UTC = 04:30 北京时间，用户最少的时段。
+OnCalendar=*-*-* 20:30:00 UTC
+RandomizedDelaySec=300
+# 机器在计划时间关机时，开机后补跑一次。
+Persistent=true
+
+[Install]
+WantedBy=timers.target

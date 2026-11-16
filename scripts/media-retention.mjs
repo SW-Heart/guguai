@@ -4,7 +4,8 @@
 //   node --env-file=.env scripts/media-retention.mjs [--before=2026-10-01T00:00:00Z] [--execute]
 //
 // --before defaults to six days ago: every cloud copy uploaded earlier is
-// removed regardless of delivery. Diagnostic logs are never touched.
+// removed regardless of delivery. Diagnostic logs and database backups are
+// never touched.
 import { appendFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -12,6 +13,7 @@ import { DeleteObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/cl
 import { openDatabase, resolveDataDir, sql } from '../lib/db.mjs';
 import { listAssetsWithObjects, listPendingGenerations, saveAssetRecord } from '../lib/store.mjs';
 import { createMediaRetentionService, MEDIA_RETENTION_DEFAULTS } from '../services/media-retention.mjs';
+import { isDbBackupObjectKey } from '../lib/db-backup-offsite.mjs';
 
 const execute = process.argv.includes('--execute');
 const beforeArg = process.argv.find(arg => arg.startsWith('--before='))?.slice('--before='.length);
@@ -76,7 +78,7 @@ for (const row of sql(`SELECT temporary_object_key AS temporaryKey, final_object
 let orphans = 0;
 let orphanBytes = 0;
 for await (const object of listObjects(r2, bucket)) {
-  if (object.key.includes('/support-logs/') || referenced.has(object.key)) continue;
+  if (object.key.includes('/support-logs/') || isDbBackupObjectKey(object.key) || referenced.has(object.key)) continue;
   if (object.lastModified.getTime() > before) continue;
   orphans++;
   orphanBytes += object.size;

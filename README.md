@@ -685,6 +685,9 @@ npm run db:check
 # 创建 SQLite 热备份，并只保留最近 7 份
 npm run db:backup
 
+# 创建热备份，并把 gzip 副本上传到私有 R2（默认保留最近 30 份）
+npm run db:backup:offsite
+
 # 启动桌面客户端（内测）
 npm run desktop:dev
 
@@ -760,6 +763,27 @@ curl --fail http://127.0.0.1:4317/readyz
 ```bash
 npm run db:backup
 ```
+
+#### 每日自动备份与异地副本
+
+`npm run db:backup` 的产物和线上库在同一块磁盘上，磁盘损坏时会一起丢失。生产环境应安装仓库提供的定时任务，每天生成本地快照并把 gzip 副本上传到私有 R2：
+
+```bash
+sudo cp deploy/gugu-ai-backup.service.example /etc/systemd/system/gugu-ai-backup.service
+sudo cp deploy/gugu-ai-backup.timer.example /etc/systemd/system/gugu-ai-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now gugu-ai-backup.timer
+
+# 立即跑一次并查看结果
+sudo systemctl start gugu-ai-backup.service
+sudo journalctl -u gugu-ai-backup -n 40 --no-pager
+systemctl list-timers gugu-ai-backup.timer
+```
+
+- 对象位于 `<MEDIA_OBJECT_PREFIX>/db-backups/studio.db.bak-<UTC 时间>.gz`，可用 `DB_BACKUP_R2_BUCKET`、`DB_BACKUP_OBJECT_PREFIX` 改到独立位置，`DB_BACKUP_REMOTE_RETENTION` 控制异地保留份数。
+- 该前缀不受媒体保留期清理影响。不要给它配置 Bucket 生命周期删除规则。
+- 任一步失败时任务以非零状态退出；配置了 `FEISHU_WEBHOOK` 时会向飞书群发送“数据库备份失败”卡片。
+- 从异地副本恢复：下载对象后 `gunzip`，再按下面的恢复步骤操作。
 
 不要只复制 `studio.db`，因为最近提交的数据可能仍在 `studio.db-wal` 中。若需要清理旧本地媒体，必须先确认对应 R2 对象的大小和校验信息，再使用 `npm run media:audit -- --delete` 分批执行；本版本不会自动清理旧数据目录。
 
