@@ -285,3 +285,23 @@ test('public assets expose authenticated delivery endpoints without leaking upst
   assert.equal(value.sourceRequiresAuth, undefined);
   assert.equal(value.referenceSourceAvailable, true);
 });
+
+test('a gateway catch-all image refusal on a text-only task points at the description, not references', () => {
+  const error = '400 图片请求未通过，请检查提示词、参考图片和尺寸参数 (request id: 202611170554007450925068268d9d63gIAgo7i)';
+  const task = { type:'image', status:'failed', error, referenceAssetIds:[], creditStatus:'refunded' };
+  assert.equal(__test.generationFailureCode(task), 'REQUEST_REJECTED');
+  const value = __test.publicGeneration(task);
+  assert.equal(value.failure.message, '画面描述未通过生成检查');
+  assert.doesNotMatch(value.error, /参考/);
+
+  const withReferences = __test.generationFailure({ ...task, referenceAssetIds:['asset-1'] });
+  assert.equal(withReferences.code, 'REQUEST_REJECTED');
+  assert.equal(withReferences.message, '画面描述或参考图片未通过生成检查');
+});
+
+test('a task without references is never blamed on a reference image', () => {
+  const error = '400 图片尺寸不符合要求';
+  assert.equal(__test.generationFailureCode({ error, referenceAssetIds:['asset-1'] }), 'INVALID_REFERENCE');
+  assert.equal(__test.generationFailureCode({ error, referenceAssetIds:[] }), 'INVALID_REQUEST');
+  assert.doesNotMatch(__test.publicGeneration({ status:'failed', error, referenceAssetIds:[] }).error, /参考/);
+});

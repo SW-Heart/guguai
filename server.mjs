@@ -468,6 +468,7 @@ const generationFailureCatalog = Object.freeze({
   ARCHIVE_FAILED: Object.freeze({ message: '成品归档暂未完成', suggestion: '模型已完成生成，请稍后刷新，不要重复提交；持续未恢复时请联系支持。', action: 'wait' }),
   INTERRUPTED: Object.freeze({ message: '任务处理被中断', suggestion: '任务未能继续执行，请确认积分状态后重新生成。', action: 'retry' }),
   REFUND_PENDING: Object.freeze({ message: '任务失败，积分退回待处理', suggestion: '请勿重复提交，联系支持并提供本平台任务编号。', action: 'contact_support' }),
+  REQUEST_REJECTED: Object.freeze({ message: '画面描述或参考图片未通过生成检查', suggestion: '请修改画面描述中可能敏感或违规的内容，或更换参考图片后重试。', action: 'edit_input' }),
   UNKNOWN: Object.freeze({ message: '生成失败，服务未返回具体原因', suggestion: '可调整提示词或参考图片后重试；若持续失败，请联系支持。', action: 'edit_input' }),
 });
 function referenceNumber(raw) {
@@ -516,6 +517,9 @@ function generationFailure(task) {
     return requiresOwnerPortrait
       ? { ...base, suggestion: '当前模型只接受包含本人肖像的参考图，请使用已获本人授权且符合当前服务规则的素材，或移除参考图改用纯文本生成。' }
       : { ...base, suggestion: '当前服务不接受这张真人参考图；如果当前服务规则允许，可先转换为彩铅或插画风格，或按要求增加面部网格/标记后重试。请确保素材已获授权并符合服务规则；也可以改用虚构角色或非真人素材，或切换到明确支持真人肖像的模型。' };
+  }
+  if (code === 'REQUEST_REJECTED' && Array.isArray(task.referenceAssetIds) && task.referenceAssetIds.length === 0) {
+    return { ...base, message: '画面描述未通过生成检查', suggestion: '请修改画面描述中可能敏感或违规的内容后重试。' };
   }
   if (code === 'CONTENT_REJECTED' && /reference|image reference|参考图|图片/.test(raw.toLowerCase())) {
     const number = referenceNumber(raw);
