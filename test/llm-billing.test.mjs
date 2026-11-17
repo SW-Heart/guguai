@@ -352,3 +352,7 @@ test('JSON parser keeps commas inside generated strings unchanged while repairin
 test('JSON parser repairs common missing commas between generated array objects', () => {
   assert.deepEqual(parseJsonObject('{"items":[{"id":1}\n{"id":2},]}'), { items:[{id:1},{id:2}] });
 });
+
+test('the text model falls back to deepseek-flash when none is configured', () => {
+  assert.equal(llmConfigFromEnv({}).model, 'deepseek-flash');
+});

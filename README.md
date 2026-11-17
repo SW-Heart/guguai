@@ -133,7 +133,7 @@ AUTODL_COMFYUI_KEY=your_autodl_comfyui_key
 
 DIRECTOR_AGENT_BASE_URL=https://your-llm-endpoint
 DIRECTOR_AGENT_API_KEY=your_llm_key
-DIRECTOR_AGENT_MODEL=deepseek-v4-flash
+DIRECTOR_AGENT_MODEL=deepseek-flash
 LLM_API_PROTOCOL=openai-compatible
 LLM_INPUT_PRICE_YUAN_PER_MILLION=3
 LLM_OUTPUT_PRICE_YUAN_PER_MILLION=6
@@ -220,7 +220,7 @@ AGENT_CONTEXT_BYTES=120000
 AGENT_SKILLS_DIRS=
 ```
 
-地址、密钥和默认模型分别优先读取 `AGENT_*`，为空时依次回退到对应的 `DIRECTOR_AGENT_*`、`LLM_*` 配置；默认模型最终回退为 `deepseek-v4-flash`。只配置 `AGENT_*` 不会反向配置旧智能导演流程。网关地址可带 `/v1`，代码会补齐该路径。
+地址、密钥和默认模型分别优先读取 `AGENT_*`，为空时依次回退到对应的 `DIRECTOR_AGENT_*`、`LLM_*` 配置；默认模型最终回退为 `deepseek-flash`。只配置 `AGENT_*` 不会反向配置旧智能导演流程。网关地址可带 `/v1`，代码会补齐该路径。
 
 `AGENT_MODELS` 是逗号分隔的模型列表；留空时尝试读取网关 `/v1/models`，失败仍保留默认模型。输出 token 上限默认 6000，约束在 256–16000；上下文预算默认 120000 字节，约束在 24000–500000。修改这些环境变量后需要重启服务。
 
