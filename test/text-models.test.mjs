@@ -115,3 +115,11 @@ test('one successful test immediately makes an enabled model available without t
  c.save([],9);c.save([row('renamed-model')],10);
  assert.deepEqual(c.list(),[]);
 });
+test('every catalog model has an official price converted to CNY',()=>{
+ const p=OFFICIAL_TEXT_MODEL_PRICES;
+ for(const id of ['claude-opus-5-5-kiro','claude-sonnet-5-kiro','gemini-4-argon','gpt-6-astra','gpt-6-sol','gpt-6.1-sol','gpt-6-luna','gpt-5.6-sol','grok-4.7','glm-5.3-flash','kimi-k3'])for(const v of Object.values(p[id]))assert.ok(v>0,id);
+ assert.deepEqual(p['claude-opus-5-5-kiro'],{inputYuanPerMillion:26.88,outputYuanPerMillion:134.4,cacheReadYuanPerMillion:1.344,cacheCreationYuanPerMillion:33.6});
+ assert.deepEqual(p['kimi-k3'],{inputYuanPerMillion:20,outputYuanPerMillion:100,cacheReadYuanPerMillion:2,cacheCreationYuanPerMillion:20});
+ const c=fixture();c.seed([{id:'gpt-6-luna'}],llmRatesFromEnv());
+ assert.equal(llmCostMicro(1000000,1000000,c.rates('gpt-6-luna',llmRatesFromEnv())),40320000);
+});
