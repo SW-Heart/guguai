@@ -111,6 +111,18 @@ test('static directory requests answer 404 instead of crashing the server', asyn
   } finally { rmSync(publicDir, { recursive:true, force:true }); }
 });
 
+test('overlong static paths answer 404 instead of reporting a server error', async () => {
+  const publicDir = mkdtempSync(path.join(tmpdir(), 'gugu-static-long-'));
+  try {
+    mkdirSync(path.join(publicDir, 'icons', 'models'), { recursive:true });
+    const pathname = `/icons/models/${'M16.278 2c1.156 0 2.093.927 2.093 2.07'.repeat(20)}`;
+    const sent = [];
+    const res = { setHeader() {}, getHeader() {}, writeHead() { throw new Error('不应发送文件'); } };
+    await serveStatic(res, pathname, { headers:{}, url:pathname }, { publicDir, sendJson:(_, status, body) => sent.push({ status, body }) });
+    assert.deepEqual(sent, [{ status:404, body:{ error:'静态文件不存在' } }]);
+  } finally { rmSync(publicDir, { recursive:true, force:true }); }
+});
+
 test('videos answer byte ranges so every browser can play and seek them', async t => {
   assert.deepEqual(parseByteRange('bytes=0-99', 1000), { start:0, end:99 });
   assert.deepEqual(parseByteRange('bytes=900-', 1000), { start:900, end:999 });

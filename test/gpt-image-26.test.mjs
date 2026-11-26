@@ -72,6 +72,17 @@ test('GPT Image 2.6 retries only before connecting and never replays a lost resp
   await assert.rejects(provider(() => assert.fail('unsupported sizes must not be submitted')).createImage({ prompt:'test', size:'1:2', quality:'1k' }, []), /不支持/);
 });
 
+test('GPT Image 2.6 logs upstream request rejections as warnings, not transport failures', async t => {
+  const errors = t.mock.method(console, 'error', () => {});
+  const warnings = t.mock.method(console, 'warn', () => {});
+  const refused = Object.assign(new Error('图片请求未通过'), { upstreamStatus:400 });
+  await assert.rejects(provider(async () => { throw refused; }).createImage({ prompt:'test', size:'1:1', quality:'1k' }, []), error => error === refused);
+  assert.equal(errors.mock.callCount(), 0);
+  assert.equal(warnings.mock.calls[0].arguments[0], '[image] WJ submission rejected');
+  await assert.rejects(provider(async () => { throw Object.assign(new Error('bad gateway'), { upstreamStatus:502 }); }).createImage({ prompt:'test', size:'1:1', quality:'1k' }, []));
+  assert.equal(errors.mock.calls[0].arguments[0], '[image] WJ submission transport failure');
+});
+
 test('GPT Image 2.6 is listed first, costs one credit per image and rejects ratios it cannot draw', async () => {
   assert.equal(isImageModelAvailable('gpt-image-2.6', { WJ_IMAGE_KEY:'test' }), true);
   assert.equal(isImageModelAvailable('gpt-image-2.6', { TUZI_DEFAULT_API_KEY:'test', DUOMI_API_KEY:'test' }), false);

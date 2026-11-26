@@ -53,7 +53,10 @@ export function createWjImageProvider({
             generationAttempt:(Number(task.generationRetryCount) || 0) + 1,
             attempt, at:new Date().toISOString(), phase, codes:transportErrorCodes(error), safeToRetry, ...diagnostics,
           }].slice(-20);
-          console.error('[image] WJ submission transport failure', {
+          // A 4xx answer is the upstream declining this request (prompt, references or size), not a network fault.
+          const status = Number(error.upstreamStatus);
+          const rejected = status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status);
+          (rejected ? console.warn : console.error)(`[image] WJ submission ${rejected ? 'rejected' : 'transport failure'}`, {
             generationId:task.id, model:GPT_IMAGE_26_MODEL_ID, attempt, phase, safeToRetry, ...diagnostics,
             detail:upstreamRequestErrorDetail(error),
           });

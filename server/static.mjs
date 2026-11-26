@@ -147,5 +147,5 @@ export async function serveStatic(res, pathname, req = null, { publicDir, appOnl
   const cacheControl = staticCacheControl(ext, { versioned });
   if (appOnly && (pathname === '/' || pathname === '/index.html' || frontendRoutePaths.has(pathname) || isProjectRoute(pathname))) res.setHeader('Vary', 'X-GuGu-Desktop');
   try { await servePublicFile(res, file, mime, cacheControl, req); }
-  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
+  catch (error) { if (['ENOENT', 'ENOTDIR', 'ENAMETOOLONG'].includes(error.code)) return sendJson(res, 404, { error: '静态文件不存在' }); throw error; }
 }
