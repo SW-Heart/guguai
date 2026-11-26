@@ -62,13 +62,13 @@ test('each login activates its account workspace before the legacy claim', () =>
 });
 
 test('frontend entrypoints use the current immutable cache keys', async () => {
-  assert.ok(app.includes('./features/credits/presentation.js?v=7'));
+  assert.ok(app.includes('./features/credits/presentation.js?v=8'));
   const admin = await readFile(new URL('../public/guguadmin.html', import.meta.url), 'utf8');
   assert.ok(admin.includes('/guguadmin.js?v=81'));
   assert.ok(admin.includes('/guguadmin.css?v=39'));
   assert.ok(admin.includes('/guguadmin-routes.css?v=9'));
   assert.doesNotMatch(admin, /guguadmin(?:\.js\?v=30|\.css\?v=19|-routes\.css\?v=7)\b/);
-  assert.match(index, /\/app\.js\?v=645\b/);
+  assert.match(index, /\/app\.js\?v=646\b/);
   assert.doesNotMatch(index, /\/app\.js\?v=260\b/);
   assert.match(index, /\/styles\.css\?v=442/);
   assert.doesNotMatch(index, /reference-canvas\.css/, 'canvas styles load with the canvas workspaces');

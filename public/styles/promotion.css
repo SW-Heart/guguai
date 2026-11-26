@@ -1,0 +1,116 @@
+/* Recharge promotion: popup, rail entry and purchase-sheet hints. */
+
+.promo-dialog { width: min(440px, calc(100% - 28px)); max-height: calc(100dvh - 28px); padding: 0; overflow: visible; border: 0; border-radius: 22px; background: transparent; box-shadow: none; }
+.promo-dialog::backdrop { background: rgba(14,13,36,.52); backdrop-filter: blur(8px) saturate(115%); }
+.promo-dialog[open] .promo-card { animation: promo-card-in 420ms cubic-bezier(.2,.9,.25,1.12); }
+.promo-dialog[open]::backdrop { animation: credit-purchase-fade 240ms ease; }
+.promo-dialog.is-minimizing::backdrop { opacity: 0; transition: opacity 300ms ease; }
+
+.promo-card { position: relative; max-height: calc(100dvh - 28px); overflow: auto; border: 1px solid rgba(129,140,248,.28); border-radius: 22px; background: linear-gradient(180deg, rgb(var(--theme-panel-rgb, 255 255 255) / .97), rgb(var(--theme-panel-rgb, 255 255 255) / .93)); box-shadow: 0 34px 90px rgba(25,20,80,.34), 0 0 0 1px rgb(var(--theme-highlight-rgb, 255 255 255) / .4) inset; backdrop-filter: blur(18px); scrollbar-width: none; }
+.promo-card::-webkit-scrollbar { display: none; }
+
+.promo-hero { position: relative; height: 196px; overflow: hidden; border-radius: 21px 21px 0 0; }
+.promo-hero::after { content: ""; position: absolute; inset: auto 0 0; height: 46px; background: linear-gradient(180deg, transparent, rgb(var(--theme-panel-rgb, 255 255 255) / .14)); pointer-events: none; }
+.promo-hero-art { display: block; width: 100%; height: 100%; stroke: none; stroke-width: 1; stroke-linecap: butt; stroke-linejoin: miter; }
+.promo-hero-brand { position: absolute; top: 16px; left: 16px; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid rgba(255,255,255,.22); border-radius: 11px; background: rgba(255,255,255,.12); backdrop-filter: blur(8px); }
+.promo-hero-brand .brand-gem { width: 22px; height: 22px; border-radius: 6px; background: #fff; }
+.promo-hero-brand .brand-gem::before, .promo-hero-brand .brand-gem::after { background: #2b2580; transform-origin: center; scale: .8; }
+.promo-close { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; color: #eef0ff; background: rgba(255,255,255,.1); backdrop-filter: blur(8px); transition: background var(--ease), transform var(--ease); }
+.promo-close:hover { background: rgba(255,255,255,.2); transform: rotate(90deg); }
+.promo-close:focus-visible { outline: 2px solid #fde68a; outline-offset: 2px; }
+.promo-close svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+/* Hero motion: the lid bobs, coins float, light breathes. */
+.promo-lid { animation: promo-lid 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.promo-beam { animation: promo-beam 2.8s ease-in-out infinite; }
+.promo-coin { animation: promo-float 3.6s ease-in-out infinite; }
+.promo-coin-b { animation-delay: -1.2s; animation-duration: 4.2s; }
+.promo-coin-c { animation-delay: -2.4s; animation-duration: 3.2s; }
+.promo-sparkles path { animation: promo-twinkle 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.promo-sparkles path:nth-child(2) { animation-delay: -.8s; }
+.promo-sparkles path:nth-child(3) { animation-delay: -1.6s; }
+.promo-stars circle { animation: promo-star 3s ease-in-out infinite; }
+.promo-stars circle:nth-child(odd) { animation-delay: -1.5s; }
+.promo-badge { animation: promo-badge 3.2s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.promo-orbit ellipse:last-child { animation: promo-orbit 14s linear infinite; }
+
+.promo-body { padding: 22px 26px 24px; }
+.promo-title { margin: 0; color: var(--ink); font: 750 22px/1.3 var(--sans); letter-spacing: -.01em; }
+.promo-lead { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+
+.promo-facts { display: grid; gap: 1px; margin: 16px 0 0; overflow: hidden; border: 1px solid var(--glass-line); border-radius: 14px; background: var(--glass-line); }
+.promo-facts div { display: grid; grid-template-columns: 72px 1fr; gap: 12px; padding: 10px 14px; background: var(--glass-soft); }
+.promo-facts dt { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.promo-facts dd { margin: 0; color: var(--ink-soft, var(--ink)); font-size: 13px; font-weight: 550; line-height: 1.55; }
+
+.promo-countdown { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 12px 14px; border: 1px solid rgba(217,147,42,.28); border-radius: 14px; background: linear-gradient(135deg, rgba(254,243,199,.75), rgba(237,233,254,.7)); }
+.promo-countdown-label { color: #7c4a03; font-size: 13px; font-weight: 650; }
+.promo-countdown-digits { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.promo-countdown-digits b { min-width: 34px; padding: 5px 0; border-radius: 8px; color: #fff; background: linear-gradient(160deg, #2b2580, #5b3fc4); box-shadow: 0 4px 10px rgba(67,56,202,.28), inset 0 1px rgba(255,255,255,.18); font: 700 16px/1.2 var(--sans); text-align: center; }
+.promo-countdown-digits i { color: #5b3fc4; font-style: normal; font-weight: 700; }
+
+.promo-note { margin: 12px 0 0; color: var(--faint, var(--muted)); font-size: 12px; line-height: 1.6; }
+
+.promo-actions { display: flex; gap: 10px; margin-top: 18px; }
+.promo-actions > button { flex: 1; min-height: 46px; border-radius: 13px; font-size: 14px; font-weight: 650; }
+.promo-later { justify-content: center; }
+.promo-join { position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,.3); color: #fff; background: linear-gradient(135deg, #4f46e5, #7c5cf0 55%, #c084fc); box-shadow: 0 12px 26px rgba(91,92,232,.32), inset 0 1px rgba(255,255,255,.3); transition: box-shadow var(--ease), transform var(--ease); }
+.promo-join::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.38) 50%, transparent 65%); transform: translateX(-120%); animation: promo-shine 3.2s ease-in-out infinite 1s; }
+.promo-join:hover { box-shadow: 0 16px 30px rgba(91,92,232,.4), inset 0 1px rgba(255,255,255,.35); transform: translateY(-1px); }
+.promo-join:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.promo-dialog[data-phase="upcoming"] .promo-later { display: none; }
+
+/* Rail entry: sits above the account dock while the promotion runs. */
+.rail-promo-button { position: relative; display: flex; flex: none; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 48px; min-height: 58px; margin: 0 0 6px; padding: 6px 2px 7px; border: 1px solid rgba(253,230,138,.5); border-radius: 13px; color: #fff; background: radial-gradient(120% 90% at 50% 0%, #7c5cf0, #2b2580 78%); box-shadow: 0 8px 18px rgba(67,56,202,.3), inset 0 1px rgba(255,255,255,.22); font: 600 10px/1.2 var(--sans); text-align: center; transition: box-shadow var(--ease), transform var(--ease); }
+.rail-promo-button::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; background: conic-gradient(from var(--promo-angle, 0deg), transparent 0 70%, rgba(253,230,138,.9) 82%, transparent 94%); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; padding: 1px; animation: promo-ring 3.6s linear infinite; pointer-events: none; }
+.rail-promo-button:hover { box-shadow: 0 11px 22px rgba(67,56,202,.38), inset 0 1px rgba(255,255,255,.28); transform: translateY(-1px); }
+.rail-promo-button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.rail-promo-icon { display: grid; place-items: center; width: 18px; height: 18px; color: #fde68a; }
+.rail-promo-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; animation: promo-gift 2.6s ease-in-out infinite; transform-origin: 50% 90%; }
+.rail-promo-rate { color: #fde68a; font-size: 10.5px; font-weight: 800; letter-spacing: .01em; }
+.rail-promo-time { color: rgba(255,255,255,.86); font-size: 9.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rail-promo-button[data-phase="upcoming"] { background: radial-gradient(120% 90% at 50% 0%, #5b5bd6, #2b2a6e 78%); }
+.rail-promo-button.hidden { display: none; }
+
+@property --promo-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+/* Purchase sheet: banner and per-package bonus marks. */
+.credit-promotion-banner { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid rgba(217,147,42,.3); border-radius: 12px; color: #5b2c05; background: linear-gradient(120deg, rgba(254,243,199,.9), rgba(237,233,254,.85)); font-size: 13px; font-weight: 600; line-height: 1.45; }
+.credit-promotion-banner[hidden] { display: none; }
+.credit-promotion-banner svg { flex: none; width: 18px; height: 18px; fill: none; stroke: #b45309; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.credit-promotion-banner small { display: block; color: #8a5a17; font-size: 12px; font-weight: 500; }
+.credit-purchase-options button[data-bonus]::after { content: attr(data-bonus); position: absolute; top: -8px; right: -6px; padding: 2px 6px; border: 1px solid rgba(255,255,255,.6); border-radius: 999px; color: #5b2c05; background: linear-gradient(135deg, #fde68a, #f59e0b); box-shadow: 0 3px 8px rgba(217,119,6,.28); font: 750 10px/1.2 var(--sans); white-space: nowrap; pointer-events: none; }
+.credit-purchase-options button[data-bonus] { position: relative; overflow: visible; }
+.credit-purchase-summary .promo-bonus-meta { color: #b45309; font-weight: 650; }
+
+html[data-theme="dark"] .promo-countdown { border-color: rgba(253,230,138,.22); background: linear-gradient(135deg, rgba(120,80,20,.32), rgba(76,60,160,.3)); }
+html[data-theme="dark"] .promo-countdown-label { color: #fde68a; }
+html[data-theme="dark"] .promo-countdown-digits i { color: #c4b5fd; }
+html[data-theme="dark"] .credit-promotion-banner { border-color: rgba(253,230,138,.22); color: #fde68a; background: linear-gradient(120deg, rgba(120,80,20,.35), rgba(76,60,160,.32)); }
+html[data-theme="dark"] .credit-promotion-banner small { color: #e9d5a1; }
+html[data-theme="dark"] .credit-promotion-banner svg { stroke: #fbbf24; }
+html[data-theme="dark"] .credit-purchase-summary .promo-bonus-meta { color: #fbbf24; }
+
+@keyframes promo-card-in { from { opacity: 0; transform: translateY(18px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes promo-lid { 0%, 100% { transform: translateY(0) rotate(0); } 45% { transform: translateY(-6px) rotate(-2deg); } 60% { transform: translateY(-4px) rotate(1.5deg); } }
+@keyframes promo-beam { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes promo-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -7px; } }
+@keyframes promo-twinkle { 0%, 100% { opacity: .35; scale: .7; } 50% { opacity: 1; scale: 1.15; } }
+@keyframes promo-star { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+@keyframes promo-badge { 0%, 100% { rotate: -6deg; } 50% { rotate: 6deg; } }
+@keyframes promo-orbit { to { stroke-dashoffset: -180; } }
+@keyframes promo-shine { 0%, 60% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
+@keyframes promo-ring { to { --promo-angle: 360deg; } }
+@keyframes promo-gift { 0%, 84%, 100% { transform: rotate(0); } 88% { transform: rotate(-12deg); } 92% { transform: rotate(10deg); } 96% { transform: rotate(-6deg); } }
+
+@media (max-width: 780px) {
+  .rail-promo-button { display: none; }
+  .promo-hero { height: 168px; }
+  .promo-body { padding: 18px 18px 20px; }
+  .promo-facts div { grid-template-columns: 64px 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .promo-dialog[open] .promo-card,
+  .promo-lid, .promo-beam, .promo-coin, .promo-sparkles path, .promo-stars circle, .promo-badge, .promo-orbit ellipse,
+  .promo-join::after, .rail-promo-button::before, .rail-promo-icon svg { animation: none; }
+}

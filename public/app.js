@@ -13,7 +13,8 @@ import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=5';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=6';
 import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=2';
-import { createCreditPresentation } from './features/credits/presentation.js?v=7';
+import { createCreditPresentation } from './features/credits/presentation.js?v=8';
+import { createRechargePromotion } from './features/promotions/recharge-promotion.js?v=1';
 import { createCreditRedemptionController } from './features/credits/redemption.js?v=1';
 import { createPromptEditorCodec, linkTextMentions, pastePlainText, textMentionEntries } from './components/prompt-editor.js?v=3';
 import { createAccountScope } from './state/account-scope.js?v=2';
@@ -75,6 +76,7 @@ let desktopUpdateReminderSnoozed = false;
 let desktopUpdateDialogDismissed = false;
 const generationSubmissionForms = new WeakSet();
 let desktopUpdateState = { status: 'idle' };
+let rechargePromotion = null;
 let desktopClientInfo = {};
 const desktopUpdateExit = createDesktopUpdateExit({ getBridge: () => window.guguDesktop, getInfo: () => desktopClientInfo, closeWindow: () => window.close() });
 const desktopDownloadUrl = 'https://guguai.xyz/#download';
@@ -1009,10 +1011,34 @@ function renderCreditPurchase() {
   const selectedCredits = wechat ? (valid ? Math.round(Number(amount) * 100) / 10 : 0) : state.alipayTopupCredits;
   $('#alipayTopupAmount').textContent = wechat ? (valid ? `¥${Number(amount).toFixed(2)}` : '—') : `¥${(selectedCredits * rate).toFixed(2)}`;
   const meta = $('#alipayTopupMeta');
-  if (meta) meta.textContent = `${wechat && !valid ? '' : `${creditText(selectedCredits)} 积分 · `}1 元 = ${creditText(wechat ? 10 : 1 / rate)} 积分`;
+  const bonus = rechargePromotion?.bonusFor(selectedCredits) || 0;
+  if (meta) {
+    meta.textContent = `${wechat && !valid ? '' : `${creditText(selectedCredits)} 积分 · `}1 元 = ${creditText(wechat ? 10 : 1 / rate)} 积分`;
+    if (bonus > 0) {
+      const extra = document.createElement('span');
+      extra.className = 'promo-bonus-meta';
+      extra.textContent = ` · 活动赠送 ${creditText(bonus)} 积分`;
+      meta.append(extra);
+    }
+  }
+  renderCreditPromotion();
   const balance = $('#creditPurchaseBalance');
   if (balance) balance.textContent = creditText(state.credits);
   $('#alipayRefreshPayment').classList.toggle('hidden', !state.alipayOrderNo);
+}
+// Promotion hints inside the purchase sheet; all hidden when no promotion runs.
+function renderCreditPromotion() {
+  const active = Boolean(rechargePromotion?.isActive());
+  const rateText = active ? rechargePromotion.rateText() : '';
+  const banner = $('#creditPromotionBanner');
+  if (banner) {
+    banner.hidden = !active;
+    if (active) $('#creditPromotionBannerText').textContent = `黑色星期五：今日充值额外赠送 ${rateText} 积分`;
+  }
+  $$('[data-alipay-credits], [data-wechat-amount]').forEach(button => {
+    if (active) button.dataset.bonus = `+${rateText}`;
+    else button.removeAttribute('data-bonus');
+  });
 }
 function setAlipayStatus(message = '', tone = '') {
   // The purchase sheet and the standalone QR dialog mirror the same order status.
@@ -1046,7 +1072,8 @@ function openWechatPayDialog(result) {
   const credits = Number(result.order?.credits) || state.alipayTopupCredits;
   const amount = Number(result.order?.totalAmount);
   $('#wechatPayAmount').textContent = `¥${(Number.isFinite(amount) && amount > 0 ? amount : credits * rate).toFixed(2)}`;
-  $('#wechatPayCredits').textContent = `${creditText(credits)} 积分`;
+  const orderBonus = Number(result.order?.bonusCredits) || 0;
+  $('#wechatPayCredits').textContent = orderBonus > 0 ? `${creditText(credits)} 积分 + 赠送 ${creditText(orderBonus)} 积分` : `${creditText(credits)} 积分`;
   $('#wechatPayQr img').src = result.qrCodeUrl;
   $('#wechatPayQr').dataset.state = 'pending';
   $('#wechatPayCheck').textContent = '我已完成支付';
@@ -1101,12 +1128,13 @@ async function refreshAlipayPayment({ polling = false } = {}) {
       paymentPollingStartedAt = 0;
       await loadCredits();
       setCreditBalance(state.creditWallet.balance);
-      setAlipayStatus(`${creditText(result.order.credits)} 积分已到账`, 'success');
+      const bonusCredits = Number(result.order.bonusGrantedCredits) || 0;
+      setAlipayStatus(`${creditText(result.order.credits)} 积分已到账${bonusCredits > 0 ? `，活动赠送 ${creditText(bonusCredits)} 积分` : ''}`, 'success');
       renderCreditPurchase();
       if (window.guguDesktop?.payments?.complete) {
         try { await window.guguDesktop.payments.complete(); } catch {}
       }
-      showPaymentSuccess(result.order.credits, state.creditWallet.balance);
+      showPaymentSuccess(result.order.credits, state.creditWallet.balance, bonusCredits);
     } else if (['CLOSED', 'REFUNDED', 'REFUNDING'].includes(result.order?.status)) {
       stopAlipayPaymentPolling();
       markWechatPayExpired();
@@ -1185,6 +1213,7 @@ async function loadCredits() {
     const result = await api(withHistory ? '/api/credits' : '/api/credits?view=summary');
     if (!accountScope.isCurrent(requestAccount)) return;
     state.pricing = result.pricing;
+    rechargePromotion?.update(result.promotion);
     state.creditWallet = { balance:Number(result.balance) || 0, held:Number(result.held) || 0, available:Number(result.available) || 0 };
     if (Array.isArray(result.transactions)) {
       state.creditTransactions = result.transactions;
@@ -1240,7 +1269,7 @@ function closePaymentSuccess() {
   if (dialog?.open) dialog.close();
   if (dialog) dialog.hidden = true;
 }
-function showPaymentSuccess(credits, balance) {
+function showPaymentSuccess(credits, balance, bonus = 0) {
   const purchaseDialog = $('#creditPurchaseDialog');
   if (purchaseDialog?.open) {
     state.creditPurchaseRestoreFocus = null;
@@ -1250,10 +1279,10 @@ function showPaymentSuccess(credits, balance) {
   closeWechatPayDialog({ restoreFocus:false });
   const dialog = $('#paymentSuccessDialog');
   if (!dialog) return;
-  $('#paymentSuccessCredits').textContent = `${creditText(credits)} 积分已到账`;
+  $('#paymentSuccessCredits').textContent = bonus > 0 ? `${creditText(credits)} 积分已到账，活动赠送 ${creditText(bonus)} 积分` : `${creditText(credits)} 积分已到账`;
   dialog.hidden = false;
   if (!dialog.open) dialog.showModal();
-  animatePaymentSuccessBalance(Number(balance) - Number(credits), Number(balance));
+  animatePaymentSuccessBalance(Number(balance) - Number(credits) - Number(bonus || 0), Number(balance));
   requestAnimationFrame(() => $('#closePaymentSuccess').focus());
 }
 // Count the balance up once the check mark has drawn; skipped for reduced motion.
@@ -1308,6 +1337,11 @@ async function openCreditPurchase() {
   requestAnimationFrame(() => $('#closeCreditPurchase').focus());
   await loadCredits();
 }
+rechargePromotion = createRechargePromotion({
+  openPurchase:() => { void openCreditPurchase(); },
+  getUserId:() => state.user?.id,
+  onChange:() => { if ($('#creditPurchaseDialog')?.open) renderCreditPurchase(); },
+});
 const creditControl = $('#creditControl');
 const creditRedemption = createCreditRedemptionController({ api, accountScope, formatCredits:creditText,
   onRedeemed(result) {
@@ -1686,6 +1720,7 @@ function clearDesktopAccountState() {
   projectLibrary.reset();
   notificationController.closeNotificationDialog();
   resetAccountState(state);
+  rechargePromotion?.reset();
   desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
   desktopWorkspacePath = '';
   cancelRouteContentRender();

@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/styles.css?v=442">
   <link rel="stylesheet" href="/payment.css?v=7">
   <link rel="stylesheet" href="/styles/theme.css?v=3">
+  <link rel="stylesheet" href="/styles/promotion.css?v=1">
 </head>
 <body>
   <a class="skip-link" href="#workspaceMain">跳到创作区</a>
@@ -277,6 +278,7 @@
       </div>
       <section id="creditBuyPanel" class="credit-buy-panel" role="tabpanel" aria-labelledby="creditBuyTab">
       <div class="credit-purchase-body">
+        <p id="creditPromotionBanner" class="credit-promotion-banner" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5"/></svg><span><span id="creditPromotionBannerText"></span><small>赠送积分随充值同时到账，退款时一并扣回</small></span></p>
         <h3 id="creditPackageLabel" class="credit-purchase-label">选择积分</h3>
         <div id="alipayCreditPackages" hidden class="credit-purchase-options" role="radiogroup" aria-labelledby="creditPackageLabel"><button class="active" type="button" role="radio" aria-checked="true" tabindex="0" data-alipay-credits="10"><span class="credit-package-amount"><b>10</b><i>积分</i></span><span class="credit-package-price" data-credit-price>¥1.00</span><span class="credit-package-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-alipay-credits="50"><span class="credit-package-amount"><b>50</b><i>积分</i></span><span class="credit-package-price" data-credit-price>¥5.00</span><span class="credit-package-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-alipay-credits="100"><span class="credit-package-amount"><b>100</b><i>积分</i></span><span class="credit-package-price" data-credit-price>¥10.00</span><span class="credit-package-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-alipay-credits="500"><span class="credit-package-amount"><b>500</b><i>积分</i></span><span class="credit-package-price" data-credit-price>¥50.00</span><span class="credit-package-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span></button></div>
         <div id="wechatAmountPackages" class="credit-purchase-options wechat-amount-options" role="radiogroup" aria-label="选择微信支付金额"><button type="button" role="radio" aria-checked="true" tabindex="0" data-wechat-amount="1"><span class="credit-package-amount"><b>1</b><i>元</i></span><span class="credit-package-price">10 积分</span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-wechat-amount="5"><span class="credit-package-amount"><b>5</b><i>元</i></span><span class="credit-package-price">50 积分</span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-wechat-amount="10"><span class="credit-package-amount"><b>10</b><i>元</i></span><span class="credit-package-price">100 积分</span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-wechat-amount="50"><span class="credit-package-amount"><b>50</b><i>元</i></span><span class="credit-package-price">500 积分</span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-wechat-amount="100"><span class="credit-package-amount"><b>100</b><i>元</i></span><span class="credit-package-price">1000 积分</span></button><button type="button" role="radio" aria-checked="false" tabindex="-1" data-wechat-amount="500"><span class="credit-package-amount"><b>500</b><i>元</i></span><span class="credit-package-price">5000 积分</span></button></div>
@@ -372,6 +374,6 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
     </button>
   </div>
-  <script type="module" src="/app.js?v=645"></script>
+  <script type="module" src="/app.js?v=646"></script>
 </body>
 </html>

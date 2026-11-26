@@ -6,13 +6,16 @@ import { openDatabase, closeDatabase, sql } from '../lib/db.mjs';
 import { walletOf, chargeGenerationMicro } from '../lib/ledger.mjs';
 import { createWechatOrder, queryWechatOrder, refundWechatOrder, handleWechatNotification, wechatOrderForUser, loadWechatConfig, xunhuHash, verifyXunhuHash } from '../lib/wechat-payments.mjs';
 import { createAccountRouteHandler } from '../server/routes/account.mjs';
+import { __test as promotionClock } from '../lib/promotions.mjs';
 
 const env = { XUNHUPAY_APP_ID: 'wx-channel', XUNHUPAY_SECRET: 'test-secret', PUBLIC_BASE_URL: 'https://example.com' };
 const signed = data => ({ ...data, hash: xunhuHash(data, env.XUNHUPAY_SECRET) });
 const response = data => ({ ok: true, json: async () => data });
 function setup(t) {
   openDatabase({ file: ':memory:' });
-  t.after(() => closeDatabase({ checkpoint: false }));
+  // Outside every recharge promotion, so amounts stay exact on any date.
+  promotionClock.setClock(() => Date.parse('2026-01-01T00:00:00Z'));
+  t.after(() => { promotionClock.setClock(null); closeDatabase({ checkpoint: false }); });
   sql(`INSERT INTO users(id,username,password_hash,created_at,credit_balance_micro,credit_held_micro,doc_json)
     VALUES('wx-user','wx-user','hash','2026-01-01',0,0,'{}')`).run();
 }
@@ -170,7 +173,7 @@ test('wechat order routes require authentication; notify is public and fails clo
 test('all modified versioned entries have current cache keys', () => {
   const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
   assert.ok(Number(read('public/index.html').match(/\/app\.js\?v=(\d+)\b/)?.[1])>=454);
-  assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=7'));
+  assert.ok(read('public/app.js').includes('./features/credits/presentation.js?v=8'));
   assert.ok(read('public/index.html').includes('/payment.css?v=7'));
   assert.ok(!read('public/pricing.html').includes('/payment.css'));
   for (const page of ['pricing', 'home', 'features', 'help']) assert.ok(read(`public/${page}.html`).includes('/marketing.js?v=31'));

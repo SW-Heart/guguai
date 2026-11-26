@@ -25,7 +25,7 @@ function fixture() {
   let requests = 0;
   const context = vm.createContext({
     state, $, $$:selector => selector === '[data-wechat-amount]' ? presets : [],
-    creditText:String, accountScope:{ snapshot:() => ({}) },
+    creditText:String, accountScope:{ snapshot:() => ({}) }, rechargePromotion:null,
     api:() => { requests++; throw new Error('Unexpected payment request'); },
   });
   vm.runInContext(app.slice(app.indexOf('function selectedWechatAmount()'), app.indexOf('function setAlipayStatus(')), context);
@@ -86,7 +86,7 @@ test('purchase validation ships accessible feedback and fresh script and style e
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.match(html, /aria-describedby="wechatAmountHint wechatCustomAmountError"/);
   assert.match(html, /id="wechatCustomAmountError"[^>]*aria-live="polite"/);
-  assert.match(html, /\/app\.js\?v=645"/);
+  assert.match(html, /\/app\.js\?v=646"/);
   assert.match(html, /\/payment\.css\?v=7"/);
   const customInput = html.match(/<input id="wechatCustomAmount"[^>]*>/)[0];
   assert.doesNotMatch(customInput, /maxlength=/);

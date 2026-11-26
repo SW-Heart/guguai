@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { redeemCreditCode } from '../../lib/ledger.mjs';
+import { publicPromotion } from '../../lib/promotions.mjs';
 import { createLoginAttemptLimiter } from '../../lib/auth.mjs';
 import { createWechatOrder, queryWechatOrder, wechatOrderForUser, handleWechatNotification, refundWechatOrder } from '../../lib/wechat-payments.mjs';
 
@@ -118,6 +119,7 @@ export function createAccountRouteHandler({
           llmOutputYuanPerMillion:llmRates.outputYuanPerMillion,
           yuanPerCredit:llmRates.yuanPerCredit,
         },
+        promotion:publicPromotion(),
         transactions,
       });
       return true;

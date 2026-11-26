@@ -65,6 +65,7 @@ export function createCreditPresentation({ getState, escapeHtml, formatFullDate 
     if (entry?.type === 'alipay_purchase') return '支付宝充值';
     if (entry?.type === 'code_redemption') return '兑换码兑换';
     if (entry?.type === 'signup_bonus') return '赠送积分';
+    if (entry?.type === 'promotion_bonus') return '充值活动赠送';
     if (entry?.type === 'admin_credit_adjustment') return '充值（后台操作增加积分）';
     return '积分获取';
   }
