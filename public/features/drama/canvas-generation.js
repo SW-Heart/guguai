@@ -1,5 +1,5 @@
 import { speechModels,speechDesignModel,systemVoices } from '../speech/catalog.js?v=2';
-import { modelLogoUrl } from '../../components/model-logo.js?v=12';
+import { modelLogoUrl } from '../../components/model-logo.js?v=13';
 import { defaultVideoDuration } from '../generation/video-defaults.js?v=5';
 import { replaceAssetMentions } from '../../video-prompt.js?v=6';
 const imageRatios=['1:1','3:4','4:3','9:16','16:9','3:2','2:3','1:2','2:1','5:4','4:5'];
@@ -47,7 +47,7 @@ export function createCanvasGenerationDraft(type,config={}){
 export function canvasGenerationOptions(draft,config={}){
   if(draft.type==='audio')return {model:speechModels.find(m=>m.id===draft.modelId),modes:[],parameters:null,aspects:[],qualities:[]};
   const model=canvasGenerationModels(draft.type,config).find(item=>item.id===draft.modelId);
-  if(draft.type==='image')return {model,modes:[],parameters:null,aspects:imageRatiosFor(draft.modelId),qualities:draft.modelId==='seedream-5.0'?['2k','3k','4k']:draft.modelId==='midjourney'?['0.25','0.5','1','2','4']:['gpt-image-2.5','nano-banana-2.1','gpt-image-2.6'].includes(draft.modelId)?['1k','2k','4k']:['low','medium','high']};
+  if(draft.type==='image')return {model,modes:[],parameters:null,aspects:imageRatiosFor(draft.modelId),qualities:draft.modelId==='seedream-5.5'?['1k','1.5k','2k']:draft.modelId==='seedream-5.0'?['2k','3k','4k']:draft.modelId==='midjourney'?['0.25','0.5','1','2','4']:['gpt-image-2.5','nano-banana-2.1','gpt-image-2.6'].includes(draft.modelId)?['1k','2k','4k']:['low','medium','high']};
   const modes=model?.modes||[];
   const base=modes.find(item=>item.generationType===draft.mode)||modes[0]||null;
   const quality=base?.qualityOptions?.includes(draft.quality)?draft.quality:base?.qualityOptions?.[0];

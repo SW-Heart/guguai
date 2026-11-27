@@ -193,7 +193,7 @@ test('Seedream 5.0 uses synchronous JSON generations for text and reference imag
       assert.equal(options.headers.Authorization, 'Bearer tuzi-test-key');
       assert.equal(options.headers['Content-Type'], 'application/json');
       assert.deepEqual(JSON.parse(options.body), {
-        model:'doubao-seedream-5-0-260128', prompt:'一只小兔子', size:'2048x2048', response_format:'url',
+        model:'doubao-seedream-5-0-260128', prompt:'一只小兔子', size:'2048x2048', response_format:'url', watermark:false,
         ...(refs.length ? { image:refs.length === 1 ? refs[0] : refs } : {}),
       });
       return { data:[{ url:'https://cdn.example/seedream.png' }] };
@@ -228,6 +228,7 @@ test('Seedream submits the selected 2K, 3K or 4K pixel dimensions', async () => 
       const body = JSON.parse(options.body);
       assert.equal(body.size, size);
       assert.equal(body.model, 'doubao-seedream-5-0-260128');
+      assert.equal(body.watermark, false);
       return { data:[{ url:'https://cdn.example/result.png' }] };
     });
     await tuzi.createImage({ model:'seedream-5.0', prompt:'test', size:'1:1', quality }, []);
@@ -235,6 +236,24 @@ test('Seedream submits the selected 2K, 3K or 4K pixel dimensions', async () => 
   }
   const tuzi = provider(() => assert.fail('invalid dimensions must not be submitted'));
   await assert.rejects(tuzi.createImage({ model:'seedream-5.0', prompt:'test', size:'4096x4096', quality:'2k' }, []), /尺寸/);
+});
+
+test('Seedream 5.5 submits its own upstream model at 1K, 1.5K or 2K without watermark', async () => {
+  for (const [quality, aspect, size] of [['1k','16:9','1280x720'], ['1.5k','1:1','1536x1536'], ['1.5k','2:1','2136x1068'], ['2k','1:1','2048x2048'], ['2k','4:5','1824x2288']]) {
+    for (const requested of [aspect, size]) {
+      const tuzi = provider(async (_url, options) => {
+        const body = JSON.parse(options.body);
+        assert.equal(body.model, 'doubao-seedream-5-5-261028');
+        assert.equal(body.size, size);
+        assert.equal(body.watermark, false);
+        return { data:[{ url:'https://cdn.example/result.png' }] };
+      });
+      assert.equal((await tuzi.createImage({ model:'seedream-5.5', prompt:'test', size:requested, quality }, [])).url, 'https://cdn.example/result.png');
+    }
+  }
+  const tuzi = provider(() => assert.fail('unsupported Seedream 5.5 tiers must not be submitted'));
+  await assert.rejects(tuzi.createImage({ model:'seedream-5.5', prompt:'test', size:'1:1', quality:'4k' }, []), /Seedream 5\.5 图片尺寸/);
+  await assert.rejects(tuzi.createImage({ model:'seedream-5.5', prompt:'test', size:'3072x3072' }, []), /尺寸/);
 });
 
 test('Seedream records a socket disconnect separately from the local deadline and does not replay it', async () => {

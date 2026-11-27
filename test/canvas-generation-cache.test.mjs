@@ -14,10 +14,10 @@ test('speech language popover style fix reaches the versioned stylesheet entry',
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=647', '/styles.css?v=442']],
-    ['app.js', ['./drama-studio.js?v=325', './features/agent/workspace.js?v=192']],
-    ['drama-studio.js', ['./features/drama/director-workspace.js?v=216']],
-    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=216']],
+    ['index.html', ['/app.js?v=648', '/styles.css?v=442']],
+    ['app.js', ['./drama-studio.js?v=326', './features/agent/workspace.js?v=193']],
+    ['drama-studio.js', ['./features/drama/director-workspace.js?v=217']],
+    ['features/agent/workspace.js', ['../drama/director-workspace.js?v=217']],
     ['features/drama/director-workspace.js', ['./canvas-layout.js?v=2']],
   ];
   for (const [file, urls] of entries) {
@@ -34,25 +34,25 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=647'],
+    ['index.html', '/app.js?v=648'],
     ['index.html', '/styles.css?v=442'],
-    ['app.js', './drama-studio.js?v=325'],
-    ['app.js', './features/agent/workspace.js?v=192'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=216'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=216'],
+    ['app.js', './drama-studio.js?v=326'],
+    ['app.js', './features/agent/workspace.js?v=193'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=217'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=217'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
-    ['features/drama/director-workspace.js', './canvas-generation-references.js?v=17'],
-    ['features/drama/director-workspace.js', './storyboard-drafts.js?v=16'],
-    ['features/drama/storyboard-drafts.js', './canvas-generation-references.js?v=17'],
+    ['features/drama/director-workspace.js', './canvas-generation-references.js?v=18'],
+    ['features/drama/director-workspace.js', './storyboard-drafts.js?v=17'],
+    ['features/drama/storyboard-drafts.js', './canvas-generation-references.js?v=18'],
     ['features/drama/director-workspace.js', './canvas-links.js?v=3'],
     ['features/drama/director-workspace.js', './canvas-connect.js?v=3'],
-    ['features/drama/director-workspace.js', './canvas-ops.js?v=12'],
+    ['features/drama/director-workspace.js', './canvas-ops.js?v=13'],
     ['features/drama/director-workspace.js', '../agent/frames.js?v=4'],
     ['features/drama/director-workspace.js', './document-card.js?v=3'],
     ['features/drama/director-actions.js', './canvas-links.js?v=3'],
     ['features/drama/storyboard-drafts.js', './canvas-links.js?v=3'],
     ['features/agent/workspace.js', '../drama/director-actions.js?v=21'],
-    ['features/drama/canvas-generation-references.js', './canvas-generation.js?v=25'],
+    ['features/drama/canvas-generation-references.js', './canvas-generation.js?v=26'],
     ['app.js', './features/media/controller.js?v=14'],
     ['features/drama/director-workspace.js', './director-mentions.js?v=5'],
     ['features/drama/director-workspace.js', './canvas-media-library.js?v=3'],
@@ -74,11 +74,11 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('connection endpoint handle fix reaches both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=647'],
-    ['app.js', './drama-studio.js?v=325'],
-    ['app.js', './features/agent/workspace.js?v=192'],
-    ['drama-studio.js', './features/drama/director-workspace.js?v=216'],
-    ['features/agent/workspace.js', '../drama/director-workspace.js?v=216'],
+    ['index.html', '/app.js?v=648'],
+    ['app.js', './drama-studio.js?v=326'],
+    ['app.js', './features/agent/workspace.js?v=193'],
+    ['drama-studio.js', './features/drama/director-workspace.js?v=217'],
+    ['features/agent/workspace.js', '../drama/director-workspace.js?v=217'],
     ['features/drama/director-workspace.js', '../../vendor/director/reference-canvas.js?v=43'],
   ];
   for (const [file, url] of entries) {

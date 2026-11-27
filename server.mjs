@@ -5,6 +5,7 @@ import { tuziImageRetryUrl } from './desktop/media-retry.mjs';
 import { editVideoLayers } from './services/agent-video-edit.mjs';
 import { createAgentSessionRepository } from './repositories/agent-sessions.mjs';
 import { textModels } from './lib/text-models.mjs';
+import { seedreamModel } from './lib/seedream.mjs';
 import { createAgentGateway, agentConfig } from './lib/agent/gateway.mjs';
 import { createAgentSkills } from './lib/agent/skills.mjs';
 import { createAgentTools } from './lib/agent/tools.mjs';
@@ -300,10 +301,11 @@ const videoDurations = new Set([8, 10, 15, 20, 30]);
 const dramaVideoDurations = new Set(Array.from({ length: 30 }, (_, index) => index + 1));
 const dramaStepOrder = ['script', 'resources', 'storyboard', 'video'];
 const fixedModels = Object.freeze({ image: 'gpt-image-2.5' });
-const imageModelIds = Object.freeze({ gptImage26:'gpt-image-2.6', seedream50:'seedream-5.0', gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney', nanoBanana21: 'nano-banana-2.1' });
+const imageModelIds = Object.freeze({ gptImage26:'gpt-image-2.6', seedream50:'seedream-5.0', seedream55:'seedream-5.5', gptImage2: 'gpt-image-2', gptImage25: 'gpt-image-2.5', midjourney: 'midjourney', nanoBanana21: 'nano-banana-2.1' });
 const supportedImageModelIds = new Set(Object.values(imageModelIds));
 const imageModelCatalog = Object.freeze([
   { id:imageModelIds.gptImage26, label:'GPT Image 2.6', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage26], qualityOptions:['1K', '2K', '4K'] },
+  { id:imageModelIds.seedream55, label:'Seedream 5.5', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.seedream55], qualityOptions:['1K', '1.5K', '2K'] },
   { id:imageModelIds.seedream50, label:'Seedream 5.0', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.seedream50], qualityOptions:['2K', '3K', '4K'] },
   { id:imageModelIds.gptImage25, label:'GPT Image 2.5', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage25], qualityOptions:['1K', '2K', '4K'] },
   { id:imageModelIds.gptImage2, label:'GPT-Image-2', description:IMAGE_MODEL_DESCRIPTIONS[imageModelIds.gptImage2] },
@@ -714,7 +716,7 @@ function publicPlatformPrices(pricing, videoCapabilities) {
     for (const quality of qualities) {
       const credits = modelPrice(pricing, imageModel.id, quality, imageModel.id === imageModelIds.gptImage25
         ? tuziImageCredits[quality.toLowerCase()]
-        : imageModel.id === imageModelIds.seedream50 ? 2 : [imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(imageModel.id) ? 1 : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
+        : seedreamModel(imageModel.id) ? seedreamModel(imageModel.id).credits : [imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(imageModel.id) ? 1 : imageModel.id === imageModelIds.midjourney ? midjourneyImageCredits : pricing.imagePerRequest);
       items.push({ modelId:imageModel.id, label:imageModel.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : imageModel.label, quality, duration:null, available:true, enabled:true, availability:'available', credits, yuan:credits * 0.1, unit:'request', priceVersion:`v1-${createHash('sha256').update(`gugu-price:platform:${pricing.version}:${imageModel.id}:${quality}`).digest('hex').slice(0, 32)}` });
     }
   }
@@ -3113,7 +3115,7 @@ function agentMediaCatalog() {
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
     id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : m.id === imageModelIds.gptImage26 ? [...GPT_IMAGE_26_ASPECTS] : [...imageSizes],
-    qualities:m.id === imageModelIds.seedream50 ? ['2k', '3k', '4k'] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
+    qualities:seedreamModel(m.id) ? [...seedreamModel(m.id).qualities] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
     quantity:m.id === imageModelIds.midjourney ? [4,8] : [1,2,3,4,5,6,7,8,9,10],
     referenceUsage:'referenceAssetIds 使用当前工作空间的素材 ID。Midjourney 比例、质量等设置在 midjourneyOptions。实际可用性与费用由 media_prepare 检查。',
   }));

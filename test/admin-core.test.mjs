@@ -174,11 +174,11 @@ test('admin core controls', async t => {
     const version = modelId => sql('SELECT version FROM model_controls WHERE model_id = :modelId').get({ modelId }).version;
     // Image defaults are gpt-image-2.6=0, gpt-image-2=1, gpt-image-2.5=2, midjourney=3.
     updateModelControl('midjourney', { sortOrder: 0 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
-    assert.deepEqual(order('image'), [['midjourney', 0], ['gpt-image-2.6', 1], ['gpt-image-2', 2], ['gpt-image-2.5', 3], ['nano-banana-2.1', 4], ['seedream-5.0', 5]]);
+    assert.deepEqual(order('image'), [['midjourney', 0], ['gpt-image-2.6', 1], ['gpt-image-2', 2], ['gpt-image-2.5', 3], ['nano-banana-2.1', 4], ['seedream-5.0', 5], ['seedream-5.5', 6]]);
     assert.equal(version('gpt-image-2'), 2);
     assert.throws(() => updateModelControl('gpt-image-2', { enabled: false }, { actorUserId: admin.id, expectedVersion: 1 }), { statusCode: 409 });
     updateModelControl('midjourney', { sortOrder: 3 }, { actorUserId: admin.id, expectedVersion: version('midjourney') });
-    assert.deepEqual(order('image'), [['gpt-image-2.6', 0], ['gpt-image-2', 1], ['gpt-image-2.5', 2], ['midjourney', 3], ['nano-banana-2.1', 4], ['seedream-5.0', 5]]);
+    assert.deepEqual(order('image'), [['gpt-image-2.6', 0], ['gpt-image-2', 1], ['gpt-image-2.5', 2], ['midjourney', 3], ['nano-banana-2.1', 4], ['seedream-5.0', 5], ['seedream-5.5', 6]]);
     // Video models are a separate group and were not touched.
     assert.equal(sql("SELECT COUNT(*) AS count FROM model_controls WHERE kind = 'video' AND version > 1").get().count, 0);
     // Saving without changing the order leaves historical duplicates alone.

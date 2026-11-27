@@ -1,4 +1,4 @@
-import { SEEDREAM_MODEL_ID, SEEDREAM_UPSTREAM_MODEL_ID, seedreamSize } from '../lib/seedream.mjs';
+import { seedreamModel, seedreamSize } from '../lib/seedream.mjs';
 import { isPreconnectFailure, transportErrorCodes, transportErrorDiagnostics } from './transport.mjs';
 
 export function createTuziProvider({
@@ -76,9 +76,10 @@ export function createTuziProvider({
   }
 
   async function createImage(task, refs, hooks = {}) {
-    const isSeedream = task.model === SEEDREAM_MODEL_ID || task.model === SEEDREAM_UPSTREAM_MODEL_ID;
-    const size = isSeedream ? seedreamSize(task.size || '1:1', task.quality) : task.size;
-    if (isSeedream && !size) throw new Error('不支持的 Seedream 5.0 图片尺寸');
+    const seedream = seedreamModel(task.model);
+    const isSeedream = Boolean(seedream);
+    const size = isSeedream ? seedreamSize(task.size || '1:1', task.quality, seedream.id) : task.size;
+    if (isSeedream && !size) throw new Error(`不支持的 ${seedream.label} 图片尺寸`);
     const form = isSeedream ? null : new FormData();
     if (form) {
       form.append('model', task.model || 'gpt-image-2.5');
@@ -98,7 +99,7 @@ export function createTuziProvider({
           created = await fetchJson(`${baseUrl}${isSeedream ? '/v1/images/generations' : '/v1/videos'}`, {
             method:'POST',
             headers:{ Authorization:authorization(), ...(isSeedream ? { 'Content-Type':'application/json' } : {}) },
-            body:isSeedream ? JSON.stringify({ model:SEEDREAM_UPSTREAM_MODEL_ID, prompt:task.prompt, size, response_format:'url', ...(refs.length ? { image:refs.length === 1 ? refs[0] : refs } : {}) }) : form,
+            body:isSeedream ? JSON.stringify({ model:seedream.upstreamModelId, prompt:task.prompt, size, response_format:'url', watermark:false, ...(refs.length ? { image:refs.length === 1 ? refs[0] : refs } : {}) }) : form,
             signal,
           });
           break;
@@ -135,7 +136,7 @@ export function createTuziProvider({
       }
       if (isSeedream) {
         const url = created?.data?.[0]?.url;
-        if (!url) throw Object.assign(new Error('Seedream 5.0 没有返回图片地址'), { provider:'tuzi', submissionUncertain:true });
+        if (!url) throw Object.assign(new Error(`${seedream.label} 没有返回图片地址`), { provider:'tuzi', submissionUncertain:true });
         return { provider:'tuzi', taskId:'', url };
       }
       const taskId = created.id || created.task_id;

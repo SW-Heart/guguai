@@ -18,7 +18,7 @@ test('notes render only while an update is offered and are reachable through fre
   const html = read('index.html');
   const app = read('app.js');
   assert.match(html, /<ul id="desktopUpdateNotes" class="desktop-update-notes hidden"/);
-  assert.match(html, /\/app\.js\?v=647"/);
+  assert.match(html, /\/app\.js\?v=648"/);
   assert.match(html, /\/styles\.css\?v=442"/);
   assert.match(app, /from '\.\/features\/updates\/release-notes\.js\?v=1'/);
   assert.match(app, /\['available', 'downloading', 'downloaded'\]\.includes\(status\)/);

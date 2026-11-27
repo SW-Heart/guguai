@@ -1,5 +1,5 @@
 import { GPT_IMAGE_26_MODEL_ID, GPT_IMAGE_26_CREDITS, GPT_IMAGE_26_QUALITIES, gptImage26Size } from '../../lib/gpt-image-26.mjs';
-import { SEEDREAM_MODEL_ID, SEEDREAM_CREDITS, SEEDREAM_QUALITIES, seedreamSize, seedreamQualityForSize } from '../../lib/seedream.mjs';
+import { seedreamModel, seedreamQualityError, seedreamSize, seedreamQualityForSize } from '../../lib/seedream.mjs';
 import { minimaxH3RecordedModel } from '../../providers/minimax-h3.mjs';
 import { modelRouteCharge } from '../../lib/model-routes.mjs';
 import { modelPrice, videoBillingUnit } from '../../lib/pricing.mjs';
@@ -329,7 +329,8 @@ export function createGenerationRouteHandler({
     const requestedImageModelId = type === 'image' ? String(input.modelId ?? fixedModels.image).trim().toLowerCase() : '';
     if (type === 'image' && !supportedImageModelSet.has(requestedImageModelId)) return sendJson(res, 400, { error:'不支持的图片模型' }), true;
     const isMidjourney = requestedImageModelId === midjourneyModelId;
-    const isSeedream = requestedImageModelId === SEEDREAM_MODEL_ID;
+    const seedream = seedreamModel(requestedImageModelId);
+    const isSeedream = Boolean(seedream);
     const isNanoBanana = requestedImageModelId === 'nano-banana-2.1';
     const isGptImage26 = requestedImageModelId === GPT_IMAGE_26_MODEL_ID;
     const isTuziImage = requestedImageModelId === tuziImageModelId;
@@ -348,13 +349,13 @@ export function createGenerationRouteHandler({
     const size = type === 'image' ? (isMidjourney ? midjourneyOptions.aspectRatio : String(input.size || (isSeedream || isGptImage26 ? '1:1' : isTuziImage ? 'auto' : '16:9'))) : null;
     if (type === 'image' && isTuziImage && !tuziImageSizes.has(size)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 图片尺寸' }), true;
     if (type === 'image' && !isSeedream && !isTuziImage && !imageSizes.has(size)) return sendJson(res, 400, { error:'不支持的图片比例' }), true;
-    const imageQuality = String(input.quality || (isSeedream ? seedreamQualityForSize(size) || '2k' : isTuziImage || isNanoBanana || isGptImage26 ? '1k' : 'medium')).toLowerCase();
+    const imageQuality = String(input.quality || (isSeedream ? seedreamQualityForSize(size, seedream.id) || '2k' : isTuziImage || isNanoBanana || isGptImage26 ? '1k' : 'medium')).toLowerCase();
     if (type === 'image' && isTuziImage && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 GPT Image 2.5 清晰度' }), true;
     if (type === 'image' && isNanoBanana && !tuziImageTiers.has(imageQuality)) return sendJson(res, 400, { error:'不支持的 Nano Banana 2.1 清晰度' }), true;
     if (type === 'image' && isGptImage26 && !GPT_IMAGE_26_QUALITIES.includes(imageQuality)) return sendJson(res, 400, { error:'GPT Image 2.6 清晰度可选 1K、2K、4K' }), true;
     if (type === 'image' && isGptImage26 && !gptImage26Size(size, imageQuality)) return sendJson(res, 400, { error:'GPT Image 2.6 暂不支持该画面比例，请重新选择' }), true;
-    if (type === 'image' && isSeedream && !SEEDREAM_QUALITIES.includes(imageQuality)) return sendJson(res, 400, { error:'Seedream 5.0 清晰度可选 2K、3K、4K' }), true;
-    if (type === 'image' && isSeedream && !seedreamSize(size, imageQuality)) return sendJson(res, 400, { error:'Seedream 5.0 图片尺寸与清晰度不匹配，请重新选择' }), true;
+    if (type === 'image' && isSeedream && !seedream.qualities.includes(imageQuality)) return sendJson(res, 400, { error:seedreamQualityError(seedream.id) }), true;
+    if (type === 'image' && isSeedream && !seedreamSize(size, imageQuality, seedream.id)) return sendJson(res, 400, { error:`${seedream.label} 图片尺寸与清晰度不匹配，请重新选择` }), true;
     if (type === 'image' && !isSeedream && !isNanoBanana && !isGptImage26 && !isMidjourney && !isTuziImage && !imageQualities.has(imageQuality)) return sendJson(res, 400, { error:'不支持的图片质量' }), true;
     const requestedReferenceCount = Array.isArray(input.referenceAssetIds) ? input.referenceAssetIds.map(safeId).filter(Boolean).length : 0;
     const suppliedReferenceCounts = normalizeQuoteReferenceCounts(input.referenceCounts);
@@ -390,7 +391,7 @@ export function createGenerationRouteHandler({
       : isMidjourney
         ? { ...pricing, imagePerRequestMicro:creditsToMicro(midjourneyImageCredits) }
       : isSeedream
-        ? { ...pricing, imagePerRequestMicro:creditsToMicro(SEEDREAM_CREDITS) }
+        ? { ...pricing, imagePerRequestMicro:creditsToMicro(seedream.credits) }
       : isNanoBanana
         ? { ...pricing, imagePerRequestMicro:creditsToMicro(1) }
       : isGptImage26

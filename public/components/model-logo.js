@@ -1,7 +1,7 @@
 const files = Object.freeze({
   'wan-3.0': 'qwen-color', 'wan-3.0-value': 'qwen-color',
   'kling-4.0': 'kling-color',
-  'seedream-5.0': 'bytedance-color',
+  'seedream-5.0': 'bytedance-color', 'seedream-5.5': 'bytedance-color',
   'nano-banana-2.1': 'gemini-color',
   'gpt-image-2': 'openai', 'gpt-image-2.5': 'openai', 'gpt-image-2.6': 'openai', midjourney: 'midjourney', grok: 'grok',
   'minimax-h3-15s': 'minimax-color', 'minimax-h3': 'minimax-color',
