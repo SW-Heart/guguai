@@ -129,7 +129,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=82/);
+  assert.match(adminHtml, /guguadmin\.js\?v=83/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -545,6 +545,24 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(replay.data.replay, true);
   const usersAfterAdjustment = await admin.call(`/api/admin/users?query=${encodeURIComponent(target.username)}`);
   assert.equal(usersAfterAdjustment.data.items[0].totalSpent, 1.25);
+  for (const [sort, value] of [['balance', user => user.credits], ['spent', user => user.totalSpent], ['active', user => user.lastActiveAt || ''], ['created', user => user.createdAt]]) {
+    const listed = await admin.call(`/api/admin/users?sort=${sort}&limit=100`);
+    assert.equal(listed.response.status, 200, JSON.stringify(listed.data));
+    const all = listed.data.items;
+    assert.ok(all.length >= 2, sort);
+    assert.deepEqual(all.map(value), [...all.map(value)].sort((a, b) => (a < b) - (a > b)), `${sort} 应降序`);
+    const paged = [];
+    let cursor = '';
+    do {
+      const pageRes = await admin.call(`/api/admin/users?sort=${sort}&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+      assert.equal(pageRes.response.status, 200, `${sort} ${JSON.stringify(pageRes.data)}`);
+      const page = pageRes.data;
+      paged.push(...page.items.map(user => user.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    assert.deepEqual(paged, all.map(user => user.id), `${sort} 分页应与整页一致`);
+  }
+  assert.equal((await admin.call('/api/admin/users?sort=spent')).data.items[0].id, target.id);
   const detailAfterAdjustment = await admin.call(`/api/admin/users/${target.id}`);
   assert.equal(detailAfterAdjustment.data.user.totalSpent, 1.25);
   const audit = await admin.call('/api/admin/logs/audit?limit=100');

@@ -23,7 +23,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     overviewRange: 'all',
     requestSeq: {},
     filters: {
-      users: { query: '', status: '', role: '' },
+      users: { query: '', status: '', role: '', sort: '' },
       orders: { query: '', from: '', to: '' },
       invites: { query: '', enabled: '' },
       announcements: { status: '' },
@@ -845,17 +845,19 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
           <label class="field is-wide"><span class="field-label">搜索</span><span class="search-input">${icon('search')}<input id="userQuery" data-search value="${esc(filters.query)}" placeholder="用户名或完整用户 ID（按 / 快速聚焦）" autocomplete="off" spellcheck="false"></span></label>
           <label class="field"><span class="field-label">账号状态</span><select id="userStatus"><option value="">全部状态</option><option value="active">正常</option><option value="disabled">已停用</option></select></label>
           <label class="field"><span class="field-label">角色</span><select id="userRole"><option value="">全部角色</option><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+          <label class="field"><span class="field-label">排序</span><select id="userSort"><option value="">注册时间</option><option value="balance">当前余额</option><option value="spent">累计消耗</option><option value="active">最近活跃</option></select></label>
           <div class="toolbar-actions"><button class="btn btn-ghost" type="button" data-reset>${icon('rotate')}重置</button><button class="btn btn-primary" type="submit">${icon('search')}查询</button></div>
         </form>
         <div id="userTable" data-table>${skeletonMarkup()}</div>
       </div>`;
     $('#userStatus').value = filters.status;
     $('#userRole').value = filters.role;
-    const apply = () => { filters.query = $('#userQuery').value.trim(); filters.status = $('#userStatus').value; filters.role = $('#userRole').value; resetPager('users'); fetchUsers(); };
+    $('#userSort').value = filters.sort;
+    const apply = () => { filters.query = $('#userQuery').value.trim(); filters.status = $('#userStatus').value; filters.role = $('#userRole').value; filters.sort = $('#userSort').value; resetPager('users'); fetchUsers(); };
     $('#userFilters').onsubmit = event => { event.preventDefault(); apply(); };
     $('#userQuery').addEventListener('input', debounce(apply, 400));
-    $('#userStatus').onchange = $('#userRole').onchange = apply;
-    $('[data-reset]', root).onclick = () => { $('#userQuery').value = ''; $('#userStatus').value = ''; $('#userRole').value = ''; apply(); };
+    $('#userStatus').onchange = $('#userRole').onchange = $('#userSort').onchange = apply;
+    $('[data-reset]', root).onclick = () => { $('#userQuery').value = ''; $('#userStatus').value = ''; $('#userRole').value = ''; $('#userSort').value = ''; apply(); };
     bindRefresh($('[data-refresh="users"]', root), fetchUsers);
     await fetchUsers();
   }
@@ -868,6 +870,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     if (filters.query) params.set('query', filters.query);
     if (filters.status) params.set('status', filters.status);
     if (filters.role) params.set('role', filters.role);
+    if (filters.sort) params.set('sort', filters.sort);
     if (currentCursor('users')) params.set('cursor', currentCursor('users'));
     markLoading(table);
     try {

@@ -97,7 +97,7 @@ test('redemption entries have a user-facing label and all changed entries have f
   const read = file => readFileSync(new URL(`../public/${file}`, import.meta.url), 'utf8');
   assert.match(read('index.html'), /\/app\.js\?v=646"/);
   assert.match(read('index.html'), /\/payment\.css\?v=7"/);
-  assert.match(read('guguadmin.html'), /\/guguadmin\.js\?v=82"/);
+  assert.match(read('guguadmin.html'), /\/guguadmin\.js\?v=83"/);
   assert.match(read('app.js'), /credits\/redemption\.js\?v=1/);
   assert.match(read('app.js'), /credits\/presentation\.js\?v=8/);
   assert.doesNotMatch(read('guguadmin.js'), /邀请码|注册赠送|新用户即可使用它注册/);
