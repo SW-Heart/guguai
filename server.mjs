@@ -68,6 +68,7 @@ import { createMidjourneyGridService } from './services/midjourney-grid.mjs';
 import { createRuntimeLifecycle } from './services/runtime-lifecycle.mjs';
 import { bodyBuffer, bodyForm, bodyJson, mutationAllowed, publicHttpErrorBody, publicHttpErrorMessage, requestTraceId, sendJson, sendText } from './server/http-protocol.mjs';
 import { isDesktopRequest, serveFile, serveStatic, staticCacheControl, staticEntryFile } from './server/static.mjs';
+import { serveSeoRoute } from './server/seo.mjs';
 import { createAuthRouteHandler } from './server/routes/auth.mjs';
 import { createAccountRouteHandler } from './server/routes/account.mjs';
 import { createDramaRouteHandler } from './server/routes/drama.mjs';
@@ -3283,6 +3284,7 @@ const server = http.createServer(async (req, res) => {
     if (await filesRoute(req, res, url)) return;
 
 
+    if ((req.method === 'GET' || req.method === 'HEAD') && await serveSeoRoute(res, req, url.pathname, { publicDir, priceState:publicModelPriceState })) return;
     const downloadMatch = url.pathname.match(/^\/downloads\/(mac|windows)$/);
     if (downloadMatch && req.method === 'GET') {
       const target = publicDownloadUrls[downloadMatch[1]];

@@ -303,10 +303,10 @@ section[id], article[id], .help-article section[id] { scroll-margin-top: 88px; }
 .help-content { min-width: 0; }
 .help-article { padding-bottom: 32px; margin-bottom: 35px; border-bottom: 1px solid var(--line); }
 .help-enhanced .help-article { border-bottom: 0; margin-bottom: 0; }
-.help-article h1 { margin: 0 0 17px; font-size: 26px; line-height: 1.4; font-weight: 650; letter-spacing: -.04em; }
+.help-article .article-title { margin: 0 0 17px; font-size: 26px; line-height: 1.4; font-weight: 650; letter-spacing: -.04em; }
 .article-intro { color: var(--muted); font-size: 14px; line-height: 1.9; margin: 0 0 30px; }
 .article-meta { display: flex; gap: 12px; font-size: 12px; color: var(--muted); padding-bottom: 22px; margin-bottom: 33px; border-bottom: 1px solid var(--line); }
-.help-article h2 { font-size: 19px; margin: 30px 0 14px; font-weight: 600; line-height: 1.5; letter-spacing: -.02em; }
+.help-article h3 { font-size: 19px; margin: 30px 0 14px; font-weight: 600; line-height: 1.5; letter-spacing: -.02em; }
 .help-article section > p, .help-article ul, .help-article ol { font-size: 14px; color: var(--ink-2); line-height: 1.95; }
 .help-article ul, .help-article ol { padding-left: 21px; margin: 14px 0 20px; }
 .help-article li { padding-left: 5px; margin: 9px 0; }
@@ -459,8 +459,8 @@ section[id], article[id], .help-article section[id] { scroll-margin-top: 88px; }
   .help-sidebar .sidebar-title, .help-sidebar .sidebar-note { display: none; }
   .help-enhanced #help-nav { display: none; }
   .help-enhanced #help-mobile-nav { display: block; width: 100%; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 8px; padding: var(--space-2) var(--space-3); background: var(--surface); color: var(--ink-2); font-size: 13px; }
-  .help-article h1 { font-size: 23px; }
-  .help-article h2 { font-size: 18px; }
+  .help-article .article-title { font-size: 23px; }
+  .help-article h3 { font-size: 18px; }
   .help-reading-nav { gap: var(--space-3); }
   .help-reading-nav a { padding: var(--space-3); }
 }

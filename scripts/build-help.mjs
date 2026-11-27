@@ -24,9 +24,9 @@ export function renderHelpBlocks() {
       return `<li><a class="text-link" href="#${target.id}">${escape(target.title)}</a></li>`;
     });
     return `<article class="help-article" id="${article.id}" aria-labelledby="${article.id}-title">
-<h1 id="${article.id}-title" tabindex="-1">${escape(article.title)}</h1><p class="article-intro">${escape(article.intro)}</p><div class="article-meta"><span>约 ${minutes} 分钟阅读</span></div>
+<h2 class="article-title" id="${article.id}-title" tabindex="-1">${escape(article.title)}</h2><p class="article-intro">${escape(article.intro)}</p><div class="article-meta"><span>约 ${minutes} 分钟阅读</span></div>
 ${article.screenshot ? `<figure class="article-example preview-panel"><img src="${escape(article.screenshot.src)}"${/-1470\.webp$/.test(article.screenshot.src) ? ` srcset="${escape(article.screenshot.src)} 1470w, ${escape(article.screenshot.src.replace(/-1470\.webp$/, '.webp'))} 2940w" sizes="(min-width: 1200px) 860px, 100vw"` : ''} alt="${escape(article.screenshot.alt)}" width="2940" height="1846" loading="lazy" decoding="async"><figcaption>${escape(article.screenshot.caption)}</figcaption></figure>` : ''}
-${article.sections.map((section, index) => `<section id="${article.id}--${index}" aria-labelledby="${article.id}-heading-${index}"><h2 id="${article.id}-heading-${index}">${escape(section.title)}</h2>
+${article.sections.map((section, index) => `<section id="${article.id}--${index}" aria-labelledby="${article.id}-heading-${index}"><h3 id="${article.id}-heading-${index}">${escape(section.title)}</h3>
 ${(section.paragraphs || []).map(text => `<p>${escape(text)}</p>`).join('\n')}
 ${section.steps ? `<ol>${section.steps.map(text => `<li>${escape(text)}</li>`).join('\n')}</ol>` : ''}
 ${section.bullets ? `<ul>${section.bullets.map(text => `<li>${escape(text)}</li>`).join('\n')}</ul>` : ''}
@@ -34,7 +34,7 @@ ${section.table ? renderHelpTable(section.table) : ''}
 ${section.example ? `<figure class="article-example example-code-block"><figcaption class="sr-only">${escape(section.exampleTitle || '参考示例')}</figcaption><button class="example-copy" type="button" data-copy-example="${article.id}-example-${index}" aria-label="复制${escape(section.title)}示例" title="复制示例">${copyIcon}${checkIcon}</button><p class="example-copy-status sr-only" role="status" aria-live="polite" aria-atomic="true" data-copy-status></p><pre class="example-content"><code id="${article.id}-example-${index}">${escape(section.example)}</code></pre>${section.example.includes('@') ? '<p class="example-hint">使用前将 @名称 替换为你的实际素材名称；整段放入输入框即可自动引用，无需逐个手动选择。</p>' : section.example.includes('[') ? '<p class="example-hint">使用前请将方括号中的内容替换成自己的需求。</p>' : ''}</figure>` : ''}
 ${section.note ? `<aside class="article-note"><b>小提示</b>${escape(section.note)}</aside>` : ''}
 ${section.resources?.length ? `<p class="article-resources">${section.resources.map(resource => { if (!resource.href.startsWith('https://') && !/^\/[\w/#?=-]*$/.test(resource.href)) throw new Error('Invalid help resource link'); return `<a class="text-link" href="${escape(resource.href)}">${escape(resource.title)}</a>`; }).join(' · ')}</p>` : ''}</section>`).join('\n')}
-${related.length ? `<div class="article-related"><h2>接下来可以阅读</h2><ul>${related.join('\n')}</ul></div>` : ''}
+${related.length ? `<div class="article-related"><h3>接下来可以阅读</h3><ul>${related.join('\n')}</ul></div>` : ''}
 </article>`;
   }).join('\n');
   return { NAV: nav, OPTIONS: options, ARTICLES: articles };
