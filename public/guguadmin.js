@@ -875,13 +875,14 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
       if (isStale('users', token)) return;
       const items = data.items || [];
       const filtered = filters.query || filters.status || filters.role;
-      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="用户列表"><thead><tr><th>用户</th><th>状态</th><th class="is-num">当前余额</th><th class="is-num">可用</th><th class="is-num">冻结</th><th class="is-num">累计消耗</th><th>注册时间</th><th class="is-actions">操作</th></tr></thead><tbody>${items.map(user => `<tr>
+      table.innerHTML = items.length ? `<div class="table-wrap"><table aria-label="用户列表"><thead><tr><th>用户</th><th>状态</th><th class="is-num">当前余额</th><th class="is-num">可用</th><th class="is-num">冻结</th><th class="is-num">累计消耗</th><th>最近活跃</th><th>注册时间</th><th class="is-actions">操作</th></tr></thead><tbody>${items.map(user => `<tr>
           <td><div class="cell-user"><span class="avatar" aria-hidden="true">${initial(user.nickname || user.username)}</span><div class="cell-stack"><span><button class="link-button" type="button" data-user-detail="${esc(user.id)}" title="查看用户详情">${userIdentity(user)}</button>${user.role === 'admin' ? ' <span class="tag is-brand">管理员</span>' : ''}</span>${idText(user.id, '用户 ID')}</div></div></td>
           <td>${badge(user.status)}</td>
           <td class="is-num"><b>${money(user.credits)}</b></td>
           <td class="is-num">${money(user.available)}</td>
           <td class="is-num">${Number(user.held) ? `<span class="warn-text">${money(user.held)}</span>` : money(user.held)}</td>
           <td class="is-num">${money(user.totalSpent)}</td>
+          <td>${date(user.lastActiveAt)}</td>
           <td>${date(user.createdAt)}</td>
           <td class="is-actions"><div class="actions"><button class="btn btn-sm" data-user-detail="${esc(user.id)}" type="button">详情</button><button class="btn btn-sm" data-user-adjust="${esc(user.id)}" type="button">调账</button>${user.status === 'active' ? `<button class="btn btn-sm btn-danger-ghost" data-user-disable="${esc(user.id)}" type="button">停用</button>` : `<button class="btn btn-sm" data-user-enable="${esc(user.id)}" type="button">启用</button>`}</div></td>
         </tr>`).join('')}</tbody></table></div>${pageControls('users', data.total, data.nextCursor, items.length)}`
@@ -909,7 +910,7 @@ import { logSummary, createLogDrawer, bindLogStickyHeader } from './features/adm
     }).join('');
     const generations = (user.recentGenerations || []).slice(0, 6).map(item => `<div class="user-recent-item"><span>${badge(item.status)}<span>${esc(item.modelId || item.type || item.id)}</span></span><span>${date(item.createdAt)}</span></div>`).join('');
     const name = user.nickname || user.username || 'U';
-    return `<div class="user-detail-identity"><span class="avatar is-lg" aria-hidden="true">${initial(name)}</span><div class="user-detail-identity-main"><strong>${userIdentity(user)}</strong><span class="user-detail-status">${badge(user.status)}${user.role === 'admin' ? '<span class="tag is-brand">管理员</span>' : ''}<span>注册于 ${date(user.createdAt)}</span></span>${idText(user.id, '用户 ID')}</div></div>
+    return `<div class="user-detail-identity"><span class="avatar is-lg" aria-hidden="true">${initial(name)}</span><div class="user-detail-identity-main"><strong>${userIdentity(user)}</strong><span class="user-detail-status">${badge(user.status)}${user.role === 'admin' ? '<span class="tag is-brand">管理员</span>' : ''}<span>注册于 ${date(user.createdAt)}</span>${user.lastActiveAt ? `<span>最近活跃 ${date(user.lastActiveAt)}</span>` : ''}</span>${idText(user.id, '用户 ID')}</div></div>
       <div class="user-detail-grid">
         <div class="user-detail-metric"><small>当前余额</small><strong>${money(user.credits)}</strong></div>
         <div class="user-detail-metric"><small>可用余额</small><strong>${money(user.available)}</strong></div>

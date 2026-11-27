@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+const LAST_ACTIVE_TOUCH_MS = 10 * 60 * 1000;
+
 export function createAccountRepository({ sql, tx, parseUserRow } = {}) {
   for (const [name, dependency] of Object.entries({ sql, tx, parseUserRow })) {
     if (typeof dependency !== 'function') throw new TypeError(`账号仓储缺少 ${name} 依赖`);
@@ -189,7 +191,16 @@ export function createAccountRepository({ sql, tx, parseUserRow } = {}) {
       if (row) deleteSession(tokenHash);
       return null;
     }
+    touchLastActive(row, nowIso);
     return { ...parseUserRow(row), sessionScope: row.scope, csrfTokenHash: row.csrfTokenHash };
+  }
+
+  // A remembered login counts as activity; throttled so each request does not write.
+  function touchLastActive(row, nowIso) {
+    if (row.scope !== 'user') return;
+    const last = Date.parse(row.last_active_at || '');
+    if (Number.isFinite(last) && Date.parse(nowIso) - last < LAST_ACTIVE_TOUCH_MS) return;
+    sql('UPDATE users SET last_active_at = :now WHERE id = :id AND (last_active_at IS NULL OR last_active_at < :now)').run({ now: nowIso, id: row.id });
   }
 
   function purgeExpiredSessions(nowIso) {

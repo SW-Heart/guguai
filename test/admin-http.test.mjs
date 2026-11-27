@@ -129,7 +129,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(page.status, 200);
   const adminHtml = await page.text();
   assert.match(adminHtml, /管理后台/);
-  assert.match(adminHtml, /guguadmin\.js\?v=81/);
+  assert.match(adminHtml, /guguadmin\.js\?v=82/);
 
   const login = await admin.call('/api/admin/auth/login', { method: 'POST', headers: { Origin: base }, body: { username: 'http_admin', password: adminPassword } });
   assert.equal(login.response.status, 200);
@@ -533,6 +533,7 @@ test('admin HTTP permissions and core workflows', async t => {
   assert.equal(users.data.items.length, 1);
   const target = users.data.items[0];
   assert.equal(target.totalSpent, 0);
+  assert.ok(target.lastActiveAt, '注册登录后应记录最近活跃时间');
   const seedBalance = await admin.call(`/api/admin/users/${target.id}/credit-adjustments`, { method: 'POST', headers: { Origin: base, 'X-CSRF-Token': csrf }, body: { amount: '4.5', reasonCode: 'customer_service', note: 'http seed', idempotencyKey: 'http-seed-1' } });
   assert.equal(seedBalance.response.status, 200);
   assert.equal(seedBalance.data.balance, 4.5);
