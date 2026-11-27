@@ -130,7 +130,7 @@ test('both composers put previews above text and all changed entry cache keys ar
   assert.match(read('features/agent/workspace.js'),/class="agent-entry-attachments attachment-strip"[^>]*><\/div><textarea id="agentEntryMessage"/);
   assert.match(read('features/drama/director-workspace.js'),/data-agent-attachments[^>]*><\/div><textarea id="directorMessage"/);
   for(const [path,urls] of [
-    ['index.html',['/app.js?v=649','/styles.css?v=443']],
+    ['index.html',['/app.js?v=650','/styles.css?v=443']],
     ['app.js',['./features/agent/workspace.js?v=194','./drama-studio.js?v=327']],
     ['drama-studio.js',['./features/drama/director-workspace.js?v=218']],
     ['features/agent/workspace.js',['../drama/director-workspace.js?v=218','./attachment-preview.js?v=5']],

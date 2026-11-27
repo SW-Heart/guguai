@@ -261,11 +261,11 @@ test('changed frontend modules are reachable through current cache keys', () => 
   const controller = readFileSync(new URL('../public/features/generation/upscale-controller.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.match(app, /features\/generation\/presentation\.js\?v=6'/);
-  assert.match(app, /features\/generation\/upscale-controller\.js\?v=2'/);
+  assert.match(app, /features\/generation\/upscale-controller\.js\?v=3'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=8'/);
   assert.match(app, /features\/credits\/presentation\.js\?v=8'/);
   assert.match(controller, /'\.\/upscale\.js\?v=1'/);
-  assert.match(html, /\/app\.js\?v=649"/);
+  assert.match(html, /\/app\.js\?v=650"/);
   assert.match(html, /\/styles\.css\?v=443"/);
   assert.match(html, /id="videoUpscaleDialog"/);
 });

@@ -103,7 +103,7 @@ test('promotion assets are versioned from every entry that loads them', async ()
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=649'));
+  assert.ok(html.includes('/app.js?v=650'));
   assert.ok(html.includes('/styles/promotion.css?v=1'));
   assert.ok(html.includes('id="creditPromotionBanner"'));
   assert.ok(app.includes("./features/promotions/recharge-promotion.js?v=1"));

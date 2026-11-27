@@ -12,10 +12,11 @@ import { createRecordIndexes } from './state/records.js?v=2';
 import { createDesktopScope } from './platform/desktop-scope.js?v=4';
 import { createTaskPoller } from './features/generation/polling.js?v=5';
 import { createGenerationPresentation } from './features/generation/presentation.js?v=6';
-import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=2';
+import { createVideoUpscaleController, isVideoUpscaleTask } from './features/generation/upscale-controller.js?v=3';
 import { createCreditPresentation } from './features/credits/presentation.js?v=8';
 import { createRechargePromotion } from './features/promotions/recharge-promotion.js?v=1';
 import { createCreditRedemptionController } from './features/credits/redemption.js?v=1';
+import { createCreditShortagePrompt, isInsufficientCreditsError } from './features/credits/shortage.js?v=1';
 import { createPromptEditorCodec, linkTextMentions, pastePlainText, textMentionEntries } from './components/prompt-editor.js?v=3';
 import { createAccountScope } from './state/account-scope.js?v=2';
 import { createNotificationController } from './features/notifications/controller.js?v=11';
@@ -89,7 +90,18 @@ let routeRenderEpoch = 0;
 const desktopScope = createDesktopScope({ getWindow: () => window, getSyncInfo: () => desktopSyncInfo, getMediaKind: item => desktopMediaKind(item) });
 const desktopScopeHeaders = desktopScope.headers;
 const apiResponseShape = url => /\/api\/generations\?/.test(String(url)) && /(?:^|[?&])(?:ids|view)=/.test(String(url)) ? 'array' : 'object';
-const { request: api, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
+const { request: requestApi, page: apiPage } = createApiClient({ scopeHeaders: desktopScopeHeaders, responseShapeFor: apiResponseShape });
+const creditShortage = createCreditShortagePrompt({
+  toast: message => toast(message),
+  openPurchase: () => { void openCreditPurchase(); },
+  isPurchaseOpen: () => Boolean(document.querySelector('#creditPurchaseDialog')?.open),
+});
+// Every module receives this wrapper, so any paid action that comes back short
+// prompts first and then opens the purchase dialog, whichever page started it.
+const api = (url, options) => requestApi(url, options).catch(error => {
+  if (isInsufficientCreditsError(error)) creditShortage.notify(error.message);
+  throw error;
+});
 createErrorReporter({
   headers: () => window.guguDesktop ? { ...desktopScopeHeaders(), 'X-GuGu-Desktop':'1' } : {},
   meta: () => ({ appVersion:String(desktopClientInfo.version || ''), platform:String(desktopClientInfo.platform || '') }),
@@ -206,6 +218,7 @@ const videoUpscale = createVideoUpscaleController({
   $, api, toast, setCreditBalance,
   creditText:value => creditText(value), fileById, taskById, observeTaskFailure,
   getBalance:() => state.credits,
+  onInsufficientCredits:message => creditShortage.notify(message),
   onTasksChanged:tasks => {
     if (tasks.length) {
       state.tasks = [...tasks, ...state.tasks.filter(item => !tasks.some(task => task.id === item.id))];
@@ -1204,6 +1217,7 @@ function setCreditBalance(balance) {
   renderCreditBalance();
   renderCreditDetail();
   if ($('#creditPurchaseDialog')?.open) renderCreditPurchase();
+  videoUpscale.refreshBalance();
 }
 // Only the open credit detail needs the history; other refreshes fetch the balance alone.
 async function loadCredits() {
@@ -1225,6 +1239,7 @@ async function loadCredits() {
     updateVideoCost();
     renderCreditDetail();
     renderCreditPurchase();
+    videoUpscale.refreshBalance();
   } catch (error) { if (accountScope.isCurrent(requestAccount) && error.status === 401) location.reload(); }
 }
 
@@ -1721,6 +1736,7 @@ function clearDesktopAccountState() {
   notificationController.closeNotificationDialog();
   resetAccountState(state);
   rechargePromotion?.reset();
+  creditShortage.cancel();
   desktopSyncInfo = { deviceId:'', workspaceId:'', cursor:'', accountId:'' };
   desktopWorkspacePath = '';
   cancelRouteContentRender();

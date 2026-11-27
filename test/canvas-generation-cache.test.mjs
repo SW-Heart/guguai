@@ -14,7 +14,7 @@ test('speech language popover style fix reaches the versioned stylesheet entry',
 
 test('canvas generation menu fix reaches both versioned workspace entries', async () => {
   const entries = [
-    ['index.html', ['/app.js?v=649', '/styles.css?v=443']],
+    ['index.html', ['/app.js?v=650', '/styles.css?v=443']],
     ['app.js', ['./drama-studio.js?v=327', './features/agent/workspace.js?v=194']],
     ['drama-studio.js', ['./features/drama/director-workspace.js?v=218']],
     ['features/agent/workspace.js', ['../drama/director-workspace.js?v=218']],
@@ -34,7 +34,7 @@ test('canvas generation menu fix reaches both versioned workspace entries', asyn
 
 test('bounded image drops reach both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=649'],
+    ['index.html', '/app.js?v=650'],
     ['index.html', '/styles.css?v=443'],
     ['app.js', './drama-studio.js?v=327'],
     ['app.js', './features/agent/workspace.js?v=194'],
@@ -74,7 +74,7 @@ test('bounded image drops reach both workspace entries through fresh cache versi
 
 test('connection endpoint handle fix reaches both workspace entries through fresh cache versions', async () => {
   const entries = [
-    ['index.html', '/app.js?v=649'],
+    ['index.html', '/app.js?v=650'],
     ['app.js', './drama-studio.js?v=327'],
     ['app.js', './features/agent/workspace.js?v=194'],
     ['drama-studio.js', './features/drama/director-workspace.js?v=218'],

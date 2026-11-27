@@ -60,6 +60,7 @@ export function createVideoUpscaleController({
   taskById,
   onTasksChanged,
   observeTaskFailure,
+  onInsufficientCredits = () => {},
 } = {}) {
   const uploadProgress = new Map();
   const inFlight = new Set();
@@ -90,6 +91,10 @@ export function createVideoUpscaleController({
     confirm.toggleAttribute('aria-busy', busy);
   }
 
+  const shortageText = quote => `积分不足，本次需要 ${creditText(quote.credits)} 积分`;
+
+  // A short balance keeps the button as it is: clicking it opens the
+  // purchase dialog instead of starting the upscale.
   function renderQuote(quote, extra = {}) {
     const balance = Number(quote.balance ?? getBalance());
     const enough = balance >= Number(quote.credits);
@@ -98,9 +103,18 @@ export function createVideoUpscaleController({
       target:`${sizeText(quote.outputWidth, quote.outputHeight)} · ${quote.label}`,
       credits:`${creditText(quote.credits)} 积分`,
       balance,
-      error:extra.error || (enough ? '' : `积分不足，本次需要 ${creditText(quote.credits)} 积分`),
-      ready:enough,
+      error:extra.error || (enough ? '' : shortageText(quote)),
+      ready:true,
     });
+  }
+
+  // Called whenever the wallet changes, so a top-up made while the dialog
+  // is open is reflected without reopening it.
+  function refreshBalance() {
+    const current = session;
+    if (!current?.quote || !dialog().open || $('#confirmVideoUpscale').getAttribute('aria-busy') !== null) return;
+    current.quote = { ...current.quote, balance:getBalance() };
+    renderQuote(current.quote);
   }
 
   async function open(task) {
@@ -138,6 +152,12 @@ export function createVideoUpscaleController({
   async function confirm() {
     const current = session;
     if (!current?.quote) return;
+    if (Number(getBalance()) < Number(current.quote.credits)) {
+      current.quote = { ...current.quote, balance:getBalance() };
+      renderQuote(current.quote);
+      onInsufficientCredits(shortageText(current.quote));
+      return;
+    }
     renderDialog({ ...dialogValues(), ready:true, busy:true });
     try {
       const result = await api('/api/generations/upscale', { method:'POST', body:JSON.stringify({ ...requestBody(current), requestId:crypto.randomUUID(), expectedCredits:current.quote.credits }) });
@@ -236,5 +256,5 @@ export function createVideoUpscaleController({
   $('#confirmVideoUpscale').addEventListener('click', () => { void confirm(); });
   dialog().addEventListener('close', () => { session = null; });
 
-  return Object.freeze({ open, close, canUpscale, resumePendingUploads, preparationProgress, resolutionText });
+  return Object.freeze({ open, close, canUpscale, refreshBalance, resumePendingUploads, preparationProgress, resolutionText });
 }
