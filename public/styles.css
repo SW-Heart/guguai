@@ -7263,3 +7263,7 @@ body.desktop-runtime.desktop-darwin:not(.desktop-fullscreen) #appView.drama-proj
 .agent-text-block .agent-code-name{font-family:var(--sans);white-space:normal;overflow-wrap:anywhere;color:inherit}
 .dw-message-content .agent-text-block .agent-code-viewport{font:inherit;line-height:1.8;white-space:pre-wrap}
 .dw-message-content .agent-text-block .agent-code-viewport code{flex:1;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Admin-controlled "New" badge after a model name. */
+.model-new-badge{display:inline-flex;align-items:center;flex:0 0 auto;margin-left:5px;padding:2px 5px;border:1px solid rgba(99,102,241,.22);border-radius:4px;color:#4f46e5;background:rgba(99,102,241,.1);font:600 9px/1 var(--sans);font-style:normal;letter-spacing:.2px;vertical-align:1px;white-space:nowrap}
+.select-model-title .model-new-badge,.wb-model-option-title .model-new-badge{margin-left:0}

@@ -223,7 +223,7 @@ export function createAgentRouteHandler({ repository: repo, runtime, gateway, sk
       sendJson(res, 200, { skills: url.searchParams.get('mode')==='assistant'?assistantSkillCatalog(await skills.search()):await skills.search() }); return true;
     }
     if (url.pathname === '/api/agent/media-models' && req.method === 'GET') {
-      const models = (await mediaCatalog()).map(({id, label, kind, description, iconKey}) => ({id, label, kind, description, iconKey}));
+      const models = (await mediaCatalog()).map(({id, label, kind, description, iconKey, isNew}) => ({id, label, kind, description, iconKey, isNew:Boolean(isNew)}));
       sendJson(res, 200, { models, modelPreferences:repo.userModelPreferences(user.id) }); return true;
     }
     if (url.pathname === '/api/agent/model-preferences' && req.method === 'GET') {

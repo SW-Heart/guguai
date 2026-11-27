@@ -39,7 +39,7 @@ import { replayCanvasEdits, canReplay } from './canvas-ops.js?v=13';
 import { mergeStoryboardDrafts } from './storyboard-drafts.js?v=17';
 import { canvasMediaFiles, createCanvasMediaLibrary } from './canvas-media-library.js?v=3';
 import { agentLogoMarkup, agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from '../agent/welcome.js?v=1';
-import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=25';
+import { mountModelPreferencePicker } from '../agent/model-preference-picker.js?v=26';
 import { normalizeModelPreferences } from '../agent/model-preferences.js?v=1';
 import { bindProjectTitleEditor } from '../agent/project-title-editor.js?v=1';
 import { mountCanvasContextMenu } from './canvas-context-menu.js?v=2';
@@ -1846,7 +1846,7 @@ export function createDirectorWorkspace(host, bridge) {
     }
     if(generationMenu==='model'){
       const models=canvasGenerationModels(draft.type,config).filter(item=>item.availability!=='coming-soon');
-      return `<div class="dw-gen-menu-title">${draft.type==='image'?'图像模型':'视频模型'}</div><div class="dw-gen-option-list">${models.map(model=>`<button type="button" class="dw-gen-option" role="option" aria-selected="${model.id===draft.modelId}" data-gen-set="modelId" data-value="${escape(model.id)}" data-focus-key="modelId:${escape(model.id)}">${genModelIcon(model)}<span class="dw-gen-option-copy"><b>${escape(model.label||model.id)}</b>${model.description?`<small>${escape(model.description)}</small>`:''}</span><span class="dw-gen-option-check">${genIcons.check}</span></button>`).join('')}</div>`;
+      return `<div class="dw-gen-menu-title">${draft.type==='image'?'图像模型':'视频模型'}</div><div class="dw-gen-option-list">${models.map(model=>`<button type="button" class="dw-gen-option" role="option" aria-selected="${model.id===draft.modelId}" data-gen-set="modelId" data-value="${escape(model.id)}" data-focus-key="modelId:${escape(model.id)}">${genModelIcon(model)}<span class="dw-gen-option-copy"><b>${escape(model.label||model.id)}${model.isNew?'<em class="model-new-badge">New</em>':''}</b>${model.description?`<small>${escape(model.description)}</small>`:''}</span><span class="dw-gen-option-check">${genIcons.check}</span></button>`).join('')}</div>`;
     }
     if(generationMenu==='mode'){
       return `<div class="dw-gen-menu-title">生成方式</div><div class="dw-gen-option-list">${options.modes.map(item=>{const value=item.generationType;return `<button type="button" class="dw-gen-option" role="option" aria-selected="${value===draft.mode}" data-gen-set="mode" data-value="${escape(value)}" data-focus-key="mode:${escape(value)}"><span class="dw-gen-mode-icon" aria-hidden="true">${genIcons[value]||genIcons.video}</span><span class="dw-gen-option-copy"><b>${escape(canvasGenerationModeLabels[value]||value)}</b><small>${escape(canvasGenerationModeDescriptions[value]||'')}</small></span><span class="dw-gen-option-check">${genIcons.check}</span></button>`;}).join('')}</div>`;

@@ -3113,7 +3113,7 @@ function agentMediaCatalog() {
   const controls = new Map(listModelControls().map(item => [item.modelId, item]));
   const images = availableImageModels()
     .sort((a,b) => (controls.get(a.id)?.sortOrder ?? 999) - (controls.get(b.id)?.sortOrder ?? 999)).map(m => ({
-    id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, kind:'image',
+    id:m.id, label:m.id === imageModelIds.gptImage2 ? 'GPT-Image-2' : m.label, description:m.description, isNew:Boolean(m.isNew), kind:'image',
     sizes:m.id === imageModelIds.gptImage25 ? [...tuziImageSizes] : m.id === imageModelIds.gptImage26 ? [...GPT_IMAGE_26_ASPECTS] : [...imageSizes],
     qualities:seedreamModel(m.id) ? [...seedreamModel(m.id).qualities] : [imageModelIds.gptImage25, imageModelIds.nanoBanana21, imageModelIds.gptImage26].includes(m.id) ? [...tuziImageTiers] : m.id === imageModelIds.midjourney ? ['0.25','0.5','1','2','4'] : ['low','medium','high'],
     quantity:m.id === imageModelIds.midjourney ? [4,8] : [1,2,3,4,5,6,7,8,9,10],

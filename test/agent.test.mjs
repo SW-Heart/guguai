@@ -1279,12 +1279,12 @@ test('message enqueue atomically persists preferences with the turn and rejects 
 });
 
 test('model preference API saves account choices without changing skill or budget and discovers media independently of chat models',async()=>{
-  const f=fixture(),catalog=[{id:'image-a',label:'图片 A',kind:'image'},{id:'video-a',label:'视频 A',kind:'video'}];
+  const f=fixture(),catalog=[{id:'image-a',label:'图片 A',kind:'image',isNew:true},{id:'video-a',label:'视频 A',kind:'video'}];
   let input={},modelRequests=0;
   const route=createAgentRouteHandler({repository:f.repo,runtime:{kick(){}},gateway:{config:{model:'test-model'},listModels:async()=>{modelRequests++;throw new Error('offline');}},skills:{search:async()=>[]},mediaCatalog:async()=>catalog,bodyJson:async()=>input,sendJson:(res,status,data)=>Object.assign(res,{status,data}),requireUser:async()=>({id:'user-a'}),requireDesktopWorkspaceScope:()=>scope,walletOf:()=>({balance:100}),publicGeneration:value=>value});
   try{
     const catalogResponse={};await route({method:'GET'},catalogResponse,new URL('http://localhost/api/agent/media-models'));
-    assert.deepEqual(JSON.parse(JSON.stringify(catalogResponse.data.models)),catalog);assert.equal(modelRequests,0);
+    assert.deepEqual(JSON.parse(JSON.stringify(catalogResponse.data.models)),catalog.map(model=>({...model,isNew:Boolean(model.isNew)})));assert.equal(modelRequests,0);
     f.repo.settings(f.session,{...f.session.settings,skill:'existing-skill',autoGenerate:true,generationBudgetMicro:9000000});
     input={modelPreferences:imagePreference(['image-a'])};const response={};
     await route({method:'POST'},response,new URL(`http://localhost/api/agent/sessions/${f.session.id}/settings`));

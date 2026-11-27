@@ -6,7 +6,7 @@ import { projectLoadingMarkup } from './project-loading.js?v=1';
 import { mountSkillGallery } from './skill-gallery.js?v=8';
 import { defaultTitleFromMessage } from './default-title.js?v=1';
 import { agentWelcomeHeroMarkup, creativePresetsMarkup, bindCreativePresets } from './welcome.js?v=1';
-import { mountModelPreferencePicker } from './model-preference-picker.js?v=25';
+import { mountModelPreferencePicker } from './model-preference-picker.js?v=26';
 
 const previewUrl=file=>String(file?.url||'').startsWith('gugu-media://')?file.url:file?.previewUrl||file?.url||'';
 
@@ -18,7 +18,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   // The canvas engine is most of this page's code but the home view never uses
   // it, so it loads with the project data and is warmed up once the home is idle.
   let canvasModule=null,canvasWarmup=0;
-  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=217'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
+  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=218'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
     canvasModule=null;
     console.warn('[agent] 画布模块加载失败',error);
     throw new Error('画布加载失败，请检查网络后重试');

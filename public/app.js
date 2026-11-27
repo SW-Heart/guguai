@@ -2308,8 +2308,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=193');
-const importDramaStudio = () => import('./drama-studio.js?v=326');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=194');
+const importDramaStudio = () => import('./drama-studio.js?v=327');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -4340,7 +4340,7 @@ const modelIconUrls = {
 function modelIcon(modelId) { const src = modelIconUrls[modelId]; return src ? modelLogoMarkup(src, { className: 'select-model-icon' }) : clockIcon(); }
 function productSelectIcon(widget, option) { return widget.dataset.model ? modelIcon(option.value) : widget.dataset.ratio ? ratioIcon(option.value) : widget.dataset.resolution ? resolutionIcon(option.value) : clockIcon(); }
 function selectModelOptions(widget) { return widget?.dataset.imageModel ? imageModelOptions() : videoModelOptions(); }
-function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? selectModelOptions(widget).find(item => item.id === option?.value) : null; const promo = model ? (widget.dataset.imageModel ? imageModelPromo(model.id) : videoModelPromo(model.id)) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
+function modelTitleMarkup(widget, option) { const model = widget?.dataset.model ? selectModelOptions(widget).find(item => item.id === option?.value) : null; const promo = model ? (widget.dataset.imageModel ? imageModelPromo(model.id) : videoModelPromo(model.id)) : ''; return `<span class="select-model-title"><b>${esc(option?.textContent || '')}</b>${model?.isNew ? '<em class="model-new-badge">New</em>' : ''}${promo ? `<em class="model-promo">${promo}</em>` : ''}</span>`; }
 function productSelectMarkup(widget, select) { return [...select.options].map(option => { const model = widget.dataset.model ? selectModelOptions(widget).find(item => item.id === option.value) : null; return `<button type="button" role="option" aria-selected="${option.selected}" data-value="${esc(option.value)}" ${option.disabled ? 'disabled' : ''}>${productSelectIcon(widget, option)}<span class="select-option-label">${modelTitleMarkup(widget, option)}${model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''}</span><i>✓</i></button>`; }).join(''); }
 function selectSubtitle(widget, option = null) { if (!widget?.dataset.model) return ''; const selected = option || $(`#${widget.dataset.for}`)?.selectedOptions[0]; const model = selected ? selectModelOptions(widget).find(item => item.id === selected.value) : null; return model?.description ? `<small class="select-model-description">${esc(model.description)}</small>` : ''; }
 function refreshProductSelect(id) { const select = $(`#${id}`); const widget = $(`.product-select[data-for="${id}"]`); if (!select || !widget) return; const option = select.selectedOptions[0]; const trigger = widget.querySelector('.product-select-trigger'); const menu = widget.querySelector('.product-select-menu'); if (!trigger || !menu) return; if (!option) { trigger.innerHTML = `<span>${widget.dataset.model ? '暂无可用模型' : '暂无可用选项'}</span>`; trigger.disabled = true; menu.innerHTML = ''; return; } trigger.disabled = select.disabled; trigger.innerHTML = `${productSelectIcon(widget, option)}<span>${modelTitleMarkup(widget, option)}${selectSubtitle(widget, option)}</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg>`; widget.querySelectorAll('[role="option"]').forEach(item => item.setAttribute('aria-selected', String(item.dataset.value === select.value))); if (widget.dataset.dynamicOptions === 'true') menu.innerHTML = productSelectMarkup(widget, select); }
@@ -4386,8 +4386,12 @@ function syncImageSizeChoices(modelId) {
     syncRatioGridSelection($('.ratio-grid[data-select="imageSize"]'), '1:1');
   }
 }
+// A new model starts at its lowest resolution; re-syncing the same model keeps the user's choice.
+let imageQualityModelId = null;
 function syncImageModelParameters() {
   const modelId = $('#imageModel')?.value;
+  const modelChanged = modelId !== imageQualityModelId;
+  imageQualityModelId = modelId;
   const isMidjourney = modelId === 'midjourney';
   const isTuzi = modelId === 'gpt-image-2.5';
   const isNanoBanana = modelId === 'nano-banana-2.1' || modelId === 'gpt-image-2.6';
@@ -4399,7 +4403,8 @@ function syncImageModelParameters() {
   if (qualitySelect && qualityGroup) {
     const current = qualitySelect.value;
     qualitySelect.innerHTML = qualities.map(([value,label]) => `<option value="${value}">${label}</option>`).join('');
-    qualitySelect.value = qualities.some(([value]) => value === current) ? current : isSeedream ? '2k' : isNanoBanana ? '1k' : 'medium';
+    const defaultQuality = isSeedream || isNanoBanana ? qualities[0][0] : 'medium';
+    qualitySelect.value = !modelChanged && qualities.some(([value]) => value === current) ? current : defaultQuality;
     qualityGroup.querySelectorAll('button').forEach((button,index) => { button.dataset.value = qualities[index][0]; button.textContent = qualities[index][1]; });
     qualityGroup.parentElement.querySelector('.field-label').textContent = isSeedream || isNanoBanana ? '清晰度' : '质量';
     syncSegmentedControl('imageQuality');
@@ -4785,7 +4790,8 @@ $('#imageForm').onsubmit = async event => {
   const prompt = imagePromptText();
   if (!prompt.trim()) return toast('请填写创作描述');
   if (Array.from(prompt).length > imagePromptMaxLength) return;
-  const modelId = $('#imageModel').value || 'gpt-image-2';
+  const modelId = $('#imageModel').value;
+  if (!modelId) return toast('当前没有可用的图像模型，请稍后再试');
   const midjourneyOptions = modelId === 'midjourney' ? currentMidjourneyOptions() : null;
   const tuziQuality = modelId === 'gpt-image-2.5' ? ($('#imageTuziQuality').value || '1k') : '';
   const quantity = commitImageQuantity($('#imageQuantity').value);
