@@ -71,7 +71,7 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
   // Only smart projects use the canvas engine, the largest part of this page's
   // code, so it is fetched when one opens and warmed up while the list is idle.
   let canvasModule = null, createDirectorWorkspace = null, canvasWarmup = 0;
-  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=215'), loadCanvasStyles()]).then(([module]) => {
+  const loadCanvas = () => canvasModule ||= Promise.all([import('./features/drama/director-workspace.js?v=216'), loadCanvasStyles()]).then(([module]) => {
     createDirectorWorkspace = module.createDirectorWorkspace;
     return module;
   }).catch(error => {
@@ -1081,11 +1081,11 @@ export function createDramaStudio({ api: requestApi, promptPrecheck = { check:as
         state.files=[...files,...state.files.filter(f=>!files.some(file=>file.id===f.id))];
         return files.map(file=>({...file,previewUrl:assetPreviewUrl(file)}));
       },
-      prepareCloudFiles:async files=>{
+      prepareCloudFiles:async(files,{force=false}={})=>{
         const request=projectRequest();
         const list=Array.isArray(files)?files:[];
         const unique=[...new Set(list.map(file=>file.id))];
-        const cloudIds=await ensureCloudReferenceIds(unique);assertProjectRequest(request);
+        const cloudIds=await ensureCloudReferenceIds(unique,{force});assertProjectRequest(request);
         const byId=new Map(unique.map((id,index)=>[id,cloudIds[index]]));
         return list.map(file=>{const id=byId.get(file.id);return {...file,...(asset(id)||{}),id,previewUrl:file.previewUrl||assetPreviewUrl(file)};});
       },

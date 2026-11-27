@@ -40,10 +40,10 @@ test('changed frontend entries use matching refreshed cache keys', async () => {
   const html = await fs.readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const controller = await fs.readFile(new URL('../public/features/media/controller.js', import.meta.url), 'utf8');
   const drama = await fs.readFile(new URL('../public/drama-studio.js', import.meta.url), 'utf8');
-  assert.ok(html.includes('/app.js?v=646'));
+  assert.ok(html.includes('/app.js?v=647'));
   assert.ok(frontend.includes('./features/generation/polling.js?v=5'));
   assert.ok(frontend.includes('./features/media/controller.js?v=14'));
-  assert.ok(frontend.includes('./drama-studio.js?v=324'));
+  assert.ok(frontend.includes('./drama-studio.js?v=325'));
   for (const source of [frontend, controller, drama]) assert.ok(source.includes('desktop-media-sync.js?v=16'));
 });
 
@@ -161,4 +161,48 @@ test('a cleared cloud reference is uploaded again and the generation resubmitted
   assert.ok(ensure.includes('const ready = file => !force && isRemoteReferenceReady(file);'));
   assert.ok(ensure.includes('await loadFilesByIds(unique)'));
   assert.ok(ensure.includes('if (!force && cached'));
+});
+
+function referenceResolver(files, synced) {
+  const context = vm.createContext({
+    state:{ files:[...files] },
+    isRemoteReferenceReady:file => Boolean(file && !file.localOnly && file.remoteStatus === 'ready'),
+    needsReferenceUpload:file => Boolean(file && !(file && !file.localOnly && file.remoteStatus === 'ready') && (file.localOnly || file.localId || file.remoteStatus === 'local_only')),
+    cloudAssetFromDesktopSync:result => result?.cloudAsset?.id ? result.cloudAsset : null,
+    sharedReferenceUpload:(_key, start) => start(),
+    replacePendingReferenceId:() => {}, pendingReferenceJob:() => null, renderReferences:() => {},
+    window:{ guguDesktop:{ media:{ syncLocal:async ({ assetId, uploadForReference }) => {
+      synced.push({ assetId, uploadForReference });
+      return { cloudAsset:{ id:`cloud-copy-of-${assetId}`, remoteStatus:'ready' }, url:`gugu-media://asset/${assetId}` };
+    } } } },
+  });
+  vm.runInContext(extract(frontend, 'async function resolveReferenceAssetIds(', 'function referenceCountsForIds('), context);
+  return context.resolveReferenceAssetIds;
+}
+
+test('a generation kept only on this device is uploaded from the local file, never sent by its upstream link', async () => {
+  const synced = [];
+  const delivered = { id:'generation-ag-1', localId:'local-gen-1', kind:'image', remoteStatus:'local_only', referenceSourceAvailable:true, localStatus:'saved' };
+  const resolve = referenceResolver([delivered], synced);
+  assert.deepEqual([...await resolve(['generation-ag-1'])], ['cloud-copy-of-local-gen-1']);
+  assert.deepEqual(synced, [{ assetId:'local-gen-1', uploadForReference:true }]);
+});
+
+test('a reference the server no longer has is uploaded again when forced', async () => {
+  const synced = [];
+  const ready = { id:'cloud-a', localId:'local-a', kind:'image', remoteStatus:'ready', localStatus:'saved' };
+  const resolve = referenceResolver([ready], synced);
+  assert.deepEqual([...await resolve(['cloud-a'])], ['cloud-a']);
+  assert.deepEqual(synced, []);
+  assert.deepEqual([...await resolve(['cloud-a'], { force:true })], ['cloud-copy-of-local-a']);
+});
+
+test('every generation submit re-uploads local references once when the server asks for it', async () => {
+  assert.match(frontend, /error\?\.code !== 'REFERENCE_NOT_READY'[\s\S]{0,200}resolveReferenceAssetIds\(referenceAssetIds, \{ force:true \}\)/);
+  const director = await fs.readFile(new URL('../public/features/drama/director-workspace.js', import.meta.url), 'utf8');
+  assert.match(director, /error\?\.code!=='REFERENCE_NOT_READY'[\s\S]{0,200}prepareCloudFiles\(request\.attachments,\{force:true\}\)/);
+  const agent = await fs.readFile(new URL('../public/features/agent/workspace.js', import.meta.url), 'utf8');
+  const cloudFile = extract(agent, 'async function cloudFile(', 'async function saveCanvas(');
+  assert.match(cloudFile, /isRemoteReferenceReady\(file\)/);
+  assert.doesNotMatch(cloudFile, /referenceSourceAvailable/);
 });

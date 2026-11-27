@@ -2167,7 +2167,15 @@ export function createDirectorWorkspace(host, bridge) {
       const payloadKey=JSON.stringify(payload);
       const requestId=payload.type==='audio'&&draft.pendingPayloadKey===payloadKey?draft.pendingRequestId||crypto.randomUUID():crypto.randomUUID();
       if(payload.type==='audio'){draft.pendingRequestId=requestId;draft.pendingPayloadKey=payloadKey;}
-      const result=await bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':requestId},body:JSON.stringify({...payload,precheckSource:'agent',requestId})});
+      const submit=body=>bridge.agentApi('/api/generations',{method:'POST',headers:{'Idempotency-Key':body.requestId},body:JSON.stringify(body)});
+      const result=await submit({...payload,precheckSource:'agent',requestId}).catch(async error=>{
+        // The cloud copy of a reference can be gone while this device still
+        // has the file. Upload it again and resubmit once.
+        if(error?.code!=='REFERENCE_NOT_READY'||!request.attachments.length||!bridge.prepareCloudFiles)throw error;
+        const ready=await bridge.prepareCloudFiles(request.attachments,{force:true});
+        if(token!==epoch)throw Object.assign(new Error('stale'),{stale:true});
+        return submit({...payload,referenceAssetIds:ready.map(file=>file.id),precheckSource:'agent',requestId:crypto.randomUUID()});
+      });
       if(token!==epoch)return;
       const tasks=Array.isArray(result?.tasks)?result.tasks:result?.id?[result]:[];
       if(!tasks.length)throw new Error('暂时无法开始生成，请重试');

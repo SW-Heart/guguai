@@ -2308,8 +2308,8 @@ function loadReferenceCanvasStyles() {
 
 // Startup begins downloading the opening route's module while sign-in and
 // settings load; the later controller setup reuses the same request.
-const importAgentWorkspace = () => import('./features/agent/workspace.js?v=191');
-const importDramaStudio = () => import('./drama-studio.js?v=324');
+const importAgentWorkspace = () => import('./features/agent/workspace.js?v=192');
+const importDramaStudio = () => import('./drama-studio.js?v=325');
 function prefetchRouteModule(route) {
   const load = ['agent', 'project'].includes(route) ? importAgentWorkspace : route === 'drama' ? importDramaStudio : null;
   void load?.().catch(() => {});
@@ -4569,12 +4569,12 @@ async function uploadPendingReferenceJob(job) {
     return file;
   });
 }
-async function resolveReferenceAssetIds(ids) {
+async function resolveReferenceAssetIds(ids, { force = false } = {}) {
   const resolved=[];
   for (const id of Array.isArray(ids) ? ids : []) {
     const file=state.files.find(item => item.id === id);
-    if (isRemoteReferenceReady(file)) { resolved.push(file.id); continue; }
-    if (needsReferenceUpload(file)) {
+    if (!force && isRemoteReferenceReady(file)) { resolved.push(file.id); continue; }
+    if (needsReferenceUpload(file) || (force && (file?.localId || file?.localOnly))) {
       const localAssetId=file.localId || (file.localOnly ? file.id : '');
       if (!localAssetId || !window.guguDesktop?.media?.syncLocal) throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
       const result=await sharedReferenceUpload(`local:${localAssetId}`, () => window.guguDesktop.media.syncLocal({ assetId:localAssetId, uploadForReference:true }));
@@ -4637,8 +4637,18 @@ async function submitGeneration(type, form, payload, preparation) {
       }
       expectedPriceVersion=state.modelQuote.priceVersion || '';
     }
-    const requestId = crypto.randomUUID();
-    const result = await api('/api/generations', { method:'POST', headers:{ 'Idempotency-Key':requestId }, body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    const submit = referenceAssetIds => {
+      const requestId = crypto.randomUUID();
+      return api('/api/generations', { method:'POST', headers:{ 'Idempotency-Key':requestId }, body:JSON.stringify({ type, ...payload, referenceAssetIds, requestId, ...(expectedPriceVersion ? { expectedPriceVersion } : {}) }) });
+    };
+    // The cloud copy of a reference can be gone while this device still has
+    // the file. Upload it again from the local file and resubmit once.
+    const result = await submit(referenceAssetIds).catch(async error => {
+      if (error?.code !== 'REFERENCE_NOT_READY' || !referenceAssetIds.length || !window.guguDesktop?.media?.syncLocal) throw error;
+      const refreshedIds = await resolveReferenceAssetIds(referenceAssetIds, { force:true });
+      if (!accountScope.isCurrent(requestAccount)) throw error;
+      return submit(refreshedIds);
+    });
     if (!accountScope.isCurrent(requestAccount)) return;
     const tasks = Array.isArray(result.tasks) ? result.tasks : [result];
     chargedTasks = tasks;

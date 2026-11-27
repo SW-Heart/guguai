@@ -1,4 +1,5 @@
 import { mountCreateProjectCard } from '../../vendor/ui/create-project.js?v=5';
+import { isRemoteReferenceReady } from '../../desktop-media-sync.js?v=16';
 import { attachmentKind, mountAttachmentPreviews } from './attachment-preview.js?v=5';
 import { normalizeDirectorWorkspace } from '../drama/director-actions.js?v=21';
 import { projectLoadingMarkup } from './project-loading.js?v=1';
@@ -17,7 +18,7 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   // The canvas engine is most of this page's code but the home view never uses
   // it, so it loads with the project data and is warmed up once the home is idle.
   let canvasModule=null,canvasWarmup=0;
-  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=215'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
+  const loadCanvas=()=>canvasModule||=Promise.all([import('../drama/director-workspace.js?v=216'),loadCanvasStyles()]).then(([module])=>module).catch(error=>{
     canvasModule=null;
     console.warn('[agent] 画布模块加载失败',error);
     throw new Error('画布加载失败，请检查网络后重试');
@@ -260,10 +261,13 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
   const canvasGenerationIds=()=>project.id?[...new Set((project.directorWorkspace?.generationDrafts||[]).map(item=>String(item?.taskId||'')).filter(Boolean))]:[];
   const taskAsset=id=>asset(task(id)?.assetId);
   const current=()=>isAccountCurrent(account);
-  async function cloudFile(file){
+  // Only our own cloud copy can serve as a reference. Anything else, including
+  // a generation that is only on this device, is uploaded from the local file.
+  async function cloudFile(file,{force=false}={}){
     if(!file)return null;
-    if(!file.localOnly&&file.remoteStatus!=='local_only'&&file.referenceSourceAvailable!==false)return {...file,previewUrl:previewUrl(file)};
-    const sourceId=file.localId||file.id;
+    if(!force&&isRemoteReferenceReady(file))return {...file,previewUrl:previewUrl(file)};
+    const sourceId=file.localId||(file.localOnly?file.id:'');
+    if(!sourceId)throw new Error('这份参考素材暂时无法使用，请重新上传后再试');
     const result=await window.guguDesktop?.media?.syncLocal?.({assetId:sourceId,uploadForReference:true});
     if(!current())return null;
     if(!result?.cloudAsset?.id||result.cloudAsset.remoteStatus==='local_only')throw new Error('素材上传失败，请重试');
@@ -350,14 +354,14 @@ export function createAgentWorkspace({api,state,toast,uploadAsset,importCanvasAs
         if(files.length){project.assetIds=[...new Set([...project.assetIds,...files.map(file=>file.id)])];await saveCanvas({assetIds:project.assetIds});}
         return active()?files.map(file=>({...file,previewUrl:previewUrl(file)})):[];
       },
-      prepareCloudFiles:async files=>{
+      prepareCloudFiles:async(files,{force=false}={})=>{
         const list=Array.isArray(files)?files:[],results=new Array(list.length);
         // Two uploads at a time: the server allows only a few unfinished uploads per account.
         let next=0;
         await Promise.all(Array.from({length:Math.min(2,list.length)},async()=>{
           while(next<list.length){
             const index=next++,file=list[index];
-            const ready=await cloudFile(asset(file.id)||file);
+            const ready=await cloudFile(asset(file.id)||asset(file.localId)||file,{force});
             if(!ready)throw Object.assign(new Error('账号已切换，请重新添加文件'),{stale:true});
             results[index]=ready;
           }

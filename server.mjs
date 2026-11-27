@@ -1271,7 +1271,7 @@ function publicAsset(asset) {
   return {
     ...value,
     ...(asset.sourceGenerationId ? { sourceGenerationId: asset.sourceGenerationId } : {}),
-    referenceSourceAvailable: Boolean(asset.sourceUrl),
+    referenceSourceAvailable: Boolean(asset.objectKey && r2Configured),
     remoteStatus: asset.objectKey ? 'ready' : (asset.remoteStatus || (asset.sourceUrl ? 'pending' : 'local_only')),
     url,
     directUrl: `/api/files/${encodeURIComponent(asset.id)}/direct`,
@@ -1501,14 +1501,9 @@ async function ensureLocalAsset(userId, asset, targetDir = assetFilesDir(userId)
       await downloadToFile(url, localFile, 4);
       return localFile;
     }
-    if (asset.sourceUrl) {
-      const sourceUrl = new URL(asset.sourceUrl);
-      if (!['http:', 'https:'].includes(sourceUrl.protocol)) throw new Error('参考素材源地址不可用');
-      const sourceTask = asset.sourceGenerationId ? findGeneration(userId, asset.sourceGenerationId) : null;
-      await downloadToFile(sourceUrl.toString(), localFile, 4, { headers:generationSourceHeaders(sourceTask, sourceUrl.toString()) });
-      return localFile;
-    }
-    throw Object.assign(new Error('参考素材仅存在于桌面本地，尚未同步到云端'), { statusCode:409, code:'REFERENCE_NOT_READY' });
+    // Provider result links expire. Only our own copy is a source; without one
+    // the desktop uploads its local file again.
+    throw referenceNotReady(asset);
   })().finally(() => assetRestores.delete(restoreKey));
   assetRestores.set(restoreKey, restore);
   return restore;
@@ -1635,7 +1630,7 @@ async function validateReferenceAssets(userId, value, limits = null, { requireRe
     if (asset.kind === 'image' && Number(asset.size) >= maxImageBytes) throw Object.assign(new Error(`参考图“${asset.name}”超过 ${maxImageBytes / 1024 / 1024} MB，请选择小于 ${maxImageBytes / 1024 / 1024} MB 的图片`), { statusCode: 400 });
     if (asset.kind !== 'image' && Number(asset.size) > maxUploadBytes) throw Object.assign(new Error(`参考素材“${asset.name}”超过 25 MB`), { statusCode: 400 });
     if (requireReadable && !readable.has(id)) {
-      if (!await referenceAssetHasReadableSource(userId, asset)) throw Object.assign(new Error(`参考素材“${asset.name}”尚未同步到云端，请重新选择或上传后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
+      if (!await referenceAssetHasReadableSource(userId, asset)) throw referenceNotReady(asset);
       readable.add(id);
     }
   }
@@ -1677,10 +1672,10 @@ async function referenceAssetHasReadableSource(userId, asset) {
   if (!asset?.storageName) return false;
   const permanentFile = path.join(assetFilesDir(userId), asset.storageName);
   if (await fs.access(permanentFile).then(() => true).catch(() => false)) return true;
-  if (asset.objectKey && r2Configured) return true;
-  if (!asset.sourceUrl) return false;
-  try { return ['http:', 'https:'].includes(new URL(asset.sourceUrl).protocol); }
-  catch { return false; }
+  return Boolean(asset.objectKey && r2Configured);
+}
+function referenceNotReady(asset) {
+  return Object.assign(new Error(`参考素材“${asset?.name || '未命名文件'}”需要重新上传，请重新选择后再试`), { statusCode:409, code:'REFERENCE_NOT_READY' });
 }
 function generationSourceHeaders(task, resultUrl) {
   const routeContent = task?.routeId && /\/v1\/videos\/[^/]+\/content(?:$|\?)/.test(String(resultUrl || ''))
@@ -3215,7 +3210,7 @@ const agentRoute = createAgentRouteHandler({
   findGeneration,publicGeneration,findAsset,publicAsset,walletOf,
 });
 
-export const __test = { runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, detectUploadContentMime, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, valueVideoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
+export const __test = { ensureLocalAsset, referenceAssetHasReadableSource, runSpeechGeneration, generationRoute, mediaRetention, requestGenerationArchive, applyLocalReadyAcknowledgement, archiveGenerationWithRetry, servePendingGenerationSource, hashPassword, verifyPassword, parseCookies, tokenHash, charLength, normalizeInviteCode, isKnownInviteCode, generationCost, errorMessage, videoProgress, downloadErrorDetail, assetObjectKey, pendingUploadKey, finalUploadKey, r2ReferenceImageKey, r2ReferenceImagePrefix, r2ReferenceImageTtlMs, normalizeUploadMime, magicMatches, detectUploadContentMime, imageSizes, tuziImageSizes, tuziImageTiers, videoAspectRatios, videoDurations, fixedModels, createDefaultDramaShot, normalizeDramaProject, buildOaiVideoPayload, buildAutodlPayload, routedVideoPayload, publicPlatformPrices, publicModelPriceState, normalizeQuoteReferenceCounts, assertReferenceCountsWithinLimits, autodlRetryableResponseError, pollAutodlVideo, createAutodlVideo, pollDuomiImage, createImage, pollTuziImage:(...args) => tuziProvider.pollImage(...args), createTuziImage:(...args) => tuziProvider.createImage(...args), trackProviderSubmission, waitForProviderSubmissions, recoverPendingGenerations, generationFailureCode, generationFailure, publicGeneration, publicAsset, publicDramaProject, publicHttpErrorMessage, publicHttpErrorBody, saveGenerationAsset, archiveGenerationResult, publicCreditEntry, publicLlmUsage, generationSourceHeaders, generationAssetExtension, generationAssetName, resolveVideoPrompt, providerTaskIdDeadline, awaitingProviderTaskId, providerTaskIdTimedOut, routedVideoSubmitTimeoutMs, providerSubmissionShutdownGraceMs, imageMaxPollDurationMs, videoMaxPollDurationMs, valueVideoMaxPollDurationMs, oaiMaxPollDurationMs, oaiMaxPolls, autodlMaxPollDurationMs, videoPollTimeoutError, videoPollStartedAt, websiteApiAllowed, staticEntryFile, staticCacheControl };
 const server = http.createServer(async (req, res) => {
   let finishRequest;
   const requestWork = runtimeLifecycle.track(new Promise(resolve => { finishRequest = resolve; }));

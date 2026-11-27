@@ -283,7 +283,9 @@ test('public assets expose authenticated delivery endpoints without leaking upst
   assert.equal(value.sourceGenerationId, 'generation-task-1');
   assert.equal(value.sourceUrl, undefined);
   assert.equal(value.sourceRequiresAuth, undefined);
-  assert.equal(value.referenceSourceAvailable, true);
+  // Provider result links expire, so only our own stored copy counts as a
+  // reference source; without one the desktop uploads its local file.
+  assert.equal(value.referenceSourceAvailable, false);
 });
 
 test('a gateway catch-all image refusal on a text-only task points at the description, not references', () => {
