@@ -114,7 +114,7 @@ test('changed frontend modules are reachable through current cache keys', () => 
 test('the website leads with 智能画布 and 短剧工作台 and shows the real skills', () => {
   const home = read('home.html');
   const chapters = [...home.matchAll(/data-film-chapter data-start="[\d.]+"><b>([^<]+)</g)].map(match => match[1]);
-  assert.deepEqual(chapters, ['智能画布', '短剧工作台', '快速创作', '成片']);
+  assert.deepEqual(chapters, ['智能画布', '短剧工作台', '快速创作', '按量计费']);
   const guides = [...home.matchAll(/<a class="text-link" href="\/help#([\w-]+)">[^<]*教程</g)].map(match => match[1]);
   assert.deepEqual(guides, ['agent-start', 'drama-start', 'image-start']);
   const features = read('features.html');

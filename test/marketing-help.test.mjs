@@ -154,11 +154,11 @@ test('homepage film assets resolve and every chapter starts inside the film', as
   assert.deepEqual(starts, [...starts].sort((a, b) => a - b));
   assert.equal(starts[0], 0);
   assert.equal(starts.length, 4);
-  assert.ok(starts.every(start => start < 64), 'the film is about 64 seconds long');
+  assert.ok(starts.every(start => start < 67), 'the film is about 67 seconds long');
   assert.match(html, /<video data-hero-film muted loop playsinline/);
-  // The 64-second film replaced the 24-second one, so cached copies of older keys must not be reused.
-  assert.match(html, /\/media\/gugu-film\.mp4\?v=3"/);
-  assert.equal(html.match(/gugu-film-poster\.webp\?v=3"/g)?.length, 2);
+  // The 67-second film replaced the 64-second one, so cached copies of older keys must not be reused.
+  assert.match(html, /\/media\/gugu-film\.mp4\?v=4"/);
+  assert.equal(html.match(/gugu-film-poster\.webp\?v=4"/g)?.length, 2);
   const film = await readFile(new URL('../public/media/gugu-film.mp4', import.meta.url));
   const mvhd = film.indexOf('mvhd');
   assert.ok(mvhd > 0 && film[mvhd + 4] === 0, 'film has a version-0 movie header near the start');
